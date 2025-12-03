@@ -1,0 +1,130 @@
+{
+  "question" : {
+    "question_id" : 79773357,
+    "title" : "Deserializing Java object streams with different serial version IDs",
+    "body" : "<p>I am trying to load data from Java object streams from another application. Since I do not have access to the source code of that application, I used jdeserialize to extract the class definitions from the object streams. In general this works fine. Unfortunately, some (older) streams seem to have been serialized using classes with different serial version IDs. Otherwise the classes are identical to the ones I already have (as extracted by jdeserialize). This is the error I get when deserializing the older streams:</p>\n<blockquote>\n<p>java.io.InvalidClassException: tls.other.app.package.SomeClass; local class incompatible: stream classdesc serialVersionUID = 1, local class serialVersionUID = 2</p>\n</blockquote>\n<p>When I change the serial version IDs in the existing classes I can deserialize the older streams, but of course the new ones are not working anymore. I want to deserialize both versions of the Java object streams with the same application.</p>\n<p>I tried different things - without success so far:</p>\n<ul>\n<li><p>I created two packages with the same classes, just different serial version IDs. I created my own ObjectInputStream, overwriting readClassDescriptor(). The I try to read the stream using the first package. When that fails with the error message above I read the stream again changing the package / class name inside of readClassDescriptor():</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Override\nprotected ObjectStreamClass readClassDescriptor() throws IOException, ClassNotFoundException {\n    ObjectStreamClass resultClassDescriptor = super.readClassDescriptor();\n    String className = resultClassDescriptor.getName();\n    if(_alternatePackage &amp;&amp; className.startsWith(&quot;tls.other.app.package&quot;)) {\n        Class&lt;?&gt; localClass;\n        className = className.replace(&quot;tls.other.app.package&quot;, &quot;tls.other.app.package2&quot;);\n        try {\n            localClass = Class.forName(className); \n        } catch (ClassNotFoundException e) {\n            logger.error(&quot;No local class for &quot; + resultClassDescriptor.getName(), e);\n            return resultClassDescriptor;\n        }\n        resultClassDescriptor = ObjectStreamClass.lookup(localClass);\n    }\n    return resultClassDescriptor;\n}\n</code></pre>\n<p>If I try to load the old streams I get the following error message:</p>\n<blockquote>\n<p>java.io.StreamCorruptedException: invalid type code: 00</p>\n</blockquote>\n</li>\n<li><p>I tried to make the serial version ID dynamic doing something like this:</p>\n<pre class=\"lang-java prettyprint-override\"><code>private static final long serialVersionUID = JavaObjectStreamReader.getSerialVersionUID(IDBSClasses.PropertyValueDTO);\n</code></pre>\n<p>Of coursem the serialVersionUID is static and only initialized once. Therefore, I tried to use different ClassLoaders to reload the class after the first deserialization fails. That did not work either.</p>\n</li>\n</ul>\n<p>Is there any way to deserialize the old and the new streams in the same application?</p>\n",
+    "tags" : [ "java", "serialization", "deserialization", "objectinputstream" ],
+    "owner" : {
+      "account_id" : 3785607,
+      "reputation" : 71,
+      "user_id" : 3143659,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/6e11b34460a2f292ce0c05192d611441?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "uli",
+      "link" : "https://stackoverflow.com/users/3143659/uli"
+    },
+    "is_answered" : true,
+    "view_count" : 111,
+    "answer_count" : 2,
+    "score" : 1,
+    "last_activity_date" : 1758711103,
+    "creation_date" : 1758696626,
+    "link" : "https://stackoverflow.com/questions/79773357/deserializing-java-object-streams-with-different-serial-version-ids",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79773449,
+    "question_id" : 79773357,
+    "body" : "<p>First of all, the <code>serialVersionUID</code> acts as the guarantee that deserialization will work as expected.</p>\n<p>The official Oracle Docs describe it as</p>\n<blockquote>\n<p>A <code>SerialVersionUID</code> identifies the unique original class version for which this class is capable of writing streams and from which it can read.</p>\n</blockquote>\n<p>(<a href=\"https://docs.oracle.com/javase/8/docs/platform/serialization/spec/class.html\" rel=\"nofollow noreferrer\">https://docs.oracle.com/javase/8/docs/platform/serialization/spec/class.html</a>)</p>\n<p>So your <code>serialVersionUID</code> should differ only, if you changed a class in a way, that it will either be unable to deserialize older classes, or older classes may be unable to deserialize this one.</p>\n<p>Generally, I would recommend you to look into different methods of serialization like Jackson or Kryo.</p>\n<h1>Coming back to your problem:</h1>\n<p>You are working with old code, so this can't be helped. If you're absolutely certain, that the two versions are compatible, you can trick the mechanism with a modified <code>ObjectInputStream</code> like so:</p>\n<pre class=\"lang-java prettyprint-override\"><code>ObjectInputStream in = new ObjectInputStream(new FileInputStream(&quot;theEntity2.bin&quot;)) {\n        @Override\n        protected ObjectStreamClass readClassDescriptor() throws IOException, ClassNotFoundException {\n            var actual = super.readClassDescriptor();\n            var local = ObjectStreamClass.lookup(TheEntity.class);\n            if (actual.getName().equals(local.getName())) {\n                return local;\n            }\n            return actual;\n        }\n    };\n</code></pre>\n<p>Basically, you intercept the type descriptor of the class read from the stream. If it is the class you want to load, in this case <code>TheEntity</code>, you simply return the deserialization descriptor of your local class instead.<br />\nNow the stream believes it just read exactly the class your have and deserialization should work as expected (if they are actually compatible).<br />\nIf you have even more versions of which some are incompatible, check the return of <code>getSerialVersionUID()</code> from actual and determine, if you can handle it or not.</p>\n<p>The code is a simplified rewrite of this answer:<br />\n<a href=\"https://stackoverflow.com/questions/1816559/make-java-runtime-ignore-serialversionuids\">Make Java runtime ignore serialVersionUIDs?</a></p>\n",
+    "score" : 3,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 8227531,
+      "reputation" : 552,
+      "user_id" : 6189357,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/756d4297e65116bb0d7297232f4d3693?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Omega1001",
+      "link" : "https://stackoverflow.com/users/6189357/omega1001"
+    },
+    "creation_date" : 1758702189,
+    "last_activity_date" : 1758711103,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79773448,
+    "question_id" : 79773357,
+    "body" : "<p>There are at least a couple solutions.</p>\n<h2>1. Override <code>ObjectInputStream::readClassDescriptor</code></h2>\n<p>You can &quot;lie&quot; by replacing the <code>ObjectStreamClass</code> with one for the &quot;local class&quot; instead of the one built from the serialized object. Note this approach does <em>not</em> require having your own version of the class. And it should work if the <code>serialVersionUID</code> is truly the only difference between the local class and the serialized object's class.</p>\n<pre class=\"lang-java prettyprint-override\"><code>import java.io.IOException;\nimport java.io.InputStream;\nimport java.io.ObjectInputStream;\nimport java.io.ObjectStreamClass;\n\npublic class CustomObjectInputStream extends ObjectInputStream {\n\n  public CustomObjectInputStream(InputStream in) throws IOException {\n    super(in);\n  }\n\n  @Override\n  protected ObjectStreamClass readClassDescriptor() throws IOException, ClassNotFoundException {\n    var descriptor = super.readClassDescriptor();\n\n    // replace 'Data.class' with your real class\n    if (Data.class.getName().equals(descriptor.getName())) {\n      // assumes class implements 'Serializable'\n      descriptor = ObjectStreamClass.lookup(Data.class);\n    }\n    return descriptor;\n  }\n}\n</code></pre>\n<p>This will need to be compiled against the library containing <code>Data.class</code> (placeholder value). Otherwise, modify the code to use <code>Class::forName</code>.</p>\n<h2>2. Patch the Code</h2>\n<p>You mentioned that you managed to create the same class, just with different <code>serialVersionUID</code>s and packages. Do the same thing but keep your version of the class in the same package as the real class.</p>\n<p>For example, if you end up with the following:</p>\n<pre class=\"lang-none prettyprint-override\"><code>&lt;project-dir&gt;\n│   lib.jar\n│   \n└───patches\n    └───com\n        └───example\n                Data.class\n</code></pre>\n<p>Where <code>lib.jar</code> contains the &quot;real&quot; <code>Data</code> class and <code>patches/com/example/Data.class</code> contains your modified version, then you can launch the application in such a way that the latter will be picked up over the former.</p>\n<h5>Non-modular Library</h5>\n<p>If the same class appears in more than one entry on the class-path, then earlier entries take precedence.</p>\n<pre class=\"lang-none prettyprint-override\"><code>java -cp patches:lib.jar &lt;main-class&gt;\n</code></pre>\n<p>Replace <code>:</code> with <code>;</code> on Windows.</p>\n<h5>Modular Library</h5>\n<p>Assuming the module name is <code>lib</code>:</p>\n<pre class=\"lang-none prettyprint-override\"><code>java -p lib.jar --patch-module lib=patches ...\n</code></pre>\n",
+    "score" : 2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 8532578,
+      "reputation" : 49884,
+      "user_id" : 6395627,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Slaw",
+      "link" : "https://stackoverflow.com/users/6395627/slaw"
+    },
+    "creation_date" : 1758702095,
+    "last_activity_date" : 1758702563,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140758249,
+    "post_id" : 79773357,
+    "body" : "@Omega It doesn&#39;t say anywhere that it must be changed, and there is an entire chapter on Versioning listing all the ways that the class can be changed compatibly; further, the <code>readResolve()</code> and <code>writeReplace()</code> methods provide even more ways not to disturb the <code>serialVersionUID</code>.,",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 71739,
+      "reputation" : 311872,
+      "user_id" : 207421,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/5cfe5f7d64f44be04f147295f5c7b88e?s=256&d=identicon&r=PG",
+      "display_name" : "user207421",
+      "link" : "https://stackoverflow.com/users/207421/user207421"
+    },
+    "creation_date" : 1758761433,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140756283,
+    "post_id" : 79773357,
+    "body" : "@user207421 Not true. Official Oracle doc says: &quot;A SerialVersionUID identifies the unique original class version for which this class is capable of writing streams and from which it can read.&quot; -&gt; It is supposed to change if and only if the change you did to the class will prevent earlier versions to be deserialized correctly, or if newer versions can not be deserialized by the older class. It is literally the compatibility guarantee for (de)serialization. See <a href=\"https://docs.oracle.com/javase/8/docs/platform/serialization/spec/class.html\" rel=\"nofollow noreferrer\">docs.oracle.com/javase/8/docs/platform/serialization/spec/&hellip;</a> Paragraph 4.1 second sentence",
+    "score" : 5,
+    "owner" : {
+      "account_id" : 8227531,
+      "reputation" : 552,
+      "user_id" : 6189357,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/756d4297e65116bb0d7297232f4d3693?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Omega1001",
+      "link" : "https://stackoverflow.com/users/6189357/omega1001"
+    },
+    "creation_date" : 1758700577,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140756269,
+    "post_id" : 79773357,
+    "body" : "I can not reproduce the problem of getting a <code>java.io.StreamCorruptedException: invalid type code: 00</code> with an approach as you’ve shown. But note that letting this problem aside, your approach is unnecessarily complicated. When you replace the stream’s descriptor returned by <code>super.readClassDescriptor()</code> with a local version acquired by <code>ObjectStreamClass.lookup(…)</code>, you already bypassed the version check because the local descriptor will always have the right id (matching the local class it was generated from), regardless of the class. So you don’t need different versions of the classes.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 3211603,
+      "reputation" : 300941,
+      "user_id" : 2711488,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+      "display_name" : "Holger",
+      "link" : "https://stackoverflow.com/users/2711488/holger"
+    },
+    "creation_date" : 1758700256,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140756197,
+    "post_id" : 79773357,
+    "body" : "Moral of the story: don&#39;t change the <code>serialVersionUID</code>. Despite its name, it is not a version number. It should be left constant forever, and <i>other</i> means used to version classes, many of which are already built-in to Java Object Serialization.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 71739,
+      "reputation" : 311872,
+      "user_id" : 207421,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/5cfe5f7d64f44be04f147295f5c7b88e?s=256&d=identicon&r=PG",
+      "display_name" : "user207421",
+      "link" : "https://stackoverflow.com/users/207421/user207421"
+    },
+    "creation_date" : 1758698103,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

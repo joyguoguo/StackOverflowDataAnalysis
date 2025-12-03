@@ -1,0 +1,115 @@
+{
+  "question" : {
+    "question_id" : 79804276,
+    "title" : "Measure elapsed time on Spring reactor",
+    "body" : "<p>I am using spring-webflux version 3.2.x</p>\n<p>I want to log the total elapsed time of an whole pipeline execution.</p>\n<p>I have found a method <em>elapsed()</em> but I want the total time, but I want the total time, not for items (<em>doOnNext</em>).</p>\n<p>I saw a lot of options but I am not sure what is the correct to use.</p>\n<p>My code:</p>\n<p>private Mono getData(String slug) {</p>\n<pre><code>var stopWatch = StopWatch.createStarted();\n\nreturn getProducts(\n    Mono.zip(\n        proxy.getExternalData(slug),\n        getProductPersonalization(slug)))\n    .doOnSuccess(it -&gt; log.info(&quot;Finish with success:&quot;))\n    .doOnTerminate(() -&gt; {\n      stopWatch.stop();\n      log.info(&quot;getData execution time: {} ms&quot;,\n          stopWatch.getTime(TimeUnit.MILLISECONDS));\n    });\n</code></pre>\n<p>}</p>\n<pre><code>  private Mono&lt;MyResponse&gt; getProducts(Mono&lt;Tuple2&lt;ProductExternalResponse, ProductPersonalization&gt;&gt; tuple);\n</code></pre>\n<p>Note: I read that using stopWatch outside the pipeline is wrong, that is the reason I am looking for another solution.</p>\n<p>This method is returned to a Controller</p>\n",
+    "tags" : [ "java", "spring-webflux", "project-reactor" ],
+    "owner" : {
+      "account_id" : 4419164,
+      "reputation" : 1355,
+      "user_id" : 3599758,
+      "user_type" : "registered",
+      "accept_rate" : 71,
+      "profile_image" : "https://www.gravatar.com/avatar/248bd65321655bade15125e28a6e5a3d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "javaTry",
+      "link" : "https://stackoverflow.com/users/3599758/javatry"
+    },
+    "is_answered" : true,
+    "view_count" : 83,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1761988354,
+    "creation_date" : 1761777269,
+    "link" : "https://stackoverflow.com/questions/79804276/measure-elapsed-time-on-spring-reactor",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79806430,
+    "question_id" : 79804276,
+    "body" : "<p>You can measure the time it took a mono to reach termination from subscription by using java <a href=\"https://docs.oracle.com/javase/8/docs/api/java/lang/System.html#nanoTime--\" rel=\"nofollow noreferrer\">System.nanoTime()</a>. Save the current nanotime on subscription (in a thread-safe structure, like an atomic long), and then on termination, substract it from the time at this point.</p>\n<p><em>Note: however that such solution will also measure the time your mono was suspended, because we cannot detect when Mono operation is paused.</em></p>\n<p>So, for example, you can craft a method that log elapsed time when reaching termination:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public static &lt;V&gt; Mono&lt;V&gt; logExecTimeMs(Mono&lt;V&gt; toMeasure, Logger logger) {\n    var startTime = new AtomicLong();\n    return toMeasure\n            // Save current time on execution start\n            .doOnSubscribe(s -&gt; startTime.set(System.nanoTime()))\n            // On termination, substract finish time from start time to get exec time estimation\n            .doOnTerminate(() -&gt; {\n                var execTimeNano =  System.nanoTime() - startTime.get();\n                var execTimeMs = execTimeNano * 1e-6;\n                logger.debug(&quot;Execution time (ms): &quot; +execTimeMs);\n            });\n}\n</code></pre>\n<p>You can also create one that acts like reactor elapsed function and return measured time in output pipeline:</p>\n<pre class=\"lang-java prettyprint-override\"><code>/**\n * Measure time it took for input mono to reach termination from subscription (computation start).\n *\n * @param pipelineToMeasure User Mono to time.\n * @return Input Mono, decorated.\n *         The output is a tuple whose first value is execution time in nanoseconds.\n *         The second value is decorated mono result.\n */\npublic static &lt;V&gt; Mono&lt;Tuple2&lt;Long, V&gt;&gt; timeItNano(Mono&lt;V&gt; pipelineToMeasure) {\n    var timeCache = new AtomicLong();\n    return pipelineToMeasure\n            .doOnSubscribe(s -&gt; timeCache.set(System.nanoTime()))\n            .doOnTerminate(() -&gt; timeCache.updateAndGet(start -&gt; System.nanoTime() - start))\n            .map(value -&gt; Tuples.of(timeCache.get(), value));\n}\n</code></pre>\n<p>We can test it with this test case :</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Test\npublic void test() {\n    // Create a test mono that takes 50 ms to send next element.\n    var exampleMono = Mono.just(&quot;foo&quot;)\n            .delayElement(Duration.ofMillis(50));\n\n    // Time it with our example method\n    var timed = timeItNano(exampleMono);\n\n    StepVerifier.create(timed)\n            .assertNext(tuple -&gt; {\n                // Ensure decorated mono result has been preserved\n                assertEquals(&quot;foo&quot;, tuple.getT2());\n                // Check measured time is approwimately correct (must be more than 50ms, but not too big)\n                var execTimeMs = tuple.getT1() * 1e-6;\n                assertTrue(execTimeMs &gt; 50 &amp;&amp; execTimeMs &lt; 100);\n            })\n            .verifyComplete();\n}\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 3168631,
+      "reputation" : 4282,
+      "user_id" : 2678097,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/0b85e63f457a71f4976cee5fc44f4ae0?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "amanin",
+      "link" : "https://stackoverflow.com/users/2678097/amanin"
+    },
+    "creation_date" : 1761988354,
+    "last_activity_date" : 1761988354,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140829847,
+    "post_id" : 79804276,
+    "body" : "Yes, I am using org.apache.commons.lang3.time.StopWatch, I read that can not be used like I did in my example. I want to measure the mono to execute.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 4419164,
+      "reputation" : 1355,
+      "user_id" : 3599758,
+      "user_type" : "registered",
+      "accept_rate" : 71,
+      "profile_image" : "https://www.gravatar.com/avatar/248bd65321655bade15125e28a6e5a3d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "javaTry",
+      "link" : "https://stackoverflow.com/users/3599758/javatry"
+    },
+    "creation_date" : 1761934082,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140829542,
+    "post_id" : 79804276,
+    "body" : "There are some details that need to be cleared : Is the stopwatch you&#39;re using the <a href=\"https://commons.apache.org/proper/commons-lang/apidocs/org/apache/commons/lang3/time/StopWatch.html\" rel=\"nofollow noreferrer\">org.apache.commons.lang3.time.StopWatch</a> ? If so, then its api doc states : <code>This class is not thread-safe</code>, so it could produce bad results or errors in a concurrent environment. Also, in your example, you start the stop watch on assembly, before subscription. Is it what you want, Do you want the time it took for the mono to execute, or the total time from its creation (assembly) until its termination ?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3168631,
+      "reputation" : 4282,
+      "user_id" : 2678097,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/0b85e63f457a71f4976cee5fc44f4ae0?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "amanin",
+      "link" : "https://stackoverflow.com/users/2678097/amanin"
+    },
+    "creation_date" : 1761923002,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79806430" : [ {
+      "comment_id" : 140831859,
+      "post_id" : 79806430,
+      "body" : "@javaTry The examples I provide start measuring on subscription, not on mono creation. As far as I know, it is the closest insertion point you can have for pipeline execution.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 3168631,
+        "reputation" : 4282,
+        "user_id" : 2678097,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/0b85e63f457a71f4976cee5fc44f4ae0?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "amanin",
+        "link" : "https://stackoverflow.com/users/2678097/amanin"
+      },
+      "creation_date" : 1762072579,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140830929,
+      "post_id" : 79806430,
+      "body" : "Is there a way o measure only when pipeline start running, ignoring the time that Mono was created?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 4419164,
+        "reputation" : 1355,
+        "user_id" : 3599758,
+        "user_type" : "registered",
+        "accept_rate" : 71,
+        "profile_image" : "https://www.gravatar.com/avatar/248bd65321655bade15125e28a6e5a3d?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "javaTry",
+        "link" : "https://stackoverflow.com/users/3599758/javatry"
+      },
+      "creation_date" : 1762006800,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

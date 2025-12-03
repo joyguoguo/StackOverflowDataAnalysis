@@ -1,0 +1,146 @@
+{
+  "question" : {
+    "question_id" : 79755759,
+    "title" : "Is it required to access Swing properties in EDT?",
+    "body" : "<p>Is it required to access Swing properties in EDT?</p>\n<p>On the one hand, it is said that:</p>\n<blockquote>\n<p>In general Swing is not thread safe. All Swing components and related classes, unless otherwise documented, must be <strong>accessed</strong> on the event dispatching thread.</p>\n<p><em><a href=\"https://web.archive.org/web/20120609190427/http://docs.oracle.com/javase/6/docs/api/javax/swing/package-summary.html\" rel=\"nofollow noreferrer\">Swing's Threading Policy</a></em></p>\n</blockquote>\n<p>On the other hand, I can freely invoke, for example, <code>getText()</code> on <code>JTextComponent</code>s with no exceptions thrown <em>even if</em> I explicitly install a <code>FailOnThreadViolationRepaintManager</code> (see <a href=\"https://web.archive.org/web/20120825054049/http://docs.codehaus.org/display/FEST/Testing+that+access+to+Swing+components+is+done+in+the+EDT\" rel=\"nofollow noreferrer\">this page</a> for more info).</p>\n<pre class=\"lang-java prettyprint-override\"><code>import org.fest.swing.edt.FailOnThreadViolationRepaintManager;\nimport org.fest.swing.edt.GuiActionRunner;\nimport org.fest.swing.edt.GuiQuery;\nimport org.fest.swing.exception.EdtViolationException;\nimport org.junit.jupiter.api.BeforeAll;\nimport org.junit.jupiter.api.Test;\n\nimport javax.swing.JTextField;\n\nimport static org.junit.jupiter.api.Assertions.assertDoesNotThrow;\nimport static org.junit.jupiter.api.Assertions.assertThrows;\n\nclass EdtTest {\n\n    @BeforeAll\n    static void beforeAll() {\n        FailOnThreadViolationRepaintManager.install();\n    }\n\n    @Test\n    void settingThrows_butAccessingDoesNot() {\n        JTextField textField = GuiActionRunner.execute(new GuiQuery&lt;JTextField&gt;() {\n            @Override\n            protected JTextField executeInEDT() {\n                return new JTextField();\n            }\n        });\n        String text = &quot;Some text&quot;;\n        assertThrows(EdtViolationException.class, () -&gt; textField.setText(text));\n        assertDoesNotThrow(() -&gt; textField.getText());\n    }\n}\n</code></pre>\n<p>If I can get away with it, I would rather avoid wrapping each getter call in some EDT-posting lambda in my tests (even if I make it easier with some utility method, like <code>callAndWait(field::getText)</code>).</p>\n<p>Java 8.</p>\n",
+    "tags" : [ "java", "swing", "fest" ],
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2667,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "is_answered" : true,
+    "view_count" : 109,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1757244957,
+    "creation_date" : 1756991312,
+    "link" : "https://stackoverflow.com/questions/79755759/is-it-required-to-access-swing-properties-in-edt",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79756253,
+    "question_id" : 79755759,
+    "body" : "<p>It's a rule that you can't touch Swing components from non-EDT threads.  The rule is there to help you not create future messes.  You CAN invoke methods from other threads, and it won't error.  But, you will create very very difficult defects doing this.  So the rule is there to spare you the pain of trying to recreate a defect that only happens sometimes under strange conditions that your users will never correctly tell you what they did.  And even if they can tell you exactly what they did and what the context is, you still may not be able to reproduce it because threading errors, race conditions, and dead reckoning errors are where careers go to die.  As I tell my kids you can learn by listening or you can learn the hard way.  Your choice, but you will understand what I mean one way or the other.</p>\n<p>Now, I think you are going about things in a way that is creating this dynamic that is working against your best interest.  For one, what are you doing that requires you to interrogate Swing components from other threads?  This is a serious code smell, and probably anti-pattern.  If you change your approach you can help yourself instead of hurting yourself.  For example, if you want to do something on another thread that might require invoking methods on Swing Components you should encapsulate that state in a message, and send that information to the non-EDT thread.  It computes the answer, and posts that result back at the EDT thread.</p>\n<pre class=\"lang-java prettyprint-override\"><code>BlockingQueue queue = ....;\n\nvoid someAction(ActionEvent evt) {\n   ComputeThisForMeMessage msg = new ComputeThisForMeMessage(\n       comp.getState(),\n       ....   );\n   queue.put( msg );\n}\n</code></pre>\n<p>Then in your non-EDT thread:</p>\n<pre><code>BlockingQueue queue = ...;\nvoid execute() {\n    while( !Thread.isInterrupted() ) {\n        Message msg = queue.take();   // or poll with a timeout so you can quit without something being posted to the queue.\n        msg.execute();  // perform work on the non-EDT thread\n        SwingUtilities.invokeLater( new Runnable() {\n           public void run() {\n              msg.handleResult();\n           }\n        });\n    }\n}\n</code></pre>\n<p>Your message class can encapsulate messages that perform work off the EDT thread, and update the results in a separate method like so:</p>\n<pre><code>public interface Message {\n    void execute();       // performed off EDT\n    void handleResult();  // performed on EDT\n}\n</code></pre>\n<p>This is similar to <code>SwingWorker</code>, but it allows for more control over the threading and such.  You could use a thread pool, or a single thread without changing anything.  But, the idea is that you send all of the data the thread needs in a thread-safe manner.  Pull data from the swing components at the time of the action invocation from the EDT thread, then let the long running computation happen off EDT, and post those results back to the EDT to update the UI.  So making network hops, long running algos, etc can be performed off the EDT thread keeping the UI live and thread safe.</p>\n<p>You probably could use lambdas to make it easier to define off-EDT-thread on-EDT-thread behavior.  Naturally because there are 2 methods anonymous inner classes make sense here.  But, some people balk at using them because of verbosity.  So a lambda that returns a lambda could work as well.</p>\n<pre class=\"lang-java prettyprint-override\"><code>public interface BackgroundTask&lt;P,R&gt; {\n   Callable&lt;R&gt; execute(P parameter);\n}\n</code></pre>\n<p>That would be something like this to use it:</p>\n<pre class=\"lang-java prettyprint-override\"><code>final var someUIData = comp.getData();   // Read swing component state here on the EDT.  Save it to a variable then you can safely work with it in the thread.\nqueue.put( (p) =&gt; {\n    // do work here off EDT thread\n    someUIData.blah blah blah\n\n    return () =&gt; {\n       // this is invoked on EDT thread\n       R r = ...;\n       return r;\n    };\n});\n</code></pre>\n<p>That could work, but you'll need to be super careful about accessing parameters in the body of the lambda method.  I think it's generally safe since the non-EDT thread will return this lambda at the end of its work, and can't access those objects from that thread.  But you'd need to make sure you weren't accessing swing components in the first lambda.  Using immutable objects for things like <code>someUIData</code> will also help you.  If <code>someUIData</code> isn't immutable you may have threading issues with those objects.  But, UI paradigms of interaction here can disable or enable the errors more or less.  It can depend on your UI structure, but something to consider.  So there is less boiler-plate code, but more care is needed to make sure you are following the rules.</p>\n<p>There are lots of ways to architect this, but something like this will make it easier to follow the rules without a lot of pain.  That's what good architecture should do.  Keep you working quickly and enforcing good patterns of working.</p>\n",
+    "score" : 2,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 51881,
+      "reputation" : 39410,
+      "user_id" : 155020,
+      "user_type" : "registered",
+      "accept_rate" : 80,
+      "profile_image" : "https://i.sstatic.net/fEqVo.png?s=256",
+      "display_name" : "chubbsondubs",
+      "link" : "https://stackoverflow.com/users/155020/chubbsondubs"
+    },
+    "creation_date" : 1757022461,
+    "last_activity_date" : 1757022922,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140715789,
+    "post_id" : 79755759,
+    "body" : "Always checking for thread safety violations for every method will have too many performance issues, and Swing came after AWT failed because of performance problems.  AWT tried to allow multi-threaded access to UI components, and that was a HUGE design flaw in its design.  Swing had to backtrack that bad choice so I&#39;m not surprised there isn&#39;t a lot of oversight around violating the single thread rule.  The reason is performance.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 51881,
+      "reputation" : 39410,
+      "user_id" : 155020,
+      "user_type" : "registered",
+      "accept_rate" : 80,
+      "profile_image" : "https://i.sstatic.net/fEqVo.png?s=256",
+      "display_name" : "chubbsondubs",
+      "link" : "https://stackoverflow.com/users/155020/chubbsondubs"
+    },
+    "creation_date" : 1757023079,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140714957,
+    "post_id" : 79755759,
+    "body" : "@SergeyZolotarev Unless I really misunderstand the purpose of <code>FailOnThreadViolationRepaintManager</code>, this class can only report thread violations for operations that trigger a repaint. Invoking a getter very rarely results in a repaint, it is the setters that trigger repaints. (And this makes sense, because usually getting data should not change the state of a Swing component and thus no repaint is necessary.)",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 13203350,
+      "reputation" : 916,
+      "user_id" : 9535950,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/sc4Pk.png?s=256",
+      "display_name" : "Thomas Behr",
+      "link" : "https://stackoverflow.com/users/9535950/thomas-behr"
+    },
+    "creation_date" : 1756999447,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140714763,
+    "post_id" : 79755759,
+    "body" : "I don&#39;t know a lot about that checker, but I do know that one cannot assume much about when Swing paints.  Many many things can cause a repaint to happen, but double buffering also means painting may not happen when one expects it to.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2053598,
+      "reputation" : 44936,
+      "user_id" : 1831987,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/38b1c37530189ec4471a43a618e33f67?s=256&d=identicon&r=PG",
+      "display_name" : "VGR",
+      "link" : "https://stackoverflow.com/users/1831987/vgr"
+    },
+    "creation_date" : 1756995749,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140714757,
+    "post_id" : 79755759,
+    "body" : "@VGR <i>&quot;Most methods won&#39;t throw an exception&quot;</i> I was referring specifically to the <code>FailOnThreadViolationRepaintManager</code> checker",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2667,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "creation_date" : 1756995645,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140714649,
+    "post_id" : 79755759,
+    "body" : "<b>Yes.</b>  Most methods won&#39;t throw an exception if accessed from the wrong thread, but you will see unpredictable behavior.  Sometimes right away, sometimes during subsequent paintings.  If you want code to behave correctly every time instead of some of the time, call AWT/Swing methods from the event dispatch thread.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 2053598,
+      "reputation" : 44936,
+      "user_id" : 1831987,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/38b1c37530189ec4471a43a618e33f67?s=256&d=identicon&r=PG",
+      "display_name" : "VGR",
+      "link" : "https://stackoverflow.com/users/1831987/vgr"
+    },
+    "creation_date" : 1756993872,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79756253" : [ {
+      "comment_id" : 140754381,
+      "post_id" : 79756253,
+      "body" : "You can also do something like <code>CompletableFuture.supplyAsync(() -&gt; backgroundComputation()) .thenAcceptAsync(result -&gt; modifyUIWith(result), SwingUtilities::invokeLater);</code>",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 3211603,
+        "reputation" : 300941,
+        "user_id" : 2711488,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+        "display_name" : "Holger",
+        "link" : "https://stackoverflow.com/users/2711488/holger"
+      },
+      "creation_date" : 1758629178,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

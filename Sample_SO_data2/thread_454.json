@@ -1,0 +1,168 @@
+{
+  "question" : {
+    "question_id" : 79797564,
+    "title" : "How can I tell if a Spring ApplicationContext has been refreshed without using an event listener?",
+    "body" : "<p>I have an instance of a Spring <code>ApplicationContext</code> in a method and I need to &quot;probe&quot; it and decide if:</p>\n<ol>\n<li>it has been fully <code>refresh()</code>ed at least once so I can be sure that the beanFactory is done creating all of its beans and</li>\n<li>no subsequent <code>refresh()</code> is currently in progress</li>\n</ol>\n<p>Important restriction: In my use case I cannot use a listener for <code>ContextRefreshedEvent</code>. I can only operate on the <code>applicationContext</code> that was passed to me, which might have happened during a <code>refresh()</code>, before or after it.</p>\n<p>If you take a look at <code>org.springframework.context.support.AbstractApplicationContext#refresh</code> you will see the following steps, among others:</p>\n<pre class=\"lang-java prettyprint-override\"><code>    public void refresh() throws BeansException, IllegalStateException {\n        // :\n        prepareRefresh();  // makes this.isActive() return true\n\n        // :\n        finishBeanFactoryInitialization(beanFactory);\n        // internally calls:\n        // beanFactory.freezeConfiguration()  -&gt; makes beanFactoroy.isConfigurationFrozen() return true\n        // beanFactory.preInstantiateSingletons()\n\n        // :\n        finishRefresh();\n    }\n</code></pre>\n<p>The above selection of steps highlights the fact that <code>ConfigurableApplicationContext.isActive()</code> and <code>ConfigurableListableBeanFactory.isConfigurationFrozen()</code> which I have tried do not guarantee that <code>beanFactory.preInstantiateSingletons()</code> has been completed, which is very important in my case.</p>\n<p>Ideally I would expect</p>\n<ol>\n<li>A <code>ConfigurableApplicationContext.isRefreshed()</code> method which would indicate if a context has been fully refreshed at least once and</li>\n<li>A <code>ConfigurableApplicationContext.isBeingRefreshed()</code> which would indicate whether a refresh, the first or a subsequent one, is currently in progress.</li>\n</ol>\n<p>Schematically they would fit in the existing <code>refresh()</code> method as follows:</p>\n<pre class=\"lang-java prettyprint-override\"><code>    public void refresh() throws BeansException, IllegalStateException {\n        // Addition 1\n        setIsBeingRefreshed(true)\n\n        // :\n        prepareRefresh();\n\n        // :\n        finishBeanFactoryInitialization(beanFactory);\n\n        // Addition 2\n        setIsBeingRefreshed(false)\n        setIsRefreshed(true)\n\n        // :\n        finishRefresh();\n    }\n</code></pre>\n<p>With that available I would be able to test if <code>isRefreshed() &amp;&amp; !isBeingRefreshed()</code> to make sure I have a &quot;stable&quot; and refreshed context.</p>\n<p>But no such methods exist so I was wondering if you are aware of anything effectively equivalent.</p>\n",
+    "tags" : [ "java", "spring", "spring-boot", "dependency-injection", "spring-context" ],
+    "owner" : {
+      "account_id" : 1349124,
+      "reputation" : 800,
+      "user_id" : 1289270,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/a994da122d7e9738111f18e189f3ec4f?s=256&d=identicon&r=PG",
+      "display_name" : "Kostas Filios",
+      "link" : "https://stackoverflow.com/users/1289270/kostas-filios"
+    },
+    "is_answered" : true,
+    "view_count" : 116,
+    "answer_count" : 2,
+    "score" : 3,
+    "last_activity_date" : 1761221029,
+    "creation_date" : 1761207779,
+    "link" : "https://stackoverflow.com/questions/79797564/how-can-i-tell-if-a-spring-applicationcontext-has-been-refreshed-without-using-a",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79797762,
+    "question_id" : 79797564,
+    "body" : "<p>Disclaimer: this answer is picked up from source code inspection, and may not work for different versions of Spring Framework. Code pointers: <code>AbstractApplicationContext#refresh</code>, <code>AbstractRefreshableApplicationContext</code>, and <code>GenericApplicationContext</code> . Do keep in mind, that different deployments may have slightly different rules, so you need to check that all context implementation and factories actually extend the interfaces and classes mentioned here.</p>\n<p>There appear to be the following steps to initializing the <code>ApplicationContext</code> as of ver.6:</p>\n<ol>\n<li><p>At the very start, if there is no work and no beans yet, the <code>ApplicationContext#isActive</code> will return <code>false</code>, and <code>ApplicationContext#isClosed</code> will also return <code>false</code>.</p>\n</li>\n<li><p>One of the first things that happens is <code>ApplicationContext#active</code> value is set to <code>true</code>, so the <code>ApplicationContext#isActive</code> now returns <code>true</code></p>\n</li>\n<li><p>Then, the context's <code>BeanFactory</code> starts loading bean definitions. You will unlikely to probe this process in a generic way - all I can conclude that if your factory extends from <code>DefaultListableBeanFactory</code>, then during this phase it has <code>SerializationId</code> property set to <code>null</code> . However, there's not really any guarantees for any other value before or after the loading process.</p>\n</li>\n<li><p>Then, follows the bean-factory-post-processing, which you'll only have a hook-into if you registered a post processor of your own, and set it to lowest priority.</p>\n</li>\n<li><p>Then follows the bean creation phase for some time, which you may be able to track the completion of by probing whether <code>ConfigurableListableBeanFactory#isConfigurationFrozen</code> became <code>true</code>. Though even after configuration becomes fronzen, the factory may or may not still post-process lazy singleton initialization.</p>\n</li>\n<li><p>Finally, comes the phase of triggering various on-refresh events - calling in <code>LifecycleProcessor#onRefresh</code>, and firing the <code>ContextRefreshedEvent</code> in <code>ApplicationEventMulticaster</code>.</p>\n</li>\n</ol>\n<p>As you can see, the application event is actually the most robust way of detecting whether the refresh process is completed, but it's not going to help tracking whether the process is ongoing at the time of calling some methods.</p>\n<p>As far as non-invasive methods go, that is about it.</p>\n<p>There is one extension point, however - the <code>ApplicationStartup</code> interface. It is an invasive way - as in, you have to initialize it before <strong>anything</strong> is done to the <code>ApplicationContext</code>, but it allows you to precisely track what phase of loading is happening right now, provided that you write some code to do it.</p>\n<p>Below I'm going to provide a wrapper for the original startup object that only allows to track whether the overal refresh process is ongoing. With that you'll be able to check for context startup by calling</p>\n<pre><code>context.isActive()\n &amp;&amp; ((StartupPhaseTracker) context.getApplicationStartup()).isRefreshInProgress()\n</code></pre>\n<p>The class (i'm going to use lombok annotations to make code shorter):</p>\n<pre><code>@lombok.RequiredArgsConstructor\npublic class StartupPhaseTracker implements ApplicationStartup {\n    private static final String REFRESH_PHASE_NAME = &quot;spring.context.refresh&quot;;\n\n    private final ApplicationStartup impl;\n    @lombok.Getter\n    private volatile boolean refreshInProgress;\n\n    @Override\n    public StartupStep start(String stepName) {\n        if (REFRESH_PHASE_NAME.equals(stepName)) {\n            refreshInProgress = true;\n            return new RefreshTrackerStep(this, impl.start(stepName));\n        }\n        return impl.start(stepName);\n    }\n\n    @lombok.RequiredArgsConstructor\n    private static class RefreshTrackerStep implements StartupStep {\n        private final StartupPhaseTracker tracker;\n        private final @lombok.experimental.Delegate StartupStep impl;\n\n        @Override\n        public void end() {\n            impl.end();\n            tracker.refreshInProgress = false;\n        }\n\n        @Override\n        public StartupStep tag(String key, String value) {\n            impl.tag(key, value);\n            return this;\n        }\n\n        @Override\n        public StartupStep tag(String key, Supplier&lt;String&gt; value) {\n            impl.tag(key, value);\n            return this;\n        }\n    }\n</code></pre>\n<p>You should register it <strong>before anything else is done to the application context</strong>, though, which is tricky and depends on how you're going to run it:</p>\n<pre><code>ApplicationContext context = ...\ncontext.setApplicationStartup(\n        new StartupPhaseTracker(context.getApplicationStartup());\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 10108456,
+      "reputation" : 4013,
+      "user_id" : 7470253,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b8838b740a8c26535020a06d2a6d4735?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "M. Prokhorov",
+      "link" : "https://stackoverflow.com/users/7470253/m-prokhorov"
+    },
+    "creation_date" : 1761221029,
+    "last_activity_date" : 1761221029,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79797653,
+    "question_id" : 79797564,
+    "body" : "<p>Why not add a bean to the application context which listens to events.</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Bean\n@Slf4j\npublic class MyEventRegistry {\n   private final List&lt;ApplicationEvent&gt; events = new ArrayList&lt;&gt;();\n\n   @EventListener\n   public synchronized void onEvent(ApplicationEvent event) {\n      log.info(&quot;Received event {}&quot;, event.getClass());\n      events.add(event);\n   }\n\n   public synchronized void reset() {\n      events.clear();\n   }\n\n   public synchronized boolean hasEvent(Class&lt;? extends ApplicationEvent&gt; eventType) {\n      return events.stream().anyMatch(e -&gt; e.getClass().isAssignableFrom(eventType));\n   }\n\n   public synchronized int lastEventIndex(int startIndex, Class&lt;? extends ApplicationEvent&gt; eventType) {\n      for (int i = events.size() - 1; i &gt;= startIndex; i--) {\n         if (events.get(i).getClass().isAssignableFrom(eventType)) {\n            return i;\n         }\n      }\n      return -1;\n   }\n\n   ...\n}\n</code></pre>\n<p>You could then <code>@Inject</code> MyEventRegistry wherever you need it to query the events that have occurred</p>\n<p>Usage</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Bean\n@Slf4j\npublic void MyService\n   @Inject private ApplicationContext context;\n   @Inject private MyEventRegistry registry;\n\n   public void doStuff() {\n      int lastStartIndex = registry.lastEventIndex(0, ContextStartedEvent.class);\n      if (registry.lastEventIndex(lastStartIndex , ContextRefreshedEvent.class) != -1) {\n         log.info(&quot;Context was refreshed after start&quot;);\n      }\n      if (registry.hasEvent(ContextStoppedEvent.class)) {\n         log.info(&quot;Context was stopped&quot;);\n      }\n   }\n\n   ...\n}\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 1096470,
+      "reputation" : 29415,
+      "user_id" : 1089967,
+      "user_type" : "registered",
+      "accept_rate" : 59,
+      "profile_image" : "https://www.gravatar.com/avatar/1f256b904ff621d678598d8fa49f86c5?s=256&d=identicon&r=PG",
+      "display_name" : "lance-java",
+      "link" : "https://stackoverflow.com/users/1089967/lance-java"
+    },
+    "creation_date" : 1761213957,
+    "last_activity_date" : 1761217652,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79797762" : [ {
+      "comment_id" : 140815109,
+      "post_id" : 79797762,
+      "body" : "@Eugene Yes, but the question reads as if from developer of a tool that sits to the side of typical Spring startup, and you aren&#39;t able to alter application startup code. Though if that&#39;s true, then whole idea with <code>ApplicationStartup</code> isn&#39;t useable.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10108456,
+        "reputation" : 4013,
+        "user_id" : 7470253,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/b8838b740a8c26535020a06d2a6d4735?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "M. Prokhorov",
+        "link" : "https://stackoverflow.com/users/7470253/m-prokhorov"
+      },
+      "creation_date" : 1761310847,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140812978,
+      "post_id" : 79797762,
+      "body" : "you can do <code>SpringApplication::setApplicationStartup</code> and register your implementation at the very start",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1056871,
+        "reputation" : 121815,
+        "user_id" : 1059372,
+        "user_type" : "registered",
+        "accept_rate" : 97,
+        "profile_image" : "https://i.sstatic.net/W6OMC.png?s=256",
+        "display_name" : "Eugene",
+        "link" : "https://stackoverflow.com/users/1059372/eugene"
+      },
+      "creation_date" : 1761223750,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79797653" : [ {
+      "comment_id" : 140812898,
+      "post_id" : 79797653,
+      "body" : "@Eugene OP said &quot;I cannot use a listener for ContextRefreshedEvent. I can only operate on the applicationContext that was passed to me&quot;. I assumed this meant that the execution of the logic could not be driven by spring events. I was thinking perhaps the OP had not considered capturing the spring events via an event listener and then querying them based upon another action (eg service method invocation)",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1096470,
+        "reputation" : 29415,
+        "user_id" : 1089967,
+        "user_type" : "registered",
+        "accept_rate" : 59,
+        "profile_image" : "https://www.gravatar.com/avatar/1f256b904ff621d678598d8fa49f86c5?s=256&d=identicon&r=PG",
+        "display_name" : "lance-java",
+        "link" : "https://stackoverflow.com/users/1089967/lance-java"
+      },
+      "creation_date" : 1761221767,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140812769,
+      "post_id" : 79797653,
+      "body" : "how is this different than simply listening for <code>ContextRefreshedEvent</code> ( which OP said it <i>can&#39;t do</i> ) and having this indirection?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1056871,
+        "reputation" : 121815,
+        "user_id" : 1059372,
+        "user_type" : "registered",
+        "accept_rate" : 97,
+        "profile_image" : "https://i.sstatic.net/W6OMC.png?s=256",
+        "display_name" : "Eugene",
+        "link" : "https://stackoverflow.com/users/1059372/eugene"
+      },
+      "creation_date" : 1761218622,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140812733,
+      "post_id" : 79797653,
+      "body" : "@KostasFilios Have included sample usage",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1096470,
+        "reputation" : 29415,
+        "user_id" : 1089967,
+        "user_type" : "registered",
+        "accept_rate" : 59,
+        "profile_image" : "https://www.gravatar.com/avatar/1f256b904ff621d678598d8fa49f86c5?s=256&d=identicon&r=PG",
+        "display_name" : "lance-java",
+        "link" : "https://stackoverflow.com/users/1089967/lance-java"
+      },
+      "creation_date" : 1761217305,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140812652,
+      "post_id" : 79797653,
+      "body" : "Thanks for the reply. Can you please add the code block that I would use in my method which will start from the <code>applicationContext</code> and calculate whether it has been refreshed or not using this bean? Keep in mind that your bean might not yet be created at that moment of the calculation because that&#39;s the whole point of this inquiry, figure out if the <code>applicationContext</code>&#39;s state is &quot;before a refresh()&quot;, &quot;during a refresh()&quot; or &quot;after a full refresh()&quot;.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1349124,
+        "reputation" : 800,
+        "user_id" : 1289270,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/a994da122d7e9738111f18e189f3ec4f?s=256&d=identicon&r=PG",
+        "display_name" : "Kostas Filios",
+        "link" : "https://stackoverflow.com/users/1289270/kostas-filios"
+      },
+      "creation_date" : 1761214740,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

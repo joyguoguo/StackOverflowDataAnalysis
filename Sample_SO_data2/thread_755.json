@@ -1,0 +1,165 @@
+{
+  "question" : {
+    "question_id" : 79769625,
+    "title" : "How to correctly handle optimistic locking with Spring Data JPA and REST API",
+    "body" : "<p>I am using Spring Boot 3.5 and have added an <code>@Version</code> field to my entity. This all works fine, but I wonder how I need to handle concurrent updates coming from the REST API.</p>\n<p>Suppose 2 users have my web app open. They both see version 1 of my entity.</p>\n<p>The first user saves and the version is updated in the database. After a minute or so, the 2nd user saves his changes. I want to return a 409 Conflict at that point.</p>\n<p>The saving itself is done in a use case like this:</p>\n<pre><code>@Component\n@Transactional\nclass UpdateMyEntity {\n\n  private final MyEntityRepository repo;\n\n  public UpdateMyEntity(MyEntityRepository repo) {\n    this.repo = repo;\n  }\n\n  public MyEntity execute(MyEntityUpdateParameters parameters) {\n    MyEntity item = repo.findById(parameters.id()).orElseThrow();\n\n    item.setName(parameters.name());\n\n    return repo.save(item);\n}\n</code></pre>\n<p>At first, I tried to set the version on the <code>MyEntity</code>, but JPA/Hibernate does not take that into account.</p>\n<p>Should I manually check the version that the frontend sends me back through the rest api in my use case? Or is there a way to have the database or JPA handle this?</p>\n",
+    "tags" : [ "java", "spring", "hibernate", "optimistic-locking" ],
+    "owner" : {
+      "account_id" : 17750,
+      "reputation" : 27240,
+      "user_id" : 40064,
+      "user_type" : "registered",
+      "accept_rate" : 69,
+      "profile_image" : "https://www.gravatar.com/avatar/6f118f710d3077f91c0c0d722f7be0a3?s=256&d=identicon&r=PG",
+      "display_name" : "Wim Deblauwe",
+      "link" : "https://stackoverflow.com/users/40064/wim-deblauwe"
+    },
+    "is_answered" : true,
+    "view_count" : 194,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1758520264,
+    "creation_date" : 1758291627,
+    "link" : "https://stackoverflow.com/questions/79769625/how-to-correctly-handle-optimistic-locking-with-spring-data-jpa-and-rest-api",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79769710,
+    "question_id" : 79769625,
+    "body" : "<p>Versioning control in JPA is based on entities. Merge (or Spring's Save) will take in your unmanaged entity that you have previously read in and modified and check the version in that entity against the version in the database. How it does it is an implementation detail: It can check it upfront against the version value in the cached or read back entity, but it also will include the version value in the UPDATE statement to ensure the row is only modified if the old value it has is still there when the statement is made.</p>\n<p>In your case, you are just issuing an immediate 'findById', which will obtain the latest entity data (usually anyway, this still depends on caching options), and then modifying the name parameter. This is equivalent to an 'update X set name=:newName where id=:id' type logic statement. There is only a very small window where it might fail, such as if someone does the same thing concurrently. It will NOT work for the usecase you describe, where two users may read in the same data but issue REST requests to modify parts at slightly offset times.</p>\n<p>What you need is to serialize the entity data back, or at least the version of the data, and then force accepting it on the way back.</p>\n<pre><code>public MyEntity execute(MyEntityUpdateParameters parameters) {\n    MyEntity item = repo.findById(parameters.id()).orElseThrow();\n    if (item.getVersion() != parameters.getVersion()\n        throw new My409ConflictException();\n\n    item.setName(parameters.name());\n\n    return repo.save(item);\n}\n</code></pre>\n<p>You will then also need to have your container handle the JPA persistence exception that may get thrown when there are concurrent updates that it detects when it issues the update statement to ensure you get the 409 message you get, but there are tutorials on handling it</p>\n",
+    "score" : 2,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 231721,
+      "reputation" : 21335,
+      "user_id" : 496099,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/efa7510cf47d7bd79e80486246e7e39e?s=256&d=identicon&r=PG",
+      "display_name" : "Chris",
+      "link" : "https://stackoverflow.com/users/496099/chris"
+    },
+    "creation_date" : 1758296789,
+    "last_activity_date" : 1758296789,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140751243,
+    "post_id" : 79769625,
+    "body" : "@K.Nicholas My code had the transaction annotation. Added it now in my example code.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 17750,
+      "reputation" : 27240,
+      "user_id" : 40064,
+      "user_type" : "registered",
+      "accept_rate" : 69,
+      "profile_image" : "https://www.gravatar.com/avatar/6f118f710d3077f91c0c0d722f7be0a3?s=256&d=identicon&r=PG",
+      "display_name" : "Wim Deblauwe",
+      "link" : "https://stackoverflow.com/users/40064/wim-deblauwe"
+    },
+    "creation_date" : 1758520295,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140748653,
+    "post_id" : 79769625,
+    "body" : "<a href=\"https://stackoverflow.com/a/78134422/3426309\">stackoverflow.com/a/78134422/3426309</a>",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 4181375,
+      "reputation" : 6263,
+      "user_id" : 3426309,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/v58O6.jpg?s=256",
+      "display_name" : "Andrey B. Panfilov",
+      "link" : "https://stackoverflow.com/users/3426309/andrey-b-panfilov"
+    },
+    "creation_date" : 1758351118,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140747634,
+    "post_id" : 79769625,
+    "body" : "Versioning is used to check when serializing your entity data around. In the &#39;execute&#39; method, you are just taking a name parameter and overwriting the name regardless of any changes made since it was read- so there isn&#39;t likely going to be any versioning exceptions except in the case of concurrency in the small window from the &#39;find&#39; call to the transaction committing. If you need some version control, you&#39;ll have to check the version in the entity yourself, or if you don&#39;t care if there are other changes, maybe send in the old name and the new one and check the old version of the name",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 231721,
+      "reputation" : 21335,
+      "user_id" : 496099,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/efa7510cf47d7bd79e80486246e7e39e?s=256&d=identicon&r=PG",
+      "display_name" : "Chris",
+      "link" : "https://stackoverflow.com/users/496099/chris"
+    },
+    "creation_date" : 1758296123,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140747575,
+    "post_id" : 79769625,
+    "body" : "Did you wrap it in a transaction?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 4688171,
+      "reputation" : 11611,
+      "user_id" : 3795036,
+      "user_type" : "registered",
+      "accept_rate" : 88,
+      "profile_image" : "https://i.sstatic.net/eM2E2.png?s=256",
+      "display_name" : "K.Nicholas",
+      "link" : "https://stackoverflow.com/users/3795036/k-nicholas"
+    },
+    "creation_date" : 1758294710,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79769710" : [ {
+      "comment_id" : 140758042,
+      "post_id" : 79769710,
+      "body" : "I did a deep dive on this stuff a couple years ago and you may be correct but it seems to me more than just a good idea.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 4688171,
+        "reputation" : 11611,
+        "user_id" : 3795036,
+        "user_type" : "registered",
+        "accept_rate" : 88,
+        "profile_image" : "https://i.sstatic.net/eM2E2.png?s=256",
+        "display_name" : "K.Nicholas",
+        "link" : "https://stackoverflow.com/users/3795036/k-nicholas"
+      },
+      "creation_date" : 1758750541,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140754788,
+      "post_id" : 79769710,
+      "body" : "@K.Nicholas Best practice, absolutely, but not required as save is transactional itself. But if the method is wrapped in its own transaction or participating in one, you don&#39;t need the save call as the find method will return a managed entity with changes pushed to the DB when the transaction commits without the explicit save call.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 231721,
+        "reputation" : 21335,
+        "user_id" : 496099,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/efa7510cf47d7bd79e80486246e7e39e?s=256&d=identicon&r=PG",
+        "display_name" : "Chris",
+        "link" : "https://stackoverflow.com/users/496099/chris"
+      },
+      "creation_date" : 1758637779,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140753019,
+      "post_id" : 79769710,
+      "body" : "You still have to wrap the above method in a transaction.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 4688171,
+        "reputation" : 11611,
+        "user_id" : 3795036,
+        "user_type" : "registered",
+        "accept_rate" : 88,
+        "profile_image" : "https://i.sstatic.net/eM2E2.png?s=256",
+        "display_name" : "K.Nicholas",
+        "link" : "https://stackoverflow.com/users/3795036/k-nicholas"
+      },
+      "creation_date" : 1758572030,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

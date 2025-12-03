@@ -1,0 +1,201 @@
+{
+  "question" : {
+    "question_id" : 79802892,
+    "title" : "Collect Stream into MultiValuedMap",
+    "body" : "<p>What is the most concise way to collect a <code>Stream</code> of hierarchical data items into a <code>org.apache.commons.collections4.MultiValuedMap</code>?</p>\n<p>Since <code>Collector</code> is a tricky interface, I'm exploring ways to avoid its direct manual implementation. e.g. involving some utilities I'm not aware of.</p>\n<pre class=\"lang-java prettyprint-override\"><code>class HierarchicalItem {\n\n    private String id;\n    private String parentId;\n\n    // canonical constructor, getters\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>import org.apache.commons.collections4.MultiMapUtils;\nimport org.apache.commons.collections4.MultiValuedMap;\nimport org.junit.jupiter.api.Disabled;\nimport org.junit.jupiter.api.Test;\n\nimport java.util.Arrays;\nimport java.util.List;\n\nimport static org.assertj.core.api.Assertions.assertThat;\n\n@Disabled\npublic class GenericTest {\n\n    @Test\n    void testSomething() {\n        List&lt;HierarchicalItem&gt; items = Arrays.asList(\n                new HierarchicalItem(&quot;1&quot;, null),\n                new HierarchicalItem(&quot;a&quot;, &quot;1&quot;),\n                new HierarchicalItem(&quot;b&quot;, &quot;1&quot;),\n                new HierarchicalItem(&quot;2&quot;, null),\n                new HierarchicalItem(&quot;3&quot;, null),\n                new HierarchicalItem(&quot;c&quot;, &quot;3&quot;)\n        );\n        MultiValuedMap&lt;String, String&gt; parentsToChildren = items.stream().collect(toMultiValueMapCollector());\n        assertThat(parentIdsToChildrenIds.get(&quot;1&quot;)).containsExactly(&quot;a&quot;, &quot;b&quot;);\n        assertThat(parentIdsToChildrenIds.get(&quot;2&quot;)).isEmpty();\n        assertThat(parentIdsToChildrenIds.get(&quot;3&quot;)).containsExactly(&quot;c&quot;);\n    }\n\n    private static Collector&lt;? super HierarchicalItem, Object, MultiValuedMap&lt;String, String&gt;&gt; toMultiValueMapCollector() {\n        // your implementation goes here\n        return null;\n    }\n}\n</code></pre>\n<p>I will edit the question and specify the artifacts if they are not self-evident (I assume Apache Commons Collections, JUnit, AssertJ are widespread in Java projects).</p>\n<p>Java 8.</p>\n",
+    "tags" : [ "java", "apache-commons-collection" ],
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2667,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "is_answered" : true,
+    "view_count" : 148,
+    "answer_count" : 4,
+    "score" : -6,
+    "last_activity_date" : 1761819277,
+    "creation_date" : 1761659836,
+    "link" : "https://stackoverflow.com/questions/79802892/collect-stream-into-multivaluedmap",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79802929,
+    "question_id" : 79802892,
+    "body" : "<p><code>Collector</code> is actually pretty simple. It has the following components:</p>\n<ul>\n<li>The supplier: a <code>Supplier&lt;A&gt;</code> to create the intermediate state.</li>\n<li>The accumulator: A <code>BiConsumer&lt;A, T&gt;</code> that &quot;adds&quot; elements to the intermediate state.</li>\n<li>The combiner: a <code>BinaryOperator&lt;A&gt;</code> that takes 2 intermediate state objects, combines them, and returns the result. That result can be one of the two arguments.</li>\n<li>The finisher: a <code>Function&lt;A, R&gt;</code> that transforms the intermediate state into the final result.</li>\n<li>Characteristics. These can be used for optimization, but let's ignore them for now.</li>\n</ul>\n<p>For instance, <code>Collectors.toList()</code> is similar to the following:</p>\n<pre class=\"lang-java prettyprint-override\"><code>Collector.of(\n        ArrayList::new, // supplier\n        ArrayList::add, // accumulator\n        (list1, list2) -&gt; {\n            list1.addAll(list2);\n            return list1;\n        }, // combiner\n        Function.identity() // finisher - do nothing\n);\n</code></pre>\n<p>Creating one for <a href=\"https://commons.apache.org/proper/commons-collections/apidocs/org/apache/commons/collections4/MultiValuedMap.html\" rel=\"nofollow noreferrer\">MultiValuedMap</a> is not that hard now:</p>\n<pre class=\"lang-java prettyprint-override\"><code>Collector.of(\n        MultiMapUtils::newListValuedHashMap, // supplier, can be a different implementation\n        (map, e) -&gt; map.put(...),            // accumulator, do something here\n        (map1, map2) -&gt; {\n            map1.putAll(map2);\n            return map1;\n        },\n        Function.identity()\n);\n</code></pre>\n<p>You can even make it a bit more generic by providing a <code>Function&lt;T, K&gt;</code> and <code>Function&lt;T, V&gt;</code> to map to the keys and values. The accumulator than becomes this:</p>\n<pre class=\"lang-java prettyprint-override\"><code>(map, e) -&gt; map.put(keyMapper.apply(e), valueMapper.apply(e)),\n</code></pre>\n",
+    "score" : 4,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 1211967,
+      "reputation" : 10014,
+      "user_id" : 1180351,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/pKB8y.png?s=256",
+      "display_name" : "Rob Spoor",
+      "link" : "https://stackoverflow.com/users/1180351/rob-spoor"
+    },
+    "creation_date" : 1761661472,
+    "last_activity_date" : 1761661472,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79803054,
+    "question_id" : 79802892,
+    "body" : "<p>You can simply group it. Here is the snippet.</p>\n<pre><code>Map&lt;String, List&lt;String&gt;&gt; map = List.of(&quot;a&quot;)\n        .stream()\n        .collect(Collectors.groupingBy(\n                Function.identity(), \n                Collectors.toList()));\n</code></pre>\n<p>You can convert to multy map later.</p>\n<pre><code>MultiValuedMap&lt;String, String&gt; resultMap = new MultiValuedMap&lt;&gt;();\nmap.forEach(resultMap::putAll);\n</code></pre>\n<p>Here is ready to use method that convert list to multi map.</p>\n<pre><code>    public static &lt;T, K, V&gt; MultiValuedMap&lt;K, V&gt; toMultiMap(\n            Function&lt;T, K&gt; keyMapping,\n            Function&lt;T, V&gt; valueMapping,\n            List&lt;T&gt; list) {\n        MultiValuedMap&lt;K, V&gt; m = new MultiValuedMap&lt;&gt;();\n        list.stream()\n                .collect(Collectors.groupingBy(\n                        keyMapping,\n                        Collectors.mapping(valueMapping,\n                                Collectors.toList())))\n                .forEach(m::putAll);\n        return m;\n    }\n</code></pre>\n",
+    "score" : 3,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 4497436,
+      "reputation" : 20786,
+      "user_id" : 3656904,
+      "user_type" : "registered",
+      "accept_rate" : 67,
+      "profile_image" : "https://www.gravatar.com/avatar/8bdbd1f89f8907e8e8b15ab88c084c65?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "talex",
+      "link" : "https://stackoverflow.com/users/3656904/talex"
+    },
+    "creation_date" : 1761668345,
+    "last_activity_date" : 1761724851,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79803216,
+    "question_id" : 79802892,
+    "body" : "<p>I wouldn’t bother with a custom Collector.  Like talex suggested, I would just use <a href=\"https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/util/stream/Collectors.html#groupingBy(java.util.function.Function,java.util.stream.Collector)\" rel=\"nofollow noreferrer\">groupingBy</a>:</p>\n<pre><code>List&lt;HierarchicalItem&gt; items = Arrays.asList(\n        new HierarchicalItem(&quot;1&quot;, null),\n        new HierarchicalItem(&quot;a&quot;, &quot;1&quot;),\n        new HierarchicalItem(&quot;b&quot;, &quot;1&quot;),\n        new HierarchicalItem(&quot;2&quot;, null),\n        new HierarchicalItem(&quot;3&quot;, null),\n        new HierarchicalItem(&quot;c&quot;, &quot;3&quot;)\n);\n\nMap&lt;String, List&lt;String&gt;&gt; idMap = items.stream()\n    .filter(i -&gt; i.getParentId() != null)\n    .collect(\n        Collectors.groupingBy(i -&gt; i.getParentId(),                     // Map keys\n            Collectors.mapping(i -&gt; i.getId(), Collectors.toList())));  // Map values are a List of these\n</code></pre>\n<p>Then you can easily convert that Map to a MultiValuedMap:</p>\n<pre><code>MultiValuedMap&lt;String, String&gt; parentIdsToChildrenIds =\n    new HashSetValuedHashMap&lt;&gt;();\nidMap.forEach(parentIdsToChildrenIds::putAll);\n</code></pre>\n",
+    "score" : 2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 2053598,
+      "reputation" : 44936,
+      "user_id" : 1831987,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/38b1c37530189ec4471a43a618e33f67?s=256&d=identicon&r=PG",
+      "display_name" : "VGR",
+      "link" : "https://stackoverflow.com/users/1831987/vgr"
+    },
+    "creation_date" : 1761680817,
+    "last_activity_date" : 1761734690,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79802991,
+    "question_id" : 79802892,
+    "body" : "<p>The comment by <a href=\"https://stackoverflow.com/a/79802929/6200354\">Rob</a> described how the collector interface can be implemented, the implementation which is specific to your use-case will look something like below.</p>\n<pre class=\"lang-java prettyprint-override\"><code>MultiValuedMap&lt;String, String&gt; parentIdsToChildrenIds = hierarchicalItems.stream()\n        .collect(\n                Collector.of(\n                        ArrayListValuedHashMap::new,\n                        (map, hierarchicalItem) -&gt; {\n                            if(hierarchicalItem.getParentId() != null){\n                                map.put(hierarchicalItem.getParentId(), hierarchicalItem.getId());\n                            }\n                        },\n                        (map1, map2) -&gt; {map1.putAll(map2); return map1;},\n                        Function.identity()\n                )\n        );\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 7673258,
+      "reputation" : 2114,
+      "user_id" : 6200354,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/1afc8346f23819373b78aae36744b53a?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "atish.s",
+      "link" : "https://stackoverflow.com/users/6200354/atish-s"
+    },
+    "creation_date" : 1761665033,
+    "last_activity_date" : 1761819277,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140823038,
+    "post_id" : 79802892,
+    "body" : "@VGR yes, it will. The two levels actually correspond to two separate DB table entities in the actual app",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2667,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "creation_date" : 1761665869,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140822940,
+    "post_id" : 79802892,
+    "body" : "This seems like a strange use of a map.  Will this &quot;hierarchy&quot; always have exactly two levels?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2053598,
+      "reputation" : 44936,
+      "user_id" : 1831987,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/38b1c37530189ec4471a43a618e33f67?s=256&d=identicon&r=PG",
+      "display_name" : "VGR",
+      "link" : "https://stackoverflow.com/users/1831987/vgr"
+    },
+    "creation_date" : 1761663381,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79802929" : [ {
+      "comment_id" : 140823613,
+      "post_id" : 79802929,
+      "body" : "Or you can use the other <code>collect()</code> overload instead of constructing a Collector.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 1691630,
+        "reputation" : 51047,
+        "user_id" : 1553851,
+        "user_type" : "registered",
+        "accept_rate" : 73,
+        "profile_image" : "https://www.gravatar.com/avatar/ad333c218c8f2fb917cf506919fc95f4?s=256&d=identicon&r=PG",
+        "display_name" : "shmosel",
+        "link" : "https://stackoverflow.com/users/1553851/shmosel"
+      },
+      "creation_date" : 1761681803,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79802991" : [ {
+      "comment_id" : 140826749,
+      "post_id" : 79802991,
+      "body" : "@RobSpoor You are correct, I have not used the <code>MultiValuedMap</code> as such hence the quick and dirty solution for helping out. I just tested your suggestion, impressively how everything is handled in the map. I kept the <code>if</code> inside the accumulator since the question is about the <code>collector</code> handling everything itself. I updated the answer to reflect the change, thanks for your insights!",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 7673258,
+        "reputation" : 2114,
+        "user_id" : 6200354,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/1afc8346f23819373b78aae36744b53a?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "atish.s",
+        "link" : "https://stackoverflow.com/users/6200354/atish-s"
+      },
+      "creation_date" : 1761819369,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140823462,
+      "post_id" : 79802991,
+      "body" : "And by moving the if-statement outside of the accumulator and to a filter step (<code>.filter((hierarchicalItem) -&gt; hierarchicalItem.getParentId() != null)</code>) the accumulator can simply be <code>(map, hierarchicalItem) -&gt; map.put(hierarchicalItem.getParentId(), hierarchicalItem.getId())</code>.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1211967,
+        "reputation" : 10014,
+        "user_id" : 1180351,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/pKB8y.png?s=256",
+        "display_name" : "Rob Spoor",
+        "link" : "https://stackoverflow.com/users/1180351/rob-spoor"
+      },
+      "creation_date" : 1761677139,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140823458,
+      "post_id" : 79802991,
+      "body" : "Why manage the <code>string</code> collection manually when <code>map.put(hierarchicalItem.getParentId(), hierarchicalItem.getId())</code> will do? If <code>hierarchicalItem.getParentId() == null</code> you don&#39;t even need to do anything, as <code>MultiValuedMap.get</code> returns an empty collection if the key isn&#39;t present in the map. The accumulator can be simplified to <code>(map, hierarchicalItem) -&gt; { if (hierarchicalItem.getParentId() != null) { map.put(hierarchicalItem.getParentId(), hierarchicalItem.getId()); }</code>.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1211967,
+        "reputation" : 10014,
+        "user_id" : 1180351,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/pKB8y.png?s=256",
+        "display_name" : "Rob Spoor",
+        "link" : "https://stackoverflow.com/users/1180351/rob-spoor"
+      },
+      "creation_date" : 1761677047,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

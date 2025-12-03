@@ -1,0 +1,64 @@
+{
+  "question" : {
+    "question_id" : 79749393,
+    "title" : "SpringBoot RestClient (not WebClient, not RestTemplate) with InsecureTrustManagerFactory.INSTANCE with SslBundle",
+    "body" : "<p>There is a third-party REST endpoint I am trying to interact with. This third-party API requires certificate authentication. To do so, I am using the following, leveraging Spring SslBundle:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Bean\npublic RestClient restClient(RestClient.Builder builder, RestClientSsl ssl) {\n    return builder.baseUrl(&quot;https://the-secure-api.com/api&quot;)\n                .defaultHeader(HttpHeaders.CONTENT_TYPE, MediaType.APPLICATION_JSON_VALUE, HttpHeaders.ACCEPT, MediaType.APPLICATION_JSON_VALUE)\n                .apply(ssl.fromBundle(&quot;mybundle&quot;))\n                .build();\n}\n</code></pre>\n<pre><code>spring:\n  ssl:\n    bundle:\n      jks:\n        mybundle:\n          keystore:\n            location: C:\\\\ssl\\\\keystore.p12\n            password: 123\n            type: PKCS12\n          truststore:\n            location: C:\\\\ssl\\\\truststore.p12\n            password: 123\n            type: PKCS12\n          reload-on-update: true\n</code></pre>\n<p>This is working fine. The third-party app confirms they can see my client certificate being sent to them. I am also validating their certificate with my trust store. I would like to disable SSL validation on my side. I tried to remove this from the property, leaving <code>.apply(ssl.fromBundle(&quot;mybundle&quot;))</code></p>\n<pre class=\"lang-yaml prettyprint-override\"><code>spring:\n  ssl:\n    bundle:\n      jks:\n        mybundle:\n          keystore:\n            location: C:\\\\ssl\\\\keystore.p12\n            password: 123\n            type: PKCS12\n          reload-on-update: true\n\n</code></pre>\n<p>And thought this would equal to <code>InsecureTrustManagerFactory.INSTANCE </code>, which is not.</p>\n<p>Question: How to disable ssl verification (trust insecure host) with Spring Ssl Bundle (and hopefully, without having to go to use RestTemplate again?</p>\n",
+    "tags" : [ "java", "spring-boot", "ssl", "truststore" ],
+    "owner" : {
+      "account_id" : 14482834,
+      "reputation" : 5428,
+      "user_id" : 10461625,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/fgo5D.jpg?s=256",
+      "display_name" : "PatPanda",
+      "link" : "https://stackoverflow.com/users/10461625/patpanda"
+    },
+    "is_answered" : true,
+    "view_count" : 154,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1756438280,
+    "creation_date" : 1756399912,
+    "link" : "https://stackoverflow.com/questions/79749393/springboot-restclient-not-webclient-not-resttemplate-with-insecuretrustmanage",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79749795,
+    "question_id" : 79749393,
+    "body" : "<p>Try something like this (Need hand on more with these code snippets for checking)</p>\n<pre class=\"lang-java prettyprint-override\"><code>import org.springframework.http.client.ClientHttpRequestFactory;\nimport org.springframework.http.client.JdkClientHttpRequestFactory;\nimport org.springframework.web.client.RestClient;\n\nimport javax.net.ssl.*;\nimport java.net.http.HttpClient;\nimport java.security.cert.X509Certificate;\nimport java.time.Duration;\n\npublic class InsecureRestClient {\n\n    public static RestClient create() throws Exception {\n        // Trust manager that does not validate certificate chains\n        TrustManager[] trustAllCerts = new TrustManager[]{\n            new X509TrustManager() {\n                public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }\n                public void checkClientTrusted(X509Certificate[] certs, String authType) {}\n                public void checkServerTrusted(X509Certificate[] certs, String authType) {}\n            }\n        };\n\n        // Install the all-trusting trust manager\n        SSLContext sslContext = SSLContext.getInstance(&quot;TLS&quot;);\n        sslContext.init(null, trustAllCerts, new java.security.SecureRandom());\n\n        // Create JDK HttpClient with disabled hostname verification\n        HttpClient httpClient = HttpClient.newBuilder()\n                .sslContext(sslContext)\n                .connectTimeout(Duration.ofSeconds(10))\n                .sslParameters(new SSLParameters() {{\n                    setEndpointIdentificationAlgorithm(null); // Disables hostname verification.\n                }})\n                .build();\n\n        // Wrap in Spring’s request factory\n        ClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);\n\n        return RestClient.builder()\n                .requestFactory(requestFactory)\n                .build();\n    }\n}\n</code></pre>\n<p>and</p>\n<pre class=\"lang-java prettyprint-override\"><code>RestClient restClient = InsecureRestClient.create();\n\nString response = restClient.get()\n        .uri(&quot;https://self-signed.badssl.com/&quot;)\n        .retrieve()\n        .body(String.class);\n\nSystem.out.println(response);\n</code></pre>\n<p>or you try something from <code>HttpClient</code>\n<a href=\"https://www.javadoc.io/doc/org.apache.httpcomponents/httpclient/4.5.3/org/apache/http/conn/ssl/NoopHostnameVerifier.html\" rel=\"nofollow noreferrer\">https://www.javadoc.io/doc/org.apache.httpcomponents/httpclient/4.5.3/org/apache/http/conn/ssl/NoopHostnameVerifier.html</a></p>\n<p>Related URLs:</p>\n<ul>\n<li><a href=\"https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/web/client/RestClient.html\" rel=\"nofollow noreferrer\">https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/web/client/RestClient.html</a></li>\n<li><a href=\"https://spring.io/blog/2023/07/13/new-in-spring-6-1-restclient\" rel=\"nofollow noreferrer\">https://spring.io/blog/2023/07/13/new-in-spring-6-1-restclient</a></li>\n<li><a href=\"https://spring.io/blog/2023/06/07/securing-spring-boot-applications-with-ssl\" rel=\"nofollow noreferrer\">https://spring.io/blog/2023/06/07/securing-spring-boot-applications-with-ssl</a></li>\n</ul>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 4597208,
+      "reputation" : 1,
+      "user_id" : 3728901,
+      "user_type" : "registered",
+      "accept_rate" : 58,
+      "profile_image" : "https://www.gravatar.com/avatar/8621a1f0563a46ea809098b960d7923f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Vy Do",
+      "link" : "https://stackoverflow.com/users/3728901/vy-do"
+    },
+    "creation_date" : 1756438280,
+    "last_activity_date" : 1756438280,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140700436,
+    "post_id" : 79749393,
+    "body" : "What is your Java language level? JDK version? Spring Boot version? HttpClient (if have) version? I need more information for better solution.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 4597208,
+      "reputation" : 1,
+      "user_id" : 3728901,
+      "user_type" : "registered",
+      "accept_rate" : 58,
+      "profile_image" : "https://www.gravatar.com/avatar/8621a1f0563a46ea809098b960d7923f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Vy Do",
+      "link" : "https://stackoverflow.com/users/3728901/vy-do"
+    },
+    "creation_date" : 1756438334,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

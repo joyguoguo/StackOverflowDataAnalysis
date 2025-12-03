@@ -1,0 +1,97 @@
+{
+  "question" : {
+    "question_id" : 79790551,
+    "title" : "Why @Transactional method does not behave as expected in tests?",
+    "body" : "<p>I'm testing that:</p>\n<pre><code>@RunWith(SpringRunner.class)\n@DataJpaTest\n@Import({ OrderService.class, UserService.class })\n@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)\npublic class OrderServiceRepositoryIT {\n\n    @Autowired\n    private OrderService orderService;\n\n    @Autowired\n    private UserService userService;\n\n    @Autowired\n    private OrderRepository orderRepository;\n\n    @Test\n    public void testServiceInsertNewOrderWhenRepositorySaveFailsShouldRollbackUserBalance() {\n        User user = userService.insertNewUser(new User(null, &quot;u1&quot;, &quot;n1&quot;, &quot;e1&quot;, 2000));\n        Order notSavedOrder = new Order(null, null, 500, user);\n\n        assertThatThrownBy(() -&gt; orderService.insertNewOrder(notSavedOrder))\n                .isInstanceOf(DataIntegrityViolationException.class);\n\n        assertThat(orderRepository.findById(notSavedOrder.getId()).orElse(null)).isNull();\n        assertThat(userService.getUserById(user.getId()).getBalance()).isEqualTo(2000);\n    }\n}\n</code></pre>\n<p>With this method from <code>orderService</code>:</p>\n<pre><code>    @Transactional\n    public Order insertNewOrder(Order order) {\n        order.setId(null);\n\n        try {\n            userService.withdraw(order.getUser().getId(), order.getPrice());\n        } catch (IllegalArgumentException | IllegalStateException e) {\n            throw new IllegalStateException(&quot;Unable to insert new order&quot;);\n        }\n\n        return orderRepository.save(order);\n    }\n</code></pre>\n<p>And this one from <code>userService</code>:</p>\n<pre><code>    @Transactional\n    public void withdraw(long id, long amount) {\n        if (amount &lt; 0) {\n            throw new IllegalArgumentException(&quot;Withdraw amount cannot be negative&quot;);\n        }\n\n        User user = userRepository.findById(id).orElse(null);\n\n        if (user == null) {\n            throw new IllegalStateException(&quot;User not found&quot;);\n        }\n\n        if (user.getBalance() - amount &lt; 0) {\n            throw new IllegalStateException(&quot;Not enough balance to perform withdraw&quot;);\n        }\n\n        user.setBalance(user.getBalance() - amount);\n        userRepository.save(user);\n    }\n</code></pre>\n<p>So I manually tested that and if I try to insert an order that fails on the <code>userRepository.save(user);</code> the rollback actually happens. But in the test it doesn't, as I receive this error:</p>\n<pre><code>expected: 2000L\n but was: 1500L\n</code></pre>\n<p>Why?</p>\n<p>I'm trying every possible scenarios, but the test does not pass</p>\n",
+    "tags" : [ "java", "spring", "transactions", "integration-testing", "junit4" ],
+    "owner" : {
+      "account_id" : 23344863,
+      "reputation" : 31,
+      "user_id" : 17419318,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f018e36b189ad94001706ede25fcc5ad?s=256&d=identicon&r=PG",
+      "display_name" : "VezzoLayer",
+      "link" : "https://stackoverflow.com/users/17419318/vezzolayer"
+    },
+    "is_answered" : false,
+    "view_count" : 69,
+    "answer_count" : 1,
+    "score" : 2,
+    "last_activity_date" : 1760533562,
+    "creation_date" : 1760470154,
+    "link" : "https://stackoverflow.com/questions/79790551/why-transactional-method-does-not-behave-as-expected-in-tests",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79790610,
+    "question_id" : 79790551,
+    "body" : "<p>Thanks to @jaco0646:</p>\n<p>Note that <code>@DataJpaTest</code> is itself annotated with <code>@Transactional</code> causing the whole test to run in a single transaction. Try using <code>@SpringBootTest</code> to see if that makes a difference.</p>\n<p>– <a href=\"https://stackoverflow.com/users/1371329/jaco0646\" title=\"17,394 reputation\">jaco0646</a></p>\n<p>Infact with @SpringBootTest it works, basically the @DataJpaTest are itself @Transactional, so it performes rollback only at the end of the test, not at the end of the method orderService.insertNewOrder.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 23344863,
+      "reputation" : 31,
+      "user_id" : 17419318,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f018e36b189ad94001706ede25fcc5ad?s=256&d=identicon&r=PG",
+      "display_name" : "VezzoLayer",
+      "link" : "https://stackoverflow.com/users/17419318/vezzolayer"
+    },
+    "creation_date" : 1760474309,
+    "last_activity_date" : 1760474309,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140796297,
+    "post_id" : 79790551,
+    "body" : "Inject the <code>TestEntityManager</code> into your class and at the point you would expect a <code>commit</code> from the transaction call <code>flush</code> on it.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126777,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1760507159,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140795760,
+    "post_id" : 79790551,
+    "body" : "Note that <code>@DataJpaTest</code> is itself annotated with <code>@Transactional</code> causing the whole test to run in a single transaction. Try using <code>@SpringBootTest</code> to see if that makes a difference.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 1455702,
+      "reputation" : 17394,
+      "user_id" : 1371329,
+      "user_type" : "registered",
+      "accept_rate" : 64,
+      "profile_image" : "https://i.sstatic.net/oqbUC.png?s=256",
+      "display_name" : "jaco0646",
+      "link" : "https://stackoverflow.com/users/1371329/jaco0646"
+    },
+    "creation_date" : 1760472669,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79790610" : [ {
+      "comment_id" : 140797487,
+      "post_id" : 79790610,
+      "body" : "Alternatively, it might be possible to use <code>@Transactional(NESTED)</code> in the class to test but that would be a change of behavior.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 15064163,
+        "reputation" : 17085,
+        "user_id" : 10871900,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/720202b6e19abc330dcd92e6a1254562?s=256&d=identicon&r=PG",
+        "display_name" : "dan1st",
+        "link" : "https://stackoverflow.com/users/10871900/dan1st"
+      },
+      "creation_date" : 1760541387,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

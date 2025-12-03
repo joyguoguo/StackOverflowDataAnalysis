@@ -1,0 +1,80 @@
+{
+  "question" : {
+    "question_id" : 79794941,
+    "title" : "Accessing JSpecify Nullable annotation via reflection",
+    "body" : "<p>I'm trying to run the following code with Java 25</p>\n<pre class=\"lang-java prettyprint-override\"><code>package test;\n\nimport static org.junit.jupiter.api.Assertions.assertTrue;\n\nimport java.lang.reflect.Field;\nimport org.jspecify.annotations.Nullable;\nimport org.junit.jupiter.api.Test;\n\npublic class ReflectionTest {\n\n  @Test\n  public void test() throws NoSuchFieldException {\n    Field field = Foo.class.getDeclaredField(&quot;bar&quot;);\n    assertTrue(field.isAnnotationPresent(Nullable.class));\n  }\n\n  private record Foo(@Nullable String bar) {}\n}\n</code></pre>\n<p>but the assertion fails. What am I doing wrong? I'm using the following JDK:</p>\n<p>openjdk 25 2025-09-16 LTS</p>\n<p>OpenJDK Runtime Environment Temurin-25+36 (build 25+36-LTS)</p>\n<p>OpenJDK 64-Bit Server VM Temurin-25+36 (build 25+36-LTS, mixed mode, sharing)</p>\n",
+    "tags" : [ "java", "nullable" ],
+    "owner" : {
+      "account_id" : 397055,
+      "reputation" : 1349,
+      "user_id" : 5515573,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/e3915e75d89c4bf4f71ca5be98301671?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Thomas Oellrich",
+      "link" : "https://stackoverflow.com/users/5515573/thomas-oellrich"
+    },
+    "is_answered" : true,
+    "view_count" : 145,
+    "answer_count" : 1,
+    "score" : 5,
+    "last_activity_date" : 1760968123,
+    "creation_date" : 1760966556,
+    "link" : "https://stackoverflow.com/questions/79794941/accessing-jspecify-nullable-annotation-via-reflection",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79794960,
+    "question_id" : 79794941,
+    "body" : "<p>The annotation isn't on the field. Fields cannot be 'null' or 'non-null'.</p>\n<p>It's type usage that has that property.</p>\n<p>Note that many nullity frameworks are confused about this and get it wrong. Or rather, TYPE_USE is newer than FIELD, and the first release of annotations came with a bevy of nullity marking frameworks and they had no other option. Also, there is an argument to be made to sort it out at the field/param/returntype level. But, the point is, JSpecify does it on the type level.</p>\n<p>The <em>type use</em> of that field is annotated. This allows JSpecify's annotations to e.g. show up on the <code>String[]</code> in <code>String[][]</code> or on the <code>? extends Whatever</code> in <code>Map&lt;String, List&lt;? extends Whatever&gt;&gt;</code>; for an annotation that can only be targeted at e.g. fields, params, and methods - you couldn't do that.</p>\n<p>But, that means <strong>the field</strong> is not annotated at all. It's the field's type use that is annotated.</p>\n<p>But how does javac know?</p>\n<p>This:</p>\n<pre class=\"lang-java prettyprint-override\"><code>private @Foo String x;\n</code></pre>\n<p>is ambiguous.</p>\n<p>Is that <code>@Foo</code> annotating the field.. or is it annotating the String type?</p>\n<p>Imagine this:</p>\n<pre class=\"lang-java prettyprint-override\"><code>private List&lt;@Foo String&gt; x;\n</code></pre>\n<p>Now there's no question at all: That annotation is annotating <code>String</code>. Obviously.</p>\n<p>The way java resolves this ambiguity is to look at the annotation's own definition. JSpecify's <code>@Nullable</code> says: TYPE_USE. And only TYPE_USE. hence javac knows there's only one way to interpret it that wouldn't lead to an instant error, and decides that's what you meant.</p>\n<p>What you're looking for is <code>getAnnotatedType()</code>:</p>\n<pre class=\"lang-java prettyprint-override\"><code>import static java.lang.annotation.ElementType.*;\nimport static java.lang.annotation.RetentionPolicy.RUNTIME;\n\nimport module java.base;\n\nclass ReflectionTest {\n  void main() throws Exception {\n    Field field = FooTU.class.getDeclaredField(&quot;bar&quot;);\n    AnnotatedType type = field.getAnnotatedType();\n    System.out.println(&quot;FooTU Field: &quot; + field.isAnnotationPresent(TestAnnTypeUse.class));\n    System.out.println(&quot;FooTU type: &quot; + type.isAnnotationPresent(TestAnnTypeUse.class));\n\n    field = FooF.class.getDeclaredField(&quot;bar&quot;);\n    type = field.getAnnotatedType();\n    System.out.println(&quot;FooF Field: &quot; + field.isAnnotationPresent(TestAnnField.class));\n    System.out.println(&quot;FooF type: &quot; + type.isAnnotationPresent(TestAnnField.class));\n\n    field = FooB.class.getDeclaredField(&quot;bar&quot;);\n    type = field.getAnnotatedType();\n    System.out.println(&quot;FooB Field: &quot; + field.isAnnotationPresent(TestAnnBoth.class));\n    System.out.println(&quot;FooB type: &quot; + type.isAnnotationPresent(TestAnnBoth.class));\n  }\n\n  private record FooTU(@TestAnnTypeUse String bar) {}\n  private record FooF(@TestAnnField String bar) {}\n  private record FooB(@TestAnnBoth String bar) {}\n}\n\n@Documented\n@Target(TYPE_USE)\n@Retention(RUNTIME)\n@interface TestAnnTypeUse  {}\n\n@Documented\n@Target(FIELD)\n@Retention(RUNTIME)\n@interface TestAnnField  {}\n\n@Documented\n@Target({FIELD, TYPE_USE})\n@Retention(RUNTIME)\n@interface TestAnnBoth  {}\n</code></pre>\n<p>Prints:</p>\n<pre class=\"lang-bash prettyprint-override\"><code>&gt; java ReflectionTest.java\n\nFooTU Field: false\nFooTU type: true\nFooF Field: true\nFooF type: false\nFooB Field: true\nFooB type: true\n</code></pre>\n<p>This shows how java interprets that annotation as being on the type, or on the field, or on both, depending on the annotation's definition.</p>\n",
+    "score" : 5,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 401843,
+      "reputation" : 107136,
+      "user_id" : 768644,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+      "display_name" : "rzwitserloot",
+      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+    },
+    "creation_date" : 1760968123,
+    "last_activity_date" : 1760968123,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79794960" : [ {
+      "comment_id" : 140810261,
+      "post_id" : 79794960,
+      "body" : "You may also compare with <a href=\"https://stackoverflow.com/a/69560420/2711488\">this answer</a> as an addendum. The <code>TYPE_USE</code>  annotation will not only be at the field but also at the constructor’s parameter and the accessor method’s return type. Which totally makes sense as they all reflect <a href=\"https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/lang/reflect/RecordComponent.html#getAnnotatedType()\" rel=\"nofollow noreferrer\">the record component’s type</a>.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 3211603,
+        "reputation" : 300941,
+        "user_id" : 2711488,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+        "display_name" : "Holger",
+        "link" : "https://stackoverflow.com/users/2711488/holger"
+      },
+      "creation_date" : 1761123941,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140806464,
+      "post_id" : 79794960,
+      "body" : "Awesome. Thanks",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 397055,
+        "reputation" : 1349,
+        "user_id" : 5515573,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/e3915e75d89c4bf4f71ca5be98301671?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Thomas Oellrich",
+        "link" : "https://stackoverflow.com/users/5515573/thomas-oellrich"
+      },
+      "creation_date" : 1760968682,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

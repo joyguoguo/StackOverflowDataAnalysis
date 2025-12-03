@@ -1,0 +1,48 @@
+{
+  "question" : {
+    "question_id" : 79778164,
+    "title" : "Process events with throttling and timeout",
+    "body" : "<p>There are different kinds of events in my application. Let's call them for simplicity a-event, b-events, c-events and so on. I need to implement throttling for each kind of events separately:</p>\n<pre class=\"lang-java prettyprint-override\"><code>    @Test\n    void test() throws InterruptedException {\n        var sink = Sinks.many().unicast().&lt;String&gt;onBackpressureBuffer();\n\n        sink.asFlux()\n                .groupBy(e -&gt; e.charAt(0))\n                .flatMap(g -&gt; g\n                        .doOnNext(e -&gt; System.out.println(&quot;got &quot; + e))\n                        .timeout(Duration.ofMillis(150), Mono.defer(() -&gt; {\n                            System.out.println(&quot;timeout&quot;);\n                            return Mono.empty();\n                        }))\n                        .sample(Duration.ofMillis(100))\n                        .doOnNext(e -&gt; System.out.println(&quot;processed &quot; + e)))\n                .subscribe();\n\n        sink.tryEmitNext(&quot;a1&quot;);\n        Thread.sleep(150);\n        sink.tryEmitNext(&quot;a2&quot;);\n\n        try {\n            Thread.sleep(1000);\n        } catch (InterruptedException e) {\n            e.printStackTrace();\n        }\n    }\n</code></pre>\n<p>And also I need to close a queue for each kind of messages after a timeount so it doesn't consume any resources.</p>\n<p>It works in general. If delay between <code>a1</code> and <code>a2</code> is 50 ms, then I get:</p>\n<pre><code>got a1\ngot a2\nprocessed a2\ntimeout\n</code></pre>\n<p><code>a1</code> is not processed because of throttling.</p>\n<p>If delay is 250 ms it works fine as well:</p>\n<pre><code>got a1\nprocessed a1\ntimeout\ngot a2\nprocessed a2\ntimeout\n</code></pre>\n<p>The message queue for a-events is cleared after timeout, created the new one and <code>a2</code> is processed.</p>\n<p>The problem is when delay is 150 ms. Sometimes it receives <code>a2</code> but doesn't process it:</p>\n<pre><code>got a1\nprocessed a1\ngot a2\ntimeout\n</code></pre>\n<p>How to make this schema more stable. So it doesn't loose last event because of timeout?</p>\n",
+    "tags" : [ "java", "project-reactor" ],
+    "owner" : {
+      "account_id" : 316179,
+      "reputation" : 1325,
+      "user_id" : 632199,
+      "user_type" : "registered",
+      "accept_rate" : 98,
+      "profile_image" : "https://www.gravatar.com/avatar/3a157683f0231ec33d7878b687295ba4?s=256&d=identicon&r=PG",
+      "display_name" : "Denis",
+      "link" : "https://stackoverflow.com/users/632199/denis"
+    },
+    "is_answered" : true,
+    "view_count" : 46,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1759159734,
+    "creation_date" : 1759152535,
+    "link" : "https://stackoverflow.com/questions/79778164/process-events-with-throttling-and-timeout",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79778304,
+    "question_id" : 79778164,
+    "body" : "<p>The solution is to store last event and return it in timeout fallback:</p>\n<pre class=\"lang-java prettyprint-override\"><code>        sink.asFlux()\n                .groupBy(e -&gt; e.charAt(0))\n                .flatMap(g -&gt; {\n                    var last = new AtomicReference&lt;String&gt;();\n                    return g\n                            .doOnNext(e -&gt; {\n                                System.out.println(&quot;got &quot; + e);\n                                last.set(e);\n                            })\n                            .sample(Duration.ofMillis(100))\n                            .timeout(Duration.ofMillis(150), Mono.defer(() -&gt; {\n                                System.out.println(&quot;timeout&quot;);\n                                return Mono.justOrEmpty(last.get());\n                            }))\n                            .doOnNext(e -&gt; {\n                                last.set(null);\n                                System.out.println(&quot;processed &quot; + e);\n                            });\n                })\n                .subscribe();\n</code></pre>\n<p><code>last.set(null);</code> guarantees that the last event will not be processed twice.</p>\n<p>Also <code>timeout</code> should be after <code>sample</code>. Otherwise <code>a2</code> event can be skipped at all.</p>\n<p>The output is as follows, so <code>a2</code> processed even after timeout:</p>\n<pre><code>got a1\nprocessed a1\ngot a2\ntimeout\nprocessed a2\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 316179,
+      "reputation" : 1325,
+      "user_id" : 632199,
+      "user_type" : "registered",
+      "accept_rate" : 98,
+      "profile_image" : "https://www.gravatar.com/avatar/3a157683f0231ec33d7878b687295ba4?s=256&d=identicon&r=PG",
+      "display_name" : "Denis",
+      "link" : "https://stackoverflow.com/users/632199/denis"
+    },
+    "creation_date" : 1759159734,
+    "last_activity_date" : 1759159734,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : { }
+}

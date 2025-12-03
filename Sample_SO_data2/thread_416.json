@@ -1,0 +1,164 @@
+{
+  "question" : {
+    "question_id" : 79802519,
+    "title" : "SocketTimeoutException while downloading large file and this behavior is inconsistent among different browsers",
+    "body" : "<h3>Description of the bug</h3>\n<p>Description of the bug</p>\n<p>Using Vaadin with Spring Boot, and when I try to download a file using the DownloadHandler.fromInputStream API, the download is being interrupted after some time.</p>\n<p>On the Firefox browser, it is interrupted after 30 seconds. On Chromium-based browsers (tried Chrome and Brave), the download is interrupted after 1GB of data is downloaded.</p>\n<p>The application is deployed to a Debian server behind an Nginx proxy as a WAR file. The Nginx proxy has all timeouts set to a high value, so the timeout is not happening because of Nginx.</p>\n<pre><code>send_timeout 300;\nproxy_connect_timeout 600;\nproxy_send_timeout 600;\nproxy_read_timeout 600;\n</code></pre>\n<p>Regarding tomcat and spring configuration, i tried to use high values for timeouts or infinite timeouts, but they have no effect:</p>\n<pre><code>tomcat:\n    connection-timeout: 900000 (default is 60000).\n</code></pre>\n<p>I found no default timeout configuration of the stack that I am using, which could cause a 30-second timeout while downloading a file. Moreover, this behavior is inconsistent among different types of browsers.</p>\n<p>Looking at the Network inspector in Firefox, the request status is 200, but after 30 seconds it gets <code>NS_BINDING_ABORTED</code>. The download is not canceled by the user. I tried to increase the default timeouts in Firefox too, with no effect:</p>\n<p><a href=\"https://i.sstatic.net/xF1zqbSi.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/xF1zqbSi.png\" alt=\"Firefox configuration\" /></a></p>\n<p>I also tried to use different Java/Tomcat versions.</p>\n<p>What is also interesting is that uploading a large file using the Upload component in Vaadin completes without issue. The problem is happening only during download.</p>\n<p>Vaadin java code:</p>\n<pre><code>hiddenDownloadAnchor.setHrefAndDownload(DownloadHandler.fromInputStream(\n                                downloadEvent -&gt; new DownloadResponse(\n                                        new FileInputStream(file),\n                                        name,\n                                        type,\n                                        length))); // hiddenDownloadAnchor is hidden Anchor component from Vaadin\n</code></pre>\n<p>Content length is set correctly, along with the MIME type. I also tried to use <code>null</code> or <code>-1</code> values to indicate an unknown size or to auto-decide the MIME type, but it had no effect.</p>\n<p>Looking at the stack trace, where the exception is thrown in Tomcat: <code>NioSocketWrapper.doWrite(NioEndpoint.java:1410)</code>, I can see there is a timeout, but I am unsure why. Looking at the <code>timeout</code> variable in debug, which is retrieved from <code>getWriteTimeout()</code>, is larger than 30 seconds (even the default is 60), so I have no clue why this happens consistently in Firefox after 30 seconds, and in Chromium-based browsers after downloading 1GB (exceeding 30 seconds: downloading for about 5 minutes).</p>\n<p>Complete stack trace:</p>\n<pre><code>org.apache.catalina.connector.ClientAbortException: java.net.SocketTimeoutException\n        at org.apache.catalina.connector.OutputBuffer.realWriteBytes(OutputBuffer.java:342)\n        at org.apache.catalina.connector.OutputBuffer.appendByteArray(OutputBuffer.java:747)\n        at org.apache.catalina.connector.OutputBuffer.append(OutputBuffer.java:675)\n        at org.apache.catalina.connector.OutputBuffer.writeBytes(OutputBuffer.java:377)\n        at org.apache.catalina.connector.OutputBuffer.write(OutputBuffer.java:355)\n        at org.apache.catalina.connector.CoyoteOutputStream.write(CoyoteOutputStream.java:102)\n        at com.vaadin.flow.server.streams.TransferUtil.transfer(TransferUtil.java:97)\n        at com.vaadin.flow.server.streams.InputStreamDownloadHandler.handleDownloadRequest(InputStreamDownloadHandler.java:101)\n        at com.vaadin.flow.server.streams.DownloadHandler.handleRequest(DownloadHandler.java:104)\n        at com.vaadin.flow.server.communication.StreamRequestHandler.callElementResourceHandler(StreamRequestHandler.java:194)\n        at com.vaadin.flow.server.communication.StreamRequestHandler.handleRequest(StreamRequestHandler.java:119)\n        at com.vaadin.flow.server.VaadinService.handleRequest(VaadinService.java:1879)\n        at com.vaadin.flow.server.VaadinServlet.service(VaadinServlet.java:398)\n        at com.vaadin.flow.spring.SpringServlet.service(SpringServlet.java:106)\n        at jakarta.servlet.http.HttpServlet.service(HttpServlet.java:658)\n        at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:195)\n        at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:140)\n        at org.apache.catalina.core.ApplicationDispatcher.invoke(ApplicationDispatcher.java:612)\n        at org.apache.catalina.core.ApplicationDispatcher.processRequest(ApplicationDispatcher.java:394)\n        at org.apache.catalina.core.ApplicationDispatcher.doForward(ApplicationDispatcher.java:323)\n        at org.apache.catalina.core.ApplicationDispatcher.forward(ApplicationDispatcher.java:268)\n        at org.springframework.web.servlet.mvc.ServletForwardingController.handleRequestInternal(ServletForwardingController.java:142)\n        at org.springframework.web.servlet.mvc.AbstractController.handleRequest(AbstractController.java:178)\n        at org.springframework.web.servlet.mvc.SimpleControllerHandlerAdapter.handle(SimpleControllerHandlerAdapter.java:51)\n        at org.springframework.web.servlet.DispatcherServlet.doDispatch(DispatcherServlet.java:1089)\n        at org.springframework.web.servlet.DispatcherServlet.doService(DispatcherServlet.java:979)\n        at org.springframework.web.servlet.FrameworkServlet.processRequest(FrameworkServlet.java:1014)\n        at org.springframework.web.servlet.FrameworkServlet.doGet(FrameworkServlet.java:903)\n        at jakarta.servlet.http.HttpServlet.service(HttpServlet.java:564)\n        at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:885)\n        at jakarta.servlet.http.HttpServlet.service(HttpServlet.java:658)\n        at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:195)\n        at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:140)\n        at org.apache.tomcat.websocket.server.WsFilter.doFilter(WsFilter.java:51)\n        at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:164)\n        at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:140)\n        at org.springframework.web.filter.RequestContextFilter.doFilterInternal(RequestContextFilter.java:100)\n        at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)\n        at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:164)\n        at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:140)\n        at org.springframework.web.filter.FormContentFilter.doFilterInternal(FormContentFilter.java:93)\n        at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)\n        at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:164)\n        at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:140)\n        at org.springframework.boot.web.servlet.support.ErrorPageFilter.doFilter(ErrorPageFilter.java:124)\n        at org.springframework.boot.web.servlet.support.ErrorPageFilter$1.doFilterInternal(ErrorPageFilter.java:99)\n        at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)\n        at org.springframework.boot.web.servlet.support.ErrorPageFilter.doFilter(ErrorPageFilter.java:117)\n        at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:164)\n        at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:140)\n        at org.springframework.web.filter.CharacterEncodingFilter.doFilterInternal(CharacterEncodingFilter.java:201)\n        at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116)\n        at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:164)\n        at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:140)\n        at org.apache.catalina.core.StandardWrapperValve.invoke(StandardWrapperValve.java:167)\n        at org.apache.catalina.core.StandardContextValve.invoke(StandardContextValve.java:90)\n        at org.apache.catalina.authenticator.AuthenticatorBase.invoke(AuthenticatorBase.java:483)\n        at org.apache.catalina.core.StandardHostValve.invoke(StandardHostValve.java:116)\n        at org.apache.catalina.valves.ErrorReportValve.invoke(ErrorReportValve.java:93)\n        at org.apache.catalina.valves.AbstractAccessLogValve.invoke(AbstractAccessLogValve.java:666)\n        at org.apache.catalina.core.StandardEngineValve.invoke(StandardEngineValve.java:74)\n        at org.apache.catalina.connector.CoyoteAdapter.service(CoyoteAdapter.java:344)\n        at org.apache.coyote.http11.Http11Processor.service(Http11Processor.java:398)\n        at org.apache.coyote.AbstractProcessorLight.process(AbstractProcessorLight.java:63)\n        at org.apache.coyote.AbstractProtocol$ConnectionHandler.process(AbstractProtocol.java:903)\n        at org.apache.tomcat.util.net.NioEndpoint$SocketProcessor.doRun(NioEndpoint.java:1776)\n        at org.apache.tomcat.util.net.SocketProcessorBase.run(SocketProcessorBase.java:52)\n        at org.apache.tomcat.util.threads.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:975)\n        at org.apache.tomcat.util.threads.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:493)\n        at org.apache.tomcat.util.threads.TaskThread$WrappingRunnable.run(TaskThread.java:63)\n        at java.base/java.lang.Thread.run(Thread.java:1474)\nCaused by: java.net.SocketTimeoutException\n        at org.apache.tomcat.util.net.NioEndpoint$NioSocketWrapper.doWrite(NioEndpoint.java:1410)\n        at org.apache.tomcat.util.net.SocketWrapperBase.doWrite(SocketWrapperBase.java:732)\n        at org.apache.tomcat.util.net.SocketWrapperBase.writeBlocking(SocketWrapperBase.java:572)\n        at org.apache.tomcat.util.net.SocketWrapperBase.write(SocketWrapperBase.java:520)\n        at org.apache.coyote.http11.Http11OutputBuffer$SocketOutputBuffer.doWrite(Http11OutputBuffer.java:548)\n        at org.apache.coyote.http11.filters.ChunkedOutputFilter.doWrite(ChunkedOutputFilter.java:111)\n        at org.apache.coyote.http11.Http11OutputBuffer.doWrite(Http11OutputBuffer.java:193)\n        at org.apache.coyote.Response.doWrite(Response.java:628)\n        at org.apache.catalina.connector.OutputBuffer.realWriteBytes(OutputBuffer.java:330)\n        ... 70 more\n</code></pre>\n<h3>Expected behavior</h3>\n<p>Downloading large files should complete without issue and should not timeout on firefox browser after 30 seconds or after 1GB downloaded on chromium based browsers.</p>\n<h3>Minimal reproducible example</h3>\n<p>Add view to vaadin with an anchor and initiate download of large file (exceeding 1GB):</p>\n<pre><code>hiddenDownloadAnchor.setHrefAndDownload(DownloadHandler.fromInputStream(\n                                downloadEvent -&gt; new DownloadResponse(\n                                        new FileInputStream(file),\n                                        name,\n                                        type,\n                                        length)));\n</code></pre>\n<p>Application is spring boot with tomcat, deployed as war behind nginx proxy.</p>\n<h3>Versions</h3>\n<ul>\n<li>Vaadin / Flow version: 24.9.3</li>\n<li>Java version: 25/21</li>\n<li>Browser version: Firefox 145.0b6 or Brave 1.83.120 (Chromium: 141.0.7390.122)</li>\n<li>Application Server: Tomcat 10.1.48 (also tried older: 10.1.46)</li>\n</ul>\n<h3>EDIT: Investigation update</h3>\n<p>Came across this old <a href=\"https://trac.nginx.org/nginx/ticket/1472\" rel=\"nofollow noreferrer\">nginx issue</a> citing:</p>\n<blockquote>\n<p>Hi, we tried nginx version 1.6.2 till version 1.12.2 and have a\nproblem when used as proxy before artifactory. Downloads get\ninterrupted at 1GB.</p>\n<p>This behavior depends on the internal VLAN. On one VLAN this always\nhappens. On an other VLAN it never happens. This is size limited, not\ntime limited. From some network it stops after 30 seconds and from one\nother slow network it stops after 13 minutes.</p>\n<p>We made a minimal proxy setup with apache and this works with all\nVLANs. This is why we expect it has something to do with nginx or the\ncombination of nginx and TCP/IP stack of linux.</p>\n<p>In wireshark we see &quot;TCP Dup ACK&quot; on the client side sent to the nginx\nserver.</p>\n<p>Wget fails with connection closed at byte 1083793011 but continues\ndownload with partial content. docker can't handle this and our\ncustomers can't download docker images with layers greater 1 GB.</p>\n</blockquote>\n<p>With suggestion:</p>\n<blockquote>\n<p>The 1GB limit suggests that the problem is due to\n​proxy_max_temp_file_size. It is one gigabyte by default, and if the\nlimit is reached, nginx will stop reading from the backend till all\ndisk-buffered data are sent to the client. This in turn can result in\na send timeout on the backend side.</p>\n<p>Please check nginx and your backend logs to see what happens here.\nLikely there are something like &quot;upstream prematurely closed\nconnection&quot; in nginx error log, and send timeouts in your backend\nlogs. Alternatively, just check if proxy_max_temp_file_size 0; helps\n(this will disable disk buffering completely).</p>\n<p>If the above suggestion is true, the two possible solutions are:</p>\n<p>Tune proxy_max_temp_file_size. Consider either configuring the limit\nabove the size of all expected responses, or small enough for your\nbackend to don't time out. In particular, proxy_max_temp_file_size 0;\nmight be a good choice when proxying large files. Tune your backend\ntimeouts appropriately.</p>\n</blockquote>\n<p><strong>Changing this <code>proxy_max_temp_file_size</code> to <code>0</code> helps with downloads on chromium based browsers, but this issue persist on firefox.</strong>\nRunning <a href=\"https://nginx.org/en/download.html\" rel=\"nofollow noreferrer\">latest stable (1.28.0) nginx</a> locally, even with default configuration (just set proxy_pass and port) provides same results, so there must be something between nginx and vaadin application.</p>\n",
+    "tags" : [ "java", "spring-boot", "tomcat", "nginx-reverse-proxy", "vaadin-flow" ],
+    "owner" : {
+      "account_id" : 14571259,
+      "reputation" : 1186,
+      "user_id" : 10524503,
+      "user_type" : "registered",
+      "profile_image" : "https://lh4.googleusercontent.com/-TTMbFydM2wc/AAAAAAAAAAI/AAAAAAAAIbU/tMY5KezwBbg/s256-rj/photo.jpg",
+      "display_name" : "MarekChr",
+      "link" : "https://stackoverflow.com/users/10524503/marekchr"
+    },
+    "is_answered" : true,
+    "view_count" : 309,
+    "answer_count" : 1,
+    "score" : 3,
+    "last_activity_date" : 1763634698,
+    "creation_date" : 1761636767,
+    "link" : "https://stackoverflow.com/questions/79802519/sockettimeoutexception-while-downloading-large-file-and-this-behavior-is-inconsi",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79819191,
+    "question_id" : 79802519,
+    "body" : "<p>I think there's two mechanisms at play:</p>\n<p><strong>1. nginx proxy buffering limits</strong></p>\n<p>nginx buffers responses from upstream (Tomcat) to disk or memory. Large or slow downstream transfers can cause nginx to pause reading from the backend (Tomcat). If Tomcat continues trying to write, it eventually hits a write timeout despite having long socket timeouts configured.</p>\n<p>On Chromium browsers, the problem shows up at exactly 1 GB because proxy_max_temp_file_size defaults to 1 GB.</p>\n<p>When that file size is reached, nginx stops reading from Tomcat temporarily, the Tomcat output stalls and times out (hence your stack trace).</p>\n<p><strong>2. Firefox’s handling of long-running non-chunked responses</strong></p>\n<p>Firefox aborts long-running downloads if the upstream (proxy or server) stalls or doesn’t flush data for ~30 s (reported as NS_BINDING_ABORTED). With nginx buffering enabled, data may sit fully buffered until nginx decides to flush again, triggering this 30 s pseudo-timeout on the client.</p>\n<p><strong>How to check this hypothesis</strong></p>\n<p>If I'm correct then nginx’s error will contain lines such as</p>\n<pre class=\"lang-none prettyprint-override\"><code>upstream prematurely closed connection\nsendfile() failed (104: Connection reset by peer)\n</code></pre>\n<p>You can also check if <code>/var/lib/nginx/proxy_temp</code> contains partially written files near 1 GB.</p>\n<p><strong>nginx config</strong></p>\n<p>Apply these settings in your nginx site configuration (within the location block that proxies to Tomcat):</p>\n<pre><code>proxy_buffering off; #disables nginx’s response buffering. Data from Tomcat streams directly to the client\nproxy_request_buffering off; # ensures nginx doesn’t buffer client requests either (relevant mainly for uploads but improves symmetry).\nproxy_max_temp_file_size 0; # disables the 1 GB on-disk file buffering limit.\nproxy_http_version 1.1;\nproxy_set_header Connection &quot;&quot;;\n</code></pre>\n<p><strong>tomcat config</strong></p>\n<p>It looks like you're using spring boot so you should be able to do the following in <code>application.yaml</code></p>\n<pre class=\"lang-yaml prettyprint-override\"><code>server:\n  tomcat:\n    connection-timeout: 0\n    max-swallow-size: -1\n    max-http-post-size: -1\n</code></pre>\n<p>These ensure Tomcat doesn’t prematurely close a socket due to perceived idle time or buffer overflow.</p>\n",
+    "score" : 3,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 1096470,
+      "reputation" : 29415,
+      "user_id" : 1089967,
+      "user_type" : "registered",
+      "accept_rate" : 59,
+      "profile_image" : "https://www.gravatar.com/avatar/1f256b904ff621d678598d8fa49f86c5?s=256&d=identicon&r=PG",
+      "display_name" : "lance-java",
+      "link" : "https://stackoverflow.com/users/1089967/lance-java"
+    },
+    "creation_date" : 1763052929,
+    "last_activity_date" : 1763052929,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140863424,
+    "post_id" : 79802519,
+    "body" : "That sure is a brainteaser. Can you see if setting <code>zstd off; gzip off; brotli off;</code> in nginx makes any difference?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1066600,
+      "reputation" : 22354,
+      "user_id" : 1067003,
+      "user_type" : "registered",
+      "accept_rate" : 62,
+      "profile_image" : "https://www.gravatar.com/avatar/e3af2bd4b5604b0b661b5e6646544eba?s=256&d=identicon&r=PG",
+      "display_name" : "hanshenrik",
+      "link" : "https://stackoverflow.com/users/1067003/hanshenrik"
+    },
+    "creation_date" : 1763601430,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140861278,
+    "post_id" : 79802519,
+    "body" : "&quot;getWriteTimeout()&quot; but it&#39;s probably a read timeout at firefox. Client side headers could help to troubleshoot.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3377022,
+      "reputation" : 14383,
+      "user_id" : 2834978,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/ff9af10001f37bc0de566ca2caf2f558?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "LMC",
+      "link" : "https://stackoverflow.com/users/2834978/lmc"
+    },
+    "creation_date" : 1763507887,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140854780,
+    "post_id" : 79802519,
+    "body" : "I would start to take away and put again all the components: start with app in local tomcat, hitting with curl, hitting with browser. Then put jwebserver behind nginx, to exclude the tomcat behind. Try to download with curl from the nginx box. Where runs nginx and tomcat? In a containered, hosted environment elsewhere, where other proxies are involved?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 39574,
+      "reputation" : 24690,
+      "user_id" : 114226,
+      "user_type" : "registered",
+      "accept_rate" : 79,
+      "profile_image" : "https://i.sstatic.net/FHfgU.png?s=256",
+      "display_name" : "PeterMmm",
+      "link" : "https://stackoverflow.com/users/114226/petermmm"
+    },
+    "creation_date" : 1763144139,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140854153,
+    "post_id" : 79802519,
+    "body" : "At this time, the problem was reproduced by vaadin developers even without use of nginx.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 14571259,
+      "reputation" : 1186,
+      "user_id" : 10524503,
+      "user_type" : "registered",
+      "profile_image" : "https://lh4.googleusercontent.com/-TTMbFydM2wc/AAAAAAAAAAI/AAAAAAAAIbU/tMY5KezwBbg/s256-rj/photo.jpg",
+      "display_name" : "MarekChr",
+      "link" : "https://stackoverflow.com/users/10524503/marekchr"
+    },
+    "creation_date" : 1763124434,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140822510,
+    "post_id" : 79802519,
+    "body" : "What is the read timeout configured in the Java server? java.net.SocketTimeoutException means the connection was stalled, in this case no data was sent to the client. I would try to simplify the set-up, just a direct connection between browser and web server without any proxies and middle-ware inbetween.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 50585,
+      "reputation" : 43459,
+      "user_id" : 150978,
+      "user_type" : "registered",
+      "accept_rate" : 78,
+      "profile_image" : "https://www.gravatar.com/avatar/feadc214792e2581c3c750140e3eb2c7?s=256&d=identicon&r=PG",
+      "display_name" : "Robert",
+      "link" : "https://stackoverflow.com/users/150978/robert"
+    },
+    "creation_date" : 1761653671,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79819191" : [ {
+      "comment_id" : 140853761,
+      "post_id" : 79819191,
+      "body" : "And no such <code>&#47;var&#47;lib&#47;nginx&#47;proxy_temp</code> folder is present, only <code>&#47;var&#47;lib&#47;nginx&#47;proxy</code> and is empty.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 14571259,
+        "reputation" : 1186,
+        "user_id" : 10524503,
+        "user_type" : "registered",
+        "profile_image" : "https://lh4.googleusercontent.com/-TTMbFydM2wc/AAAAAAAAAAI/AAAAAAAAIbU/tMY5KezwBbg/s256-rj/photo.jpg",
+        "display_name" : "MarekChr",
+        "link" : "https://stackoverflow.com/users/10524503/marekchr"
+      },
+      "creation_date" : 1763108829,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140853757,
+      "post_id" : 79819191,
+      "body" : "I have set up logging in nginx, however no <code>upstream prematurely closed connection</code> is present. The only error i get from logs is the exception i posted. Adding additional unlimited timeouts and sizes to tomcat have no effect, so as setting <code>proxy_buffering off</code> have no effect in nginx. Moreover, <code>max-http-post-size</code> is not present in spring-tomcat configuration. Only <a href=\"https://docs.spring.io/spring-boot/appendix/application-properties/index.html#application-properties.server.server.tomcat.max-http-form-post-size\" rel=\"nofollow noreferrer\">max-http-form-post-size</a> and is unrelated.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 14571259,
+        "reputation" : 1186,
+        "user_id" : 10524503,
+        "user_type" : "registered",
+        "profile_image" : "https://lh4.googleusercontent.com/-TTMbFydM2wc/AAAAAAAAAAI/AAAAAAAAIbU/tMY5KezwBbg/s256-rj/photo.jpg",
+        "display_name" : "MarekChr",
+        "link" : "https://stackoverflow.com/users/10524503/marekchr"
+      },
+      "creation_date" : 1763108730,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

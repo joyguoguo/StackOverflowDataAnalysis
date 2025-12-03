@@ -1,0 +1,249 @@
+{
+  "question" : {
+    "question_id" : 79753892,
+    "title" : "Couchbase client fails with OutOfMemoryError on too many waiting threads",
+    "body" : "<p>I have a Java batch application that performs several processing steps on a Couchbase bucket hosted in a single node cluster. The database is neither big nor required to be lightning fast, just about 500 MB of data.</p>\n<p>The different application components (<a href=\"https://www.baeldung.com/java-ee-7-batch-processing\" rel=\"nofollow noreferrer\">Java Batch</a> ItemReader, ItemProcessor or ItemWriter) connect to Couchbase each via the java-sdk. They do it in parallel or repeatedly, thus a single batch run results in many calls to <code>Cluster.connect()</code>.</p>\n<p>While this was running fine, since a week I perceive timeouts and OutOfMemoryErrors.</p>\n<pre><code>[16.081s][warning][os,thread] Failed to start thread &quot;Unknown thread&quot; - pthread_create failed (EAGAIN) for attributes: stacksize: 256k, guardsize: 4k, detached.\n[16.082s][warning][os,thread] Failed to start the native thread for java.lang.Thread &quot;boundedElastic-evictor-225&quot;\n13:11:59.543 [jberet-1] ERROR org.jberet - JBERET000007: Failed to run job createTickets, createTickets, org.jberet.job.model.Step@78739007\njava.lang.OutOfMemoryError: unable to create native thread: possibly out of memory or process/resource limits reached\n    at java.base/java.lang.Thread.start0(Native Method) ~[?:?]\n    at java.base/java.lang.Thread.start(Unknown Source) [?:?]\n    at java.base/java.lang.System$2.start(Unknown Source) ~[?:?]\n    ...\n</code></pre>\n<p>Adding the JVM option <code>-XX:+HeapDumpOnOutOfMemoryError</code> does not trigger heap dumps. Increasing the heap did not help either but I discovered more than 2000 waiting threads before the error occurs. Almost all of the threads are related to the Couchbase connections. This limits my application in processing further data.</p>\n<p>I checked in the code that all the Couchbase connections get closed when no longer needed - yet the amount of threads remains and seems not to go away.</p>\n<p>There is <a href=\"https://dzone.com/articles/troubleshoot-outofmemoryerror-unable-to-create-new\" rel=\"nofollow noreferrer\">an article</a> that describes the symptom of OutOfMemoryError on the client side caused by resource constraints on the server side (Apache Cassandra NoSQL DB, in my case it is Couchbase). I checked the admin interface, but there is no indication of any problem.</p>\n<p>What can be the root cause for this behaviour? What should I look at to find out more?</p>\n<p>Threads analysis: Short before death the JVM was running 2073 threads. Removing trailing numbers from thread names, I find these counts:</p>\n<p><a href=\"https://i.sstatic.net/1Ky8yQQ3.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/1Ky8yQQ3.png\" alt=\"enter image description here\" /></a></p>\n<p>While investigating further I found JVMs with even more than 3000 threads before dying. From the thread dump I can see many threads are waiting for Couchbase Locks. Here is an example:</p>\n<pre><code>&quot;cb-txn-cleanup-230&quot; daemon prio=5 Id=2311 WAITING on java.util.concurrent.locks.AbstractQueuedSynchronizer$ConditionObject@1472208d\n&quot;cb-comp-994&quot; daemon prio=5 Id=2004 TIMED_WAITING on java.util.concurrent.locks.AbstractQueuedSynchronizer$ConditionObject@446e7065\n</code></pre>\n<p>Looks like I am facing a client-side deadlock.</p>\n<p><strong>Update:</strong>\nI suspect I ran into some special situation - not sure how to proove that.\nFor date handling we followed <a href=\"https://docs.couchbase.com/java-sdk/current/howtos/json.html#dates\" rel=\"nofollow noreferrer\">https://docs.couchbase.com/java-sdk/current/howtos/json.html#dates</a> which suggests to register your own ObjectMapper which has registered the JavaTimeModule. This is shown in <a href=\"https://docs.couchbase.com/java-sdk/current/howtos/json.html#ObjectMapper\" rel=\"nofollow noreferrer\">https://docs.couchbase.com/java-sdk/current/howtos/json.html#ObjectMapper</a>, which creates it's own ClusterEnvironment.</p>\n<p><a href=\"https://i.sstatic.net/825Ng9MT.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/825Ng9MT.png\" alt=\"enter image description here\" /></a></p>\n<p>But then here - out of context for the problem we tried to solve - you see a warning that resources might not get cleaned up if you create your own environment: <a href=\"https://docs.couchbase.com/java-sdk/current/howtos/managing-connections.html#multiple-clusters\" rel=\"nofollow noreferrer\">https://docs.couchbase.com/java-sdk/current/howtos/managing-connections.html#multiple-clusters</a></p>\n<p><a href=\"https://i.sstatic.net/Kj8DfMGy.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/Kj8DfMGy.png\" alt=\"enter image description here\" /></a></p>\n<p><strong>Update 2</strong></p>\n<p>So many people asked for code to analyze. Now, knowing what to look for I recreated the problem. Here is the code:</p>\n<pre><code>import com.couchbase.client.java.Cluster;\nimport com.couchbase.client.java.ClusterOptions;\nimport com.couchbase.client.java.codec.JacksonJsonSerializer;\nimport com.couchbase.client.java.env.ClusterEnvironment;\nimport com.fasterxml.jackson.databind.ObjectMapper;\nimport com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;\nimport java.lang.management.ManagementFactory;\nimport java.time.Duration;\nimport java.time.temporal.ChronoUnit;\nimport org.apache.logging.log4j.LogManager;\nimport org.apache.logging.log4j.Logger;\n\npublic class CouchbaseProblem {\n  private static final Logger log = LogManager.getLogger();\n  \n  public static Cluster connectSimple(String connectionString, String username, String password) {\n    return Cluster.connect(connectionString, username, password);\n  }\n\n  public static Cluster connectWithEnv(String connectionString, String username, String password) {\n    ObjectMapper mapper = new ObjectMapper();\n    mapper.registerModule(new JavaTimeModule());\n\n    ClusterEnvironment environment = ClusterEnvironment.builder()\n            .jsonSerializer(JacksonJsonSerializer.create(mapper))\n            .build();\n    ClusterOptions co = ClusterOptions.clusterOptions(username, password);\n    co.environment(environment);\n    return Cluster.connect(connectionString, co);\n  }\n  \n  public static int getThreadCount() {\n    return ManagementFactory.getThreadMXBean().getThreadCount();\n  }\n\n  public static void main(String[] args) throws Exception {\n    int max = 100;\n    \n    for (int i = 0; i &lt; max; i++) {\n      log.info(&quot;Simple Iteration {}/{}, Threads {}&quot;, i, max, getThreadCount());\n      \n      Cluster c = connectSimple(args[0], args[1], args[2]);\n      Thread.sleep(Duration.of(1, ChronoUnit.SECONDS));\n      c.disconnect();\n    }\n    \n    for (int i = 0; i &lt; max; i++) {\n      log.info(&quot;Env Iteration {}/{}, Threads {}&quot;, i, max, getThreadCount());\n      \n      Cluster c = connectWithEnv(args[0], args[1], args[2]);\n      Thread.sleep(Duration.of(1, ChronoUnit.SECONDS));\n      c.disconnect();\n    }\n  }\n}\n</code></pre>\n<p>You can see two loops, each of them creating and closing Couchbase connections. While running they log the iteration and the number of threads the JVM needs to care about.</p>\n<p>You can see the first loop's threadcount is growing but then levels off at 40, but the second loop's threadcount continually grows to over 2200.</p>\n",
+    "tags" : [ "java", "couchbase", "couchbase-java-api" ],
+    "owner" : {
+      "account_id" : 5289146,
+      "reputation" : 9940,
+      "user_id" : 4222206,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/416696430ab23f397a5dbeda73e72896?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "queeg",
+      "link" : "https://stackoverflow.com/users/4222206/queeg"
+    },
+    "is_answered" : true,
+    "view_count" : 173,
+    "answer_count" : 2,
+    "score" : 0,
+    "last_activity_date" : 1758118959,
+    "creation_date" : 1756842523,
+    "link" : "https://stackoverflow.com/questions/79753892/couchbase-client-fails-with-outofmemoryerror-on-too-many-waiting-threads",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79755068,
+    "question_id" : 79753892,
+    "body" : "<p>I was able to resolve the situation. There were about 400 connects/disconnects during such a batch run. Not all the disconnect/cleanup seems to have worked as intended.</p>\n<p>I created a connection pool that essentially connects once to Couchbase, then allows all the components to benefit from that one connection. On top of that I added some indexing which also sped up Couchbase answering requests.</p>\n<p>The jobs are running successfully again.</p>\n<p>However I'd like to comment that to implement the pool I had to wrap the Cluster into my own class. It detaches the business logic from the real Cluster and thus can prevent disconnect/closure requests. This required changes all over the business logic to use the new class. Hence it is a very custom solution. I wish Cluster were or had an interface instead of a class. Maybe something to come true in a future version of the API?</p>\n<p>Some time later, and investigating on other stuff about Couchbase I stumble over the warning at <a href=\"https://docs.couchbase.com/java-sdk/current/howtos/managing-connections.html#multiple-clusters\" rel=\"nofollow noreferrer\">https://docs.couchbase.com/java-sdk/current/howtos/managing-connections.html#multiple-clusters</a>:</p>\n<p><em>When you manually create a <code>ClusterEnvironment</code>, the SDK will not shut it down when you call <code>Cluster.disconnect()</code>. Instead, you are responsible for shutting it down after disconnecting all clusters that share the environment.</em></p>\n<p>Now this is the case in my code: I customized the environment to use FasterXML Jackson for JSON parsing with the JavaTimeModule active, maybe leading into the above issue in first place. I still need to learn how to provide this <a href=\"https://docs.couchbase.com/java-sdk/current/howtos/managing-connections.html#cluster-environment\" rel=\"nofollow noreferrer\">configuration callback</a>.</p>\n<p><strong>Update</strong></p>\n<p>Now I have proof that using the configuration callback does prevent the situation indeed. Look at this extended example:</p>\n<pre><code>import com.couchbase.client.java.Cluster;\nimport com.couchbase.client.java.ClusterOptions;\nimport com.couchbase.client.java.codec.JacksonJsonSerializer;\nimport com.couchbase.client.java.env.ClusterEnvironment;\nimport com.fasterxml.jackson.databind.ObjectMapper;\nimport com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;\nimport java.lang.management.ManagementFactory;\nimport java.time.Duration;\nimport java.time.temporal.ChronoUnit;\nimport org.apache.logging.log4j.LogManager;\nimport org.apache.logging.log4j.Logger;\n\npublic class CouchbaseProblem {\n  private static final Logger log = LogManager.getLogger();\n  \n  public static Cluster connectSimple(String connectionString, String username, String password) {\n    return Cluster.connect(connectionString, username, password);\n  }\n\n  public static Cluster connectWithEnv(String connectionString, String username, String password) {\n    ObjectMapper mapper = new ObjectMapper();\n    mapper.registerModule(new JavaTimeModule());\n\n    ClusterEnvironment environment = ClusterEnvironment.builder()\n            .jsonSerializer(JacksonJsonSerializer.create(mapper))\n            .build();\n    ClusterOptions co = ClusterOptions.clusterOptions(username, password);\n    co.environment(environment);\n    return Cluster.connect(connectionString, co);\n  }\n  \n  public static Cluster connectWithCallback(String connectionString, String username, String password) {\n    ObjectMapper mapper = new ObjectMapper();\n    mapper.registerModule(new JavaTimeModule());\n\n    ClusterOptions co = ClusterOptions.clusterOptions(username, password);\n    co.environment(env -&gt; {\n      env.jsonSerializer(JacksonJsonSerializer.create(mapper));\n    });\n    return Cluster.connect(connectionString, co);\n  }\n  \n  public static int getThreadCount() {\n    return ManagementFactory.getThreadMXBean().getThreadCount();\n  }\n\n  public static void main(String[] args) throws Exception {\n    int max = 400;\n    \n    for (int i = 0; i &lt; max; i++) {\n      log.info(&quot;Simple Iteration {}/{}, Threads {}&quot;, i, max, getThreadCount());\n      \n      Cluster c = connectSimple(args[0], args[1], args[2]);\n      Thread.sleep(Duration.of(500, ChronoUnit.MILLIS));\n      c.disconnect();\n    }\n    \n    for (int i = 0; i &lt; max; i++) {\n      log.info(&quot;Callback Iteration {}/{}, Threads {}&quot;, i, max, getThreadCount());\n      \n      Cluster c = connectSimple(args[0], args[1], args[2]);\n      Thread.sleep(Duration.of(500, ChronoUnit.MILLIS));\n      c.disconnect();\n    }\n    \n    for (int i = 0; i &lt; max; i++) {\n      log.info(&quot;Env Iteration {}/{}, Threads {}&quot;, i, max, getThreadCount());\n      \n      Cluster c = connectWithEnv(args[0], args[1], args[2]);\n      Thread.sleep(Duration.of(500, ChronoUnit.MILLIS));\n      c.disconnect();\n    }\n  }\n}\n</code></pre>\n<p>The first and the second loop stay on a stable amount of Threads while only the third one uses them excessively. The API should emit a warning when creating too many ClusterEnvironments rather than too many Clusters.</p>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 5289146,
+      "reputation" : 9940,
+      "user_id" : 4222206,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/416696430ab23f397a5dbeda73e72896?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "queeg",
+      "link" : "https://stackoverflow.com/users/4222206/queeg"
+    },
+    "creation_date" : 1756931959,
+    "last_activity_date" : 1758118959,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79765598,
+    "question_id" : 79753892,
+    "body" : "<blockquote>\n<p>I created a connection pool that essentially connects once to Couchbase, then allows all the components to benefit from that one connection.</p>\n</blockquote>\n<p>The couchbase cluster object connects once to couchbase, and allows all components to benefit from that one connection. So I'm not sure what you did or why.</p>\n<p>\\&gt; I customized the environment to use FasterXML Jackson for JSON parsing</p>\n<p>The couchbase SDK already uses FasterXML Jackson for JSON parsing.</p>\n<blockquote>\n<p>they do it in parallel or repeatedly, thus a single batch run results in many calls to <code>Cluster.connect()</code></p>\n</blockquote>\n<p>Cluster.connect() returns a Cluster object that can be used concurrently by any number of threads.  In fact the SDK issues warning messages if multiple Cluster objects are created.</p>\n<p>\\&gt; I checked in the code that all the Couchbase connections get closed when no longer needed</p>\n<p>cluster.close() needs to be called when an application no longer needs the cluster object.  Not calling cluster.close() results in resources - including some connections - remaining held by the cluster object.  Some  connections (http connections for query, fts, analytics, mgmt) are closed after remaining idle for a short period (1 second), some connections remain open indefinitely (kv connections for crud operations and internal operations to get the cluster and bucket configurations).</p>\n<p>As the name suggest OutOfMemoryErrors occurr when the JVM runs out of memory.   This can be memory held by the application, or by memory held by objects that the application is holding (Couchbase cluster objects, for example).  It is up to the application to release object that it holds.</p>\n<p>FYI - there was a ticket to create an Interface for Cluster.  - <a href=\"https://jira.issues.couchbase.com/browse/JCBC-1890\" rel=\"nofollow noreferrer\">https://jira.issues.couchbase.com/browse/JCBC-1890</a></p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 1029909,
+      "reputation" : 468,
+      "user_id" : 5228155,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/1db286437b4737ff394bb796097e80b3?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "mn_test347",
+      "link" : "https://stackoverflow.com/users/5228155/mn-test347"
+    },
+    "creation_date" : 1757968766,
+    "last_activity_date" : 1757969163,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140738540,
+    "post_id" : 79753892,
+    "body" : "You could have created a minrep in which you generate enough data to reproduce the problem.  It depends on how much you really needed other people to help you solve your problem.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 47283,
+      "reputation" : 723399,
+      "user_id" : 139985,
+      "user_type" : "registered",
+      "accept_rate" : 69,
+      "profile_image" : "https://www.gravatar.com/avatar/147c5a9cc1feec049c50da791ac7d144?s=256&d=identicon&r=PG",
+      "display_name" : "Stephen C",
+      "link" : "https://stackoverflow.com/users/139985/stephen-c"
+    },
+    "creation_date" : 1757997286,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140714134,
+    "post_id" : 79753892,
+    "body" : "The code itself would not reproduce the problem. It is based on the data as well, which would control the number of batch partitions and thus also the number of couchbase connections. The data grew over time until the problem got too big.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 5289146,
+      "reputation" : 9940,
+      "user_id" : 4222206,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/416696430ab23f397a5dbeda73e72896?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "queeg",
+      "link" : "https://stackoverflow.com/users/4222206/queeg"
+    },
+    "creation_date" : 1756981094,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140712454,
+    "post_id" : 79753892,
+    "body" : "@queeg a minimum code sample that recreates the issue would be helpful, and sometimes necessary",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 17736,
+      "reputation" : 26222,
+      "user_id" : 40015,
+      "user_type" : "registered",
+      "accept_rate" : 84,
+      "profile_image" : "https://www.gravatar.com/avatar/4b0eb78ea5852ee0f54bfd6a2252c99e?s=256&d=identicon&r=PG",
+      "display_name" : "Matthew Groves",
+      "link" : "https://stackoverflow.com/users/40015/matthew-groves"
+    },
+    "creation_date" : 1756916558,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140711134,
+    "post_id" : 79753892,
+    "body" : "I cannot share the code - at most I can create something similar which would then look like code taken from documentation. Working on heap/thread dumps.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 5289146,
+      "reputation" : 9940,
+      "user_id" : 4222206,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/416696430ab23f397a5dbeda73e72896?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "queeg",
+      "link" : "https://stackoverflow.com/users/4222206/queeg"
+    },
+    "creation_date" : 1756887468,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140710311,
+    "post_id" : 79753892,
+    "body" : "Share the code and the full error. A thread dump could be helpful too.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 372682,
+      "reputation" : 26502,
+      "user_id" : 721855,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/vZiox.png?s=256",
+      "display_name" : "aled",
+      "link" : "https://stackoverflow.com/users/721855/aled"
+    },
+    "creation_date" : 1756845357,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79755068" : [ {
+      "comment_id" : 140715507,
+      "post_id" : 79755068,
+      "body" : "Thanks for the feedback about interfaces. I agree there&#39;s an opportunity to improve the API in that area.",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 303087,
+        "reputation" : 9068,
+        "user_id" : 611819,
+        "user_type" : "registered",
+        "accept_rate" : 100,
+        "profile_image" : "https://i.sstatic.net/oew2B.png?s=256",
+        "display_name" : "dnault",
+        "link" : "https://stackoverflow.com/users/611819/dnault"
+      },
+      "creation_date" : 1757013619,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140715502,
+      "post_id" : 79755068,
+      "body" : "Glad you found a solution! If you like, you can mark your own answer as &quot;accepted&quot;.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 303087,
+        "reputation" : 9068,
+        "user_id" : 611819,
+        "user_type" : "registered",
+        "accept_rate" : 100,
+        "profile_image" : "https://i.sstatic.net/oew2B.png?s=256",
+        "display_name" : "dnault",
+        "link" : "https://stackoverflow.com/users/611819/dnault"
+      },
+      "creation_date" : 1757013432,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140714565,
+      "post_id" : 79755068,
+      "body" : "FYI, this would have been solved faster if you showed the code. Yes, Couchbase connections are &quot;expensive&quot; objects, and you should reuse a connection object as much as possible.",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 17736,
+        "reputation" : 26222,
+        "user_id" : 40015,
+        "user_type" : "registered",
+        "accept_rate" : 84,
+        "profile_image" : "https://www.gravatar.com/avatar/4b0eb78ea5852ee0f54bfd6a2252c99e?s=256&d=identicon&r=PG",
+        "display_name" : "Matthew Groves",
+        "link" : "https://stackoverflow.com/users/40015/matthew-groves"
+      },
+      "creation_date" : 1756992385,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79765598" : [ {
+      "comment_id" : 140741294,
+      "post_id" : 79765598,
+      "body" : "Yeah. The original description only says many calls to Cluster.connect. it did not mention creating many ClusterEnvironments. Calling shutdown().is described in the doc.ClusterEnvironment (Couchbase Java SDK 3.9.0 API) <a href=\"https://share.google/BOFQEnd4eP18gtaNV\" rel=\"nofollow noreferrer\">share.google/BOFQEnd4eP18gtaNV</a>. It is not necessary nor beneficial to create and destroy many couchbase cluster ( or ClusterEnvironment) objects.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1029909,
+        "reputation" : 468,
+        "user_id" : 5228155,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/1db286437b4737ff394bb796097e80b3?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "mn_test347",
+        "link" : "https://stackoverflow.com/users/5228155/mn-test347"
+      },
+      "creation_date" : 1758088347,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140738546,
+      "post_id" : 79765598,
+      "body" : "In this case the OOM is more specific.  It happened while attempting to allocate native memory (not heap memory) for thread stacks.  That is evidence that either you have a thread leak (as was the case here) or the application is using threads (and hence RAM) very inefficiently.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 47283,
+        "reputation" : 723399,
+        "user_id" : 139985,
+        "user_type" : "registered",
+        "accept_rate" : 69,
+        "profile_image" : "https://www.gravatar.com/avatar/147c5a9cc1feec049c50da791ac7d144?s=256&d=identicon&r=PG",
+        "display_name" : "Stephen C",
+        "link" : "https://stackoverflow.com/users/139985/stephen-c"
+      },
+      "creation_date" : 1757997622,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140738532,
+      "post_id" : 79765598,
+      "body" : "Thank you for the attempt. See <a href=\"https://stackoverflow.com/a/16789621/4222206\">stackoverflow.com/a/16789621/4222206</a>",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 5289146,
+        "reputation" : 9940,
+        "user_id" : 4222206,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/416696430ab23f397a5dbeda73e72896?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "queeg",
+        "link" : "https://stackoverflow.com/users/4222206/queeg"
+      },
+      "creation_date" : 1757997054,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

@@ -1,0 +1,98 @@
+{
+  "question" : {
+    "question_id" : 79801845,
+    "title" : "Selected row not updated due to JTable filling method",
+    "body" : "<p>Here's a test case:</p>\n<p>If the user:</p>\n<ol>\n<li>Selects the second table row.</li>\n<li>Types &quot;Smith&quot; in the filter field, presses Enter.</li>\n</ol>\n<p>then the table stats label should read: &quot;Rows: 1&quot;</p>\n<p>Here's an MRE. It includes both a good and a bad implementation of the table filling logic.</p>\n<p>If you keep the good implementation, the test case is passed.</p>\n<p>However, if you keep the bad implementation, the test case is failed. What makes it more interesting, is that if you clear the field, press Enter, and repeat the test case, it passes.</p>\n<pre class=\"lang-java prettyprint-override\"><code>package demos.table;\n\nimport javax.swing.DefaultRowSorter;\nimport javax.swing.JFrame;\nimport javax.swing.JLabel;\nimport javax.swing.JPanel;\nimport javax.swing.JScrollPane;\nimport javax.swing.JTable;\nimport javax.swing.JTextField;\nimport javax.swing.RowFilter;\nimport javax.swing.WindowConstants;\nimport javax.swing.table.DefaultTableModel;\nimport javax.swing.table.TableModel;\nimport java.awt.BorderLayout;\nimport java.awt.Component;\nimport java.awt.Container;\nimport java.util.regex.Pattern;\n\npublic class SimpleTableDemo {\n\n    static JTable table;\n    private static JLabel tableLabel;\n\n    public static void main(String[] args) {\n        Container mainPanel = createMainPanel();\n        JFrame frame = new JFrame(&quot;Simple Table Demo&quot;);\n        frame.setContentPane(mainPanel);\n        frame.setLocationRelativeTo(null);\n        frame.pack();\n        frame.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);\n        frame.setVisible(true);\n    }\n\n    private static Container createMainPanel() {\n        JPanel mainPanel = new JPanel(new BorderLayout());\n        mainPanel.add(createFilterField(), BorderLayout.NORTH);\n        mainPanel.add(createScroller());\n        mainPanel.add(createTableLabel(), BorderLayout.SOUTH);\n        return mainPanel;\n    }\n\n    private static Component createTableLabel() {\n        tableLabel = new JLabel(createTableLabelText());\n        return tableLabel;\n    }\n\n    private static Component createFilterField() {\n        JTextField field = new JTextField();\n        field.addActionListener(e -&gt; onFilter(field));\n        return field;\n    }\n\n    private static void onFilter(JTextField field) {\n        DefaultRowSorter&lt;? extends TableModel, ?&gt; rowSorter = (DefaultRowSorter&lt;? extends TableModel, ?&gt;) table.getRowSorter();\n        String regex = String.format(&quot;(?i)%s&quot;, Pattern.quote(field.getText()));\n        rowSorter.setRowFilter(RowFilter.regexFilter(regex, 1, 2));\n    }\n\n    private static Component createScroller() {\n        JScrollPane scroller = new JScrollPane();\n        scroller.setViewportView(createTable());\n        return scroller;\n    }\n\n    private static Component createTable() {\n        table = new JTable();\n        table.setAutoCreateRowSorter(true);\n        fillTableGood();\n//        fillTableBad();\n        table.getSelectionModel().addListSelectionListener(e -&gt; updateTableLabel());\n        return table;\n    }\n\n    /**\n     * Good implementation.\n     */\n    private static void fillTableGood() {\n        DefaultTableModel model = new DefaultTableModel(createRows(), createColumns());\n        table.setModel(model);\n    }\n\n    private static String[][] createRows() {\n        return new String[][]{{&quot;21&quot;, &quot;Peter&quot;, &quot;Smith&quot;},\n                {&quot;25&quot;, &quot;Helen&quot;, &quot;Brown&quot;},\n                {&quot;30&quot;, &quot;Josh&quot;, &quot;Brown&quot;},\n        };\n    }\n\n    private static String[] createColumns() {\n        return new String[]{&quot;Age&quot;, &quot;First Name&quot;, &quot;Last Name&quot;};\n    }\n\n    /**\n     * Bad implementation.\n     */\n    private static void fillTableBad() {\n        DefaultTableModel model = new DefaultTableModel();\n        table.setModel(model);\n\n        String[] columns = createColumns();\n        model.setColumnCount(columns.length);\n        model.setColumnIdentifiers(columns);\n\n        String[][] rows = createRows();\n        for (int rowIndex = 0; rowIndex &lt; rows.length; rowIndex++) {\n            String[] row = rows[rowIndex];\n            model.setRowCount(model.getRowCount() + 1);\n            for (int columnIndex = 0; columnIndex &lt; row.length; columnIndex++) {\n                String cellData = row[columnIndex];\n                model.setValueAt(cellData, rowIndex, columnIndex);\n            }\n        }\n    }\n\n    private static void updateTableLabel() {\n        String text = createTableLabelText();\n        if (tableLabel != null) tableLabel.setText(text);\n    }\n\n    private static String createTableLabelText() {\n        int rowCount = table.getRowCount();\n        String text = String.format(&quot;Rows: %d&quot;, rowCount);\n        int selectedRow = table.getSelectedRow();\n        if (selectedRow != -1) text = String.format(&quot;Row %d from %d&quot;, selectedRow + 1, rowCount);\n        return text;\n    }\n}\n</code></pre>\n<p>I discovered it has to do with the <code>javax.swing.JTable.SortManager#cacheModelSelection</code> method which is not invoked in the good implementation. As a result, the first <code>if</code> in the <code>javax.swing.JTable.SortManager#restoreSelection</code> method later is evaluated to <code>false</code>, eventually leading to the update of the label text.</p>\n<pre class=\"lang-java prettyprint-override\"><code>// initializes lastModelSelection — bad!\n        private void cacheModelSelection(RowSorterEvent sortEvent) {\n            lastModelSelection = convertSelectionToModel(sortEvent);\n            modelLeadIndex = convertRowIndexToModel(sortEvent,\n                        selectionModel.getLeadSelectionIndex());\n        }\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>// the second if branch is a good one, the execution should go there\n        private void restoreSelection(ModelChange change) {\n            syncingSelection = true;\n            if (lastModelSelection != null) {\n                restoreSortingSelection(lastModelSelection,\n                                        modelLeadIndex, change);\n                lastModelSelection = null;\n            } else if (modelSelection != null) {\n</code></pre>\n<p>Why would I need the bad implementation to begin with? See, our app utilizes the bad approach, and it is not straightforward to refactor it into the good one. I'm concerned it may break the app in unexpected ways. That said, I would still prefer the described bug to go out of the way (safely).</p>\n<p>What are the root causes of this behavior, and are there any tweaks to the &quot;bad&quot; implementation that would make it work?</p>\n<p>Java 8.</p>\n",
+    "tags" : [ "java", "swing" ],
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2667,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "is_answered" : true,
+    "view_count" : 88,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1761631727,
+    "creation_date" : 1761570218,
+    "link" : "https://stackoverflow.com/questions/79801845/selected-row-not-updated-due-to-jtable-filling-method",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79801884,
+    "question_id" : 79801845,
+    "body" : "<blockquote>\n<p>are there any tweaks to the &quot;bad&quot; implementation that would make it work?</p>\n</blockquote>\n<p>I moved the creation of the RowSorter after the creation of the table and they both seem to work the same:</p>\n<pre><code>private static Component createTable() {\n    table = new JTable();\n    //table.setAutoCreateRowSorter(true);\n    //fillTableGood();\n    fillTableBad();\n    table.setAutoCreateRowSorter(true);\n    table.getSelectionModel().addListSelectionListener(e -&gt; updateTableLabel());\n    return table;\n}\n</code></pre>\n<p>Using your original code you could also set the model as the last step of the method:</p>\n<pre><code>private static void fillTableBad() {\n    DefaultTableModel model = new DefaultTableModel();\n    //table.setModel(model);\n\n    String[] columns = createColumns();\n    model.setColumnCount(columns.length);\n    model.setColumnIdentifiers(columns);\n\n    String[][] rows = createRows();\n    for (int rowIndex = 0; rowIndex &lt; rows.length; rowIndex++) {\n        String[] row = rows[rowIndex];\n        model.setRowCount(model.getRowCount() + 1);\n        for (int columnIndex = 0; columnIndex &lt; row.length; columnIndex++) {\n            String cellData = row[columnIndex];\n            model.setValueAt(cellData, rowIndex, columnIndex);\n        }\n    }\n\n    table.setModel(model);\n}\n</code></pre>\n<p>Setting the model last should also be a little more efficient since your won't have to generate any TableModelEvents for changes in the model.</p>\n",
+    "score" : 3,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 44852,
+      "reputation" : 324691,
+      "user_id" : 131872,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/a0ced8e21d2a761db718acb6362b9225?s=256&d=identicon&r=PG",
+      "display_name" : "camickr",
+      "link" : "https://stackoverflow.com/users/131872/camickr"
+    },
+    "creation_date" : 1761572772,
+    "last_activity_date" : 1761586961,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140820910,
+    "post_id" : 79801845,
+    "body" : "I’d say, this is a bug. <code>lastModelSelection</code> should be set to <code>null</code> when <code>modelSelection</code> is set to a non-<code>null</code> value. Otherwise, the <code>modelSelection != null</code> check should be first, to not use the outdated <code>lastModelSelection</code>. The way it is, the problem can appear every time a <code>TableModelEvent</code> is followed by a <code>RowSorterEvent</code>.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 3211603,
+      "reputation" : 300941,
+      "user_id" : 2711488,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+      "display_name" : "Holger",
+      "link" : "https://stackoverflow.com/users/2711488/holger"
+    },
+    "creation_date" : 1761582290,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79801884" : [ {
+      "comment_id" : 140821054,
+      "post_id" : 79801884,
+      "body" : "Not sure what the exact problem is. You should be able to dynamically add/remove rows from the model and sorting should still work. I also found another solution. See updated answer.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 44852,
+        "reputation" : 324691,
+        "user_id" : 131872,
+        "user_type" : "registered",
+        "accept_rate" : 100,
+        "profile_image" : "https://www.gravatar.com/avatar/a0ced8e21d2a761db718acb6362b9225?s=256&d=identicon&r=PG",
+        "display_name" : "camickr",
+        "link" : "https://stackoverflow.com/users/131872/camickr"
+      },
+      "creation_date" : 1761587083,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140820564,
+      "post_id" : 79801884,
+      "body" : "The point is there should be no sorter at the point of table filling. Is it correct?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10187542,
+        "reputation" : 2667,
+        "user_id" : 20692967,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+        "display_name" : "Sergey Zolotarev",
+        "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+      },
+      "creation_date" : 1761573380,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

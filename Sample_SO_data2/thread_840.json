@@ -1,0 +1,62 @@
+{
+  "question" : {
+    "question_id" : 79761409,
+    "title" : "Unknown magic byte with spring cloud stream aggregation",
+    "body" : "<p>I'm developing a Spring Cloud Stream app that accepts messages in Avro format. After setting up everything, I start my app, then get an Unknown magic byte error. I'm thinking this is because I'm using SpecificAvroSerde.</p>\n<p>Here's my code:</p>\n<p><strong>application.yml</strong>:</p>\n<pre class=\"lang-yaml prettyprint-override\"><code>spring:\n  cloud:\n    function:\n      definition: employeeSalaryUpdateFlow\n    stream:\n      bindings:\n        employeeSalaryUpdateFlow-in-0:\n          destination: employee-topic\n      kafka:\n        streams:\n          binder:\n            applicationId: kafka-streams-app\n            brokers: localhost:9092\n            configuration:\n              schema.registry.url: http://localhost:8081\n              processing.guarantee: exactly_once\n              commit.interval.ms: 10000\n              default:\n                key.serde: org.apache.kafka.common.serialization.Serdes$StringSerde\n          bindings:\n            employeeSalaryUpdateFlow-in-0:\n              consumer:\n                materializedAs: employeeSalaryUpdateFlow-store\n                value-serde: io.confluent.kafka.streams.serdes.avro.SpecificAvroSerde\n</code></pre>\n<p><strong>Processor.java</strong></p>\n<pre class=\"lang-java prettyprint-override\"><code>@Bean\npublic Consumer&lt;KStream&lt;String, Employee&gt;&gt; employeeSalaryUpdateFlow() {\n    SpecificAvroSerde&lt;Employee&gt; avroSerde = new SpecificAvroSerde&lt;&gt;();\n    Map&lt;String, String&gt; serdeConfig = new HashMap&lt;&gt;();\n    serdeConfig.put(&quot;schema.registry.url&quot;, &quot;http://localhost:8081&quot;); // Set your schema registry URL\n    avroSerde.configure(serdeConfig, false);\n    return input -&gt; {\n        input\n                .map((k, v) -&gt; {\n                    log.info(&quot;Hey&quot;);\n                    return KeyValue.pair(v.getId(), v);\n                })\n                .toTable()\n                .groupBy((k, v) -&gt; KeyValue.pair(v.getDepartment(), v), Grouped.with(Serdes.String(), avroSerde))\n                .aggregate(() -&gt; employeeSalaryRecordBuilder.init(),\n                        (k, v, agg) -&gt; employeeSalaryRecordBuilder.aggregate(v, agg),\n                        (k, v, agg) -&gt; employeeSalaryRecordBuilder.substract(v, agg))\n                .toStream()\n                .foreach((k, v) -&gt; log.info(String.format(&quot;Department: %s, Total Salary: %f&quot;, k, v.getTotalSalary())));\n    };\n}\n</code></pre>\n<p><strong>Employee.avro</strong></p>\n<pre class=\"lang-json prettyprint-override\"><code>{\n  &quot;namespace&quot;: &quot;me.model&quot;,\n  &quot;type&quot;: &quot;record&quot;,\n  &quot;name&quot;: &quot;Employee&quot;,\n  &quot;fields&quot;: [\n    {&quot;name&quot;: &quot;id&quot;,&quot;type&quot;: [&quot;null&quot;,&quot;string&quot;]},\n    {&quot;name&quot;: &quot;name&quot;,&quot;type&quot;: [&quot;null&quot;,&quot;string&quot;]},\n    {&quot;name&quot;: &quot;department&quot;,&quot;type&quot;: [&quot;null&quot;,&quot;string&quot;]},\n    {&quot;name&quot;: &quot;salary&quot;,&quot;type&quot;: [&quot;null&quot;,&quot;int&quot;]}\n  ]\n}\n</code></pre>\n",
+    "tags" : [ "java", "spring-boot", "apache-kafka-streams", "spring-cloud-stream" ],
+    "owner" : {
+      "account_id" : 10629426,
+      "reputation" : 1044,
+      "user_id" : 7828101,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/8ed4dc2a412b6e7a43d634f2769041db?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "manaclan",
+      "link" : "https://stackoverflow.com/users/7828101/manaclan"
+    },
+    "is_answered" : true,
+    "view_count" : 70,
+    "answer_count" : 1,
+    "score" : 2,
+    "last_activity_date" : 1757848404,
+    "creation_date" : 1757553708,
+    "link" : "https://stackoverflow.com/questions/79761409/unknown-magic-byte-with-spring-cloud-stream-aggregation",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79763592,
+    "question_id" : 79761409,
+    "body" : "<p>I found the answer. Basically, the error message is quite misleading because what I'm missing is the Schema Registry service. You can use my setup to run the whole cluster</p>\n<p><strong>docker-compose.yaml</strong></p>\n<pre class=\"lang-yaml prettyprint-override\"><code>version: '3'\n\nservices:\n  zoo1:\n    image: confluentinc/cp-zookeeper:7.5.3\n    hostname: zoo1\n    container_name: zoo1\n    ports:\n      - &quot;2181:2181&quot;\n    environment:\n      ZOOKEEPER_CLIENT_PORT: 2181\n      ZOOKEEPER_SERVER_ID: 1\n      ZOOKEEPER_SERVERS: zoo1:2888:3888\n\n  kafka1:\n    image: confluentinc/cp-kafka:7.5.3\n    hostname: kafka1\n    container_name: kafka1\n    ports:\n      - &quot;9092:9092&quot;\n      - &quot;29092:29092&quot;\n    environment:\n      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka1:19092,EXTERNAL://${DOCKER_HOST_IP:-127.0.0.1}:9092,DOCKER://host.docker.internal:29092\n      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,DOCKER:PLAINTEXT\n      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL\n      KAFKA_ZOOKEEPER_CONNECT: &quot;zoo1:2181&quot;\n      KAFKA_BROKER_ID: 1\n      KAFKA_LOG4J_LOGGERS: &quot;kafka.controller=INFO,kafka.producer.async.DefaultEventHandler=INFO,state.change.logger=INFO&quot;\n      KAFKA_AUTHORIZER_CLASS_NAME: kafka.security.authorizer.AclAuthorizer\n      KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: &quot;true&quot;\n    depends_on:\n      - zoo1\n\n  kafka2:\n    image: confluentinc/cp-kafka:7.5.3\n    hostname: kafka2\n    container_name: kafka2\n    ports:\n      - &quot;9093:9093&quot;\n      - &quot;29093:29093&quot;\n    environment:\n      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka2:19093,EXTERNAL://${DOCKER_HOST_IP:-127.0.0.1}:9093,DOCKER://host.docker.internal:29093\n      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,DOCKER:PLAINTEXT\n      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL\n      KAFKA_ZOOKEEPER_CONNECT: &quot;zoo1:2181&quot;\n      KAFKA_BROKER_ID: 2\n      KAFKA_LOG4J_LOGGERS: &quot;kafka.controller=INFO,kafka.producer.async.DefaultEventHandler=INFO,state.change.logger=INFO&quot;\n      KAFKA_AUTHORIZER_CLASS_NAME: kafka.security.authorizer.AclAuthorizer\n      KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: &quot;true&quot;\n    depends_on:\n      - zoo1\n\n  kafka3:\n    image: confluentinc/cp-kafka:7.5.3\n    hostname: kafka3\n    container_name: kafka3\n    ports:\n      - &quot;9094:9094&quot;\n      - &quot;29094:29094&quot;\n    environment:\n      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka3:19094,EXTERNAL://${DOCKER_HOST_IP:-127.0.0.1}:9094,DOCKER://host.docker.internal:29094\n      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT,DOCKER:PLAINTEXT\n      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL\n      KAFKA_ZOOKEEPER_CONNECT: &quot;zoo1:2181&quot;\n      KAFKA_BROKER_ID: 3\n      KAFKA_LOG4J_LOGGERS: &quot;kafka.controller=INFO,kafka.producer.async.DefaultEventHandler=INFO,state.change.logger=INFO&quot;\n      KAFKA_AUTHORIZER_CLASS_NAME: kafka.security.authorizer.AclAuthorizer\n      KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: &quot;true&quot;\n    depends_on:\n      - zoo1\n  schema-registry:\n    image: confluentinc/cp-schema-registry:7.5.3\n    hostname: schema-registry\n    container_name: schema-registry\n    ports:\n      - &quot;8081:8081&quot;\n    depends_on:\n      - zoo1\n      - kafka1\n      - kafka2\n      - kafka3\n    environment:\n      SCHEMA_REGISTRY_HOST_NAME: schema-registry\n      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka1:19092,kafka2:19093,kafka3:19094\n      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081\n</code></pre>\n<p>After running Schema Registry, my application start to consume message.</p>\n<p><strong>Bonus</strong>: I've found that there are too few examples on how to develop a Spring Cloud Stream application with aggregation, so I'll but my code snippet here in case someone need it.</p>\n<p>Note that I'm using <code>kafka-avro-serializer</code> and <code>kafka-streams-avro-serde</code> version 7.5.9 together with <code>kafka-streams</code> 3.9.1.<br />\n<strong>DepartmentAggregate.avro</strong></p>\n<pre class=\"lang-json prettyprint-override\"><code>{\n  &quot;namespace&quot;: &quot;vin.kafka_stream_spring_cloud.kafka.model&quot;,\n  &quot;type&quot;: &quot;record&quot;,\n  &quot;name&quot;: &quot;DepartmentAggregate&quot;,\n  &quot;fields&quot;: [\n    {&quot;name&quot;: &quot;total_salary&quot;,&quot;type&quot;: [&quot;null&quot;,&quot;int&quot;]},\n    {&quot;name&quot;: &quot;employee_count&quot;,&quot;type&quot;: [&quot;null&quot;,&quot;int&quot;]},\n    {&quot;name&quot;: &quot;avg_salary&quot;,&quot;type&quot;: [&quot;null&quot;,&quot;double&quot;]}\n  ]\n}\n</code></pre>\n<p><strong>Processor.java</strong></p>\n<pre class=\"lang-java prettyprint-override\"><code>@Bean\npublic Consumer&lt;KStream&lt;String, Employee&gt;&gt; employeeSalaryUpdateFlow() {\n    SpecificAvroSerde&lt;Employee&gt; employeeAvroSerde = new SpecificAvroSerde&lt;&gt;();\n    Map&lt;String, String&gt; employeeSerdeConfig = new HashMap&lt;&gt;();\n    employeeSerdeConfig.put(&quot;schema.registry.url&quot;, &quot;http://localhost:8081&quot;); // Set your schema registry URL\n    employeeAvroSerde.configure(employeeSerdeConfig, false);\n\n    SpecificAvroSerde&lt;DepartmentAggregate&gt; departmentAggregateAvroSerde = new SpecificAvroSerde&lt;&gt;();\n    Map&lt;String, String&gt; departmentAggregateserdeConfig = new HashMap&lt;&gt;();\n    departmentAggregateserdeConfig.put(&quot;schema.registry.url&quot;, &quot;http://localhost:8081&quot;); // Set your schema registry URL\n    departmentAggregateAvroSerde.configure(departmentAggregateserdeConfig, false);\n\n    KeyValueBytesStoreSupplier storeSupplier = Stores.persistentKeyValueStore(&quot;employeeSalaryUpdateFlow-store&quot;);\n    Materialized&lt;String, Employee, KeyValueStore&lt;Bytes, byte[]&gt;&gt; materialized = Materialized.&lt;String, Employee&gt;as(storeSupplier).withKeySerde(Serdes.String()).withValueSerde(employeeAvroSerde);\n\n    return input -&gt; {\n        input\n                .map((k, v) -&gt; KeyValue.pair(v.getId(), v))\n                .toTable(Materialized.with(Serdes.String(), employeeAvroSerde))\n                .groupBy((k, v) -&gt; KeyValue.pair(v.getDepartment(), v), Grouped.with(Serdes.String(), employeeAvroSerde))\n                .aggregate(() -&gt; employeeSalaryRecordBuilder.init(),\n                        (k, v, agg) -&gt; employeeSalaryRecordBuilder.aggregate(v, agg),\n                        (k, v, agg) -&gt; employeeSalaryRecordBuilder.substract(v, agg),\n                        Materialized.with(Serdes.String(), departmentAggregateAvroSerde))\n                .toStream()\n                .foreach((k, v) -&gt; log.info(String.format(&quot;Department: %s, Total Salary: %s&quot;, k, v.getTotalSalary())));\n    };\n}\n</code></pre>\n<p><strong>Note</strong>: If you use IntelliJ Kafka plugin to produce an Avro message, there is a chance that the consumer won't be able to read your message. Instead, use another Spring Cloud Producer application to produce messages using the same Avro schema as your consumer app (in my case - the Employee.avro).</p>\n",
+    "score" : 0,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 10629426,
+      "reputation" : 1044,
+      "user_id" : 7828101,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/8ed4dc2a412b6e7a43d634f2769041db?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "manaclan",
+      "link" : "https://stackoverflow.com/users/7828101/manaclan"
+    },
+    "creation_date" : 1757750521,
+    "last_activity_date" : 1757848404,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140731291,
+    "post_id" : 79761409,
+    "body" : "BOM in Employee.avro?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 22124137,
+      "reputation" : 4244,
+      "user_id" : 16376827,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/1ImPw.png?s=256",
+      "display_name" : "g00se",
+      "link" : "https://stackoverflow.com/users/16376827/g00se"
+    },
+    "creation_date" : 1757670862,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}
