@@ -1,0 +1,82 @@
+{
+  "question" : {
+    "question_id" : 79789042,
+    "title" : "@EmbeddedId and @MapsId used with foreign key partially appearing in primary key",
+    "body" : "<p>I'm running a Spring Boot app.</p>\n<p>I have these two tables in my database. I fill an example of data that contains these tables.</p>\n<p>Table <code>user</code></p>\n<p>Here columns <code>id</code> and <code>century</code> are PKs, and column <code>state_id</code> is a FK from table <code>state</code> with a reference of column <code>id</code> and <code>century</code> is also a FK from table <code>state</code>. So the <code>century</code> column is a FK and a PK at the same time.</p>\n<div class=\"s-table-container\"><table class=\"s-table\">\n<thead>\n<tr>\n<th style=\"text-align: center;\">id</th>\n<th style=\"text-align: center;\">century</th>\n<th style=\"text-align: center;\">name</th>\n<th style=\"text-align: center;\">state_id</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td style=\"text-align: center;\">33</td>\n<td style=\"text-align: center;\">21</td>\n<td style=\"text-align: center;\">John Doe</td>\n<td style=\"text-align: center;\">1</td>\n</tr>\n</tbody>\n</table></div>\n<p>Table <code>state</code></p>\n<p>Here, columns <code>id</code> and <code>century</code> are both primary keys of the table</p>\n<div class=\"s-table-container\"><table class=\"s-table\">\n<thead>\n<tr>\n<th style=\"text-align: center;\">id</th>\n<th style=\"text-align: center;\">century</th>\n<th style=\"text-align: center;\">label</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td style=\"text-align: center;\">1</td>\n<td style=\"text-align: center;\">21</td>\n<td style=\"text-align: center;\">cold</td>\n</tr>\n</tbody>\n</table></div>\n<p>I want to model these two tables as JPA entities, so I did it like this:</p>\n<p>StatePK.java:</p>\n<pre><code>@Embeddable\npublic class StatePK implements Serializable {\n     private Long id;\n     private Integer century;\n}\n</code></pre>\n<p>State.java:</p>\n<pre><code>@Entity\n@Table(name = &quot;state&quot;)\npublic class State {\n\n       @EmbeddedId\n       private StatePK id;\n\n       private String label;\n}\n</code></pre>\n<p>UserPK.java:</p>\n<pre><code>@Embeddable\npublic class UserPK implements Serializable {\n     private Long id;\n     private Integer century;\n}\n</code></pre>\n<p>User.java:</p>\n<pre><code>@Entity\n@Table(name = &quot;user&quot;)\npublic class User implements Serializable {\n\n       @EmbeddedId\n       private UserPK id;\n\n       private String name;\n\n       @MapsId(&quot;century&quot;)\n       @ManyToOne(optional = false)\n       @JoinColumns(value = {\n           @JoinColumn(name = &quot;century&quot;, referencedColumnName = &quot;century&quot;),\n           @JoinColumn(name = &quot;state_id&quot;, referencedColumnName = &quot;id&quot;)})\n       private State state;\n}\n</code></pre>\n<p>When I launch the application, I have the following error:</p>\n<blockquote>\n<p>Error creating bean with name 'entityManagerFactory' defined in class\npath resource\n[org/springframework/boot/autoconfigure/orm/jpa/HibernateJpaConfiguration.class]:\n[PersistenceUnit: default] Unable to build Hibernate SessionFactory;\nnested exception is java.lang.IllegalStateException: PostInitCallback\nqueue could not be processed...\\r\\n        - PostInitCallbackEntry -\nEmbeddableMappingType(fr.xxx.User#{id})#finishInitialization</p>\n</blockquote>\n<p>How can I resolve this error?</p>\n",
+    "tags" : [ "java", "spring", "spring-boot", "jpa" ],
+    "owner" : {
+      "account_id" : 14878684,
+      "reputation" : 863,
+      "user_id" : 10744028,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-XAzkrkEpit0/AAAAAAAAAAI/AAAAAAAAAEg/AWErc7qYyNI/s256-rj/photo.jpg",
+      "display_name" : "Fizik26",
+      "link" : "https://stackoverflow.com/users/10744028/fizik26"
+    },
+    "is_answered" : true,
+    "view_count" : 225,
+    "answer_count" : 2,
+    "score" : 5,
+    "last_activity_date" : 1760612343,
+    "creation_date" : 1760342662,
+    "link" : "https://stackoverflow.com/questions/79789042/embeddedid-and-mapsid-used-with-foreign-key-partially-appearing-in-primary-key",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79791590,
+    "question_id" : 79789042,
+    "body" : "<p>Your current configuration cannot work with <code>@MapsId</code>. This is because the primary key of the dependent entity (<code>user</code>) contains only part of the primary key of the parent entity (<code>state</code>).</p>\n<p>According to the docs of <a href=\"https://docs.oracle.com/javaee/7/api/javax/persistence/MapsId.html\" rel=\"nofollow noreferrer\"><code>@MapsId</code></a></p>\n<blockquote>\n<p>Designates a <code>ManyToOne</code> or <code>OneToOne</code> relationship attribute that provides the mapping for an <a href=\"https://docs.oracle.com/javaee/7/api/javax/persistence/EmbeddedId.html\" rel=\"nofollow noreferrer\" title=\"annotation in javax.persistence\"><code>EmbeddedId</code></a> primary key, <strong>an attribute within an <code>EmbeddedId</code> primary key</strong>, or a simple primary key of the parent entity.</p>\n</blockquote>\n<p>The attributes in the <code>@EmbeddedId</code> field of type <code>UserPK</code> are not sufficient to uniquely identify the related state. A state is identified by the pair <code>(id;century)</code>, while a user contains only <code>century</code> in its <code>@EmbeddedId</code>. This is not enough for <code>@MapsId</code> to <em>map</em> the parent entity's primary key into the dependent entity's primary key.</p>\n<p>To fix your problem, you should refactor <code>UserPK</code>, and replace <code>century</code> with a field of type <code>StatePK</code>. Then, annotate the field <code>state</code> in <code>User</code> with <code>@MapsId</code>, and supply the name of the new <code>StatePK</code> attribute.</p>\n<p>For further reference, here is a link to section <em><a href=\"https://jakarta.ee/specifications/persistence/3.1/jakarta-persistence-spec-3.1.html#a149\" rel=\"nofollow noreferrer\">2.4.1. Primary Keys Corresponding to Derived Identities</a></em> of Jakarta Specification. This paragraph covers how the identity of an entity can be derived from another entity. Below (section <a href=\"https://jakarta.ee/specifications/persistence/3.1/jakarta-persistence-spec-3.1.html#examples-of-derived-identities\" rel=\"nofollow noreferrer\">2.4.1.3. Examples of Derived Identities</a>) are also showcased all possible derivation scenarios. Your situation falls under <em>example 3 - case (b)</em>. Notice how in all examples, the dependent entity's primary key includes <em>entirely</em> the parent entity's primary key.</p>\n<h3>StatePK.java</h3>\n<pre class=\"lang-java prettyprint-override\"><code>@Embeddable\n@NoArgsConstructor\n@AllArgsConstructor\n@Data\npublic class StatePK implements Serializable {\n    private Long id;\n    private Integer century;\n}\n</code></pre>\n<h3>State.java</h3>\n<pre class=\"lang-java prettyprint-override\"><code>@Entity\n@Table(name = &quot;state&quot;)\n@NoArgsConstructor\n@AllArgsConstructor\n@Data\npublic class State {\n\n    @EmbeddedId\n    private StatePK id;\n    private String label;\n}\n</code></pre>\n<h3>UserPK.java</h3>\n<pre class=\"lang-java prettyprint-override\"><code>@Embeddable\n@NoArgsConstructor\n@AllArgsConstructor\n@Data\npublic class UserPK implements Serializable {\n    private Long id;\n    private StatePK stateKey;\n}\n</code></pre>\n<h3>User.java</h3>\n<pre class=\"lang-java prettyprint-override\"><code>@Entity\n@Table(name = &quot;users&quot;)\n@NoArgsConstructor\n@AllArgsConstructor\n@Data\npublic class User implements Serializable {\n\n    @EmbeddedId\n    private UserPK id;\n    private String name;\n\n    @MapsId(&quot;stateKey&quot;)\n    @ManyToOne(optional = false)\n    @JoinColumns({\n            @JoinColumn(name = &quot;state_id&quot;, referencedColumnName = &quot;id&quot;),\n            @JoinColumn(name = &quot;state_century&quot;, referencedColumnName = &quot;century&quot;)\n    })\n    private State state;\n}\n</code></pre>\n<h3>Test Application</h3>\n<pre><code>@SpringBootApplication\npublic class DemoApplication {\n\n    public static void main(String[] args) {\n        SpringApplication.run(DemoApplication.class, args);\n    }\n\n    @Bean\n    public CommandLineRunner demo(EntityDemoService service) {\n        return args -&gt; service.demonstrateEntities();\n    }\n}\n\n@Service\nclass EntityDemoService {\n\n    @PersistenceContext\n    private EntityManager entityManager;\n\n    @Transactional\n    public void demonstrateEntities() {\n        State state = new State();\n        state.setId(new StatePK(1L, 21));\n        state.setLabel(&quot;California&quot;);\n\n        entityManager.persist(state);\n        System.out.println(&quot;Inserted State: &quot; + state);\n\n        User user = new User();\n        user.setId(new UserPK(100L, new StatePK(1L, 21)));\n        user.setName(&quot;John Doe&quot;);\n        user.setState(state);\n\n        entityManager.persist(user);\n        System.out.println(&quot;Inserted User: &quot; + user.getName());\n\n        entityManager.flush();\n        entityManager.clear();\n\n        System.out.println(&quot;\\n--- Reading back from database ---\\n&quot;);\n\n        UserPK searchKey = new UserPK();\n        searchKey.setId(100L);\n        searchKey.setStateKey(new StatePK(1L, 21));\n\n        User foundUser = entityManager.find(User.class, searchKey);\n        System.out.println(&quot;Found User: &quot; + foundUser);\n    }\n}\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 5569841,
+      "reputation" : 8654,
+      "user_id" : 4415625,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/0ea1713807527aa1cf52e40579e35ec4?s=256&d=identicon&r=PG",
+      "display_name" : "dani-vta",
+      "link" : "https://stackoverflow.com/users/4415625/dani-vta"
+    },
+    "creation_date" : 1760561079,
+    "last_activity_date" : 1760595477,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79791267,
+    "question_id" : 79789042,
+    "body" : "<p>The <code>@MapsId(&quot;century&quot;)</code>  maps only <strong>part</strong> of the composite key but Hibernate expects <code>@MapsId</code> to map the <strong>entire</strong> primary key from the parent (<strong>id</strong>, <strong>century</strong>), not just one column.</p>\n<p>You can fix it by removing <code>@MapsId</code> and explicitly defining the join columns:</p>\n<pre><code>@Entity\n@Table(name = &quot;\\&quot;user\\&quot;&quot;) // 'user' is reserved keyword in SQL\npublic class User {\n\n    @EmbeddedId\n    private UserPK id;\n\n    private String name;\n\n    @ManyToOne(optional = false)\n    @JoinColumns({\n        @JoinColumn(name = &quot;state_id&quot;, referencedColumnName = &quot;id&quot;),\n        @JoinColumn(name = &quot;century&quot;, referencedColumnName = &quot;century&quot;)\n    })\n    private State state;\n}\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 18239208,
+      "reputation" : 647,
+      "user_id" : 13276541,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a-/AOh14GgPsMth9rUGvp9lxK_Nky2OaBid5MNfuotaqiF9Bg=k-s256",
+      "display_name" : "Ahmed Mera",
+      "link" : "https://stackoverflow.com/users/13276541/ahmed-mera"
+    },
+    "creation_date" : 1760537753,
+    "last_activity_date" : 1760537753,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79791267" : [ {
+      "comment_id" : 140798114,
+      "post_id" : 79791267,
+      "body" : "The part about @MapsId is correct, but this configuration does not work. If you try to insert a state and then a user, you get <code>org.hibernate.exception.ConstraintViolationException: could not execute statement [NULL not allowed for column &quot;STATE_ID&quot;</code>",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 5569841,
+        "reputation" : 8654,
+        "user_id" : 4415625,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/0ea1713807527aa1cf52e40579e35ec4?s=256&d=identicon&r=PG",
+        "display_name" : "dani-vta",
+        "link" : "https://stackoverflow.com/users/4415625/dani-vta"
+      },
+      "creation_date" : 1760559391,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

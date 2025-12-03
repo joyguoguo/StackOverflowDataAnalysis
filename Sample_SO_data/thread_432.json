@@ -1,0 +1,112 @@
+{
+  "question" : {
+    "question_id" : 79799837,
+    "title" : "OpenTelemetry / Spring Boot — class-loading issue with helper class",
+    "body" : "<p>I am using <strong>Java 21</strong>, <strong>Spring Boot 3.3.12</strong>, <strong>Otel java agent 2.21.0</strong> and a simple Product Service application.</p>\n<p>Below is my application's <code>Dockerfile</code>:</p>\n<pre><code>FROM openjdk:21-jdk-slim\n\nWORKDIR /app\nARG JAR_FILE=target/product-service-0.0.1-SNAPSHOT.jar\nCOPY ${JAR_FILE} app.jar\n\nEXPOSE 8080\n\nCOPY opentelemetry-javaagent.jar /opt/agent/opentelemetry-javaagent.jar\nCOPY my-otel-extension.jar /opt/agent/my-otel-extension.jar\nCOPY my-otel-extension-helper.jar /opt/agent/my-otel-extension-helper.jar\n\nENV OTEL_EXPORTER_OTLP_ENDPOINT=http://host.docker.internal:4318\nENV OTEL_SERVICE_NAME=&quot;product-service&quot;\n\nENTRYPOINT [&quot;java&quot;,\n            &quot;-Xbootclasspath/a:/opt/agent/my-otel-extension-helper.jar&quot;,\n            &quot;-javaagent:/opt/agent/opentelemetry-javaagent.jar&quot;,\n            &quot;-Dotel.javaagent.extensions=/opt/agent/my-otel-extension.jar&quot;,\n            &quot;-jar&quot;, &quot;app.jar&quot;]\n</code></pre>\n<p>My OpenTelemetry extension contains:</p>\n<ol>\n<li><p><strong>A custom <code>MySpanProcessor</code></strong>\n(reference: <a href=\"https://github.com/open-telemetry/opentelemetry-java-instrumentation/blob/main/examples/extension/src/main/java/com/example/javaagent/DemoSpanProcessor.java\" rel=\"nofollow noreferrer\">DemoSpanProcessor.java</a>)</p>\n<p>The <code>onEnd()</code> method is overridden to call a static method <code>DynaPathRecorder.stopRecording()</code> from my helper JAR.\nAt runtime, <code>MySpanProcessor</code> (from the extension) is loaded by OpenTelemetry’s <code>ExtensionClassLoader</code>, which references the helper JAR on the boot classpath.\nTherefore, the helper class is correctly loaded by the <strong>boot classloader</strong>, as expected.</p>\n<pre><code>@Override\npublic void onEnd(ReadableSpan span) {\n    SpanKind spanKind = span.getKind();\n    if (spanKind == SpanKind.SERVER) {\n        com.rz.javaagent.instr.ext.DynaPathRecorder.stopRecording();\n    }\n}\n</code></pre>\n</li>\n<li><p><strong>An <code>@Advice</code> class</strong></p>\n<p>A simple <code>@Advice.OnMethodEnter</code> injects a snippet into an application controller method.\nThe injected code calls another static method <code>DynaPathRecorder.controllerEntry()</code> from the same helper JAR.\nAt runtime, this <code>Advice</code> class (from the extension) is loaded by Spring Boot’s <code>LaunchedClassLoader</code>.\nAlthough the helper JAR is on the boot classpath, the <code>LaunchedClassLoader</code> loads the helper class itself instead of delegating to the boot classloader.\nAs a result, two copies of the helper class exist in the JVM — one loaded by the <code>ExtensionClassLoader</code> and another by the <code>LaunchedClassLoader</code>.</p>\n<pre><code>@Advice.OnMethodEnter\npublic static void onEnter(@Advice.Origin String method) {\n    com.rz.javaagent.instr.ext.DynaPathRecorder.controllerEntry();\n}\n</code></pre>\n</li>\n</ol>\n<p>I think either Springboot's or Otel's classloading mechanism is causing this issue.</p>\n<p>I would like the helper class to always be loaded by the <strong>boot classloader</strong>, ensuring there is only a <strong>single instance</strong> shared between both the <code>@Advice</code> code and the <code>MySpanProcessor</code>.</p>\n",
+    "tags" : [ "java", "spring-boot", "otel", "classloading" ],
+    "owner" : {
+      "account_id" : 2453177,
+      "reputation" : 51,
+      "user_id" : 2138951,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b8e17b2b6ae5dd6760129ea84984e0fd?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Sri",
+      "link" : "https://stackoverflow.com/users/2138951/sri"
+    },
+    "is_answered" : true,
+    "view_count" : 115,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1761578046,
+    "creation_date" : 1761453464,
+    "link" : "https://stackoverflow.com/questions/79799837/opentelemetry-spring-boot-class-loading-issue-with-helper-class",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79801971,
+    "question_id" : 79799837,
+    "body" : "<p>The issue with my earlier approach was that I was treating `DynaPathRecorder` as a **helper class**, when it is actually a **shared class**.</p>\n<p>**Helper class:** A helper class is injected into the application classloader so that it can access all classes loaded by that classloader — and vice versa.</p>\n<p>**Shared class:** A shared class is one that needs to be accessible across multiple classloaders. One way to achieve this, it should be loaded by the **boot classloader**.</p>\n<p>In my previous setup, my `InstrumentationModule` implemented the `isHelperClass()` and `getAdditionalHelperClassNames()` methods, which marked `DynaPathRecorder` as a helper class. When the OpenTelemetry agent detected it as a helper, it injected it into the application classloader instead of delegating loading to the boot classloader.</p>\n<p>In my updated setup, I removed the implementations of `isHelperClass()` and `getAdditionalHelperClassNames()`. As a result, the OpenTelemetry agent now delegates the loading of `DynaPathRecorder` to the boot classloader, which resolves the issue.</p>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 2453177,
+      "reputation" : 51,
+      "user_id" : 2138951,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b8e17b2b6ae5dd6760129ea84984e0fd?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Sri",
+      "link" : "https://stackoverflow.com/users/2138951/sri"
+    },
+    "creation_date" : 1761578046,
+    "last_activity_date" : 1761578046,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140818083,
+    "post_id" : 79799837,
+    "body" : "@nineninesevenfour I have already tried two options suggested in the GitHub discussion you mentioned, but neither worked.  1. <b>Using the boot class loader:</b> As you can see in my Dockerfile, I appended my helper JAR using the <code>-Xbootclasspath&#47;a</code> option. This did not resolve the issue. 2. <b>Using extension and distro JARs:</b> I have tried both approaches, but they also did not solve the problem.  I don’t think reflection would help in this case. However, the point about exploring the bootstrap example aka the <b>Agent API</b> is interesting. I’ll give that a try and update the results here.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2453177,
+      "reputation" : 51,
+      "user_id" : 2138951,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b8e17b2b6ae5dd6760129ea84984e0fd?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Sri",
+      "link" : "https://stackoverflow.com/users/2138951/sri"
+    },
+    "creation_date" : 1761497377,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140817833,
+    "post_id" : 79799837,
+    "body" : "And btw, it seems someone else had the same problem before. If I understand the answer there correctly, they suggest to use reflection and system classloader as a workaround: <a href=\"https://github.com/open-telemetry/opentelemetry-java-instrumentation/discussions/7042\" rel=\"nofollow noreferrer\">github.com/open-telemetry/opentelemetry-java-instrumentation&zwnj;&#8203;/&hellip;</a>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 21851467,
+      "reputation" : 974,
+      "user_id" : 16143492,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/PMrGU.png?s=256",
+      "display_name" : "nineninesevenfour",
+      "link" : "https://stackoverflow.com/users/16143492/nineninesevenfour"
+    },
+    "creation_date" : 1761483744,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140817828,
+    "post_id" : 79799837,
+    "body" : "I never worked with OpenTelemetry, but I find this an interesting question. You might be able to workaraound your problem by adding the advice through telemetry&#39;s TypeInstrumentation API. Here is an example: <a href=\"https://github.com/open-telemetry/opentelemetry-java-instrumentation/blob/main/examples/extension/src/main/java/com/example/javaagent/instrumentation/DemoServlet3Instrumentation.java\" rel=\"nofollow noreferrer\">github.com/open-telemetry/opentelemetry-java-instrumentation&zwnj;&#8203;/&hellip;</a> This way your application code would be free from your metric needs. It should also be possible to add a &quot;marker annotation&quot; to your controller.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 21851467,
+      "reputation" : 974,
+      "user_id" : 16143492,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/PMrGU.png?s=256",
+      "display_name" : "nineninesevenfour",
+      "link" : "https://stackoverflow.com/users/16143492/nineninesevenfour"
+    },
+    "creation_date" : 1761483587,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79801971" : [ {
+      "comment_id" : 140820806,
+      "post_id" : 79801971,
+      "body" : "If this solution works for you, you should accept your own answer.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 3391382,
+        "reputation" : 5361,
+        "user_id" : 2846138,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/2sp68.png?s=256",
+        "display_name" : "cyberbrain",
+        "link" : "https://stackoverflow.com/users/2846138/cyberbrain"
+      },
+      "creation_date" : 1761579254,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

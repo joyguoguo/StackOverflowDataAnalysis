@@ -1,0 +1,93 @@
+{
+  "question" : {
+    "question_id" : 79805315,
+    "title" : "Micrometer trace for async method and scheduled method",
+    "body" : "<p>I have a Spring Boot application with scheduled jobs that call async methods. The scheduled method gets a trace ID automatically, but it's not propagating to the async methods unless i manually create spans in the async methods. I need each scheduled execution to have one trace ID shared across all operations, with different span IDs for each async operation.</p>\n<p>Current Setup:</p>\n<p>Spring Boot 3.5.4 Micrometer 1.15.2 with Brave bridge for tracing Log4j2 with MDC for structured logging ThreadPoolTaskExecutor for async processing</p>\n<p>Is there a way to make my current approach cleaner, does it look robust?\nHere is the code</p>\n<p>This is what I am doing right now, it seems to work, does it look correct? Do you see any issues? Is there a cleaner solution possible?</p>\n<p>AsyncConfig.java</p>\n<pre><code>import io.micrometer.context.ContextSnapshot;\nimport org.springframework.beans.factory.annotation.Value;\nimport org.springframework.context.annotation.Bean;\nimport org.springframework.context.annotation.Configuration;\nimport org.springframework.scheduling.annotation.EnableAsync;\nimport org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;\n\n@Configuration\n@EnableAsync\npublic class AsyncConfig {\n    \n    public static final String THREAD_POOL_NAME = &quot;threadPoolTaskExecutor&quot;;\n    \n    @Value(&quot;${thread-pools.data-poller.max-size:10}&quot;)\n    private int threadPoolMaxSize;\n    \n    @Value(&quot;${thread-pools.data-poller.core-size:5}&quot;)\n    private int threadPoolCoreSize;\n    \n    @Value(&quot;${thread-pools.data-poller.queue-capacity:100}&quot;)\n    private int threadPoolQueueSize;\n    \n    @Bean(name = THREAD_POOL_NAME)\n    public ThreadPoolTaskExecutor getThreadPoolTaskExecutor() {\n        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();\n        executor.setMaxPoolSize(threadPoolMaxSize);\n        executor.setCorePoolSize(threadPoolCoreSize);\n        executor.setQueueCapacity(threadPoolQueueSize);\n        // Add context propagation\n        executor.setTaskDecorator(runnable -&gt; \n            ContextSnapshot.captureAll().wrap(runnable)\n        );\n        return executor;\n    }\n}\n</code></pre>\n<p>DataProcessor.java</p>\n<pre><code>import io.micrometer.tracing.Span;\nimport io.micrometer.tracing.Tracer;\nimport lombok.NonNull;\nimport lombok.RequiredArgsConstructor;\nimport lombok.extern.slf4j.Slf4j;\nimport org.springframework.scheduling.annotation.Async;\nimport org.springframework.stereotype.Service;\n\n@Slf4j\n@Service\n@RequiredArgsConstructor\npublic class DataProcessor {\n    \n    @NonNull\n    private final Tracer tracer;\n    \n    public static final String THREAD_POOL_NAME = &quot;threadPoolTaskExecutor&quot;;\n    \n    @Async(THREAD_POOL_NAME)\n    public void processPendingData() {\n        Span span = tracer.nextSpan().name(&quot;process-pending-data&quot;).start();\n        try (Tracer.SpanInScope ws = tracer.withSpan(span)) {\n            log.info(&quot;Processing pending items&quot;);\n            // Now shows correct traceId and unique spanId!\n            // Business logic here\n        } finally {\n            span.end();\n        }\n    }\n    \n    @Async(THREAD_POOL_NAME)\n    public void processRetryData() {\n        Span span = tracer.nextSpan().name(&quot;process-retry-data&quot;).start();\n        try (Tracer.SpanInScope ws = tracer.withSpan(span)) {\n            log.info(&quot;Processing retry items&quot;);\n            // Now shows correct traceId and unique spanId!\n            // Retry logic here\n        } finally {\n            span.end();\n        }\n    }\n}\n</code></pre>\n<p>PollingService.java</p>\n<pre><code>import lombok.NonNull;\nimport lombok.RequiredArgsConstructor;\nimport lombok.extern.slf4j.Slf4j;\nimport org.springframework.scheduling.annotation.EnableScheduling;\nimport org.springframework.scheduling.annotation.Scheduled;\nimport org.springframework.stereotype.Service;\n\n@Slf4j\n@Service\n@EnabledScheduling\n@RequiredArgsConstructor\npublic class PollingService {\n    \n    @NonNull\n    private final DataProcessor dataProcessor;\n    \n    // the trace id automatically spawns for this\n    @Scheduled(fixedDelay = 5000)\n    public void pollData() {\n        log.info(&quot;Starting data polling&quot;); \n        // Shows traceId and spanId correctly in logs\n        \n        // These async calls lose trace context\n        dataProcessor.processPendingData();\n        dataProcessor.processRetryData();\n    }\n}\n</code></pre>\n",
+    "tags" : [ "java", "spring", "spring-boot", "spring-micrometer", "micrometer-tracing" ],
+    "owner" : {
+      "account_id" : 44481772,
+      "reputation" : 17,
+      "user_id" : 31775267,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/55950ef27af2995823de90ca9794a36b?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Bluev Blue",
+      "link" : "https://stackoverflow.com/users/31775267/bluev-blue"
+    },
+    "is_answered" : false,
+    "view_count" : 148,
+    "answer_count" : 0,
+    "score" : 0,
+    "last_activity_date" : 1761904649,
+    "creation_date" : 1761868280,
+    "link" : "https://stackoverflow.com/questions/79805315/micrometer-trace-for-async-method-and-scheduled-method",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140831407,
+    "post_id" : 79805315,
+    "body" : "Also you can start a new span inside the wrapper of the runnable in order to avoid doing it inside each <code>@Async</code>. Maybe options from here would help <a href=\"https://stackoverflow.com/a/79804705/7613649\">stackoverflow.com/a/79804705/7613649</a>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10320634,
+      "reputation" : 3398,
+      "user_id" : 7613649,
+      "user_type" : "registered",
+      "accept_rate" : 25,
+      "profile_image" : "https://www.gravatar.com/avatar/c95137fce225c304ac42743da3816d6c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Geba",
+      "link" : "https://stackoverflow.com/users/7613649/geba"
+    },
+    "creation_date" : 1762028366,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140829832,
+    "post_id" : 79805315,
+    "body" : "No it isn&#39;t. It doesn&#39;t break anything. ]",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126777,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1761933606,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140829276,
+    "post_id" : 79805315,
+    "body" : "I heard using NewSpan ContinueSpan breaks async nature of the methods. Is this true?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 44481772,
+      "reputation" : 17,
+      "user_id" : 31775267,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/55950ef27af2995823de90ca9794a36b?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Bluev Blue",
+      "link" : "https://stackoverflow.com/users/31775267/bluev-blue"
+    },
+    "creation_date" : 1761915816,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140828888,
+    "post_id" : 79805315,
+    "body" : "You can use the <code>@NewSpan</code>, <code>@ContinueSpan</code> atc. annotation from micrometer instead of doing it manually.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126777,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1761904781,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

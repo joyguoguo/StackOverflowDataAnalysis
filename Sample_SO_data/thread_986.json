@@ -1,0 +1,64 @@
+{
+  "question" : {
+    "question_id" : 79748675,
+    "title" : "How to trigger StructuredTaskScope.TimeoutException on Java 25",
+    "body" : "<p>I am trying to use StructuredTaskScope on Java 25. However, I could not to trigger StructuredTaskScope.TimeoutException.</p>\n<p>Please find the code <a href=\"https://github.com/tugalsan/com.tugalsan.tst.thread/blob/main/src/main/java/com/tugalsan/tst/thread/Main.java\" rel=\"nofollow noreferrer\">here</a> and below:</p>\n<pre class=\"lang-java prettyprint-override\"><code>package com.tugalsan.tst.thread;\n\nimport java.time.Duration;\nimport java.util.Arrays;\nimport java.util.List;\nimport java.util.Optional;\nimport java.util.concurrent.Callable;\nimport java.util.concurrent.StructuredTaskScope;\nimport java.util.concurrent.StructuredTaskScope.Joiner;\nimport java.util.concurrent.StructuredTaskScope.Subtask.State;\n\npublic class Main {\n\n    public static void main(String... s) {\n        Callable&lt;String&gt; tenSecsTask = () -&gt; {\n            Thread.sleep(Duration.ofSeconds(10));\n            return &quot;a&quot;;\n        };\n        var allAwait = allAwait(&quot;allAwait&quot;, Duration.ofSeconds(2), tenSecsTask);\n        allAwait.resultsSuccessful().forEach(IO::println);\n        IO.println(&quot;main.done..&quot;);\n    }\n\n    public static record AllAwait&lt;R&gt;(String name, Duration timeout, List&lt;R&gt; resultsSuccessful, List&lt;StructuredTaskScope.Subtask&lt;R&gt;&gt; resultsFailedOrUnavailable, Optional&lt;StructuredTaskScope.TimeoutException&gt; timeoutException) {\n\n    }\n\n    public static &lt;R&gt; AllAwait&lt;R&gt; allAwait(String name, Duration timeout, Callable&lt;R&gt;... callables) {\n        try (var scope = StructuredTaskScope.open(Joiner.&lt;R&gt;awaitAll(),\n                cf -&gt; {\n                    if (name != null) {\n                        cf.withName(name);\n                    }\n                    if (timeout != null) {\n                        cf.withTimeout(timeout);\n                    }\n                    return cf;\n                }\n        )) {\n            var subTasks = Arrays.stream(callables).map(scope::fork).toList();\n            scope.join();\n            var resultsSuccessful = subTasks.stream().filter(st -&gt; st.state() == State.SUCCESS).map(StructuredTaskScope.Subtask::get).toList();\n            var resultsFailedOrUnavailable = subTasks.stream().filter(st -&gt; st.state() == State.FAILED || st.state() == State.UNAVAILABLE).toList();\n            return new AllAwait(name, timeout, resultsSuccessful, resultsFailedOrUnavailable, Optional.empty());\n        } catch (InterruptedException | StructuredTaskScope.TimeoutException e) {\n            throwIfInterruptedException(e);\n            if (e instanceof StructuredTaskScope.TimeoutException et) {\n                return new AllAwait(name, timeout, List.of(), List.of(), Optional.of(et));\n            }\n            return null;\n        }\n    }\n....\n}\n\n</code></pre>\n<p>Console output shows, the callable finishes its work successfully, but it is supposed to fail.</p>\n<pre class=\"lang-none prettyprint-override\"><code>Executing command line: [C:\\bin\\java\\home\\bin\\java.exe, --enable-preview, --enable-preview, --add-modules, jdk.incubator.vector, -classpath, C:\\git\\tst\\com.tugalsan.tst.thread\\target\\classes, com.tugalsan.tst.thread.Main]\nWARNING: Using incubator modules: jdk.incubator.vector\na\nmain.done..\n</code></pre>\n<p>I have missed adding the InterruptedException handling code before. Please find it below as well:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@SuppressWarnings(&quot;unchecked&quot;)\nprivate static &lt;T extends Throwable&gt; void _throwAsUncheckedException(Throwable exception) throws T {\n    throw (T) exception;\n}\n\n@Deprecated //only internalUse\nprivate static void throwAsUncheckedException(Throwable exception) {\n    Main.&lt;RuntimeException&gt;_throwAsUncheckedException(exception);\n}\n\npublic static &lt;R&gt; R throwIfInterruptedException(Throwable t) {\n    if (isInterruptedException(t)) {\n        Thread.currentThread().interrupt();\n        throwAsUncheckedException(t);\n    }\n    return null;\n}\n\npublic static boolean isInterruptedException(Throwable t) {\n    if (t instanceof InterruptedException) {\n        return true;\n    }\n    if (t.getCause() != null) {\n        return isInterruptedException(t.getCause());\n    }\n    return false;\n}\n</code></pre>\n",
+    "tags" : [ "java", "structured-task-scope" ],
+    "owner" : {
+      "account_id" : 1927984,
+      "reputation" : 753,
+      "user_id" : 1738007,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/PqYoh.jpg?s=256",
+      "display_name" : "Tugalsan Karabacak",
+      "link" : "https://stackoverflow.com/users/1738007/tugalsan-karabacak"
+    },
+    "is_answered" : true,
+    "view_count" : 139,
+    "answer_count" : 1,
+    "score" : 3,
+    "last_activity_date" : 1756369168,
+    "creation_date" : 1756359663,
+    "link" : "https://stackoverflow.com/questions/79748675/how-to-trigger-structuredtaskscope-timeoutexception-on-java-25",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79748771,
+    "question_id" : 79748675,
+    "body" : "<p>You are not creating the <code>StructuredTaskScope</code> with a timeout as required for a <code>StructuredTaskScope.Timeout</code> exception to be thrown.</p>\n<p>Why? Because the documentation for <code>StructuredTaskScope.Configuration#withTimeout()</code> says:</p>\n<blockquote>\n<p>Returns a <strong>new</strong> { Configuration} object with the given timeout. The other components are the same as this object.</p>\n</blockquote>\n<p>But you throw away that new <code>Configuration</code> object and return the unconfigured <code>Configuration</code> object.</p>\n<p>You should create your <code>StructuredTaskScope</code> as</p>\n<pre><code>       try (var scope = StructuredTaskScope.open(Joiner.&lt;R&gt;awaitAll(),\n                cf -&gt; cf.withName(name).withTimeout(timeout);\n        )) {\n</code></pre>\n",
+    "score" : 4,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 7423601,
+      "reputation" : 21940,
+      "user_id" : 5646962,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/950788cd150c2e596944181dfd8421af?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Thomas Kl&#228;ger",
+      "link" : "https://stackoverflow.com/users/5646962/thomas-kl%c3%a4ger"
+    },
+    "creation_date" : 1756366361,
+    "last_activity_date" : 1756366361,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79748771" : [ {
+      "comment_id" : 140697922,
+      "post_id" : 79748771,
+      "body" : "I confirm, updating the code to &quot;return cf.withName(name).withTimeout(timeout);&quot; works.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1927984,
+        "reputation" : 753,
+        "user_id" : 1738007,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/PqYoh.jpg?s=256",
+        "display_name" : "Tugalsan Karabacak",
+        "link" : "https://stackoverflow.com/users/1738007/tugalsan-karabacak"
+      },
+      "creation_date" : 1756367204,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

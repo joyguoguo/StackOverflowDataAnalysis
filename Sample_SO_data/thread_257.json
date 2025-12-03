@@ -1,0 +1,134 @@
+{
+  "question" : {
+    "question_id" : 79817739,
+    "title" : "Azure Storage blob upload filename collision with UUID",
+    "body" : "<p>During performance test we got some error from Azure Storage saying that</p>\n<blockquote>\n<p>com.azure.storage.blob.models.BlobStorageException: Status code 409, &quot;<Code>BlobAlreadyExists</Code>The specified blob already exists. RequestId:53c64237-701e-0086-6766-52cc7f000000</p>\n</blockquote>\n<p>The obvious reason would be that we want to use the same id to upload the blob to Azure.<br />\nHowever what we have is</p>\n<pre><code>@Override\npublic String storeQuote(final JsonNode quote) {\n    final String uuid = UUID.randomUUID().toString();\n    try {\n        final String blobName = BLOB_PREFIX + uuid;\n\n        LOGGER.debug(&quot;Uploading content to blob[{}].&quot;, blobName);\n        BlobClient blobClient = blobContainerClient.getBlobClient(blobName);\n        blobClient.upload(BinaryData.fromObject(quote));\n        LOGGER.debug(&quot;Upload was successful to blob [{}].&quot;, blobName);\n\n        return uuid;\n    }\n    catch (Exception e) {\n        throw new AzureBlogStorageErrorException(&quot;Error occurred when stored the quote in to Azure Blob Storage!&quot;, e);\n    }\n}\n</code></pre>\n<p>I can hardly imagine that we had 10+ times UUID collision in 1-2 hours performance test (I am just joking, obviously it can't happen or I am just very-very-... unlucky).</p>\n<p>Any idea please what the issue can be please?</p>\n<p>//////////////////////// question 1 ////////////////////////<br />\nI haven't set any retry mechanism, can this problem be caused by that? Is there a default retry if nothing is set? As far as I know there isn't but I am not 100% sure.</p>\n",
+    "tags" : [ "java", "azure-blob-storage", "azure-storage", "uuid" ],
+    "owner" : {
+      "account_id" : 1324418,
+      "reputation" : 1519,
+      "user_id" : 1269572,
+      "user_type" : "registered",
+      "accept_rate" : 76,
+      "profile_image" : "https://www.gravatar.com/avatar/71bbb43fc9269586beb0688707ebae7c?s=256&d=identicon&r=PG",
+      "display_name" : "Viktor",
+      "link" : "https://stackoverflow.com/users/1269572/viktor"
+    },
+    "is_answered" : true,
+    "view_count" : 76,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1763558673,
+    "creation_date" : 1762950738,
+    "link" : "https://stackoverflow.com/questions/79817739/azure-storage-blob-upload-filename-collision-with-uuid",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79824494,
+    "question_id" : 79817739,
+    "body" : "<p>Azure Storage SDK does, indeed, have a default retry mechanism built in. Most likely, the issue you're running into stems from partially completed uploads.</p>\n<p>Since you're performance testing, the most likely scenario is that the upload is creating the file in your storage container, but due to high loads, the <code>success</code> response isn't being received by the client. Thus, the client will retry the upload using the same UUID.</p>\n<p>In order to mitigate the issue you're going to want to use the <code>BlobServiceClientBuilder.retryOptions()</code> method to setup your retries. You can find documentation regarding the different options you can work with <a href=\"https://learn.microsoft.com/en-us/java/api/com.azure.core.http.policy.retryoptions?view=azure-java-stable\" rel=\"nofollow noreferrer\">here.</a></p>\n",
+    "score" : 0,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 223215,
+      "reputation" : 3104,
+      "user_id" : 482270,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/oXbT0.jpg?s=256",
+      "display_name" : "akseli",
+      "link" : "https://stackoverflow.com/users/482270/akseli"
+    },
+    "creation_date" : 1763558673,
+    "last_activity_date" : 1763558673,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140852952,
+    "post_id" : 79817739,
+    "body" : "Also, is your code multithreaded? Are <code>blobContainerClient</code> and <code>BlobClient </code> both thread-safe? I would guess you have some kind of thread-safety or cached-value problem.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 322981,
+      "reputation" : 346842,
+      "user_id" : 642706,
+      "user_type" : "registered",
+      "accept_rate" : 58,
+      "profile_image" : "https://i.sstatic.net/ZWEI3.jpg?s=256",
+      "display_name" : "Basil Bourque",
+      "link" : "https://stackoverflow.com/users/642706/basil-bourque"
+    },
+    "creation_date" : 1763056485,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140852945,
+    "post_id" : 79817739,
+    "body" : "Start with logging the value of both <code>uuid</code> and <code>blobName</code> as a sanity-check. Did you study your logs? Did you see duplicates there? Verify your <code>import</code> statements, and change those variable names to avoid collisions.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 322981,
+      "reputation" : 346842,
+      "user_id" : 642706,
+      "user_type" : "registered",
+      "accept_rate" : 58,
+      "profile_image" : "https://i.sstatic.net/ZWEI3.jpg?s=256",
+      "display_name" : "Basil Bourque",
+      "link" : "https://stackoverflow.com/users/642706/basil-bourque"
+    },
+    "creation_date" : 1763056161,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140852033,
+    "post_id" : 79817739,
+    "body" : "Thanks for the reply. Yes, that was my understanding but as per my code above I am not sure what the root cause is. As I know there isn&#39;t a retry working when Azure Storage is called, at least I haven&#39;t set anything. I wouldn&#39;t want to add a silly code to generate a new UUID and upload again when this 409 error is retrieved. It would be good to find the root cause. However I might need to do that...",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1324418,
+      "reputation" : 1519,
+      "user_id" : 1269572,
+      "user_type" : "registered",
+      "accept_rate" : 76,
+      "profile_image" : "https://www.gravatar.com/avatar/71bbb43fc9269586beb0688707ebae7c?s=256&d=identicon&r=PG",
+      "display_name" : "Viktor",
+      "link" : "https://stackoverflow.com/users/1269572/viktor"
+    },
+    "creation_date" : 1763026317,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140851632,
+    "post_id" : 79817739,
+    "body" : "No, <code>UUID.randomUUID()</code> is not generating duplicates (unless you went out of your way to register a faulty security Provider); something else is going on. See <a href=\"https://github.com/openjdk/jdk/blob/master/src/java.base/share/classes/java/util/UUID.java\" rel=\"nofollow noreferrer\">the source code</a> in OpenJDK. That class is implemented with <a href=\"https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/security/SecureRandom.html#%3Cinit%3E()\" rel=\"nofollow noreferrer\">no-arg constructor</a> of <code>java.security.SecureRandom</code>. That class provides a cryptographically-strong random number generator with non-deterministic output.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 322981,
+      "reputation" : 346842,
+      "user_id" : 642706,
+      "user_type" : "registered",
+      "accept_rate" : 58,
+      "profile_image" : "https://i.sstatic.net/ZWEI3.jpg?s=256",
+      "display_name" : "Basil Bourque",
+      "link" : "https://stackoverflow.com/users/642706/basil-bourque"
+    },
+    "creation_date" : 1763007710,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79824494" : [ {
+      "comment_id" : 140880563,
+      "post_id" : 79824494,
+      "body" : "Yes, that was it, thanks! Meanwhile I learnt more about this default retry function and found a way to turn it off. Cheers",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1324418,
+        "reputation" : 1519,
+        "user_id" : 1269572,
+        "user_type" : "registered",
+        "accept_rate" : 76,
+        "profile_image" : "https://www.gravatar.com/avatar/71bbb43fc9269586beb0688707ebae7c?s=256&d=identicon&r=PG",
+        "display_name" : "Viktor",
+        "link" : "https://stackoverflow.com/users/1269572/viktor"
+      },
+      "creation_date" : 1764540819,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

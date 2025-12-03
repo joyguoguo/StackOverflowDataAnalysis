@@ -1,0 +1,82 @@
+{
+  "question" : {
+    "question_id" : 79796432,
+    "title" : "Mapping multiple subclasses to same Parent ID in JPA Joined Inheritance",
+    "body" : "<p>I created the tables Person, PersonExtra, PersonBasic, etc. in my database with the superclass Person and subclasses PersonExtra and PersonBasic.</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Entity\n@Table(name = &quot;person&quot;)\n@Inheritance(strategy = InheritanceType.JOINED)\npublic class Person {\n    @Id\n    @Column(name = &quot;id&quot;, nullable = false, unique = true, length = 20)\n    private String id;\n    private String name;\n    private String lastname;\n    // ...\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>@Entity\n@PrimaryKeyJoinColumn(name = &quot;extra_id&quot;)\npublic class PersonExtra extends Person {\n    private String code;\n    private String subject;\n    // ...\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>@Entity\n@PrimaryKeyJoinColumn(name = &quot;basic_id&quot;)\npublic class PersonBasic extends Person {\n    private String range;\n}\n</code></pre>\n<p>If I create a Person first and then try to create a PersonExtra with an existing Person's ID, I get a duplicate ID error because it tries to persist both Person and PersonExtra. It seems like a person can only have one unique type and can only be created through the subclass.</p>\n<ul>\n<li>I would like a person to be able to be both a PersonExtra and a PersonBasic at the same time.</li>\n</ul>\n<p>When I was modeling the database, it seemed better. I had the idea of using something like inheritance in the database, which could be easier to map.</p>\n<p>How can I structure my JPA entities so different subclasses (PersonExtra and PersonBasic) can be created with the same id as the superclass (Person)?</p>\n<ul>\n<li><p>I was thinking that maybe creating One to One relations like Person with PersonExtra and Person with PersonBasic could work.<br />\nI liked the idea of having inheritance here but, seems is it not possible in this situation?</p>\n</li>\n<li><p>I was considering using the MappedSuperclass annotation, but isn't that just for an abstract class when the entity isn't created in the database?</p>\n</li>\n<li><p>Or maybe should I modify the database and create a one-to-many relationship with roles? Part of me thinks that some of the database semantics could be lost, and implementing the logic later could be complicated.</p>\n</li>\n</ul>\n<p>I'm new to this and could be wrong about all of this.</p>\n",
+    "tags" : [ "java", "spring", "hibernate", "jpa", "spring-data-jpa" ],
+    "owner" : {
+      "account_id" : 38432673,
+      "reputation" : 22,
+      "user_id" : 28772060,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/8a2bff1bacb0cd5fb7f8a04f2f6534d8?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "gustavo",
+      "link" : "https://stackoverflow.com/users/28772060/gustavo"
+    },
+    "is_answered" : true,
+    "view_count" : 116,
+    "answer_count" : 2,
+    "score" : 2,
+    "last_activity_date" : 1761163881,
+    "creation_date" : 1761113817,
+    "link" : "https://stackoverflow.com/questions/79796432/mapping-multiple-subclasses-to-same-parent-id-in-jpa-joined-inheritance",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79797164,
+    "question_id" : 79796432,
+    "body" : "<blockquote>\n<p>If I create a Person first and then try to create a PersonExtra with an existing Person's ID, I get a duplicate ID error because it tries to persist both Person and PersonExtra.</p>\n</blockquote>\n<p>Of course it does.  If you instantiate an object whose class is <code>Person</code>, then it's class <em>is not</em> <code>PersonExtra</code> or <code>PersonBasic</code>.  If you instantiate an object whose class is <code>PersonExtra</code> then its class <em>is not</em> <code>Person</code> or <code>PersonBasic</code>, notwithstanding that you can assign a reference to it to a variable of <em>type</em> <code>Person</code>. Therefore, your <code>Person</code> object and your <code>PersonExtra</code> object cannot be either the same or equivalent.  It follows that if they are persisted then they must have distinct persistent identities.</p>\n<blockquote>\n<p>It seems like a person can only have one unique type</p>\n</blockquote>\n<p>An <em>object</em> can have only one <em>class</em>, established when the object is created and remaining the same throughout its lifetime. This is a fundamental characteristic of Java's OO model.  References to an object can be consistent with more than one <em>type</em> through polymorphism, this is a separate characteristic of Java's OO model.  JPA works with and within Java's OO model.</p>\n<blockquote>\n<p>and can only be created through the subclass.</p>\n</blockquote>\n<p>Sort of.  If you want an object whose class is <code>PersonExtra</code> then you need to create it <em>as</em> a <code>PersonExtra</code>.  It then will not be a <code>PersonBasic</code> in any sense.  It will function as <code>Person</code> in a polymorphic sense, and have all the properties of any <code>Person</code>, but its object identity is inextricably tied to having class <code>PersonExtra</code>.</p>\n<p>If you persist such an object then the fact that its class is <code>PersonExtra</code> (and not any other) is among the details to be persisted, subject to later retrieval.</p>\n<blockquote>\n<p>I would like a person to be able to be both a PersonExtra and a PersonBasic at the same time.</p>\n</blockquote>\n<p>That is impossible -- inconsistent with Java's OO model -- as long as <code>PersonExtra</code> and <code>PersonBasic</code> are class types, with neither being a subtype of the other.  This is not even a matter of JPA.</p>\n<p>If <em>every</em> <code>PersonExtra</code> should also be a <code>PersonBasic</code> then <code>PersonExtra</code> should extend <code>PersonBasic</code> instead of extending <code>Person</code> directly. And if you don't need to support entities that are <code>Person</code>s but not <code>PersonBasic</code>s, then you should probably combine those two into a single class.</p>\n<p>You could also consider whether you may be looking for composition instead of inheritance.  That is, maybe you want <code>Person</code>s to <em>have</em> <code>PersonExtraDetails</code> instead of <em>being</em> <code>PersonExtra</code>s.  That would be modeled via (mapped) relationships, not inheritance.  For example:</p>\n<pre><code>@Entity\npublic class Person {\n    @Id\n    private String id;\n    private String name;\n    private String lastname;\n\n    @OneToOne(mappedBy=&quot;person&quot;, optional=true)\n    private PersonBasicDetails basicDetails;\n\n    @OneToOne(mappedBy=&quot;person&quot;, optional=true)\n    private PersonExtraDetails extraDetails;\n\n    // ...\n}\n</code></pre>\n<pre><code>@Entity\npublic class PersonExtraDetails {\n    @Id\n    private Integer id;\n    private String code;\n    private String subject;\n\n    @OneToOne\n    private Person person;\n}\n</code></pre>\n<pre><code>@Entity\npublic class PersonBasicDetails {\n    @Id\n    Integer id;\n    private String range;\n\n    @OneToOne\n    private Person person;\n}\n</code></pre>\n<blockquote>\n<p>How can I structure my JPA entities so different subclasses (PersonExtra and PersonBasic) can be created with the same id as the superclass (Person)?</p>\n</blockquote>\n<p>You can't.  I'm uncertain where your mental model of this is failing you, but I suspect that you may be looking at this the wrong way around, maybe as classes being Java-side proxies for database tables.  It's harder to come at this from the database side than it is to come from the Java side, and if you're starting with a database schema then you almost never are looking for polymorphic entities on the Java side.</p>\n<blockquote>\n<ul>\n<li>I was thinking that maybe creating One to One relations like Person with PersonExtra and Person with PersonBasic could work.</li>\n</ul>\n</blockquote>\n<p>Indeed it could, as described above.  Note well that this dispenses with the polymorphism.</p>\n<blockquote>\n<ul>\n<li>I liked the idea of having inheritance here but, seems is it not possible in this situation?</li>\n</ul>\n</blockquote>\n<p>It's unclear what you liked about polymorphism for this problem, and it's unclear whether that could be made to work for you (many of the primary considerations are discussed above).  I would advise you, however, that entity polymorphism is messy, and even pure-Java polymorphism tends to be overused.</p>\n<blockquote>\n<ul>\n<li>I was considering using the MappedSuperclass annotation, but isn't that just for an abstract class when the entity isn't created in the database?</li>\n</ul>\n</blockquote>\n<p>A mapped superclass does not need to be abstract, but if <code>Person</code> were a mapped superclass instead of an entity class then objects whose class was exactly <code>Person</code> would not be entities. They could not be persisted in the database.</p>\n<blockquote>\n<ul>\n<li>Or maybe should I modify the database and create a one-to-many relationship with roles? Part of me thinks that some of the database semantics could be lost, and implementing the logic later could be complicated.</li>\n</ul>\n</blockquote>\n<p>It's unclear to me how what you've presented would map to roles, or how a model of it would differ from the one-to-one relationships you're contemplating, but possibly that would make sense. I'm uncertain what &quot;database semantics&quot; you fear losing, but I think that's an issue of how you implement the details.</p>\n<blockquote>\n<p>I'm new to this and could be wrong about all of this.</p>\n</blockquote>\n<p>How best to model your data is a non-trivial problem, both in Java and in the database.  There are often multiple viable options with different tradeoffs.  When I have the freedom to design the database <em>de novo</em>, I tend to prefer starting on the Java side, focusing on how the entities will be used there, what their significance is, and how they are related to each other.  A clean, well-factored design on that side tends to admit clean, well-normalized database designs.  Which you may even be able to generate automagically from the annotated entity classes.</p>\n",
+    "score" : 2,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 2792262,
+      "reputation" : 190712,
+      "user_id" : 2402272,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+      "display_name" : "John Bollinger",
+      "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+    },
+    "creation_date" : 1761160411,
+    "last_activity_date" : 1761163881,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79797001,
+    "question_id" : 79796432,
+    "body" : "<p>Take a look at <a href=\"https://github.com/Blazebit/blaze-persistence\" rel=\"nofollow noreferrer\">Blaze Persistence entity view</a></p>\n<p>But as for me that approach will lead to some complexity and cause errors</p>\n",
+    "score" : -2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 7426697,
+      "reputation" : 3061,
+      "user_id" : 5648942,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/3230f26677f40f48e3ecb294382b0728?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Javasick",
+      "link" : "https://stackoverflow.com/users/5648942/javasick"
+    },
+    "creation_date" : 1761148711,
+    "last_activity_date" : 1761148711,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140811486,
+    "post_id" : 79796432,
+    "body" : "Java inheritance question for you - how can a Person be both a PersonExtra AND a PersonBasic at the same time. If you can&#39;t do it with java inheritance, JPA inheritance can&#39;t either.  You want roles, where a Person can have the &#39;basic&#39; and &#39;extra&#39; role or data added in at the same time, not inheritance",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 231721,
+      "reputation" : 21335,
+      "user_id" : 496099,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/efa7510cf47d7bd79e80486246e7e39e?s=256&d=identicon&r=PG",
+      "display_name" : "Chris",
+      "link" : "https://stackoverflow.com/users/496099/chris"
+    },
+    "creation_date" : 1761157888,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

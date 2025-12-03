@@ -1,0 +1,98 @@
+{
+  "question" : {
+    "question_id" : 79779760,
+    "title" : "Throwing result size exceptions for UPDATE or DELETE statements using jOOQ",
+    "body" : "<p>I'm using jOOQ to rewrite a JPA based service, for the usual reasons. One of the things I'm revisiting is the way we used to catch &quot;the user passed a resource ID that (doesn't exist/they don't have permission to access/whatever) to the resource's DELETE method, so we have to return 404&quot;.</p>\n<p>In basic SQL, you're able to just <code>DELETE FROM widgets WHERE id = 123</code>, and the database server will reply with the number of rows deleted. If equal to 1, great, commit. If equal to 0, rollback and throw HTTP 404. If greater than 1, rollback and panic because we probably forgot to set up a primary key somewhere somehow. Compared to the JPA way of things, this spares me a database round trip, which probably involved way too many selected columns, as JPA likes to fetch an entity so it can be passed to a thing that will then delete it.</p>\n<p>With jOOQ, I'm doing</p>\n<pre class=\"lang-java prettyprint-override\"><code>int deletedRows = dsl.delete(WIDGETS).where(WIDGETS.ID.equal(123)).execute();\n</code></pre>\n<p>and then examine <code>deletedRows</code> and proceed from there.</p>\n<p>However, the SELECT APIs have this neat <code>fetchSingle</code> method that encapsulates this behavior nicely, and is probably intended exactly for the case where you want to interact with a row identified uniquely, through the primary key or some other unique combination of columns. Great!</p>\n<p>How can I use this with DELETE (and UPDATE, while I'm at it)? Or do I need to keep looking at my <code>deletedRows</code> value and maybe write a wrapper function? It would be a simple one to be sure, but I wonder if I missed something in jOOQ that does this already.</p>\n<p>I've looked at <code>DELETE ... RETURNING</code>, which does implement <code>ResultQuery</code> so has access to fetchSingle, but unlike <code>SELECT ... RETURNING</code> which can be emulated for engines that don't support the keyword, <code>DELETE ... RETURNING</code> and <code>UPDATE ... RETURNING</code> are indicated as not having support for most engines, so I'm wary of using that just for access to <code>fetchSingle</code>, as I don't actually need a returned column value from that query.</p>\n",
+    "tags" : [ "java", "jooq" ],
+    "owner" : {
+      "account_id" : 6932189,
+      "reputation" : 440,
+      "user_id" : 5321341,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/926171279c9a7b096d08ab9266ee2cec?s=256&d=identicon&r=PG",
+      "display_name" : "Fabrice Gabolde",
+      "link" : "https://stackoverflow.com/users/5321341/fabrice-gabolde"
+    },
+    "is_answered" : true,
+    "view_count" : 91,
+    "answer_count" : 1,
+    "score" : 5,
+    "last_activity_date" : 1759308935,
+    "creation_date" : 1759304956,
+    "link" : "https://stackoverflow.com/questions/79779760/throwing-result-size-exceptions-for-update-or-delete-statements-using-jooq",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79779833,
+    "question_id" : 79779760,
+    "body" : "<p>Indeed, only a select few jOOQ dialects have native support for <code>RETURNING</code> or <code>OUTPUT</code> or <code>FINAL TABLE</code> or something similar, and even if they do support the syntax for <code>INSERT</code>, they might not support it for <code>UPDATE</code> or <code>DELETE</code>. As per the doc of <a href=\"https://www.jooq.org/doc/latest/manual/sql-building/sql-statements/delete-statement/delete-returning/\" rel=\"nofollow noreferrer\"><code>DELETE .. RETURNING</code></a> (at jOOQ 3.21), only these support it natively:</p>\n<ul>\n<li>CockroachDB</li>\n<li>Db2</li>\n<li>Firebird</li>\n<li>H2</li>\n<li>MariaDB</li>\n<li>Oracle</li>\n<li>PostgreSQL</li>\n<li>SQL Server</li>\n<li>SQLite</li>\n<li>YugabyteDB</li>\n</ul>\n<p>If you're sure that you won't make many mistakes and have to roll back tons of rows all the time, then checking the update count will be the simplest / safest route. If, however, you don't really have a unique key on your <code>ID</code> column and this situation happens all the time, I'd consider using <a href=\"https://www.jooq.org/doc/latest/manual/sql-building/sql-statements/select-statement/for-update-clause/\" rel=\"nofollow noreferrer\"><code>SELECT .. FOR UPDATE</code></a> (pessimistic locking) prior to your <code>DELETE</code> statement in order to avoid too big of a transactional footprint. Rollbacks aren't cheap, especially in MVCC locking models, where frequent rollbacks can lead to quite a bit of contention.</p>\n<p>A simple utility should be enough here:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public static int executeSingle(Query query) {\n    if (query.execute() != 1)\n        throw new MyException();\n}\n</code></pre>\n",
+    "score" : 4,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 247217,
+      "reputation" : 223472,
+      "user_id" : 521799,
+      "user_type" : "registered",
+      "accept_rate" : 89,
+      "profile_image" : "https://www.gravatar.com/avatar/eb96efa7a5664ba1c4ebf586abd4121f?s=256&d=identicon&r=PG",
+      "display_name" : "Lukas Eder",
+      "link" : "https://stackoverflow.com/users/521799/lukas-eder"
+    },
+    "creation_date" : 1759308935,
+    "last_activity_date" : 1759308935,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79779833" : [ {
+      "comment_id" : 140772682,
+      "post_id" : 79779833,
+      "body" : "Yes, I&#39;ve considered this. I&#39;m keeping it as an option for later; right now with our traffic and concurrent user volume, it feels like premature optimization to worry too much about that. Btw, it&#39;s really nice that for about every SQL thing I can think about (and many that I can&#39;t!), jOOQ has it implemented already. Thanks for this awesome piece of software.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 6932189,
+        "reputation" : 440,
+        "user_id" : 5321341,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/926171279c9a7b096d08ab9266ee2cec?s=256&d=identicon&r=PG",
+        "display_name" : "Fabrice Gabolde",
+        "link" : "https://stackoverflow.com/users/5321341/fabrice-gabolde"
+      },
+      "creation_date" : 1759390135,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140771665,
+      "post_id" : 79779833,
+      "body" : "@FabriceGabolde I see. Well, there&#39;s also the optimistic locking feature in jOOQ, which is also update count based: <a href=\"https://www.jooq.org/doc/latest/manual/sql-execution/crud-with-updatablerecords/optimistic-locking\" rel=\"nofollow noreferrer\">jooq.org/doc/latest/manual/sql-execution/&hellip;</a>. Perhaps that could help here.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 247217,
+        "reputation" : 223472,
+        "user_id" : 521799,
+        "user_type" : "registered",
+        "accept_rate" : 89,
+        "profile_image" : "https://www.gravatar.com/avatar/eb96efa7a5664ba1c4ebf586abd4121f?s=256&d=identicon&r=PG",
+        "display_name" : "Lukas Eder",
+        "link" : "https://stackoverflow.com/users/521799/lukas-eder"
+      },
+      "creation_date" : 1759337795,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140771272,
+      "post_id" : 79779833,
+      "body" : "I do have a unique integer ID, I&#39;m not very worried about the execute() &gt; 1 case; this should only ever happen if I really mess up. The execute() == 0 case can happen, because the ID to delete is provided by the user. In normal flows, the ID exists, but there is nothing stopping them from typing DELETE /widgets/9999999. Thanks for the answer; I&#39;ll go with the utility function route.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 6932189,
+        "reputation" : 440,
+        "user_id" : 5321341,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/926171279c9a7b096d08ab9266ee2cec?s=256&d=identicon&r=PG",
+        "display_name" : "Fabrice Gabolde",
+        "link" : "https://stackoverflow.com/users/5321341/fabrice-gabolde"
+      },
+      "creation_date" : 1759327387,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

@@ -1,0 +1,133 @@
+{
+  "question" : {
+    "question_id" : 79764413,
+    "title" : "Doesn&#39;t JPA has @Transactional by default?",
+    "body" : "<p>I have a basic CRUD, when trying to delete using the user email I get</p>\n<p><code>&quot;message&quot;: &quot;No EntityManager with actual transaction available for current thread - cannot reliably process 'remove' call&quot;</code></p>\n<p>When using the @Transactional it works, I've read that JPA uses @Transactional by default</p>\n<p>My repository:</p>\n<pre><code>@Repository\npublic interface UserRepository extends JpaRepository&lt;User, Long&gt; {\n    void deleteByEmail(String email);\n}\n</code></pre>\n<p>My service:</p>\n<pre><code>@Service\npublic class UserService {\n    private final UserRepository repository;\n\n    @Autowired\n    public UserService(UserRepository repository) {\n        this.repository = repository;\n    }\n</code></pre>\n<p>My controller:</p>\n<pre><code>@RestController\n@RequestMapping(&quot;/user&quot;)\npublic class UserController {\n\n    private final UserService userService;\n\n    @Autowired\n    public UserController(UserService reviewService, UserService userService) {\n        this.userService = userService;\n    }\n\n    @Transactional\n    @DeleteMapping(&quot;/email/{email}&quot;)\n    public void deleteByEmail(@PathVariable String email){\n        userService.deleteByEmail(email);\n    }\n</code></pre>\n<p>I've tried to look into the @DeleteMapping class to see if it uses the @Transactional but couldn't find it.</p>\n<p>My question is, does JPA uses @Transactional by default and I'm doing something wrong or I really should explicitly use it on delete and update?</p>\n<p><strong>I'm using spring boot 3.5.0</strong></p>\n",
+    "tags" : [ "java", "spring", "spring-boot", "jpa" ],
+    "owner" : {
+      "account_id" : 20575755,
+      "reputation" : 189,
+      "user_id" : 15102974,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/829a86ccc6af7fca97c6c44f06f2e61e?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "PauloRamos",
+      "link" : "https://stackoverflow.com/users/15102974/pauloramos"
+    },
+    "is_answered" : true,
+    "view_count" : 143,
+    "answer_count" : 2,
+    "score" : 1,
+    "last_activity_date" : 1757873855,
+    "creation_date" : 1757865932,
+    "link" : "https://stackoverflow.com/questions/79764413/doesnt-jpa-has-transactional-by-default",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79764462,
+    "question_id" : 79764413,
+    "body" : "<p>The default methods in the <code>CrudRepository</code> interface will have <code>@Transactional</code> annotation on them. But since you have added a custom method - <code>void deleteByEmail(String email);</code> you will have to give <code>@Transactional</code> explicitly either at Controller, Service or Repository level.</p>\n<hr />\n<p>Ref: <a href=\"https://docs.spring.io/spring-data/jpa/reference/jpa/transactions.html\" rel=\"nofollow noreferrer\">https://docs.spring.io/spring-data/jpa/reference/jpa/transactions.html</a>  states that -</p>\n<blockquote>\n<h2>Transactional query methods</h2>\n<p>Declared query methods (including default methods) do not get any transaction configuration applied by default. To run those methods transactionally, use <code>@Transactional</code> at the repository interface you define, as shown in the following example:</p>\n</blockquote>\n<blockquote>\n<p>Example 3. Using @Transactional at query methods</p>\n</blockquote>\n<pre><code>@Transactional(readOnly = true)\ninterface UserRepository extends JpaRepository&lt;User, Long&gt; {\n\n  List&lt;User&gt; findByLastname(String lastname);\n\n  @Modifying\n  @Transactional\n  @Query(&quot;delete from User u where u.active = false&quot;)\n  void deleteInactiveUsers();\n}\n</code></pre>\n<blockquote>\n<p>Typically, you want the <code>readOnly</code> flag to be set to <code>true</code>, as most of the query methods only read data. In contrast to that, <code>deleteInactiveUsers()</code> makes use of the <code>@Modifying</code> annotation and overrides the transaction configuration. Thus, the method runs with the <code>readOnly</code> flag set to <code>false</code>.</p>\n</blockquote>\n",
+    "score" : 3,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 16184989,
+      "reputation" : 41,
+      "user_id" : 11685421,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/gP3XB.png?s=256",
+      "display_name" : "adityam_31",
+      "link" : "https://stackoverflow.com/users/11685421/adityam-31"
+    },
+    "creation_date" : 1757871933,
+    "last_activity_date" : 1757871933,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79764437,
+    "question_id" : 79764413,
+    "body" : "<p>In order to execute queries on the database, you need to transport the queries via a DB connection to the database. The connection is retrieved from the DB connection pool. The DB connection is retrieved via <code>DataSource.getConnection()</code>, and that method is called whenever a transaction is started.</p>\n<p>So, yes you have a transaction somewhere for the <code>CrudRepository</code>. If you dont declare one, Spring will do it for you, after calling e.g., <code>UserRepository.deleteByEmail(String)</code>.</p>\n<p>You should use transactions if you want to make sure, that all your queries either succeed, or fail alltogeter when executing. Please readup on transaction management in general.</p>\n<h1>Update:</h1>\n<p>To be more specific, <strong>Spring Data</strong> only <strong>applies</strong> <code>@Transactional</code> to the CrudRepository methods (see <a href=\"https://docs.spring.io/spring-data/jpa/reference/jpa/transactions.html\" rel=\"nofollow noreferrer\">https://docs.spring.io/spring-data/jpa/reference/jpa/transactions.html</a>):</p>\n<blockquote>\n<p>By default, methods inherited from <code>CrudRepository</code> inherit the transactional configuration from SimpleJpaRepository. For read operations, the transaction configuration readOnly flag is set to true. All others are configured with a plain @Transactional so that default transaction configuration applies.</p>\n</blockquote>\n<p>All other methods, e.g., if you define your own custom method (and add your own implementation), or if you use derived queries, <strong>you</strong> have to add <code>@Transactional</code> <strong>by hand</strong> (see <a href=\"https://docs.spring.io/spring-data/jpa/reference/jpa/transactions.html#transactional-query-methods\" rel=\"nofollow noreferrer\">https://docs.spring.io/spring-data/jpa/reference/jpa/transactions.html#transactional-query-methods</a>):</p>\n<blockquote>\n<p>Declared query methods (including default methods) do not get any transaction configuration applied by default. To run those methods transactionally, use @Transactional at the repository interface you define, as shown in the following example:</p>\n</blockquote>\n",
+    "score" : 2,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 1920229,
+      "reputation" : 4453,
+      "user_id" : 1731935,
+      "user_type" : "registered",
+      "accept_rate" : 75,
+      "profile_image" : "https://www.gravatar.com/avatar/c23790f4c3fd69f51d462d4772d89c5b?s=256&d=identicon&r=PG",
+      "display_name" : "Manuel",
+      "link" : "https://stackoverflow.com/users/1731935/manuel"
+    },
+    "creation_date" : 1757868746,
+    "last_activity_date" : 1757873855,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140735213,
+    "post_id" : 79764413,
+    "body" : "@StephenC Spring Boot creates an implementation for <code>@Repository</code> classes. For this <code>deleteByEmail</code> method the query is based on the method name: <code>DELETE FROM User WHERE email = :email</code>. This automatic mapping of method names to queries is quite powerful.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1211967,
+      "reputation" : 10014,
+      "user_id" : 1180351,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/pKB8y.png?s=256",
+      "display_name" : "Rob Spoor",
+      "link" : "https://stackoverflow.com/users/1180351/rob-spoor"
+    },
+    "creation_date" : 1757867874,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140735174,
+    "post_id" : 79764413,
+    "body" : "What is the implementation class for your <code>UserRepository</code> ?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 47283,
+      "reputation" : 723399,
+      "user_id" : 139985,
+      "user_type" : "registered",
+      "accept_rate" : 69,
+      "profile_image" : "https://www.gravatar.com/avatar/147c5a9cc1feec049c50da791ac7d144?s=256&d=identicon&r=PG",
+      "display_name" : "Stephen C",
+      "link" : "https://stackoverflow.com/users/139985/stephen-c"
+    },
+    "creation_date" : 1757866343,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79764437" : [ {
+      "comment_id" : 140735334,
+      "post_id" : 79764437,
+      "body" : "@PauloRamos Please see my updated question with links to the spring data documentation.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1920229,
+        "reputation" : 4453,
+        "user_id" : 1731935,
+        "user_type" : "registered",
+        "accept_rate" : 75,
+        "profile_image" : "https://www.gravatar.com/avatar/c23790f4c3fd69f51d462d4772d89c5b?s=256&d=identicon&r=PG",
+        "display_name" : "Manuel",
+        "link" : "https://stackoverflow.com/users/1731935/manuel"
+      },
+      "creation_date" : 1757873874,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140735242,
+      "post_id" : 79764437,
+      "body" : "So based on what you&#39;re saying it should work, but why if I do not use @Transactional I&#39;m getting this error? &quot;message&quot;: &quot;No EntityManager with actual transaction available for current thread - cannot reliably process &#39;remove&#39; call&quot;",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 20575755,
+        "reputation" : 189,
+        "user_id" : 15102974,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/829a86ccc6af7fca97c6c44f06f2e61e?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "PauloRamos",
+        "link" : "https://stackoverflow.com/users/15102974/pauloramos"
+      },
+      "creation_date" : 1757869556,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

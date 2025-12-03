@@ -1,0 +1,101 @@
+{
+  "question" : {
+    "question_id" : 79817227,
+    "title" : "using variable of type Class&lt;?&gt; in switch construct",
+    "body" : "<p>i'm in need of a data container for several data types and fail to write some omnipotent :-) converter func.</p>\n<p>Maybe my idea is crab, in this case please give me a hint what concept to use.</p>\n<p>My current template is as follows:</p>\n<pre><code>    public static Object convert(Class&lt;?&gt; dataType, String data) {\n        switch (dataType) {\n        case JsonNode.class:\n            return new ObjectMapper().readTree(data);\n            break;\n        case Integer.class:\n            return Integer.parse(data);\n            break;\n        default:\n            break;\n        }\n    }\n</code></pre>\n<p>But it wont compile with errors:</p>\n<p>Case constant of type Class&lt;JsonNode&gt; is incompatible with switch selector type Class&lt;capture#1-of ?&gt;</p>\n<p>Case constant of type Class&lt;Integer&gt; is incompatible with switch selector type Class&lt;capture#1-of ?&gt;</p>\n<p>Am I completely mislead in my solution or is there a valid syntax to get this done?</p>\n",
+    "tags" : [ "java", "class", "dynamic", "switch-statement" ],
+    "owner" : {
+      "account_id" : 26544556,
+      "reputation" : 362,
+      "user_id" : 20174801,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/e3f952db11e56496176482f3c0122776?s=256&d=identicon&r=PG",
+      "display_name" : "Synopsis",
+      "link" : "https://stackoverflow.com/users/20174801/synopsis"
+    },
+    "is_answered" : true,
+    "view_count" : 78,
+    "answer_count" : 4,
+    "score" : 0,
+    "last_activity_date" : 1762979847,
+    "creation_date" : 1762905253,
+    "link" : "https://stackoverflow.com/questions/79817227/using-variable-of-type-class-in-switch-construct",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79817229,
+    "question_id" : 79817227,
+    "body" : "<p>You're going to have to use a chain of ifs.  Sorry if you were hoping for something better.</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 465573,
+      "reputation" : 200423,
+      "user_id" : 869736,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/ae7bb06b9a23a4dd7eea69e853d47d12?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Louis Wasserman",
+      "link" : "https://stackoverflow.com/users/869736/louis-wasserman"
+    },
+    "creation_date" : 1762905440,
+    "last_activity_date" : 1762905440,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79817312,
+    "question_id" : 79817227,
+    "body" : "<p>You can't use those in switches. Switches aren't quite 'a replacement for a bunch of <code>if</code> / <code>else if</code> statements'.</p>\n<p>More generally I wouldn't do it this way at all. For many reasons:</p>\n<ul>\n<li>There's an alternative. I think it's pretty good - see below.</li>\n<li>You can't generate a compile-time error if someone calls <code>convert</code> with a hardcoded data type that you don't support. For example, if you don't have a rule for converting to, say, <code>Boolean</code>, and I write <code>convert(Boolean.class, &quot;true&quot;)</code>, it'd be nice if I get an error as I write that line instead of having to wait for the runtime to tell me.</li>\n<li>If you want to convert to a genericsed type, such as: &quot;Please convert this to a <code>List&lt;Integer&gt;</code>&quot;, you can't; <code>Class&lt;?&gt;</code> cannot represent generics. <code>List.class</code> works, <code>List&lt;Integer&gt;.class</code> does not. (There's a hack called 'super type tokens' that sort of can but it's convoluted, wonky syntax, and will confuse readers. I wouldn't go for those lightly!)</li>\n<li>The code is a bit of a mess as it'll have to be a giant <code>if/elseif</code> block.</li>\n<li>If that list grows long, the code has to walk through every case every time, i.e. it's not very performant.</li>\n</ul>\n<p>An alternative:</p>\n<pre><code>public final class DataConverters {\n  private DataConverters() {} // No instantiation\n\n  public static final Function&lt;String, Integer&gt; TO_INTEGER = v -&gt; Integer.parse(v);\n  public static final Function&lt;String, JsonNode&gt; TO_JSON = v -&gt; new ObjectMapper().readTree(v);\n  // and so on\n}\n\n// to use:\n\nString v = readSomeNumber();\nint n = DataConverters.TO_INTEGER.apply(v);\n</code></pre>\n<p>If you also need dynamic behaviour, i.e. where some code doesn't know what type is needed and instead the caller to this code tells it what is needed:</p>\n<pre><code>public &lt;T&gt; T readFromDb(Db db, String unid, Function&lt;String, T&gt; converter) throws SQLException {\n  var s = db.select(&quot;SELECT data FROM dataTable WHERE unid = ?&quot;, unid).singleString();\n  return converter.apply(s);\n}\n</code></pre>\n<p>The above would read data from a database table, and convert it. A caller could for example write: <code>int v = readFromDb(db, &quot;12345&quot;, DataConverters.TO_INTEGER);</code>.</p>\n<p>Note that you get type safety (these methods return the type you're converting to, not 'Object'), and you can't convert to a type you have no converter for.</p>\n<p>If you MUST make it even more dynamic than that, which is a giant code smell and can only be excused if you're interacting with a language with less strict typing rules, you could even do something like this:</p>\n<pre><code>// in DataConverters\n\nprivate static final Map&lt;Class&lt;?&gt;, Function&lt;String, ?&gt;&gt; ALL_CONVERTERS; static {\n  var m = new HashMap&lt;Class&lt;?&gt;, Function&lt;String, ?&gt;&gt;();\n  m.put(Integer.class, TO_INTEGER);\n  // one 'put' call for every converter you wrote.\n  ALL_CONVERTERS = Collections.unmodifiableMap(m);\n}\n\npublic static &lt;T&gt; T convert(Class&lt;T&gt; type, String data) {\n  return type.cast(ALL_CONVERTERS.get(type).apply(data));\n}\n</code></pre>\n<p>With that last trick you lose the ability to have converters that convert to genericsed types (you can't have <code>Function&lt;String, List&lt;String&gt;&gt; TO_STRING_LIST = ...;</code>).</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 401843,
+      "reputation" : 107136,
+      "user_id" : 768644,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+      "display_name" : "rzwitserloot",
+      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+    },
+    "creation_date" : 1762918666,
+    "last_activity_date" : 1762918666,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79817379,
+    "question_id" : 79817227,
+    "body" : "<p>If there are no class name conflicts, you can use:</p>\n<pre><code>switch( dataType.getSimpleName() ) {\n   case “String” -&gt; your_code; \n}\n</code></pre>\n<p>and if there are: *</p>\n<pre><code>switch( dataType.getCanonicalName() ) { \n   case “java.lang.String” -&gt; your_code; \n}\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 10843443,
+      "reputation" : 918,
+      "user_id" : 20882864,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+      "display_name" : "Marce Puente",
+      "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+    },
+    "creation_date" : 1762926917,
+    "last_activity_date" : 1762926917,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79818231,
+    "question_id" : 79817227,
+    "body" : "<p>@MarcoPuente that's pretty bad. A high 'hey it works, dont care about maintainability' vibe. You could easily write a typo and you won't get a warning. There's a good reason &quot;Stringly typed&quot; is an insult. Please don't write that.</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 401843,
+      "reputation" : 107136,
+      "user_id" : 768644,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+      "display_name" : "rzwitserloot",
+      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+    },
+    "creation_date" : 1762979847,
+    "last_activity_date" : 1762979847,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : { }
+}

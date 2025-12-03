@@ -1,0 +1,177 @@
+{
+  "question" : {
+    "question_id" : 79776139,
+    "title" : "Java Instrumentation ClassFileTransformer with generated jdk classes DelegatingClassLoader",
+    "body" : "<p>I’m currently working on a Java agent that modifies the bytecode of classes by adding a marker.\nThe goal is to instrument only the classes from my project, but for testing purposes, I have temporarily configured the agent to instrument all packages, including those from the JDK.</p>\n<p><strong>Technical Context</strong></p>\n<p>At JVM startup, some classes are loaded before the Java agent is executed.\nThen, whether in Java 8 or Java 21, some code calls the following class:</p>\n<pre><code>jdk.internal.reflect.MethodAccessorGenerator\n</code></pre>\n<p>This class dynamically generates another class via:</p>\n<pre><code>return JLA.defineClass(newLoader, name, bytes, null, &quot;__ClassDefiner__&quot;);\n</code></pre>\n<p>This code triggers class transformation, even for dynamically generated classes.\nI conclude that if this is allowed without restriction at the native level of the JVM, then it should be possible to instrument these generated classes.</p>\n<p><strong>Concrete Example</strong></p>\n<p>Here is an example of a dynamically generated class:</p>\n<pre><code>package jdk.internal.reflect;\n\nimport java.lang.reflect.InvocationTargetException;\nimport java.rmi.server.RemoteObject;\n\npublic class GeneratedSerializationConstructorAccessor1 extends SerializationConstructorAccessorImpl {\n\n   public Object newInstance(Object[] var1) throws InvocationTargetException {\n      RemoteObject var10000;\n      RemoteObject var10001;\n      try {\n         var10000 = new RemoteObject;\n         var10001 = var10000;\n         if (var1 != null &amp;&amp; var1.length != 0) {\n            throw new IllegalArgumentException();\n         }\n      } catch (NullPointerException | ClassCastException var3) {\n         throw new IllegalArgumentException(var3.toString());\n      }\n\n      try {\n         var10001.&lt;init&gt;();\n         return var10000;\n      } catch (Throwable var2) {\n         throw new InvocationTargetException(var2);\n      }\n   }\n}\n</code></pre>\n<p><strong>Successful Instrumentation</strong></p>\n<p>When I instrument this class with a simple trace line, it works perfectly:</p>\n<pre><code>package jdk.internal.reflect;\n\nimport fr.code.api.CodeMonitoring;\nimport java.lang.reflect.InvocationTargetException;\nimport java.rmi.server.RemoteObject;\n\npublic class GeneratedSerializationConstructorAccessor1 extends SerializationConstructorAccessorImpl {\n   private static boolean b_code_newInstance_0;\n\n   public Object newInstance(Object[] var1) throws InvocationTargetException {\n      CodeMonitoring.callMethod(&quot;jdk/internal/reflect/GeneratedSerializationConstructorAccessor1&quot;, &quot;newInstance&quot;, &quot;([Ljava/lang/Object;)Ljava/lang/Object;&quot;);\n\n      RemoteObject var10000;\n      RemoteObject var10001;\n      try {\n         var10000 = new RemoteObject;\n         var10001 = var10000;\n         if (var1 != null &amp;&amp; var1.length != 0) {\n            throw new IllegalArgumentException();\n         }\n      } catch (NullPointerException | ClassCastException var3) {\n         throw new IllegalArgumentException(var3.toString());\n      }\n\n      try {\n         var10001.&lt;init&gt;();\n         return var10000;\n      } catch (Throwable var2) {\n         throw new InvocationTargetException(var2);\n      }\n   }\n}\n</code></pre>\n<p><strong>Failed Instrumentation</strong></p>\n<p>However, if I assign the result of the method call to a boolean variable, the JVM crashes:</p>\n<pre><code>b_code_newInstance_0 = CodeMonitoring.callMethod(&quot;jdk/internal/reflect/GeneratedSerializationConstructorAccessor1&quot;, &quot;newInstance&quot;, &quot;([Ljava/lang/Object;)Ljava/lang/Object;&quot;);\n</code></pre>\n<p><strong>Observed Problem</strong></p>\n<p>In Java 8, this triggers an exception:\njava.lang.NoClassDefFoundError</p>\n<p>In Java 21, the JVM terminates abruptly with no error message.</p>\n<p><strong>Hypothesis and Question</strong></p>\n<p>I understand that this class is an internal, dynamically generated class in Java.\nSince it can be instrumented, I’m simply curious to understand why assigning the result to a boolean causes a crash, while a simple method call does not.</p>\n<p>\uD83D\uDC49 Do you have any idea what might be causing this difference in behavior?</p>\n<p><strong>Additional Note</strong></p>\n<p>The generated code, whether in Java 8 or Java 21, has a bytecode major version of 49, which corresponds to Java 5.</p>\n<p>The ASM code used to modify this bytecode is as follows:</p>\n<pre><code>  public void visitCode() {\n        super.visitCode();\n        \n        mv.visitLdcInsn(className);\n        mv.visitLdcInsn(name);\n        mv.visitLdcInsn(descriptor);\n        mv.visitMethodInsn(Opcodes.INVOKESTATIC, &quot;fr/deadcode/api/CodeMonitoring&quot;, &quot;callMethod&quot;, &quot;(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Z&quot;, false);\n        mv.visitFieldInsn(Opcodes.PUTSTATIC, className, field, &quot;Z&quot;);\n    }\n</code></pre>\n<p>Thank you guys</p>\n",
+    "tags" : [ "java", "instrumentation" ],
+    "owner" : {
+      "account_id" : 11024811,
+      "reputation" : 31,
+      "user_id" : 31578656,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f12b8cb30bed035da30c658310eb814f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "user31578656",
+      "link" : "https://stackoverflow.com/users/31578656/user31578656"
+    },
+    "is_answered" : false,
+    "view_count" : 83,
+    "answer_count" : 1,
+    "score" : 3,
+    "last_activity_date" : 1758961020,
+    "creation_date" : 1758901323,
+    "link" : "https://stackoverflow.com/questions/79776139/java-instrumentation-classfiletransformer-with-generated-jdk-classes-delegatingc",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79776611,
+    "question_id" : 79776139,
+    "body" : "<p>There are two problems here:</p>\n<ol>\n<li>The class loader hierarchy</li>\n<li>Instrumenting subclasses of <a href=\"https://github.com/openjdk/jdk/blob/jdk-21%2B22/src/java.base/share/classes/jdk/internal/reflect/MagicAccessorImpl.java\" rel=\"nofollow noreferrer\"><code>MagicAccessorImpl</code></a></li>\n</ol>\n<h1>1. Class Loader hierarchy</h1>\n<p>Agents are loaded into the <a href=\"https://docs.oracle.com/en/java/javase/21/docs/api/java.instrument/java/lang/instrument/package-summary.html#loading-agent-classes-and-the-modules-classes-available-to-the-agent-class-heading\" rel=\"nofollow noreferrer\">System Class Loader</a></p>\n<blockquote>\n<p>Classes loaded from the agent JAR file are loaded by the <a href=\"https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/lang/ClassLoader.html#getSystemClassLoader()\" rel=\"nofollow noreferrer\">system class loader</a> and are members of the system class loader's <a href=\"https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/lang/ClassLoader.html#getUnnamedModule()\" rel=\"nofollow noreferrer\">unnamed module</a>. The system class loader typically defines the class containing the application <code>main</code> method too.</p>\n</blockquote>\n<p>If you instrument classes in the bootstrap class loader, then those instrumented classes can only uses classes that are defined by the bootstrap class loader.</p>\n<p>This warning applies to this situation as well:</p>\n<blockquote>\n<p>Supporting classes that the agent arranges to be loaded by the bootstrap class loader (by means of <a href=\"https://docs.oracle.com/en/java/javase/21/docs/api/java.instrument/java/lang/instrument/Instrumentation.html#appendToBootstrapClassLoaderSearch(java.util.jar.JarFile)\" rel=\"nofollow noreferrer\"><code>appendToBootstrapClassLoaderSearch</code></a> or the <code>Boot-Class-Path</code> attribute specified below), must link only to classes defined to the bootstrap class loader. There is no guarantee that all platform classes can be defined by the boot class loader.</p>\n</blockquote>\n<p>One option is to load classes that are used by instrumented classes with the bootstrap class loader - two methods are already mentioned, but there might be more ways.</p>\n<h1>2. Instrumenting subclasses of <code>MagicAccessorImpl</code></h1>\n<p>Those classes are special, as they are <a href=\"https://github.com/openjdk/jdk/blob/jdk-21%2B22/src/java.base/share/classes/jdk/internal/reflect/MagicAccessorImpl.java\" rel=\"nofollow noreferrer\">not verified</a>:</p>\n<blockquote>\n<pre class=\"lang-java prettyprint-override\"><code>/** &lt;P&gt; MagicAccessorImpl (named for parity with FieldAccessorImpl and\n   others, not because it actually implements an interface) is a\n   marker class in the hierarchy. All subclasses of this class are\n   &quot;magically&quot; granted access by the VM to otherwise inaccessible\n   fields and methods of other classes. It is used to hold the code\n   for dynamically-generated FieldAccessorImpl and MethodAccessorImpl\n   subclasses. (Use of the word &quot;unsafe&quot; was avoided in this class's\n   name to avoid confusion with {@link jdk.internal.misc.Unsafe}.) &lt;/P&gt;\n\n   &lt;P&gt; The bug fix for 4486457 also necessitated disabling\n   verification for this class and all subclasses, as opposed to just\n   SerializationConstructorAccessorImpl and subclasses, to avoid\n   having to indicate to the VM which of these dynamically-generated\n   stub classes were known to be able to pass the verifier. &lt;/P&gt;\n\n   &lt;P&gt; Do not change the name of this class without also changing the\n   VM's code. &lt;/P&gt; */\n</code></pre>\n</blockquote>\n<p>This allows the class to do funny/magic things such as creating an object of one type and then calling the constructor of an other type - as is done by the &quot;constructor for serialization&quot;, which skips all constructors until the first non-serializable super class is reached.</p>\n<p>As those classes are not verified, you have to take extreme care that those classes are (somewhat) valid - the JVM will usually not complain if you mess this up, and may fail later for seemingly unrelated reasons.</p>\n<p>My advice here is: <strong>Do not touch.</strong></p>\n<p>By the way, in Java 18 the reflection framework was <a href=\"https://openjdk.org/jeps/416\" rel=\"nofollow noreferrer\">updated to use MethodHandles</a>, and in Java 22 the &quot;constructor for serialization&quot; uses MethodHandles as well.<br />\nAt some point after this the special treatment of not verifying subclasses of <code>MagicAccessorImpl</code> was removed.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 785560,
+      "reputation" : 15259,
+      "user_id" : 845414,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/8fbe63f77ce3f9656c62b27db4d8583b?s=256&d=identicon&r=PG",
+      "display_name" : "Johannes Kuhn",
+      "link" : "https://stackoverflow.com/users/845414/johannes-kuhn"
+    },
+    "creation_date" : 1758961020,
+    "last_activity_date" : 1758961020,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140765991,
+    "post_id" : 79776139,
+    "body" : "@Johannes Kuhn The generated class GeneratedSerializationConstructorAccessor1 does indeed call fr.code.api.CodeMonitoring.callMethod, because I added instrumentation.appendToBootstrapClassLoaderSearch",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 11024811,
+      "reputation" : 31,
+      "user_id" : 31578656,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f12b8cb30bed035da30c658310eb814f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "user31578656",
+      "link" : "https://stackoverflow.com/users/31578656/user31578656"
+    },
+    "creation_date" : 1759133794,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140765984,
+    "post_id" : 79776139,
+    "body" : "@AleZalazar The call to CodeMonitoring.callMethod works perfectly; I can see in the execution stack that the code is indeed called and the method returns a primitive boolean true. The problem is not the call itself, but the assignment to the static variable — if I do a pop, it works",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 11024811,
+      "reputation" : 31,
+      "user_id" : 31578656,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f12b8cb30bed035da30c658310eb814f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "user31578656",
+      "link" : "https://stackoverflow.com/users/31578656/user31578656"
+    },
+    "creation_date" : 1759133647,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140763268,
+    "post_id" : 79776139,
+    "body" : "Amendment to what Johannes said: You can put your agent classes on the bootstrap classloader altogether or alternatively use a &quot;springboard agent&quot; which puts them there without accessing them directly and afterwards delegate to the transformer when it is on the bootstrap classpath already.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1087271,
+      "reputation" : 68549,
+      "user_id" : 1082681,
+      "user_type" : "registered",
+      "accept_rate" : 90,
+      "profile_image" : "https://i.sstatic.net/lDK9h.png?s=256",
+      "display_name" : "kriegaex",
+      "link" : "https://stackoverflow.com/users/1082681/kriegaex"
+    },
+    "creation_date" : 1758960054,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140763260,
+    "post_id" : 79776139,
+    "body" : "In short: Agents are loaded with the application class loader. Classes from the bootstrap class loader can&#39;t see those classes.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 785560,
+      "reputation" : 15259,
+      "user_id" : 845414,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/8fbe63f77ce3f9656c62b27db4d8583b?s=256&d=identicon&r=PG",
+      "display_name" : "Johannes Kuhn",
+      "link" : "https://stackoverflow.com/users/845414/johannes-kuhn"
+    },
+    "creation_date" : 1758959388,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140762519,
+    "post_id" : 79776139,
+    "body" : "Have you tried printing the returned object from the callMethod execution? does it match a boolean? Does it need to be casted?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1600162,
+      "reputation" : 1980,
+      "user_id" : 1481345,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/7ce7a13002102b17b0bd3388ff2fed36?s=256&d=identicon&r=PG",
+      "display_name" : "Ale Zalazar",
+      "link" : "https://stackoverflow.com/users/1481345/ale-zalazar"
+    },
+    "creation_date" : 1758909431,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79776611" : [ {
+      "comment_id" : 140801259,
+      "post_id" : 79776611,
+      "body" : "@user31578656 It’s most likely because the <code>putstatic</code> refers to the generated class itself which might not be supported for those special JVM classes. You could try a static field in a different class instead. However, it’s a mistake that those classes where ever shown to the classfile transformer (unlike the other generated classes which where defined to be non-transformable right from the start).",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 3211603,
+        "reputation" : 300941,
+        "user_id" : 2711488,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+        "display_name" : "Holger",
+        "link" : "https://stackoverflow.com/users/2711488/holger"
+      },
+      "creation_date" : 1760686455,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140766011,
+      "post_id" : 79776611,
+      "body" : "The return value is correctly pushed onto the stack.  If I do a POP, I remove it from the stack, and everything works fine.  But if I assign it using PUTSTATIC, it no longer works.  There&#39;s no need to insert a visitFrame, since the code is version 49 — even in Java 21.    I know, I know — I’m just naturally curious :)",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 11024811,
+        "reputation" : 31,
+        "user_id" : 31578656,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/f12b8cb30bed035da30c658310eb814f?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "user31578656",
+        "link" : "https://stackoverflow.com/users/31578656/user31578656"
+      },
+      "creation_date" : 1759134516,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140766001,
+      "post_id" : 79776611,
+      "body" : "My goal is not to modify JDK code — I was building a Java agent for a specific need within my team&#39;s code. Initially, I didn’t apply any filtering, and that’s when I noticed this behavior.    In life, it’s important to be curious and understand how things work, so I’d really like to get to the bottom of this. That said, I’m not planning to modify any of the JVM&#39;s internal or &quot;magic&quot; classes.    I want to emphasize that the call itself works — I successfully modified the code that calls my static method.  What doesn’t work is assigning the result of that method to the variable b_code_newInstanc",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 11024811,
+        "reputation" : 31,
+        "user_id" : 31578656,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/f12b8cb30bed035da30c658310eb814f?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "user31578656",
+        "link" : "https://stackoverflow.com/users/31578656/user31578656"
+      },
+      "creation_date" : 1759134055,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

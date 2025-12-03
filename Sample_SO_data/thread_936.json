@@ -1,0 +1,99 @@
+{
+  "question" : {
+    "question_id" : 79753446,
+    "title" : "Asserting on displayed JDialogs",
+    "body" : "<p>How do I assert on Swing modal dialogs?</p>\n<p>The problem:</p>\n<ol>\n<li>I <em>can't</em> show a dialog synchronously —  it would block the thread indefinitely.</li>\n<li>I <em>can</em> pass it to <code>SwingUtilities#invokeLater</code>, but can neither assert on the dialog's contents immediately after (since it may not fully initialize at that point) nor <code>Robot#waitForIdle</code> (since it throws if invoked from the EDT — all Swing tests <a href=\"https://web.archive.org/web/20120825111857/http://docs.codehaus.org/display/FEST/Writing+EDT-safe+GUI+tests\" rel=\"nofollow noreferrer\">should</a> run in the EDT, I believe).</li>\n</ol>\n<p>MRE:</p>\n<pre class=\"lang-java prettyprint-override\"><code>import javax.swing.JDialog;\nimport javax.swing.JPanel;\nimport javax.swing.JTextField;\nimport java.awt.Window;\nimport java.awt.event.ComponentAdapter;\nimport java.awt.event.ComponentEvent;\n\npublic class SimpleDialog extends JDialog {\n\n    private JTextField textField;\n\n    public SimpleDialog(String title) {\n        this(null, title);\n    }\n\n    public SimpleDialog(Window owner, String title) {\n        super(owner, title);\n        add(createMainPanel());\n    }\n\n    // our dialogs have a unique showing method\n    public void doModal() {\n        /* \n         in a real case, it would typically contain some init logic \n         and return a constant (OK, CANCEL, etc.) \n        */\n        setVisible(true);\n    }\n\n    private JPanel createMainPanel() {\n        JPanel panel = new JPanel();\n        panel.add(createNameField());\n        // imagine there's an app requirement that the field should have focus right away\n        panel.addComponentListener(new ComponentAdapter() {\n            @Override\n            public void componentShown(ComponentEvent e) {\n                textField.requestFocus();\n            }\n        });\n        return panel;\n    }\n\n    private JTextField createNameField() {\n        textField = new JTextField(10);\n        textField.setName(&quot;nameField&quot;);\n        return textField;\n    }\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>import org.fest.swing.core.BasicRobot;\nimport org.fest.swing.core.ComponentFinder;\nimport org.fest.swing.core.Robot;\nimport org.fest.swing.core.matcher.JTextComponentMatcher;\nimport org.junit.jupiter.api.Test;\n\nimport javax.swing.SwingUtilities;\nimport javax.swing.text.JTextComponent;\n\nimport java.lang.reflect.InvocationTargetException;\n\nimport static org.junit.jupiter.api.Assertions.assertEquals;\nimport static org.junit.jupiter.api.Assertions.assertTrue;\n\nclass SimpleDialogTest {\n\n    Robot robot = BasicRobot.robotWithCurrentAwtHierarchy();\n    ComponentFinder finder = robot.finder();\n\n    @Test\n    void onceDialogDisplayed_nameFieldHasFocus() throws InterruptedException, InvocationTargetException {\n        SwingUtilities.invokeAndWait(() -&gt; {\n            SimpleDialog dialog = new SimpleDialog(&quot;Enter your name&quot;);\n            JTextComponent nameField = finder.find(JTextComponentMatcher.withName(&quot;nameField&quot;));\n\n            SwingUtilities.invokeLater(dialog::doModal);\n            assertTrue(nameField.hasFocus()); // fails\n        });\n    }\n}\n</code></pre>\n<pre class=\"lang-xml prettyprint-override\"><code>        &lt;dependency&gt;\n            &lt;groupId&gt;org.junit.jupiter&lt;/groupId&gt;\n            &lt;artifactId&gt;junit-jupiter-engine&lt;/artifactId&gt;\n            &lt;version&gt;5.9.3&lt;/version&gt;\n            &lt;scope&gt;test&lt;/scope&gt;\n        &lt;/dependency&gt;\n\n        &lt;dependency&gt;\n            &lt;groupId&gt;org.easytesting&lt;/groupId&gt;\n            &lt;artifactId&gt;fest-swing&lt;/artifactId&gt;\n            &lt;version&gt;1.2.1&lt;/version&gt;\n            &lt;scope&gt;test&lt;/scope&gt;\n        &lt;/dependency&gt;\n</code></pre>\n<p>Or is my whole idea of running entire tests in the EDT doomed from the start (I hoped to <a href=\"https://stackoverflow.com/questions/79749938/writing-safe-non-ugly-swing-tests\">annotate</a> a test class and forget about EDT-related issues altogether)?</p>\n<p>Keep in mind, our dialogs have a unique showing method, so a simple <code>fixture.show()</code> won't do anyway.</p>\n<pre class=\"lang-java prettyprint-override\"><code>// works, not executed in the EDT as a whole\n    @Test\n    void onceDialogDisplayed_nameFieldHasFocus() throws InterruptedException, InvocationTargetException {\n        DialogFixture dialogFixture = createDialogFixture();\n        dialogFixture.show();\n        JTextComponent nameField = finder.find(JTextComponentMatcher.withName(&quot;nameField&quot;));\n        assertTrue(nameField.hasFocus());\n    }\n\n    private DialogFixture createDialogFixture() {\n        SimpleDialog dialog = createDialog();\n        DialogFixture dialogFixture = new DialogFixture(robot, dialog);\n        return dialogFixture;\n    }\n\n    private static SimpleDialog createDialog() {\n        SimpleDialog dialog = GuiActionRunner.execute(new GuiQuery&lt;SimpleDialog&gt;() {\n            @Override\n            protected SimpleDialog executeInEDT() {\n                SimpleDialog dialog = new SimpleDialog(&quot;Enter your name&quot;);\n                return dialog;\n            }\n        });\n        return dialog;\n    }\n</code></pre>\n<p>Java 8.</p>\n",
+    "tags" : [ "java", "swing", "junit5", "fest" ],
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2667,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "is_answered" : true,
+    "view_count" : 100,
+    "answer_count" : 2,
+    "score" : 2,
+    "last_activity_date" : 1756971442,
+    "creation_date" : 1756812945,
+    "link" : "https://stackoverflow.com/questions/79753446/asserting-on-displayed-jdialogs",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79755407,
+    "question_id" : 79753446,
+    "body" : "<blockquote>\n<p>Or is my whole idea of running entire tests in the EDT doomed from the start</p>\n</blockquote>\n<p>When it comes to modal dialogs, yes.</p>\n<blockquote>\n<p>How do I assert on Swing modal dialogs?</p>\n</blockquote>\n<p>Upon asynchronously calling a blocking showing method (e.g. with <code>SwingUtilities.invokeLater()</code>), you <code>waitForIdle()</code> outside of the EDT and then assert.</p>\n<p>All creations, mutations, access of Swing components, on the other hand, should be done in the EDT. See <a href=\"https://stackoverflow.com/a/79755391/20692967\">this answer</a> for an example.</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2667,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "creation_date" : 1756971442,
+    "last_activity_date" : 1756971442,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79753586,
+    "question_id" : 79753446,
+    "body" : "<p>You could use a <a href=\"https://docs.oracle.com/javase/8/docs/api/java/util/concurrent/CountDownLatch.html\" rel=\"nofollow noreferrer\">CountDownLatch</a></p>\n<pre class=\"lang-java prettyprint-override\"><code>SimpleDialog dialog = new SimpleDialog(&quot;Enter your name&quot;);\nJTextComponent nameField = finder.find(JTextComponentMatcher.withName(&quot;nameField&quot;));\n\nCountDownLatch doneSignal = new CountDownLatch(1);\nSwingUtilities.invokeLater(() -&gt; {\n   dialog.doModal();\n   doneSignal.countDown();\n});\ndoneSignal.await();\nassertTrue(nameField.hasFocus());\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 1096470,
+      "reputation" : 29415,
+      "user_id" : 1089967,
+      "user_type" : "registered",
+      "accept_rate" : 59,
+      "profile_image" : "https://www.gravatar.com/avatar/1f256b904ff621d678598d8fa49f86c5?s=256&d=identicon&r=PG",
+      "display_name" : "lance-java",
+      "link" : "https://stackoverflow.com/users/1089967/lance-java"
+    },
+    "creation_date" : 1756822092,
+    "last_activity_date" : 1756822092,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79753586" : [ {
+      "comment_id" : 140709461,
+      "post_id" : 79753586,
+      "body" : "Oh, sorry, it doesn&#39;t work since <code>doModal()</code> is blocking (just like <code>dialog.setVisible(true)</code>)",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10187542,
+        "reputation" : 2667,
+        "user_id" : 20692967,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+        "display_name" : "Sergey Zolotarev",
+        "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+      },
+      "creation_date" : 1756822805,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140709450,
+      "post_id" : 79753586,
+      "body" : "Thank you. Is this how it&#39;s <i>supposed</i> to be done (from the standpoint of FEST creators)?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10187542,
+        "reputation" : 2667,
+        "user_id" : 20692967,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+        "display_name" : "Sergey Zolotarev",
+        "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+      },
+      "creation_date" : 1756822541,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

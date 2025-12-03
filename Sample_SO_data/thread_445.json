@@ -1,0 +1,673 @@
+{
+  "question" : {
+    "question_id" : 79798305,
+    "title" : "How can I generically convert a String value into an instance of a given Comparable type in Java?",
+    "body" : "<p>I’m trying to implement a generic utility method that takes a <code>String</code> value and a <code>Class&lt;?&gt;</code> type, and returns an instance of that type.</p>\n<p>The context: This value represents data from a JPA column, so the type corresponds to the type of the entity property (e.g., String, Integer, LocalDate, Instant, etc.).\nAll target types are guaranteed to implement <code>Comparable</code>.</p>\n<p>Here’s a simplified example of what I currently have:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class TypeParser {\n\n    public static Object convertStringToTypeOf(String raw, Class&lt;?&gt; type){\n        return Integer.valueOf(raw);\n    }\n}\n</code></pre>\n<p>What I want is a proper, type-safe, and extensible approach,  something that can handle typical <code>Comparable</code> types without hardcoding a long chain of <code>if/else</code> Statements like this:</p>\n<pre class=\"lang-java prettyprint-override\"><code>if (type == String.class) return raw;\nif (type == Integer.class) return Integer.valueOf(raw);\nif (type == LocalDate.class) return LocalDate.parse(raw);\nif (type == Instant.class) return Instant.parse(raw);\n</code></pre>\n<p>I’d like to make this as generic, maintainable, and type-safe as possible, since it will be part of a framework-level utility for mapping values dynamically in JPA entities.</p>\n<p>The main idea is: if this type is derived from `Comparable`, which is guaranteed, to be instantiated since later it will be compared.</p>\n",
+    "tags" : [ "java", "jpa", "generics", "reflection", "type-conversion" ],
+    "owner" : {
+      "account_id" : 40326788,
+      "reputation" : 9,
+      "user_id" : 29723891,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/13ceb1b799e7d60a4431bb29ce6d36b8?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "David Todorov",
+      "link" : "https://stackoverflow.com/users/29723891/david-todorov"
+    },
+    "is_answered" : true,
+    "view_count" : 255,
+    "answer_count" : 3,
+    "score" : -3,
+    "last_activity_date" : 1761752724,
+    "creation_date" : 1761266077,
+    "link" : "https://stackoverflow.com/questions/79798305/how-can-i-generically-convert-a-string-value-into-an-instance-of-a-given-compara",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79798342,
+    "question_id" : 79798305,
+    "body" : "<h2>Extensible solution</h2>\n<p>You asked for a type-safe and extensible type parser.</p>\n<p>The comment by @Anonymous can give us exactly that. Building a parser where you can plug in conversions for types. The parser looks a converter for the type asked for up in a map. And then has that converter perform the actual parsing into the type in question.</p>\n<pre><code>public class TypeParser {\n    private Map&lt;Class&lt;?&gt;, Function&lt;String, Object&gt;&gt; converters = new HashMap&lt;&gt;();\n\n    public &lt;T extends Comparable&lt;T&gt;&gt; void registerConverter(\n            Class&lt;T&gt; type, Function&lt;String, T&gt; converter) {\n        converters.put(type, converter::apply);\n    }\n\n    public &lt;T extends Comparable&lt;T&gt;&gt; T convertStringToTypeOf(String raw, Class&lt;T&gt; type){\n        return type.cast(converters.get(type).apply(raw));\n    }\n}\n</code></pre>\n<p>When passing a <code>Class</code> to <code>convertStringToTypeOf()</code>, we may just as well make the method generic and have it return that type. This should give you the type safety. We need to cast to that type, which fortunately the <code>Class</code> object can do for us. And since we have only put converters in the map that match the <code>Class</code> keys, we also know that the cast will succeed.</p>\n<p>The method cannot but break if you pass a type to it for which no converter has been registered. As the method stands, the map will return <code>null</code>, and we will attempt to call <code>apply()</code> on that <code>null</code>, giving a <code>NullPointerException</code>. You should modify the method to throw a different exception type with a telling message (leaving that to the reader). You may also add a <code>boolean canConvertToType(Class&lt;?&gt;)</code> method that one can call before trying to parse.</p>\n<p>By making <code>registerConverter()</code> generic too we ensure two requirements on compile time:</p>\n<ol>\n<li>The converter does convert to the type for which it is registered (this is what makes the cast in <code>convertStringToTypeOf()</code> safe).</li>\n<li>Only converters for comparable types are registered. This is what the <code>T extends Comparable</code> type parameter does. This in turn ensures that only comparable types are converted to.</li>\n</ol>\n<p>Use like</p>\n<pre><code>    TypeParser myParser = new TypeParser();\n    myParser.registerConverter(String.class, s -&gt; s);\n    myParser.registerConverter(Integer.class, Integer::valueOf);\n    // ...\n\n    Integer myInteger = myParser.convertStringToTypeOf(&quot;42&quot;, Integer.class);\n    System.out.println(&quot;Successfully parsed into the Integer &quot; + myInteger);\n</code></pre>\n<p>Output from the example snippet is:</p>\n<blockquote>\n<p>Successfully parsed into the Integer 42</p>\n</blockquote>\n<p>Update @rzwitserloot: Thanks for the comment. The unsafety you correctly point out (whether we want to call it “type unsafety” or something else) is inherent in the question, not (only) in this answer.</p>\n",
+    "score" : 5,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 44423363,
+      "reputation" : 59,
+      "user_id" : 31744890,
+      "user_type" : "unregistered",
+      "profile_image" : "https://www.gravatar.com/avatar/7e85021807842f8d17d8df777c25d5fc?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Mayara Collets",
+      "link" : "https://stackoverflow.com/users/31744890/mayara-collets"
+    },
+    "creation_date" : 1761273896,
+    "last_activity_date" : 1761314974,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79798563,
+    "question_id" : 79798305,
+    "body" : "<p>You can implement a generic utility method that converts a <code>String</code> into any <code>Comparable</code> type by checking the target type and performing the appropriate conversion.</p>\n<p>Here’s a simple and practical solution:</p>\n<pre class=\"lang-java prettyprint-override\"><code>import java.time.LocalDate;\nimport java.time.Instant;\n\npublic class TypeParser {\n\n    @SuppressWarnings(&quot;unchecked&quot;)\n    public static &lt;T extends Comparable&lt;T&gt;&gt; T convertStringToTypeOf(String raw, Class&lt;T&gt; type) {\n        if (type == String.class) {\n            return (T) raw;\n        } else if (type == Integer.class) {\n            return (T) Integer.valueOf(raw);\n        } else if (type == Long.class) {\n            return (T) Long.valueOf(raw);\n        } else if (type == Double.class) {\n            return (T) Double.valueOf(raw);\n        } else if (type == Boolean.class) {\n            return (T) Boolean.valueOf(raw);\n        } else if (type == LocalDate.class) {\n            return (T) LocalDate.parse(raw);\n        } else if (type == Instant.class) {\n            return (T) Instant.parse(raw);\n        }\n\n        throw new IllegalArgumentException(&quot;Unsupported type: &quot; + type);\n    }\n}\n</code></pre>\n",
+    "score" : -2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 44426072,
+      "reputation" : 7,
+      "user_id" : 31746482,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/11ca48f8d780fe9f31201f64a2792329?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Mohamed Younes",
+      "link" : "https://stackoverflow.com/users/31746482/mohamed-younes"
+    },
+    "creation_date" : 1761295235,
+    "last_activity_date" : 1761295235,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79798377,
+    "question_id" : 79798305,
+    "body" : "<p>There is no way to avoid using <em>if/else</em>. The following code is the closest I could get to what you are asking for...</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class TypeParser&lt;T extends Comparable&lt;T&gt;&gt; {\n\n   public T convertStringToTypeOf( String raw, Class&lt;? extends Comparable&gt; type ) {\n\n        // we assign the name “parse” to “methodName” since it is the\n        // one implemented by the largest number of classes, then in\n        // the “if/else if” statements we check if we need to change it.\n      String methodName = &quot;parse&quot;;\n      if( type.equals( String.class ) ) {\n         return (T) raw;\n      }\n      else if( type.equals( Integer.class ) ) {\n         methodName = &quot;parseInt&quot;;\n      }\n\n        // obtain method's class\n      Method metodos[] = type.getMethods();\n\n        // we iterate over them until we find a match with the expected\n        // name, in which case we invoke it, passing it the received\n        // string twice as parameters (yes, it's weird).\n      for( Method met : metodos ) {\n         if( met.getName().equals( methodName ) &amp;&amp; met.getParameterCount() == 1 ) {\n            try {\n               @SuppressWarnings(&quot;unchecked&quot;)\n                 // when a static method is invoked, the first parameter,\n                 // which should be the object that has the method to be\n                 // invoked, is ignored, so I can put anything...\n                 // including *null*.\n               T out = (T) met.invoke( null, raw );\n               return out;\n            }\n            catch( IllegalAccessException | InvocationTargetException ex ) { }\n         }\n      }\n      return null;\n   }\n\n   void test() {\n          \n      T myT6 = convertStringToTypeOf( &quot;2025-10-10&quot;, LocalDate.class );\n      T myT7 = convertStringToTypeOf( &quot;2025-10-11&quot;, LocalDate.class );\n      System.out.println( myT6.compareTo( myT7 ) );\n      \n      T myT1 = convertStringToTypeOf( &quot;Hello&quot;, String.class );\n      T myT2 = convertStringToTypeOf( &quot;Hello&quot;, String.class );\n      System.out.println( myT1.compareTo( myT2 ) );\n      T myT3 = convertStringToTypeOf( &quot;1&quot;, Integer.class );\n      T myT4 = convertStringToTypeOf( &quot;1&quot;, Integer.class );\n\n        // error does not implement “Comparable”\n      // T myT5 = convertStringToTypeOf( &quot;1&quot;, Popo.class );\n      System.out.println( myT3.compareTo( myT4 ) );\n   }\n\n   public static void main( String[] args ) {\n      new TypeParser&lt;&gt;().test();\n   }\n}\n\nclass Popo {\n\n}\n</code></pre>\n<p>Now, this seems to me like a case of “using a sledgehammer to crack a nut”,  using reflection (which we should generally avoid due to overload).<br />\nIf we only want to compare the objects created from the received strings, we can do so more elegantly by implementing our <strong>compareTo()</strong> method as follows:</p>\n<pre><code>int compareTo( String a, String b, Class c ) {\n  return switch( c.getCanonicalName() ) {\n      case &quot;java.lang.String&quot; -&gt; a.compareTo( b );\n      case &quot;java.lang.Integer&quot; -&gt; Integer.decode( a ).compareTo( Integer.decode( b ) );\n      case &quot;java.time.LocalDate&quot; -&gt; LocalDate.parse( a ).compareTo( LocalDate.parse( b ) );\n      case &quot;java.time.Instant&quot; -&gt; Instant.parse( a ).compareTo( Instant.parse( b ) );\n      default -&gt; Integer.MIN_VALUE;\n   };\n}\n</code></pre>\n<p>and we invoke it thus:</p>\n<pre><code>System.out.println( compareTo( &quot;2025-10-11&quot;, &quot;2025-10-11&quot;, LocalDate.class ) );\nSystem.out.println( compareTo( &quot;10&quot;, &quot;11&quot;, Integer.class ) );\n</code></pre>\n",
+    "score" : -3,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 10843443,
+      "reputation" : 918,
+      "user_id" : 20882864,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+      "display_name" : "Marce Puente",
+      "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+    },
+    "creation_date" : 1761280449,
+    "last_activity_date" : 1761752724,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140816928,
+    "post_id" : 79798305,
+    "body" : "Have you looked into frameworks like Jackson&#39;s ObjectMapper?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1535561,
+      "reputation" : 9056,
+      "user_id" : 1431720,
+      "user_type" : "registered",
+      "accept_rate" : 89,
+      "profile_image" : "https://www.gravatar.com/avatar/f5a1388d4d3b2bf03b11bb5658c68c29?s=256&d=identicon&r=PG",
+      "display_name" : "Robert",
+      "link" : "https://stackoverflow.com/users/1431720/robert"
+    },
+    "creation_date" : 1761407240,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140814256,
+    "post_id" : 79798305,
+    "body" : "It <i>sounds</i> like you have decided something along the lines of: &quot;I know! I&#39;ll just keep things simple and ask the DB to turn everything into strings, and then later on I&#39;ll just turn the string back into whatever type it needs to be, how hard could it be?&quot;. You&#39;re now asking questions about that second step. But your error was in the first: No, asking the DB to string-ize all the things is <i>not</i> a good idea. Or, at least, it&#39;s <i>highly unlikely</i>. Sounds like an X/Y problem. The true answer to <i>this specific question</i> is, as Louis says: impossible.",
+    "score" : 8,
+    "owner" : {
+      "account_id" : 401843,
+      "reputation" : 107136,
+      "user_id" : 768644,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+      "display_name" : "rzwitserloot",
+      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+    },
+    "creation_date" : 1761282575,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140814238,
+    "post_id" : 79798305,
+    "body" : "I don&#39;t see why you have a <code>String</code> in the first place. JPA should give you an object of the correct type. Have you lost the type somewhere?",
+    "score" : 4,
+    "owner" : {
+      "account_id" : 71739,
+      "reputation" : 311872,
+      "user_id" : 207421,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/5cfe5f7d64f44be04f147295f5c7b88e?s=256&d=identicon&r=PG",
+      "display_name" : "user207421",
+      "link" : "https://stackoverflow.com/users/207421/user207421"
+    },
+    "creation_date" : 1761281186,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140814148,
+    "post_id" : 79798305,
+    "body" : "You may use a <code>switch</code> expression instead of <code>if</code>/<code>else</code>, but other than that there is no other way. Extensible? Yeah, you may build a parser where you can plug in conversions for types, and the parser will check whether its got a converter for the type asked for. Maybe look it up in a map.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7612423,
+      "reputation" : 87400,
+      "user_id" : 5772882,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Anonymous",
+      "link" : "https://stackoverflow.com/users/5772882/anonymous"
+    },
+    "creation_date" : 1761272734,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140814102,
+    "post_id" : 79798305,
+    "body" : "What&#39;s the relevance of <code>Comparable</code> here? The problem is not about comparing instances of these classes, is it?",
+    "score" : 5,
+    "owner" : {
+      "account_id" : 6651855,
+      "reputation" : 291845,
+      "user_id" : 5133585,
+      "user_type" : "registered",
+      "accept_rate" : 96,
+      "profile_image" : "https://i.sstatic.net/dfqcw.png?s=256",
+      "display_name" : "Sweeper",
+      "link" : "https://stackoverflow.com/users/5133585/sweeper"
+    },
+    "creation_date" : 1761268949,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140814090,
+    "post_id" : 79798305,
+    "body" : "Hello David, welcome, there is a problem with your idea: the method returns an <i>Object</i>, so you will have to recast it where you use the variable, and if we make it return a <i>T</i> object, using generics, it wouldn&#39;t change, because when using it in another method, you would have to do the <i>cast</i>, In short, the casting process must be carried out <i>in situ</i>... unless you only want to compare the values received...",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10843443,
+      "reputation" : 918,
+      "user_id" : 20882864,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+      "display_name" : "Marce Puente",
+      "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+    },
+    "creation_date" : 1761268103,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140814085,
+    "post_id" : 79798305,
+    "body" : "Can you explain your objection to the <code>if&#47;else</code> chain? It&#39;s hard to offer suggestions if we don&#39;t know what you&#39;re looking for.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 1691630,
+      "reputation" : 51047,
+      "user_id" : 1553851,
+      "user_type" : "registered",
+      "accept_rate" : 73,
+      "profile_image" : "https://www.gravatar.com/avatar/ad333c218c8f2fb917cf506919fc95f4?s=256&d=identicon&r=PG",
+      "display_name" : "shmosel",
+      "link" : "https://stackoverflow.com/users/1553851/shmosel"
+    },
+    "creation_date" : 1761267699,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140814078,
+    "post_id" : 79798305,
+    "body" : "The short answer is, &quot;too bad.&quot; There is no generic, maintainable, type safe way to do this.",
+    "score" : 8,
+    "owner" : {
+      "account_id" : 465573,
+      "reputation" : 200423,
+      "user_id" : 869736,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/ae7bb06b9a23a4dd7eea69e853d47d12?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Louis Wasserman",
+      "link" : "https://stackoverflow.com/users/869736/louis-wasserman"
+    },
+    "creation_date" : 1761267258,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79798563" : [ {
+      "comment_id" : 140814663,
+      "post_id" : 79798563,
+      "body" : "OP does <i>not</i> want if-else - <code>without hardcoding a long chain of if&#47;else statements</code>.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 23783500,
+        "reputation" : 7109,
+        "user_id" : 17795888,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/Xay1V.jpg?s=256",
+        "display_name" : "Chaosfire",
+        "link" : "https://stackoverflow.com/users/17795888/chaosfire"
+      },
+      "creation_date" : 1761296992,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79798342" : [ {
+      "comment_id" : 140815162,
+      "post_id" : 79798342,
+      "body" : "Comment on the edit: No, it&#39;s not &#39;inherent in the question&#39;. It is possible to imagine a java where <code>.convertStringToTypeOf(foo, SomeStrangeType.class)</code> gets flagged at write time as not possible due to there being no converter for SomeStrangeType. That&#39;s not possible in java, but it could have been. One can also imagine an annotation powered code gen system that <i>generates</i> converter methods for each and every type for which a converter exists and then you really do get red wavy lines in your editor as you type. It&#39;s.. ridiculously overengineered, but it is possible.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 401843,
+        "reputation" : 107136,
+        "user_id" : 768644,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+        "display_name" : "rzwitserloot",
+        "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+      },
+      "creation_date" : 1761312061,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140815039,
+      "post_id" : 79798342,
+      "body" : "@rzwitserloot When it comes to Generics, “type safe” means that no “heap pollution” can occur, so this is type safe. It does not imply that a method can accept any input that the compile-time signature would allow. A <code>HashMap</code> is considered type safe, still, that does not imply that it has a value for every key I could pass into <code>get</code>. Of course, a <code>NullPointerException</code> is not the best response to an unsupported argument.",
+      "score" : 3,
+      "owner" : {
+        "account_id" : 3211603,
+        "reputation" : 300941,
+        "user_id" : 2711488,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+        "display_name" : "Holger",
+        "link" : "https://stackoverflow.com/users/2711488/holger"
+      },
+      "creation_date" : 1761308817,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140814252,
+      "post_id" : 79798342,
+      "body" : "This isn&#39;t &#39;type safe&#39; in most definitions of the word: When you write <code>.convertStringToTypeOf(foo, SomeStrangeType.class)</code>, your code has no write-time errors, but will fail at runtime. Sure, &#39;type safety&#39; is not violated but java <i>itself</i> guarantees that so trivially any answer can make that claim if that&#39;s how you&#39;d define &#39;type safe&#39;. Also, an NPE for an unmapped type is particularly egregious.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 401843,
+        "reputation" : 107136,
+        "user_id" : 768644,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+        "display_name" : "rzwitserloot",
+        "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+      },
+      "creation_date" : 1761282395,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79798377" : [ {
+      "comment_id" : 140825267,
+      "post_id" : 79798377,
+      "body" : "I have already corrected it... and a thousand apologies for my “stubbornness”.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 10843443,
+        "reputation" : 918,
+        "user_id" : 20882864,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+        "display_name" : "Marce Puente",
+        "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+      },
+      "creation_date" : 1761752823,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140825250,
+      "post_id" : 79798377,
+      "body" : "@Anonymous, I sugI finally understand, thanks to both of you for your explanations, and especially to user207421 for your infinite patience.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 10843443,
+        "reputation" : 918,
+        "user_id" : 20882864,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+        "display_name" : "Marce Puente",
+        "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+      },
+      "creation_date" : 1761752406,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140825064,
+      "post_id" : 79798377,
+      "body" : "user207421 is correct. From the <code>Class.getMethods()</code> documentation: <i>The elements in the returned array are not sorted and are not in any particular order.</i> So selecting the first method with the right name does not guarantee that you get the right method. And <code>Method.invoke()</code> is specified to throw <code>IllegalArgumentException</code> if the argument count does not match.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 7612423,
+        "reputation" : 87400,
+        "user_id" : 5772882,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Anonymous",
+        "link" : "https://stackoverflow.com/users/5772882/anonymous"
+      },
+      "creation_date" : 1761747871,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140823957,
+      "post_id" : 79798377,
+      "body" : "Reaches a <code>parseInt()</code> that takes four parameters, because you aren&#39;t selecting the methods well enough: i.e. on parameter count as well as name. NB What is &#39;wrong with my machine&#39; is a different JDK from yours.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 71739,
+        "reputation" : 311872,
+        "user_id" : 207421,
+        "user_type" : "registered",
+        "accept_rate" : 82,
+        "profile_image" : "https://www.gravatar.com/avatar/5cfe5f7d64f44be04f147295f5c7b88e?s=256&d=identicon&r=PG",
+        "display_name" : "user207421",
+        "link" : "https://stackoverflow.com/users/207421/user207421"
+      },
+      "creation_date" : 1761699457,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140821472,
+      "post_id" : 79798377,
+      "body" : "The <i>invoke</i> method receives one parameter (the object whose methods are to be invoked) and other parameters (or not) that are requested by the method to be invoked. In my code, I pass two parameters to <i>invoke</i>, the “non-object” (since the method is static) and a single parameter for the target method, so only one reaches “parse”.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10843443,
+        "reputation" : 918,
+        "user_id" : 20882864,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+        "display_name" : "Marce Puente",
+        "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+      },
+      "creation_date" : 1761605444,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140821444,
+      "post_id" : 79798377,
+      "body" : "OK, I will explain it to you. <code>Integer.parseInt()</code> has several overloads, and your code isn&#39;t defensive enough to ensure that it only executes the right one, i.e. the one that takes a single String argument. So if Reflection happens to deliver one of the others, e.g. <code>Integer.parseInt(java.lang.CharSequence,int,int,int)</code>, before <code>Integer.parseInt(String)</code>, as it did for me, you get this exception. Same applies to all other <code>parse()</code> methods that may have overloads.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 71739,
+        "reputation" : 311872,
+        "user_id" : 207421,
+        "user_type" : "registered",
+        "accept_rate" : 82,
+        "profile_image" : "https://www.gravatar.com/avatar/5cfe5f7d64f44be04f147295f5c7b88e?s=256&d=identicon&r=PG",
+        "display_name" : "user207421",
+        "link" : "https://stackoverflow.com/users/207421/user207421"
+      },
+      "creation_date" : 1761603222,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140820438,
+      "post_id" : 79798377,
+      "body" : "At this point, I don&#39;t know what else to say, given that the implementation of the method <b>convertStringToTypeOf()</b> I have proposed <b>never fails</b>. I only see two possibilities: either you have a serious problem with your machine, or your judgment is completely biased by the desire to determine that “what I don&#39;t understand” must be wrong.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10843443,
+        "reputation" : 918,
+        "user_id" : 20882864,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+        "display_name" : "Marce Puente",
+        "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+      },
+      "creation_date" : 1761570024,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140819785,
+      "post_id" : 79798377,
+      "body" : "@MarcePuente So why does your code throw <code>IllegalArgumentException</code>? And what do you plan to do about fixing it?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 71739,
+        "reputation" : 311872,
+        "user_id" : 207421,
+        "user_type" : "registered",
+        "accept_rate" : 82,
+        "profile_image" : "https://www.gravatar.com/avatar/5cfe5f7d64f44be04f147295f5c7b88e?s=256&d=identicon&r=PG",
+        "display_name" : "user207421",
+        "link" : "https://stackoverflow.com/users/207421/user207421"
+      },
+      "creation_date" : 1761548564,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140819590,
+      "post_id" : 79798377,
+      "body" : "I recommend reading the <i>Reflection</i> documentation. when a static method is invoked, the object passed as a parameter is ignored (although it must be present) and can be null.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 10843443,
+        "reputation" : 918,
+        "user_id" : 20882864,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+        "display_name" : "Marce Puente",
+        "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+      },
+      "creation_date" : 1761535254,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140819581,
+      "post_id" : 79798377,
+      "body" : "<code>Integer.parseInt()</code> is a static method, and so are <code>String.parse()</code>,  <code>LocalDate.parse()</code>, and whatever else you are calling incorrectly via <code>Method.invoke()</code>  in the reflective code you wrote above.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 71739,
+        "reputation" : 311872,
+        "user_id" : 207421,
+        "user_type" : "registered",
+        "accept_rate" : 82,
+        "profile_image" : "https://www.gravatar.com/avatar/5cfe5f7d64f44be04f147295f5c7b88e?s=256&d=identicon&r=PG",
+        "display_name" : "user207421",
+        "link" : "https://stackoverflow.com/users/207421/user207421"
+      },
+      "creation_date" : 1761534435,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140817056,
+      "post_id" : 79798377,
+      "body" : "In my IDE <code>TypeParser</code> shows 5 warnings but runs fine and prints <code>-1  0  0</code>.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 7612423,
+        "reputation" : 87400,
+        "user_id" : 5772882,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Anonymous",
+        "link" : "https://stackoverflow.com/users/5772882/anonymous"
+      },
+      "creation_date" : 1761415151,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140816248,
+      "post_id" : 79798377,
+      "body" : "Thank you for your comment, I have already corrected it.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10843443,
+        "reputation" : 918,
+        "user_id" : 20882864,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+        "display_name" : "Marce Puente",
+        "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+      },
+      "creation_date" : 1761354717,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140816227,
+      "post_id" : 79798377,
+      "body" : "Good point, I didn&#39;t think of that scenario. Based on the examples in the OP, I limited the possibilities to the typical classes.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10843443,
+        "reputation" : 918,
+        "user_id" : 20882864,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+        "display_name" : "Marce Puente",
+        "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+      },
+      "creation_date" : 1761352999,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140816224,
+      "post_id" : 79798377,
+      "body" : "There is a small problem: it does not receive an object as a parameter, but rather a class, and as far as I know, it does not work with a <i>switch</i>.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10843443,
+        "reputation" : 918,
+        "user_id" : 20882864,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+        "display_name" : "Marce Puente",
+        "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+      },
+      "creation_date" : 1761352823,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140816223,
+      "post_id" : 79798377,
+      "body" : "In general, the rule &quot;shorter is <b>neccessarily better</b>&quot; is obviously wrong. Surely I don&#39;t need to explain this. It often is, but not <i>literally always</i>. This is one of those cases where it&#39;s way, way worse. This code is even invalid: It would trigger on e.g. a <code>com.foo.whatever.String</code>. If anybody were to include that class in the system that&#39;d be a big snafu, but regardless, your code reacts to it incorrectly. A trivial example of where &#39;but this is shorter&#39; has led you into a terrible place.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 401843,
+        "reputation" : 107136,
+        "user_id" : 768644,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+        "display_name" : "rzwitserloot",
+        "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+      },
+      "creation_date" : 1761352807,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140816221,
+      "post_id" : 79798377,
+      "body" : "A comment is a terrible place to write code unfortunately. Please pretty print it in an editor: <code>Object o = &quot;hello&quot;; return switch (o) { case String _ -&gt; &quot;It&#39;s a string&quot;; case Integer i -&gt; &quot;It&#39;s integer number: &quot; + i.intValue(); default -&gt; &quot;Dunno what it is&quot;;};</code>",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 401843,
+        "reputation" : 107136,
+        "user_id" : 768644,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+        "display_name" : "rzwitserloot",
+        "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+      },
+      "creation_date" : 1761352642,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140816200,
+      "post_id" : 79798377,
+      "body" : "@user207421 The only static method is <b>main</b>, where I create an object <i>TypeParser</i> and call <b>test()</b>, please, copy the entire class, and execute it, &quot;Passing the same object twice to a parse() method makes no sense whatsoever&quot;, There is not a single call to <b>parse</b> with two arguments in my entire code...  &#175;\\_(ツ)_/&#175;",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10843443,
+        "reputation" : 918,
+        "user_id" : 20882864,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+        "display_name" : "Marce Puente",
+        "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+      },
+      "creation_date" : 1761351140,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140816181,
+      "post_id" : 79798377,
+      "body" : "I copy/pasted it, and you have not addressed my other comment. Passing the same object twice to a <code>parse()</code> method makes no sense whatsoever.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 71739,
+        "reputation" : 311872,
+        "user_id" : 207421,
+        "user_type" : "registered",
+        "accept_rate" : 82,
+        "profile_image" : "https://www.gravatar.com/avatar/5cfe5f7d64f44be04f147295f5c7b88e?s=256&d=identicon&r=PG",
+        "display_name" : "user207421",
+        "link" : "https://stackoverflow.com/users/207421/user207421"
+      },
+      "creation_date" : 1761349605,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140815283,
+      "post_id" : 79798377,
+      "body" : "@rzwitserloot It&#39;s not a trick; I use the switch to write less, and could you explain what you mean by <b>and JDK21+ allows you to actually use the types in a switch</b>?, I feel like I missed something.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10843443,
+        "reputation" : 918,
+        "user_id" : 20882864,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+        "display_name" : "Marce Puente",
+        "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+      },
+      "creation_date" : 1761315301,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140815179,
+      "post_id" : 79798377,
+      "body" : "@user207421 The response code <b>does not throw any exceptions</b>. Perhaps you copied it incorrectly, using <b>met.invoke( raw );</b> instead of <b>met.invoke( raw, raw );</b>.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10843443,
+        "reputation" : 918,
+        "user_id" : 20882864,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+        "display_name" : "Marce Puente",
+        "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+      },
+      "creation_date" : 1761312597,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140815172,
+      "post_id" : 79798377,
+      "body" : "@Anonymous Teacher, when I wrote my response, not the one you are referring to, it had not been published. Now that I see it, the comparison between my first implementation and yours is clearly disadvantageous. However, I believe that the correct path is that of the second implementation.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10843443,
+        "reputation" : 918,
+        "user_id" : 20882864,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+        "display_name" : "Marce Puente",
+        "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+      },
+      "creation_date" : 1761312442,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140814563,
+      "post_id" : 79798377,
+      "body" : "This code throws <code>java.lang.IllegalArgumentException: wrong number of arguments</code> at the <code>invoke()</code> call. Static methods must be invoked with the class as the first argument. Code not tested before posting.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 71739,
+        "reputation" : 311872,
+        "user_id" : 207421,
+        "user_type" : "registered",
+        "accept_rate" : 82,
+        "profile_image" : "https://www.gravatar.com/avatar/5cfe5f7d64f44be04f147295f5c7b88e?s=256&d=identicon&r=PG",
+        "display_name" : "user207421",
+        "link" : "https://stackoverflow.com/users/207421/user207421"
+      },
+      "creation_date" : 1761293888,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140814277,
+      "post_id" : 79798377,
+      "body" : "Any advantage over the reflection-free answer by Mayara Collets (in turn partly based on my comment)? I rather tend to agree with you that you&#39;re &quot;cracking nuts wirh a sledge hammer&quot;.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 7612423,
+        "reputation" : 87400,
+        "user_id" : 5772882,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Anonymous",
+        "link" : "https://stackoverflow.com/users/5772882/anonymous"
+      },
+      "creation_date" : 1761283818,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140814255,
+      "post_id" : 79798377,
+      "body" : "The switch hack objectively worse than any if/else chain could possibly be, and JDK21+ allows you to actually <i>use the types</i> in a switch so it&#39;s not even needed.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 401843,
+        "reputation" : 107136,
+        "user_id" : 768644,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+        "display_name" : "rzwitserloot",
+        "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+      },
+      "creation_date" : 1761282488,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

@@ -1,0 +1,64 @@
+{
+  "question" : {
+    "question_id" : 79774299,
+    "title" : "Why does Java&#39;s X22519 Lib works with some inputs but not others",
+    "body" : "<p>I am using java built-in SunEC 21 security provider to do X25519 test cases and all work but one.<br />\nI am using the same logic for every test just different inputs.<br />\nWhen I use the inputs:</p>\n<blockquote>\n<p><code>Public key: e5210f12786811d3f4b7959d0538ae2c31dbe7106fc03c3efc4cd549c715a493</code><br />\n<code>Private key: 4b66e9d4d1b4673c5ad22691957d6af5c11b6421e0ea01d42ca4169e7918ba0d</code></p>\n</blockquote>\n<p>the expected output is:</p>\n<blockquote>\n<p>95cbde9476e8907d7aade45cb4b873f88b595a68799fa152e6f8f7647aac7957</p>\n</blockquote>\n<p>Instead I get:</p>\n<blockquote>\n<p>d5f33573c9f6b8129483acce1e2534e95d3c41af6b00d0d30437b87cada57e4a</p>\n</blockquote>\n<p>(This is test case two in the RFC 7748.)</p>\n<p>I don't know why this is. Whenever I try it with the first or third input in the RFC 7748 it works fine. (Again, same logic just different inputs.)</p>\n<pre class=\"lang-java prettyprint-override\"><code>byte[] publicKey;\npublicKey = Hex.decode(&quot;e5210f12786811d3f4b7959d0538ae2c31dbe7106fc03c3efc4cd549c715a493&quot;);\n\nbyte[] privateKey;// input scalar\nprivateKey = Hex.decode(&quot;4b66e9d4d1b4673c5ad22691957d6af5c11b6421e0ea01d42ca4169e7918ba0d&quot;);\n// System.out.println(&quot;bc go crazy:&quot; + Hex.toHexString(privateKey));\n\nNamedParameterSpec paramSpec = new NamedParameterSpec(&quot;X25519&quot;);\n\nBigInteger clientBigInteger = new BigInteger(1, Util.reverse(publicKey));\n\nKeyFactory kf = KeyFactory.getInstance(&quot;X25519&quot;);\nXECPublicKeySpec clientPublicKeySpec = new XECPublicKeySpec(paramSpec, clientBigInteger);\n\nXECPublicKey clientPublicKey;\n\nclientPublicKey = (XECPublicKey) kf.generatePublic(clientPublicKeySpec);\n\nXECPrivateKeySpec privateKeySpec = new XECPrivateKeySpec(paramSpec, privateKey);\n\nXECPrivateKey secretKey = (XECPrivateKey) kf.generatePrivate(privateKeySpec);\n\nKeyAgreement ka = KeyAgreement.getInstance(&quot;X25519&quot;);\n\nka.init(secretKey);\nka.doPhase(clientPublicKey, true);\nbyte[] sharedSecret = ka.generateSecret();\n\nSystem.err.println(&quot;---------- X25519 test cases ----------&quot;);\n\nSystem.out.println(&quot;X25519-test-case-2-out:&quot; + Hex.toHexString(sharedSecret));\nSystem.out.println(\n&quot;X25519-test-case-2-exp:95cbde9476e8907d7aade45cb4b873f88b595a68799fa152e6f8f7647aac7957&quot;);\n</code></pre>\n<p>This is the code that's not giving the right output. I have checked test vectors ten times, and copy pasted logic twenty. What's wrong with my code? Why does it work for some test vectors but not others?</p>\n<p>Based off RFC 7748.</p>\n",
+    "tags" : [ "java", "ssl", "encryption", "public-key-encryption", "x25519" ],
+    "owner" : {
+      "account_id" : 43558369,
+      "reputation" : 31,
+      "user_id" : 31300293,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/53qDmWwH.png?s=256",
+      "display_name" : "whynotjava",
+      "link" : "https://stackoverflow.com/users/31300293/whynotjava"
+    },
+    "is_answered" : true,
+    "view_count" : 194,
+    "answer_count" : 2,
+    "score" : 4,
+    "last_activity_date" : 1758807489,
+    "creation_date" : 1758763453,
+    "link" : "https://stackoverflow.com/questions/79774299/why-does-javas-x22519-lib-works-with-some-inputs-but-not-others",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79774523,
+    "question_id" : 79774299,
+    "body" : "<p>There is <a href=\"https://www.rfc-editor.org/errata/rfc7748\" rel=\"noreferrer\">an errata for RFC 7748</a> that includes, among other issues, a mistake in the u-coordinate of this test vector:</p>\n<blockquote>\n<p>Section 5.2 says:</p>\n<p>Input u-coordinate:<br />\ne5210f12786811d3f4b7959d0538ae2c31dbe7106fc03c3efc4cd549c715a493</p>\n<p>It should say:</p>\n<p>Input u-coordinate:<br />\ne5210f12786811d3f4b7959d0538ae2c31dbe7106fc03c3efc4cd549c715a413</p>\n<p>Notes:</p>\n<p>In the X25519 2nd test vector the last byte of input u-coordinate should be 13 instead of 93. This will fix inconsistency between u-coordinate, its base10 representation and the output u-coordinate.</p>\n</blockquote>\n<p>With the changed u-coordinate, your code returns the right result.</p>\n<hr />\n<p><strong>Edit:</strong> Upon closer inspection of the erratum, I saw that the verifier rejected it, meaning that the original u-coordinate should actually work as well:</p>\n<blockquote>\n<p>--VERIFIER NOTES--<br />\nA change of one bit of the input u-coordinate in the hexadecimal representation is proposed (to make it &quot;consistent&quot; with the base 10 representation). However, implementations of x25519 should &quot;mask&quot; that bit after taking a u-coordinate as an input - therefore, the existing text of RFC does not have any errors there.&lt;</p>\n</blockquote>\n<p>So why does the Java code not produce the correct result for the original u-coordinate, but only for the changed one?<br />\nBoth u-coordinates differ only in the most significant bit. For the changed u-coordinate, the most significant bit is 0: 0x13 = 0001 0011, for the original u-coordinate it is 1: 0x93 = 1001 0011 (note that X25519 uses little endian, so the most significant byte is at the end).<br />\nSince the X25519 specification stipulates that the most significant bit of the u-coordinate must be cleared and that <strong>implementations must ensure this</strong> (<a href=\"https://datatracker.ietf.org/doc/html/rfc7748#section-5\" rel=\"noreferrer\">RFC 7748, sec. 5</a>), both u-coordinates should indeed produce the correct result.<br />\nApparently, contrary to the X25519 specification, the JCA/JCE classes do not implicitly ensure that the most significant bit is set to 0 (which may be a bug), so this must be done explicitly in the Java code or, equivalently, the changed u-coordinate must be used from the outset.</p>\n<p>Alternatively, BouncyCastle can be used, which avoids this problem:</p>\n<pre class=\"lang-java prettyprint-override\"><code>import org.bouncycastle.crypto.agreement.X25519Agreement;\nimport org.bouncycastle.crypto.params.X25519PrivateKeyParameters;\nimport org.bouncycastle.crypto.params.X25519PublicKeyParameters;\nimport org.bouncycastle.util.encoders.Hex;\n\n...\n\nbyte[] privateKey = Hex.decode(&quot;4b66e9d4d1b4673c5ad22691957d6af5c11b6421e0ea01d42ca4169e7918ba0d&quot;);\nX25519PrivateKeyParameters privateKeyParams = new X25519PrivateKeyParameters(privateKey); \nbyte[] publicKey = Hex.decode(&quot;e5210f12786811d3f4b7959d0538ae2c31dbe7106fc03c3efc4cd549c715a493&quot;);\nX25519PublicKeyParameters publicKeyParams = new X25519PublicKeyParameters(publicKey); \n\nX25519Agreement agreement = new X25519Agreement();\nagreement.init(privateKeyParams);\nbyte[] sharedSecret = new byte[agreement.getAgreementSize()];\nagreement.calculateAgreement(publicKeyParams, sharedSecret, 0);\nSystem.out.println(Hex.toHexString(sharedSecret)); // 95cbde9476e8907d7aade45cb4b873f88b595a68799fa152e6f8f7647aac7957\n</code></pre>\n",
+    "score" : 6,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 12359353,
+      "reputation" : 50558,
+      "user_id" : 9014097,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Y9EVM.jpg?s=256",
+      "display_name" : "Topaco",
+      "link" : "https://stackoverflow.com/users/9014097/topaco"
+    },
+    "creation_date" : 1758786531,
+    "last_activity_date" : 1758807489,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79774576,
+    "question_id" : 79774299,
+    "body" : "<p>I am sure X25519 public inputs are 32-byte little-endian field elements where the top bit is ignored. if you can supply a spec that takes the raw 32-byte public value (little-endian) and lets the provider decode (mask) it, that might also work.</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 42364300,
+      "reputation" : 35,
+      "user_id" : 30717897,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/1pJRMS3L.png?s=256",
+      "display_name" : "Mayowa Arokoola",
+      "link" : "https://stackoverflow.com/users/30717897/mayowa-arokoola"
+    },
+    "creation_date" : 1758789758,
+    "last_activity_date" : 1758789758,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : { }
+}
