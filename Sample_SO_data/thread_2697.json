@@ -1,0 +1,210 @@
+{
+  "question" : {
+    "question_id" : 79601953,
+    "title" : "Java Process.waitFor() does not wait",
+    "body" : "<p>I am following a book on Java 'Java: The Complete Reference, 11th Edition&quot; which has the following code</p>\n<pre><code>class ExecDemoFini {\n    public static void main(String args[]) {\n        Runtime r = Runtime.getRuntime();\n        Process p = null;\n\n        try {\n            p = r.exec(&quot;notepad&quot;);\n            p.waitFor();\n        } catch(Exception e) {\n            System.out.println(&quot;Error executing notepad.&quot;);\n        }\n        System.out.println(&quot;Notepad returned &quot; + p.exitValue());\n    }\n}\n</code></pre>\n<p>According to the book, this program, when run in a Windows environment, is supposed to wait for notepad to terminate. But it does not. It returns an exit code of 0 immediately. I read on another post that had a similar question, that maybe the process that is starting (in this case, notepad) it creates another subprocess and then terminates itself. Is that the case here? Is that how notepad works? If not, I want to know why this example does not work in my computer. All the other examples have been accurate so far.</p>\n<p>I use Windows 11 and openJDK version 11.0.0.2 .</p>\n",
+    "tags" : [ "java", "windows", "process", "runtime", "exec" ],
+    "owner" : {
+      "account_id" : 41723540,
+      "reputation" : 3,
+      "user_id" : 30421461,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/860893f0e9fd0039762c7ac1218b6fb2?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Mrinmoy Sadhukhan",
+      "link" : "https://stackoverflow.com/users/30421461/mrinmoy-sadhukhan"
+    },
+    "is_answered" : true,
+    "view_count" : 189,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1747291109,
+    "creation_date" : 1746107030,
+    "link" : "https://stackoverflow.com/questions/79601953/java-process-waitfor-does-not-wait",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79605750,
+    "question_id" : 79601953,
+    "body" : "<p>The book is probably written + tested with Windows 10 or earlier. In earlier versions of Windows, notepad is a native executable with single document interface.</p>\n<p>Note that the call <code>r.exec(&quot;notepad&quot;);</code> relies on the use of system variable <code>PATHEXT</code> to resolve the binary. On my machine <code>PATHEXT</code> looks at the <code>Path</code> with these file extensions for &quot;notepad&quot;.</p>\n<pre><code>PATHEXT=.COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC\n</code></pre>\n<p>So the old sample launches notepad.exe as long as not finding another file extension in the path.</p>\n<p><strong>Windows 11</strong></p>\n<p>Windows 11 notepad is an app from Microsoft Store and has an application alias &quot;Notepad.exe&quot;. It appears to launch subprocesses. The code sample you have works but it does not await the children to complete.</p>\n<p>Here is example launch which uses <code>ProcessBuilder</code> and awaits child processes to exit:</p>\n<pre><code>public static void main(String... args) throws IOException, InterruptedException, ExecutionException {\n    // Ideally use &quot;notepad.exe&quot; here that you don't accidentally run notepad.com if such exists \n\n    start(&quot;notepad&quot;);\n}\n\npublic static int start(String ... cmd) throws IOException, InterruptedException, ExecutionException {\n\n    System.out.println(&quot;start &quot;+Arrays.toString(cmd));\n\n    // Launch and wait:\n    ProcessBuilder pb = new ProcessBuilder(cmd);\n    pb.redirectErrorStream(true);   // No STDERR =&gt; merge to STDOUT\n    Process p = pb.start();\n\n    // No STDIN, just closes to signal end of input\n    // (replace _ by a variable on older JDK)\n    try(OutputStream _ = p.getOutputStream()) {/*EMPTY*/}\n\n    // Process STDOUT\n    p.getInputStream().transferTo(System.out);\n\n    // Await process exit\n    int rc = p.waitFor();\n\n    // Show results + STDOUT+STDERR\n    System.out.println(&quot;Exit PID &quot;+p.pid()+&quot; EXITCODE &quot;+rc +' '+(rc == 0 ? &quot;OK&quot;:&quot;**** ERROR ****&quot;)+&quot; command:&quot;+Arrays.toString(cmd));\n\n    // Await process descendants exit\n    waitForDescendants(p.toHandle());\n\n    // Optional: if (rc != 0) throw new RuntimeException(&quot;Process failed code: &quot;+rc+&quot; command: &quot;+Arrays.toString(cmd));\n    return rc;\n}\n\n/**\n * Pause current thread if there are any known running subprocesses of handle\n */\nprivate static void waitForDescendants(ProcessHandle handle) throws InterruptedException, ExecutionException {\n    var waiters = handle.descendants()\n                        .map(ProcessHandle::onExit).toList();\n    System.out.println(&quot;pid &quot;+handle.pid() +&quot; has &quot;+waiters.size()+&quot; descendants&quot;);\n    for (CompletableFuture&lt;ProcessHandle&gt; cf : waiters) {\n        ProcessHandle subp = cf.get();\n        System.out.println(&quot;waitForDescendants &quot;+handle.pid() +&quot; child ended &quot;+subp.pid());\n        waitForDescendants(subp);\n    }\n}\n</code></pre>\n<p>The above code should work in Windows 10, and the call to <code>waitForDescendants</code> will do nothing. On Windows 11 it may print details of the subprocess, something like:</p>\n<pre><code>start [notepad]\nExit PID 59236 EXITCODE 0 OK command:[notepad]\npid 59236 has 1 descendants\nwaitForDescendants 59236 child ended 47908\npid 47908 has 0 descendants\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 5998820,
+      "reputation" : 16283,
+      "user_id" : 4712734,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f6e922a2cb7e2da59286f27b162aaca5?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "DuncG",
+      "link" : "https://stackoverflow.com/users/4712734/duncg"
+    },
+    "creation_date" : 1746371803,
+    "last_activity_date" : 1746372916,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140388122,
+    "post_id" : 79601953,
+    "body" : "Note well that there is a distinction between waiting for the child process to exit and waiting for the Notepad window to close.  Behavior such as you seem to be observing often signals that the process you waited for is not the one that you observe still to be running.  The one still running may be a child of that process, or even an altogether separate one.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 2792262,
+      "reputation" : 190832,
+      "user_id" : 2402272,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+      "display_name" : "John Bollinger",
+      "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+    },
+    "creation_date" : 1746128622,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140388110,
+    "post_id" : 79601953,
+    "body" : "I don&#39;t imagine that it&#39;s responsible for your issue, but do note that <code>Runtime.exec(String)</code> is deprecated.  <code>ProcessBuilder</code> is a better choice, or <code>Runtime.exec(String[])</code> if you insist on working at a lower level.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2792262,
+      "reputation" : 190832,
+      "user_id" : 2402272,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+      "display_name" : "John Bollinger",
+      "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+    },
+    "creation_date" : 1746128395,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140387784,
+    "post_id" : 79601953,
+    "body" : "@rzwitserloot . No I do not have notepad running before I execute the program. The book teaches all the things you said. The part about ProcessBuilder comes right after this. This part of the chapter was just to show the use of waitFor() thats why this code does not focus on exception handling. Nothing changes if I write &quot;notepad.exe&quot; instead of &quot;notepad&quot;.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 41723540,
+      "reputation" : 3,
+      "user_id" : 30421461,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/860893f0e9fd0039762c7ac1218b6fb2?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Mrinmoy Sadhukhan",
+      "link" : "https://stackoverflow.com/users/30421461/mrinmoy-sadhukhan"
+    },
+    "creation_date" : 1746121523,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140387370,
+    "post_id" : 79601953,
+    "body" : "Actually it looks like the book then goes on to doing the same thing with <code>ProcessBuilder</code>, that time using the file extension to the executable, though with a similarly lazy/obfuscatory approach to exceptions",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 22124137,
+      "reputation" : 4243,
+      "user_id" : 16376827,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/1ImPw.png?s=256",
+      "display_name" : "g00se",
+      "link" : "https://stackoverflow.com/users/16376827/g00se"
+    },
+    "creation_date" : 1746113060,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140387240,
+    "post_id" : 79601953,
+    "body" : "Did you already have a notepad running? If yes depending on all sorts of things, running notepad.exe might just do: &quot;1. Tell already running notepad to open a new tab, 2. wait for it to acknowledge this, 3. exit yourself - the already running notepad did the thing&quot;. Also, this code is deplorable in many ways, I doubt the quality of that book of yours (bad exception handling, failure to use ProcessBuilder, failure to at least write &#39;notepad.exe&#39;,  bizarre style to save Runtime to a separate variable first - all in a tiny snippet!). What happens if you make that <code>&quot;notepad.exe&quot;</code> instead?",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 401843,
+      "reputation" : 107186,
+      "user_id" : 768644,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+      "display_name" : "rzwitserloot",
+      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+    },
+    "creation_date" : 1746110542,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140387207,
+    "post_id" : 79601953,
+    "body" : "@dan1st <code>catch(Exception e)</code> is in over half of all SO questions, and putting that comment in each and every one of them strikes me as a really bad idea. Maybe not place drive-by irrelevant comments. Yes, &#39;catch everything and ignore it&#39; is bad, but I don&#39;t think this is the way to fight that particular unfortunate aspect of java culture.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 401843,
+      "reputation" : 107186,
+      "user_id" : 768644,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+      "display_name" : "rzwitserloot",
+      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+    },
+    "creation_date" : 1746109732,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140387141,
+    "post_id" : 79601953,
+    "body" : "Note that if you are facing something that might throw an <code>InterruptedException</code>, you probably <a href=\"https://stackoverflow.com/a/3976377/10871900\">don&#39;t want to silently handle it</a>. This isn&#39;t a problem with your example but it might be worth considering in the future.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 15064163,
+      "reputation" : 17100,
+      "user_id" : 10871900,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/720202b6e19abc330dcd92e6a1254562?s=256&d=identicon&r=PG",
+      "display_name" : "dan1st",
+      "link" : "https://stackoverflow.com/users/10871900/dan1st"
+    },
+    "creation_date" : 1746108036,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140387107,
+    "post_id" : 79601953,
+    "body" : "Yes, probably notepad in your case start another notepad, and exit",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 8541795,
+      "reputation" : 35245,
+      "user_id" : 6401656,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/jtwou.jpg?s=256",
+      "display_name" : "RbMm",
+      "link" : "https://stackoverflow.com/users/6401656/rbmm"
+    },
+    "creation_date" : 1746107426,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79605750" : [ {
+      "comment_id" : 140408000,
+      "post_id" : 79605750,
+      "body" : "@MrinmoySadhukhan Great. It helps the SO community if you upvote or accept helpful answers, and leave comments if they don&#39;t.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 5998820,
+        "reputation" : 16283,
+        "user_id" : 4712734,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/f6e922a2cb7e2da59286f27b162aaca5?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "DuncG",
+        "link" : "https://stackoverflow.com/users/4712734/duncg"
+      },
+      "creation_date" : 1746714788,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140400656,
+      "post_id" : 79605750,
+      "body" : "Hey man thank you so much. This was really helpful.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 41723540,
+        "reputation" : 3,
+        "user_id" : 30421461,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/860893f0e9fd0039762c7ac1218b6fb2?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Mrinmoy Sadhukhan",
+        "link" : "https://stackoverflow.com/users/30421461/mrinmoy-sadhukhan"
+      },
+      "creation_date" : 1746539525,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

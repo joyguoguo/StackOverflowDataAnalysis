@@ -1,0 +1,63 @@
+{
+  "question" : {
+    "question_id" : 79607569,
+    "title" : "Statically compile Groovy DelegatingScript with delegated object containing method with closure",
+    "body" : "<p>I have following classes</p>\n<pre class=\"lang-java prettyprint-override\"><code>final class GroovyValidator {\n\n    @Override\n    public List&lt;String&gt; validate(String script) {\n        final CompilerConfiguration config = new CompilerConfiguration();\n        config.setScriptBaseClass(&quot;groovy.util.DelegatingScript&quot;);\n        config.addCompilationCustomizers(new ASTTransformationCustomizer(\n                Map.of(&quot;extensions&quot;, List.of(ConnectorTypeCheckExtension.class.getName())),\n                CompileStatic.class));\n\n        try {\n            final GroovyShell shell = new GroovyShell(this.getClass().getClassLoader(), config);\n            // compile the script\n            final DelegatingScript parsedScript = (DelegatingScript) shell.parse(script);\n            parsedScript.setDelegate(new ObjectClass());\n            parsedScript.run();\n        } catch (MultipleCompilationErrorsException e) {\n            return e.getErrorCollector().getErrors().stream()\n                    .map(m -&gt; {\n                        final StringWriter stringWriter = new StringWriter();\n                        m.write(new PrintWriter(stringWriter));\n                        return stringWriter.toString();\n                    })\n                    .toList();\n\n        }\n        return Collections.emptyList();\n    }\n\n}\n\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>public class ObjectClass {\n\n    public ObjectClass objectClass(String name,\n            @DelegatesTo(value = String.class, strategy = Closure.DELEGATE_FIRST) Closure&lt;?&gt; closure) {\n        closure.setDelegate(name);\n        closure.setResolveStrategy(Closure.DELEGATE_FIRST);\n        closure.call();\n        return this;\n    }\n}\n\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>public class ConnectorTypeCheckExtension extends AbstractTypeCheckingExtension {\n\n    public ConnectorTypeCheckExtension(StaticTypeCheckingVisitor typeCheckingVisitor) {\n        super(typeCheckingVisitor);\n    }\n\n    @Override\n    public List&lt;MethodNode&gt; handleMissingMethod(ClassNode receiver, String name, ArgumentListExpression argumentList,\n            ClassNode[] argumentTypes, MethodCall call) {\n        System.out.printf(&quot;Handling missing %s\\n&quot;, name);\n        if (&quot;objectClass&quot;.equals(name)) {\n            final ClassNode objectClassNode = classNodeFor(ObjectClass.class);\n            /*\n             Without bellow call to `delegatesTo` I am getting \n             [Script1.groovy: 2: [Static type checking] - Cannot find matching method Script1#concat(java.lang.String). Please check if the declared type is correct and if the method exists. \n             */\n            delegatesTo(classNodeFor(String.class), Closure.DELEGATE_FIRST);\n            return List.of(makeDynamic(call, objectClassNode));\n        }\n\n        return Collections.emptyList();\n    }\n}\n</code></pre>\n<p>and following test</p>\n<pre class=\"lang-java prettyprint-override\"><code>    @Test\n    void scriptContainsKnownMethodClosure_validateIsCalled_validationShouldPass() {\n        final String script = &quot;&quot;&quot;\n                objectClass(&quot;User&quot;) {\n                    println concat(&quot;X&quot;)\n                }\n                &quot;&quot;&quot;;\n\n        final GroovyValidator validator = new GroovyValidator();\n        final List&lt;String&gt; errors = validator.validate(script);\n\n        System.out.println(errors);\n        assertTrue(errors.isEmpty());\n\n    }\n</code></pre>\n<p>I would expect, that the test will pass. In particular I would expect, that the <code>objectClass</code> method from the <code>ObjectClass</code> class would be called, and then the concatenation of the &quot;User&quot; with letter &quot;X&quot; would be printed. But instead it fails at runtime, with this error message:</p>\n<pre><code>java.lang.ClassCastException: class Script1 cannot be cast to class groovy.lang.Closure (Script1 is in unnamed module of loader groovy.lang.GroovyClassLoader$InnerLoader @6cc0bcf6; groovy.lang.Closure is in unnamed module of loader 'app')\n</code></pre>\n<p>I really do not understand this error. Why it happens? Is the problem somewhere in the type check extension? Or is it not possible to have script like above compiled statically, given that the method called in script is a method on delegate?</p>\n<p>I am also confused, how does the <code>delegatesTo</code> method work. How does it know what argument is it about? I mean the <code>objectClass</code> method has two arguments <code>name</code> which is String and then the <code>closure</code>. I guess in this case it could pick the correct one, but what if there would be two or more closure parameters?</p>\n<p><strong>Note</strong> I know, that if I use the <code>ObjectClass</code> as a base script (after necessary tweaks) it works. In fact I will most likely use that approach. However, I would really like to understand what is going on in the described case.</p>\n",
+    "tags" : [ "java", "groovy", "closures", "static-compilation", "type-extension" ],
+    "owner" : {
+      "account_id" : 2336402,
+      "reputation" : 99,
+      "user_id" : 2048644,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/86b8e419d5bd59d9143029879dbbfade?s=256&d=identicon&r=PG",
+      "display_name" : "CoCumis",
+      "link" : "https://stackoverflow.com/users/2048644/cocumis"
+    },
+    "is_answered" : false,
+    "view_count" : 56,
+    "answer_count" : 0,
+    "score" : 0,
+    "last_activity_date" : 1746475597,
+    "creation_date" : 1746475597,
+    "link" : "https://stackoverflow.com/questions/79607569/statically-compile-groovy-delegatingscript-with-delegated-object-containing-meth",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140399169,
+    "post_id" : 79607569,
+    "body" : "@daggett as far as I can tell, the <code>typeCheckingVisitor.typeCheckingContext.delegationMetadata</code> is null at that point of time.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2336402,
+      "reputation" : 99,
+      "user_id" : 2048644,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/86b8e419d5bd59d9143029879dbbfade?s=256&d=identicon&r=PG",
+      "display_name" : "CoCumis",
+      "link" : "https://stackoverflow.com/users/2048644/cocumis"
+    },
+    "creation_date" : 1746515365,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140398199,
+    "post_id" : 79607569,
+    "body" : "delegatesTo is using metadata from current context <a href=\"https://github.com/groovy/groovy-core/blob/4c05980922a927b32691e4c3eba5633825cc01e3/src/main/org/codehaus/groovy/transform/stc/AbstractTypeCheckingExtension.java#L154\" rel=\"nofollow noreferrer\">github.com/groovy/groovy-core/blob/&hellip;</a>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1333316,
+      "reputation" : 29017,
+      "user_id" : 1276664,
+      "user_type" : "registered",
+      "accept_rate" : 17,
+      "profile_image" : "https://www.gravatar.com/avatar/873470471a482071b8e085095cf89221?s=256&d=identicon&r=PG",
+      "display_name" : "daggett",
+      "link" : "https://stackoverflow.com/users/1276664/daggett"
+    },
+    "creation_date" : 1746478120,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

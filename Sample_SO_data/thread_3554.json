@@ -1,0 +1,184 @@
+{
+  "question" : {
+    "question_id" : 79541121,
+    "title" : "Index Based Querying and Sorting - DynamoDb",
+    "body" : "<p>I am coming from an Android Application Development background. I am exploring DynamoDB and I've written a Kotlin server and linked it with DynamoDB. While I have successfully  made connection, table, Partition Keys and Sort Keys, I'm having some trouble with Global Secondary Index.</p>\n<p>I'm trying to build a pagination API, API needs support following params:</p>\n<p>query by</p>\n<pre><code>title, release date, genres, min rating, max rating, tags.\n</code></pre>\n<p>I also want to sort by,</p>\n<pre><code>release date, rating.\n</code></pre>\n<p>Since in my assets table <code>imdb_id</code> is set as Partition Key. And I'm using Sort Key for storing <code>DETAILS</code> (contains all essential info (non-key) such as title, release date, rating, description, etc.) and <code>RECOMMENDATION</code>. SK in this format because, I needed a way to make lists of recommended movies for each movie, I could have supplied a field with the json of array objects as String or String Array, but since I am storing the movies' detail info anyways (and I'd want them to be available in the database as queryable items), it made much more sense to have them as separate records. So, I stored the original movie as a <code>DETAILS</code> record, I stored each recommended movie as a separate <code>RECOMMENDATION#&lt;imdb_id&gt;</code> record. Recommendations only contained the <code>imdb_id</code> of the recommended movie (which can be used to fetch <code>DETAILS</code> of the recommendation). And then finally I stored each of the recommended movie as a <code>DETAILS</code> record.</p>\n<p>This way, I was able to keep a record of all of the recommendations against all movies while also storing the <code>DETAILS</code> info of those recommended movies too. I hope that makes sens3! \uD83D\uDE43</p>\n<p>So, I created a Global Secondary Index in terraform like so:</p>\n<pre><code>global_secondary_index {\n  name               = &quot;ReleaseDateIndex&quot;\n  hash_key           = &quot;imdb_id&quot;\n  range_key          = &quot;release_date&quot;\n  projection_type    = &quot;INCLUDE&quot;\n  non_key_attributes = [\n      &quot;posters&quot;,\n      &quot;title&quot;,\n      &quot;release_date&quot;,\n      &quot;tmdb_rating&quot;,\n      &quot;mpaRating&quot;\n  ]\n}\n</code></pre>\n<p>And when I query the results in my DynamoDB Enhanced Client like so:</p>\n<pre><code>    val index = table.index(&quot;ReleaseDateIndex&quot;)\n\n    val queryCondition = QueryConditional.keyEqualTo(\n        Key\n            .builder()\n            .partitionValue(\n                type,\n            )\n            .build()\n    )\n\n    val queryBuilder = QueryEnhancedRequest.builder()\n        .queryConditional(queryCondition)\n        .scanIndexForward(orderBy == &quot;asc&quot;)\n        .limit(limit)\n\n    // Execute query\n    return index.query(\n        queryBuilder.build()\n    ).flatMap { page -&gt;\n        page.items()\n    }\n</code></pre>\n<p>I get duplicate objects in my query result. I understand why, it is because all objects with different sort key for <code>DETAILS</code> and RECOMMENDATIONS SK all are returned. But I only want objects with <code>SK = DETAILS</code>.</p>\n<p>I can apply a <code>FilterExpression</code> but that would filter results after loading them into memory. Which increases read-cost, utilizes more RAM and will slow down the overall time.</p>\n<p>So, I am looking for way to query objects where <code>SK = DETAILS</code>.</p>\n<p>I am open to schema changes or any other optimisations since this is for learning practice.</p>\n<p>Examples of how the API would behave:</p>\n<pre><code>curl --location 'https://&lt;api_url&gt;/listing?imdb_id=tt0053219&amp;direction=asc&amp;query=movie%20title&amp;sortBy=release_date&amp;limit=50'\n</code></pre>\n<p>My current understanding is that I cannot apply filter based on both title and genre at the same time (might be possible by using a composite SK on the index, topic for another time).</p>\n<p>So, for now genre API fetch would look something like:</p>\n<pre><code>curl --location 'https://api_url&gt;/listing?imdb_id=tt0053219&amp;direction=asc&amp;genre=drama&amp;sortBy=release_date&amp;limit=50'\n</code></pre>\n<p>The <code>imdb_id</code> is purely intended as an exclusive start key and will be null for the first page.</p>\n<p>Ideally sort By has these options</p>\n<pre><code>enum class SortBy(\n    val value: String,\n) {\n    TITLE(&quot;title&quot;),\n    RATING(&quot;rating&quot;),\n    LIKES(&quot;likes&quot;),\n    RELEASE_DATE(&quot;release_date&quot;),\n    ;\n}\n</code></pre>\n",
+    "tags" : [ "java", "amazon-web-services", "kotlin", "amazon-dynamodb" ],
+    "owner" : {
+      "account_id" : 2128241,
+      "reputation" : 3353,
+      "user_id" : 1889768,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/f7c563b7e2e34c68165a66af5f4c75d9?s=256&d=identicon&r=PG",
+      "display_name" : "Abbas",
+      "link" : "https://stackoverflow.com/users/1889768/abbas"
+    },
+    "is_answered" : true,
+    "view_count" : 81,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1743250420,
+    "creation_date" : 1743156356,
+    "link" : "https://stackoverflow.com/questions/79541121/index-based-querying-and-sorting-dynamodb",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79543221,
+    "question_id" : 79541121,
+    "body" : "<p>You're talking about efficient querying on an index, for a query to be efficient it must be done in the KeyConditionExpression. DynamoDB only allows 2 keys, with a full equality necessary on the partition key.</p>\n<p>If you need to filter on multiple attributes, you must include them in the keys, using a composite key.</p>\n<p>Filter expression can be inefficient but it depends how many items you're filtering out. If for example you filter out only a few items then it's likely the performance and cost will remain the same. If you filter out the majority then you've become inefficient. You can monitor the efficiency in the response of each request:</p>\n<p><code>Count / ScannedCount * 100</code></p>\n",
+    "score" : 2,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 10749774,
+      "reputation" : 20494,
+      "user_id" : 7909676,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/50Vga.jpg?s=256",
+      "display_name" : "Leeroy Hannigan",
+      "link" : "https://stackoverflow.com/users/7909676/leeroy-hannigan"
+    },
+    "creation_date" : 1743250420,
+    "last_activity_date" : 1743250420,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140276383,
+    "post_id" : 79541121,
+    "body" : "@jarmod I&#39;ve added an explanation for <code>DETAILS</code> and <code>RECOMMENDATION</code> and I&#39;ve added examples of how I&#39;m hoping to shape the API. I hope that clears things up. If not let me know.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 2128241,
+      "reputation" : 3353,
+      "user_id" : 1889768,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/f7c563b7e2e34c68165a66af5f4c75d9?s=256&d=identicon&r=PG",
+      "display_name" : "Abbas",
+      "link" : "https://stackoverflow.com/users/1889768/abbas"
+    },
+    "creation_date" : 1743233041,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140275526,
+    "post_id" : 79541121,
+    "body" : "I&#39;m not 100% sure what you mean by &quot;I&#39;m using Sort Key for storing DETAILS and RECOMMENDATIONS&quot; but you can query a table or index with an equality condition on the partition key and a begins_with condition on the range key. Could you add a couple of examples of what queries/sorts you&#39;re hoping to make?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 100740,
+      "reputation" : 79837,
+      "user_id" : 271415,
+      "user_type" : "registered",
+      "accept_rate" : 91,
+      "profile_image" : "https://www.gravatar.com/avatar/8648256cc53b261c5e1d266380a256fc?s=256&d=identicon&r=PG",
+      "display_name" : "jarmod",
+      "link" : "https://stackoverflow.com/users/271415/jarmod"
+    },
+    "creation_date" : 1743195576,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140275372,
+    "post_id" : 79541121,
+    "body" : "Besides I want to sort the results based on <code>release_date</code>. If I use the same sort key, am I not sorting the same results with additional step of adding GSI?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2128241,
+      "reputation" : 3353,
+      "user_id" : 1889768,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/f7c563b7e2e34c68165a66af5f4c75d9?s=256&d=identicon&r=PG",
+      "display_name" : "Abbas",
+      "link" : "https://stackoverflow.com/users/1889768/abbas"
+    },
+    "creation_date" : 1743192347,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140275370,
+    "post_id" : 79541121,
+    "body" : "@jarmod yes, but on an index the sort method will only work on <code>range_key</code> defined in the index. Can we and should we redefine the same SK in index too?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2128241,
+      "reputation" : 3353,
+      "user_id" : 1889768,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/f7c563b7e2e34c68165a66af5f4c75d9?s=256&d=identicon&r=PG",
+      "display_name" : "Abbas",
+      "link" : "https://stackoverflow.com/users/1889768/abbas"
+    },
+    "creation_date" : 1743192256,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140274939,
+    "post_id" : 79541121,
+    "body" : "Maybe I misunderstand your question, but the key builder has a sortValue(...) method as well as a partitionValue(...) method.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 100740,
+      "reputation" : 79837,
+      "user_id" : 271415,
+      "user_type" : "registered",
+      "accept_rate" : 91,
+      "profile_image" : "https://www.gravatar.com/avatar/8648256cc53b261c5e1d266380a256fc?s=256&d=identicon&r=PG",
+      "display_name" : "jarmod",
+      "link" : "https://stackoverflow.com/users/271415/jarmod"
+    },
+    "creation_date" : 1743183921,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79543221" : [ {
+      "comment_id" : 140277288,
+      "post_id" : 79543221,
+      "body" : "If you want them sorted by releaseDate and also just see Details, then add a composite key <code>DETAILS#ReleaseDate</code>",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 10749774,
+        "reputation" : 20494,
+        "user_id" : 7909676,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/50Vga.jpg?s=256",
+        "display_name" : "Leeroy Hannigan",
+        "link" : "https://stackoverflow.com/users/7909676/leeroy-hannigan"
+      },
+      "creation_date" : 1743264445,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140277097,
+      "post_id" : 79543221,
+      "body" : "Anyways, I think the more I dive deeper into DynamoDB, the more I figure it&#39;s not right DB for this UseCase. Which is inconsistent with what AWS docs say about DynamoDB.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2128241,
+        "reputation" : 3353,
+        "user_id" : 1889768,
+        "user_type" : "registered",
+        "accept_rate" : 85,
+        "profile_image" : "https://www.gravatar.com/avatar/f7c563b7e2e34c68165a66af5f4c75d9?s=256&d=identicon&r=PG",
+        "display_name" : "Abbas",
+        "link" : "https://stackoverflow.com/users/1889768/abbas"
+      },
+      "creation_date" : 1743258741,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140277091,
+      "post_id" : 79543221,
+      "body" : "I agree, these are all the points I believe I&#39;ve outlined in my question, except the composite SK. I am aware of some use of composite keys, but I am yet to use them. As the first step I wanted to get results sorted with release date, which I am getting. But then I&#39;m also getting the <code>RECOMMENDATION#&lt;imdb_id&gt;</code> item added against each movie. And that&#39;s what I&#39;m looking for, a way to fetch this info, without applying filter expression. These extra items can be up to 10 recommended movies per movie.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2128241,
+        "reputation" : 3353,
+        "user_id" : 1889768,
+        "user_type" : "registered",
+        "accept_rate" : 85,
+        "profile_image" : "https://www.gravatar.com/avatar/f7c563b7e2e34c68165a66af5f4c75d9?s=256&d=identicon&r=PG",
+        "display_name" : "Abbas",
+        "link" : "https://stackoverflow.com/users/1889768/abbas"
+      },
+      "creation_date" : 1743258585,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

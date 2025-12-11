@@ -1,0 +1,264 @@
+{
+  "question" : {
+    "question_id" : 79678556,
+    "title" : "Spring JPA or Hibernate Entity returns with null enum fields",
+    "body" : "<p>I've been working on a Spring Project and encountered an unusual error. I have an Entity class defined as</p>\n<pre class=\"lang-java prettyprint-override\"><code>import jakarta.persistence.*;\nimport lombok.Data;\n// other imports\n\n@Table(\n        name = &quot;brand&quot;\n)\n@Entity\n@Data\npublic class Brand {\n    @Id\n    @Column(\n            name = &quot;id&quot;\n    )\n    @GeneratedValue(\n            strategy = GenerationType.UUID\n    )\n    String id;\n    @Enumerated(EnumType.STRING)\n    ResourceType resourceType;\n    String name;\n    String defaultLanguage;\n    @Enumerated(EnumType.STRING)\n    ReviewStage reviewStage;\n\n}\n\npublic enum ResourceType {\n    PUBLIC,\n    MEDIA_OUTLET, // Other Values\n}\n\npublic enum ReviewStage {\n    PRE_SUBMIT,\n    SUBMITTED,\n    REJECTED,\n    ACCEPTED,\n    DECLINED,\n    CONFIRMED,\n    CONFIRM_APPEALED;\n}\n</code></pre>\n<p>Here is my Repository:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public interface BrandRepo extends JpaRepository&lt;Brand, String&gt; {\n\n    @Query(value = &quot;select * from brand i where i.name like CONCAT('%', ?1, '%') &quot; +\n            &quot;and i.reviewStage = :#{#stage?.name()}&quot;, nativeQuery = true)\n    //@Query(&quot;select i from Brand i where i.name like %:name% and i.reviewStage = :stage&quot;)\n    List&lt;Brand&gt; getLikeName(String name, ReviewStage stage, Pageable pageable);\n}\n</code></pre>\n<p>In my database, I have a few objects with both the <code>resourceType</code> and <code>reviewStage</code> columns set to some value. But when I execute the method, the object returns, but the fields are null.\nWhen I use the non-native query version in the JPA Repository, the object does NOT return.</p>\n<p>Right now, I'm using Spring Boot version 3.5.0 - A recent update, I may have been using a 2.x version when I first persisted these objects to the database (mentioning this in case the issue is a bug in a recent version of Spring Boot).</p>\n<p>Other Gradle Dependencies:</p>\n<pre class=\"lang-none prettyprint-override\"><code>    implementation 'org.hibernate:hibernate-core:6.1.6.Final'\n    implementation 'org.hibernate:hibernate-entitymanager:5.6.14.Final'\n    implementation 'jakarta.validation:jakarta.validation-api:3.0.2'\n    implementation &quot;org.springframework.boot:spring-boot-starter-data-jpa:$springbootVersion&quot;  // Note, this is 3.5.0\n    implementation 'jakarta.persistence:jakarta.persistence-api:3.1.0'\n\n    implementation 'com.mysql:mysql-connector-j:9.3.0'\n    implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310:+'\n</code></pre>\n<p>I have tried replacing my Hibernate dependencies with</p>\n<pre class=\"lang-none prettyprint-override\"><code>implementation 'org.hibernate.orm:hibernate-core:7.0.3.Final'\n</code></pre>\n<p>This led me to Google (Bing, actually) <code>java.lang.ClassNotFoundException: org.hibernate.query.BindableType</code> so I reverted back.</p>\n<p><strong>Edit:</strong> Made sure Entity name was consistent throughout post.</p>\n<p><strong>Edit 2:</strong> I have not solved the problem yet. However, I have done a little digging to see if I could narrow down the problem. I decided to Create a Converter class and I've updated my entity class as follows:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Table(\n        name = &quot;brand&quot;\n)\n@Entity\n@Data\npublic class Brand {\n    @Id\n    @Column(\n            name = &quot;id&quot;\n    )\n    @GeneratedValue(\n            strategy = GenerationType.UUID\n    )\n    String id;\n    @Enumerated(EnumType.STRING)\n    ResourceType resourceType;\n    String name;\n    String defaultLanguage;\n    @Convert(converter = ReviewStageConverter.class)\n    ReviewStage reviewStage;\n    String brandId;\n\n\n    public void setReviewStage(ReviewStage reviewStage1){\n        this.reviewStage = reviewStage1;\n    }\n\n    public void setReviewStage(String reviewStage1) {\n        this.reviewStage = ReviewStage.valueOf(reviewStage1.trim());\n    }\n}\n</code></pre>\n<p>Here are the results of running the Converter:\n<a href=\"https://i.sstatic.net/EDrh2bAZ.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/EDrh2bAZ.png\" alt=\"Debug of Converter class showing that the input string was null\" /></a></p>\n<p>I've also enabled Hibernate SQL logging and here is the statement used:\n<a href=\"https://i.sstatic.net/rUCo0XCk.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/rUCo0XCk.png\" alt=\"Log of the Hibernate SQL statement used\" /></a></p>\n<p>Lastly, because I considered the possibility that the issue was with either the MySQL driver I was using or with JDBC (or the enum values just weren't there in my DB), I created a JDBC-stub application and here are the results (the real entity class is a bit larger than what was shown before):\n<a href=\"https://i.sstatic.net/A2TZ2178.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/A2TZ2178.png\" alt=\"Results of JDBC-stub application showing that enum values are appearing\" /></a></p>\n<p><strong>Edit 3:</strong> Earlier today, I created a smaller project that used both Spring JPA and JDBC to retrieve data. My logic works correctly in the smaller project. I feel compelled to provide additional context that I previously did not consider relevant.</p>\n<p>The larger project is connected to multiple databases (in theory), something that is not true of the smaller project. It uses a library that had two JPA DataSource's and a configuration file for its own purposes.</p>\n<p>Here is the configuration file for it's own DataSource:</p>\n<pre class=\"lang-java prettyprint-override\"><code>import com.zaxxer.hikari.HikariDataSource;\nimport jakarta.persistence.EntityManagerFactory;\nimport org.springframework.beans.factory.annotation.Qualifier;\nimport org.springframework.boot.autoconfigure.jdbc.DataSourceProperties;\nimport org.springframework.boot.context.properties.ConfigurationProperties;\nimport org.springframework.boot.orm.jpa.EntityManagerFactoryBuilder;\nimport org.springframework.context.annotation.Bean;\nimport org.springframework.context.annotation.Configuration;\nimport org.springframework.data.jpa.repository.config.EnableJpaRepositories;\nimport org.springframework.orm.jpa.JpaTransactionManager;\nimport org.springframework.orm.jpa.LocalContainerEntityManagerFactoryBean;\nimport org.springframework.transaction.PlatformTransactionManager;\nimport org.springframework.transaction.annotation.EnableTransactionManagement;\n\nimport javax.sql.DataSource;\nimport java.util.HashMap;\nimport java.util.Map;\n\n@Configuration\n@EnableTransactionManagement\n@EnableJpaRepositories(\n        entityManagerFactoryRef = &quot;resourcesEntityManagerFactory&quot;,\n        transactionManagerRef = &quot;resourcesTransactionManager&quot;,\n        basePackages = {&quot;com.tc.resources.repos&quot;})\n\npublic class ResourceRepoConfig {\n\n    @Bean(name = &quot;resourcesDataSourceProperties&quot;)\n    @ConfigurationProperties(&quot;spring.datasource&quot;)\n    public DataSourceProperties primaryDataSourceProperties()\n    {\n        return new DataSourceProperties();\n    }\n\n\n    @Bean(name = &quot;resourcesDataSource&quot;)\n    @ConfigurationProperties(&quot;spring.datasource.configuration&quot;)\n    public DataSource primaryDataSource(@Qualifier(&quot;resourcesDataSourceProperties&quot;) DataSourceProperties primaryDataSourceProperties) {\n        DataSource ds = primaryDataSourceProperties.initializeDataSourceBuilder().type(HikariDataSource.class).build();\n        return ds;\n    }\n\n\n    @Bean(name = &quot;resourcesEntityManagerFactory&quot;)\n    public LocalContainerEntityManagerFactoryBean primaryEntityManagerFactory(\n            EntityManagerFactoryBuilder primaryEntityManagerFactoryBuilder,\n            @Qualifier(&quot;resourcesDataSource&quot;) DataSource primaryDataSource) {\n\n        Map&lt;String, String&gt; primaryJpaProperties = new HashMap&lt;&gt;();\n        primaryJpaProperties.put(&quot;hibernate.hbm2ddl.auto&quot;, &quot;update&quot;);\n        primaryJpaProperties.put(&quot;hibernate.enable_lazy_load_no_trans&quot;, &quot;true&quot;);\n\n        LocalContainerEntityManagerFactoryBean ret = primaryEntityManagerFactoryBuilder\n                .dataSource(primaryDataSource)\n                .packages( &quot;com.tc.resources.models&quot;)\n                .persistenceUnit(&quot;resourcesDataSource&quot;)\n                .properties(primaryJpaProperties)\n                .build();\n\n        return ret;\n    }\n\n\n    @Bean(name = &quot;resourcesTransactionManager&quot;)\n    public PlatformTransactionManager primaryTransactionManager(\n            @Qualifier(&quot;resourcesEntityManagerFactory&quot;) EntityManagerFactory primaryEntityManagerFactory) {\n\n        return new JpaTransactionManager(primaryEntityManagerFactory);\n    }\n}\n</code></pre>\n",
+    "tags" : [ "java", "spring-boot", "hibernate", "spring-data-jpa", "enums" ],
+    "owner" : {
+      "account_id" : 19146380,
+      "reputation" : 283,
+      "user_id" : 13985271,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/a9g3e.png?s=256",
+      "display_name" : "Trec Apps",
+      "link" : "https://stackoverflow.com/users/13985271/trec-apps"
+    },
+    "is_answered" : true,
+    "view_count" : 210,
+    "answer_count" : 4,
+    "score" : 0,
+    "last_activity_date" : 1750978034,
+    "creation_date" : 1750833381,
+    "link" : "https://stackoverflow.com/questions/79678556/spring-jpa-or-hibernate-entity-returns-with-null-enum-fields",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79678823,
+    "question_id" : 79678556,
+    "body" : "<p><strong>First cleanup your dependencies</strong></p>\n<pre><code>implementation &quot;org.springframework.boot:spring-boot-starter-validation&quot; \nimplementation &quot;org.springframework.boot:spring-boot-starter-data-jpa&quot;\n\nimplementation 'com.mysql:mysql-connector-j:9.3.0'\n</code></pre>\n<ol>\n<li>The <code>spring-boot-starter-data-jpa</code> contains already the necessary dependencies for Hibernate to be used with JPA.</li>\n<li>Use <code>spring-boot-starter-validation</code> to add validation to your application. Don't add individual dependencies as that well lead to issues with upgrading and compatibility.</li>\n</ol>\n<p><strong>Write a proper query method instead of custom query</strong>\nWith Spring Data JPA you can write simple <a href=\"https://docs.spring.io/spring-data/jpa/reference/jpa/query-methods.html\" rel=\"nofollow noreferrer\">query methods</a> without having to resort to write a query yourself.</p>\n<pre class=\"lang-java prettyprint-override\"><code>List&lt;Brand&gt; findByNameContainingAndReviewStage(String name, ReviewStage reviewStage, Pageable pageable);\n</code></pre>\n<p>This is all you need, no need for a query. If you wanted to write a query to start with I would suggest writing a JPQL not a SQL query as that will lead to mapping issues (as you have seen here).</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126800,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1750845204,
+    "last_activity_date" : 1750917247,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79678580,
+    "question_id" : 79678556,
+    "body" : "<p>Maybe you must be write inside JpaRepository Brand entity not BrandInfo. Please try this and check again</p>\n<pre><code>public interface BrandRepo extends JpaRepository&lt;Brand, String&gt;\n</code></pre>\n<p>also</p>\n<pre><code>@Query(&quot;SELECT i FROM Brand i WHERE i.name LIKE %:name% AND i.reviewStage = :stage&quot;)\n\nList&lt;Brand&gt; getLikeName(@Param(&quot;name&quot;) String name, @Param(&quot;stage&quot;) ReviewStage stage, Pageable pageable);\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 21797838,
+      "reputation" : 361,
+      "user_id" : 16097168,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/iIbNc.jpg?s=256",
+      "display_name" : "Abbas",
+      "link" : "https://stackoverflow.com/users/16097168/abbas"
+    },
+    "creation_date" : 1750834436,
+    "last_activity_date" : 1750835087,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79679085,
+    "question_id" : 79678556,
+    "body" : "<p>I test it it works fine can you try my build.gradle file</p>\n<pre><code>plugins {\n    id 'java'\n    id 'org.springframework.boot' version '3.5.3'\n    id 'io.spring.dependency-management' version '1.1.7'\n}\n\ngroup = 'org.softylines'\nversion = '0.0.1-SNAPSHOT'\n\njava {\n    toolchain {\n        languageVersion = JavaLanguageVersion.of(17)\n    }\n}\n\nrepositories {\n    mavenCentral()\n}\n\ndependencies {\n    // Spring Boot starters\n    implementation 'org.springframework.boot:spring-boot-starter-data-jpa'\n    implementation 'org.springframework.boot:spring-boot-starter-jdbc'\n    implementation 'org.springframework.boot:spring-boot-starter-web'\n\n    // Lombok\n    compileOnly 'org.projectlombok:lombok'\n    annotationProcessor 'org.projectlombok:lombok'\n\n    // PostgreSQL driver\n    runtimeOnly 'org.postgresql:postgresql'\n\n    // Test dependencies\n    testImplementation 'org.springframework.boot:spring-boot-starter-test'\n    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'\n}\n\ntasks.named('test') {\n    useJUnitPlatform()\n}\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 21408345,
+      "reputation" : 21,
+      "user_id" : 15769126,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a-/AOh14GiMahU3jdMvvvNDzuIQGeAC9fewbivRCjdd2cWl=k-s256",
+      "display_name" : "amir BEN AHMED",
+      "link" : "https://stackoverflow.com/users/15769126/amir-ben-ahmed"
+    },
+    "creation_date" : 1750856444,
+    "last_activity_date" : 1750856444,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79679983,
+    "question_id" : 79678556,
+    "body" : "<p>Please change your code to this:</p>\n<p>@Query(&quot;select i from Brand i where i.name like %:name% and i.reviewStage = :stage&quot;)<br />\nPage&lt;Brand&gt; getLikeName(@Param(&quot;name&quot;) String name, @Param(&quot;stage&quot;) ReviewStage stage, Pageable pageable);</p>\n<p>or this one if you want your <strong>nativeQuery be true</strong>:</p>\n<p>@Query(value = &quot;select * from brand i where i.name like CONCAT('%', ?1, '%') and i.review_stage = ?2&quot;, nativeQuery = true)<br />\nList&lt;Brand&gt; getLikeName(String name, String reviewStage, Pageable pageable);</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 8543734,
+      "reputation" : 25,
+      "user_id" : 6659239,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/9IEn0.gif?s=256",
+      "display_name" : "Alireza Abolhasani",
+      "link" : "https://stackoverflow.com/users/6659239/alireza-abolhasani"
+    },
+    "creation_date" : 1750918510,
+    "last_activity_date" : 1750918964,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140540278,
+    "post_id" : 79678556,
+    "body" : "If you are using native query (nativeQuery = true), then it should look like this:                 @Query(value = &quot;SELECT * FROM brand i WHERE i.name LIKE %?1% AND i.review_stage = ?2&quot;, nativeQuery = true) List&lt;Brand&gt; getLikeName(String name, String reviewStageName, Pageable pageable);",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 21797838,
+      "reputation" : 361,
+      "user_id" : 16097168,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/iIbNc.jpg?s=256",
+      "display_name" : "Abbas",
+      "link" : "https://stackoverflow.com/users/16097168/abbas"
+    },
+    "creation_date" : 1750834950,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140540274,
+    "post_id" : 79678556,
+    "body" : "The (:#{...}) expressions only work in JPQL queries, i.e. nativeQuery = false (or defaults to JPQL if not written at all).",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 21797838,
+      "reputation" : 361,
+      "user_id" : 16097168,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/iIbNc.jpg?s=256",
+      "display_name" : "Abbas",
+      "link" : "https://stackoverflow.com/users/16097168/abbas"
+    },
+    "creation_date" : 1750834876,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79679983" : [ {
+      "comment_id" : 140544931,
+      "post_id" : 79679983,
+      "body" : "For the first one, I&#39;m seeing an empty list. For the second one (I had to change &#39;review_stage&#39; to &#39;reviewStage&#39;), I&#39;m still seeing the enums as null values.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 19146380,
+        "reputation" : 283,
+        "user_id" : 13985271,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/a9g3e.png?s=256",
+        "display_name" : "Trec Apps",
+        "link" : "https://stackoverflow.com/users/13985271/trec-apps"
+      },
+      "creation_date" : 1750953072,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79678823" : [ {
+      "comment_id" : 140552183,
+      "post_id" : 79678823,
+      "body" : "Then the query returns nothing. Check if the query is what you expect (you can enable SQL printing in Hibernate). Is the query  you posted the actual query or was it also doing other thinbgs like ignoring case etc?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 3192259,
+        "reputation" : 126800,
+        "user_id" : 2696260,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+        "display_name" : "M. Deinum",
+        "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+      },
+      "creation_date" : 1751262876,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140544889,
+      "post_id" : 79678823,
+      "body" : "I&#39;m afraid I&#39;m still just seeing an empty list",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 19146380,
+        "reputation" : 283,
+        "user_id" : 13985271,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/a9g3e.png?s=256",
+        "display_name" : "Trec Apps",
+        "link" : "https://stackoverflow.com/users/13985271/trec-apps"
+      },
+      "creation_date" : 1750952389,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140543145,
+      "post_id" : 79678823,
+      "body" : "Could you try with <code>findByNameContainingAndReviewStage</code> although <code>Contains</code> should work (or maybe only on lists).",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 3192259,
+        "reputation" : 126800,
+        "user_id" : 2696260,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+        "display_name" : "M. Deinum",
+        "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+      },
+      "creation_date" : 1750917235,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140542021,
+      "post_id" : 79678823,
+      "body" : "I&#39;m just seeing an empty list. Before, I was seeing something in the list.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 19146380,
+        "reputation" : 283,
+        "user_id" : 13985271,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/a9g3e.png?s=256",
+        "display_name" : "Trec Apps",
+        "link" : "https://stackoverflow.com/users/13985271/trec-apps"
+      },
+      "creation_date" : 1750871109,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79678580" : [ {
+      "comment_id" : 140542026,
+      "post_id" : 79678580,
+      "body" : "I&#39;m just seeing an empty list now.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 19146380,
+        "reputation" : 283,
+        "user_id" : 13985271,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/a9g3e.png?s=256",
+        "display_name" : "Trec Apps",
+        "link" : "https://stackoverflow.com/users/13985271/trec-apps"
+      },
+      "creation_date" : 1750871200,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140540266,
+      "post_id" : 79678580,
+      "body" : "@TrecApps Yes, it confuses me that you write like this.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 21797838,
+        "reputation" : 361,
+        "user_id" : 16097168,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/iIbNc.jpg?s=256",
+        "display_name" : "Abbas",
+        "link" : "https://stackoverflow.com/users/16097168/abbas"
+      },
+      "creation_date" : 1750834700,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140540256,
+      "post_id" : 79678580,
+      "body" : "Thats not it. I meant to mask &quot;BrandInfo&quot; as &quot;Brand&quot; when posting my question. Apparently, I forgot one instance.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 19146380,
+        "reputation" : 283,
+        "user_id" : 13985271,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/a9g3e.png?s=256",
+        "display_name" : "Trec Apps",
+        "link" : "https://stackoverflow.com/users/13985271/trec-apps"
+      },
+      "creation_date" : 1750834541,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

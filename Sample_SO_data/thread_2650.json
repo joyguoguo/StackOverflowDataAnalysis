@@ -1,0 +1,64 @@
+{
+  "question" : {
+    "question_id" : 79606301,
+    "title" : "Does running parallel and async together cause errors in java?",
+    "body" : "<pre><code>**Config TaskExecutor:**\n\n@Bean(&quot;threadImport&quot;)\npublic TaskExecutor threadImport() {\n        log.info(&quot;*** init threadImport with corePoolSize [{}] maxPoolSize [{}]&quot;,\n                threadImportCorePoolSize, threadImportMaxPoolSize);\n        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();\n        executor.setCorePoolSize(20); /* 20 poolSize */\n        executor.setMaxPoolSize(100); /* 100 max poolSize */\n        executor.setQueueCapacity(1024000); //1024000 default queue capacity\n        executor.setThreadNamePrefix(&quot;threadImport-&quot;);\n        return executor;\n    }\n\n**Detail consumeT24CustCorpVip: Parallel processing of messages received when consuming kafka**\n\npublic void consumeT24CustCorpVip(List&lt;String&gt; messages) throws ExecutionException, InterruptedException {\n        List&lt;CompletableFuture&lt;BaseResponse&gt;&gt; lstCompletableFutures = new ArrayList&lt;&gt;();\n        if (!CollectionUtils.isEmpty(messages)) {\n            Gson gson = new GsonBuilder().registerTypeAdapter(LocalDate.class, new LocalDateAdapter()).create(); //create bean Gson custom\n            messages.stream().parallel().forEach(message -&gt; {\n                lstCompletableFutures.add(executedThreadT24CorpVip.executeT24CustCorpVip(message, gson));\n            }); //Parallel processing of messages received when consuming kafka, use\n        }\n    }\n\n**Detail executeT24CustCorpVip: convert message to entity and save to database:**\n\n@Async(&quot;threadImport&quot;) //Use config bean threadImport\npublic CompletableFuture&lt;BaseResponse&gt; executeT24CustCorpVip(String message, Gson gson) {\n        BaseResponse baseResponse = new BaseResponse();\n        try {\n            T24VpbCustCorpVip t24VpbCustCorpVip = gson.fromJson(message, T24VpbCustCorpVip.class); //convert message to entity\n            t24CustCorpVipRepository.save(t24VpbCustCorpVip); //save database\n            baseResponse.setStatus(Status.SUCCESS);\n        } catch (Exception e) {\n            baseResponse.setStatus(Status.ERROR);\n        }\n        return CompletableFuture.completedFuture(baseResponse); //response CompletableFuture\n    }\n</code></pre>\n<p><strong>I receive error bellow:</strong></p>\n<pre><code>org.springframework.kafka.listener.ListenerExecutionFailedException: Listener method 'public void vn.com.vpbank.corp.api.AirportLoungeController.consumeT24CustCorpVip(java.util.List&lt;java.lang.String&gt;) throws java.util.concurrent.ExecutionException,java.lang.InterruptedException' threw exception; nested exception is java.lang.NullPointerException; nested exception is java.lang.NullPointerException\n    at org.springframework.kafka.listener.KafkaMessageListenerContainer$ListenerConsumer.decorateException(KafkaMessageListenerContainer.java:1641)\n    at org.springframework.kafka.listener.KafkaMessageListenerContainer$ListenerConsumer.invokeBatchErrorHandler(KafkaMessageListenerContainer.java:1387)\n    at org.springframework.kafka.listener.KafkaMessageListenerContainer$ListenerConsumer.doInvokeBatchListener(KafkaMessageListenerContainer.java:1274)\n    at org.springframework.kafka.listener.KafkaMessageListenerContainer$ListenerConsumer.invokeBatchListener(KafkaMessageListenerContainer.java:1179)\n    at org.springframework.kafka.listener.KafkaMessageListenerContainer$ListenerConsumer.invokeListener(KafkaMessageListenerContainer.java:1162)\n    at org.springframework.kafka.listener.KafkaMessageListenerContainer$ListenerConsumer.pollAndInvoke(KafkaMessageListenerContainer.java:949)\n    at org.springframework.kafka.listener.KafkaMessageListenerContainer$ListenerConsumer.run(KafkaMessageListenerContainer.java:884)\n    at java.util.concurrent.Executors$RunnableAdapter.call(Executors.java:511)\n    at java.util.concurrent.FutureTask.run(FutureTask.java:266)\n    at java.lang.Thread.run(Thread.java:750)\nCaused by: java.lang.NullPointerException: null\n    at vn.com.vpbank.corp.service.airportLounge.impl.AirportLoungeServiceImpl.consumeT24CustCorpVip(AirportLoungeServiceImpl.java:352)\n    at vn.com.vpbank.corp.service.airportLounge.impl.AirportLoungeServiceImpl$$FastClassBySpringCGLIB$$b3d2718d.invoke(&lt;generated&gt;)\n    at org.springframework.cglib.proxy.MethodProxy.invoke(MethodProxy.java:218)\n    at org.springframework.aop.framework.CglibAopProxy$DynamicAdvisedInterceptor.intercept(CglibAopProxy.java:685)\n    at vn.com.vpbank.corp.service.airportLounge.impl.AirportLoungeServiceImpl$$EnhancerBySpringCGLIB$$7bfb2704.consumeT24CustCorpVip(&lt;generated&gt;)\n    at vn.com.vpbank.corp.api.AirportLoungeController.consumeT24CustCorpVip(AirportLoungeController.java:104)\n    at sun.reflect.GeneratedMethodAccessor428.invoke(Unknown Source)\n    at sun.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)\n    at java.lang.reflect.Method.invoke(Method.java:498)\n    at org.springframework.messaging.handler.invocation.InvocableHandlerMethod.doInvoke(InvocableHandlerMethod.java:171)\n    at org.springframework.messaging.handler.invocation.InvocableHandlerMethod.invoke(InvocableHandlerMethod.java:120)\n    at org.springframework.kafka.listener.adapter.HandlerAdapter.invoke(HandlerAdapter.java:48)\n    at org.springframework.kafka.listener.adapter.MessagingMessageListenerAdapter.invokeHandler(MessagingMessageListenerAdapter.java:301)\n    at org.springframework.kafka.listener.adapter.BatchMessagingMessageListenerAdapter.invoke(BatchMessagingMessageListenerAdapter.java:141)\n    at org.springframework.kafka.listener.adapter.BatchMessagingMessageListenerAdapter.onMessage(BatchMessagingMessageListenerAdapter.java:133)\n    at org.springframework.kafka.listener.adapter.BatchMessagingMessageListenerAdapter.onMessage(BatchMessagingMessageListenerAdapter.java:58)\n    at org.springframework.kafka.listener.KafkaMessageListenerContainer$ListenerConsumer.doInvokeBatchOnMessage(KafkaMessageListenerContainer.java:1359)\n    at org.springframework.kafka.listener.KafkaMessageListenerContainer$ListenerConsumer.invokeBatchOnMessage(KafkaMessageListenerContainer.java:1322)\n    at org.springframework.kafka.listener.KafkaMessageListenerContainer$ListenerConsumer.doInvokeBatchListener(KafkaMessageListenerContainer.java:1262)\n    ... 7 common frames omitted\n</code></pre>\n<p>I don't understand why nullpointer error appears here?\nMethod <em>executeT24CustCorpVip</em> I tried to catch the error in try catch, and I found that there is no error that I cannot catch. So that method <em>executeT24CustCorpVip</em> always return object without null.\nCan someone explain it to me?</p>\n",
+    "tags" : [ "java", "spring-boot", "asynchronous", "parallel-processing", "completable-future" ],
+    "owner" : {
+      "account_id" : 26135982,
+      "reputation" : 124,
+      "user_id" : 19825967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/BUR7E.jpg?s=256",
+      "display_name" : "hungtv",
+      "link" : "https://stackoverflow.com/users/19825967/hungtv"
+    },
+    "is_answered" : true,
+    "view_count" : 62,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1746428822,
+    "creation_date" : 1746417836,
+    "link" : "https://stackoverflow.com/questions/79606301/does-running-parallel-and-async-together-cause-errors-in-java",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79606464,
+    "question_id" : 79606301,
+    "body" : "<p>The problem is this line</p>\n<pre><code>lstCompletableFutures.add(executedThreadT24CorpVip.executeT24CustCorpVip(message, gson));\n</code></pre>\n<p><code>lstCompletableFutures</code> is a simple <code>ArrayList</code> which is not threadsafe. Your code executes the line from a multithreaded context (by calling it from <code>messages.stream().parallel().forEach()</code>).</p>\n<p>A better solution would be not to use <code>.forEach()</code> but <code>.map().toList()</code>:</p>\n<pre><code>        lstCompletableFutures.addAll(\n            messages.stream()\n                .parallel()\n                .map(message -&gt; executedThreadT24CorpVip.executeT24CustCorpVip(message, gson))\n                .toList()\n        );\n</code></pre>\n<p>I would even suggest to not worry to much about inefficiencies with empty lists and write that method as</p>\n<pre><code>public void consumeT24CustCorpVip(List&lt;String&gt; messages) throws ExecutionException, InterruptedException {\n    Gson gson = new GsonBuilder().registerTypeAdapter(LocalDate.class, new LocalDateAdapter()).create(); //create bean Gson custom\n    List&lt;CompletableFuture&lt;BaseResponse&gt;&gt; lstCompletableFutures = \n        messages.stream()\n            .parallel()\n            .map(message -&gt; executedThreadT24CorpVip.executeT24CustCorpVip(message, gson))\n            .toList();\n}\n</code></pre>\n",
+    "score" : 2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 7423601,
+      "reputation" : 21950,
+      "user_id" : 5646962,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/950788cd150c2e596944181dfd8421af?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Thomas Kl&#228;ger",
+      "link" : "https://stackoverflow.com/users/5646962/thomas-kl%c3%a4ger"
+    },
+    "creation_date" : 1746428822,
+    "last_activity_date" : 1746428822,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79606464" : [ {
+      "comment_id" : 140396089,
+      "post_id" : 79606464,
+      "body" : "Thanks @Thomas, I understand ArrayList is not thread-safe so the problem might appear. I will try again.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 26135982,
+        "reputation" : 124,
+        "user_id" : 19825967,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/BUR7E.jpg?s=256",
+        "display_name" : "hungtv",
+        "link" : "https://stackoverflow.com/users/19825967/hungtv"
+      },
+      "creation_date" : 1746431429,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

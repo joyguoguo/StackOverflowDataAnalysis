@@ -1,0 +1,115 @@
+{
+  "question" : {
+    "question_id" : 79596029,
+    "title" : "Error when trying to use test Jpa configuration in integration testing",
+    "body" : "<p>What I am trying to achieve:</p>\n<p>Run an integration test for a Spring Controller in a test container, use a TestJpaConfig instead of JpaConfig:</p>\n<pre><code>@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)\n@ActiveProfiles(&quot;test&quot;)\n@Testcontainers\n@ComponentScan(excludeFilters = {\n        @ComponentScan.Filter(type = FilterType.ASSIGNABLE_TYPE, classes = JpaConfig.class)\n})\n@Import(TestJpaConfig.class)\npublic class SomeControllerIT {\n\n    @Container\n    static PostgreSQLContainer&lt;?&gt; postgresContainer = new PostgreSQLContainer...\n\n    @DynamicPropertySource\n    static void overrideProperties(DynamicPropertyRegistry registry) {\n        ...\n    }\n\n    @LocalServerPort\n    private int port;\n\n    @Autowired\n    private TestRestTemplate restTemplate;\n\n    @MockBean\n    Bean beans...\n\n    @Autowired\n    Class classes...\n\n    @BeforeEach\n    void setup() {\n        ...\n    }\n\n    @Test\n    void test_Something() throws Exception {\n        ...\n    }\n}\n</code></pre>\n<p>I am having this error:</p>\n<pre><code>Caused by: org.springframework.beans.factory.support.BeanDefinitionOverrideException: Invalid bean definition with name 'jpaAuditingHandler' defined in null: Cannot register bean definition [Root bean: class [org.springframework.data.auditing.AuditingHandler]; scope=; abstract=false; lazyInit=null; autowireMode=0; dependencyCheck=0; autowireCandidate=true; primary=false; factoryBeanName=null; factoryMethodName=from; initMethodNames=null; destroyMethodNames=null] for bean 'jpaAuditingHandler' since there is already [Root bean: class [org.springframework.data.auditing.AuditingHandler]; scope=; abstract=false; lazyInit=null; autowireMode=0; dependencyCheck=0; autowireCandidate=true; primary=false; factoryBeanName=null; factoryMethodName=from; initMethodNames=null; destroyMethodNames=null] bound.\n</code></pre>\n<p>My JpaConfig:</p>\n<pre><code>@Configuration\n@EnableJpaAuditing(auditorAwareRef = &quot;auditorProvider&quot;)\npublic class JpaConfig {\n    @Bean\n    public AuditorAware&lt;Long&gt; auditorProvider() {\n        return new SpringSecurityAuditorAware();\n    }\n}\n</code></pre>\n<p>And my TestJpaConfig:</p>\n<pre><code>@TestConfiguration\n@EnableJpaAuditing(auditorAwareRef = &quot;testAuditorProvider&quot;)\npublic class TestJpaConfig {\n\n    @Bean(name = &quot;test&quot;)\n    public AuditorAware&lt;Long&gt; auditorProvider() {\n        return () -&gt; Optional.of(1L);\n    }\n}\n</code></pre>\n<p>I've tried to work to fix this error without success, asking here for help now, any ideas? I have limited knowledge in Spring.</p>\n",
+    "tags" : [ "java", "spring", "spring-boot", "integration-testing" ],
+    "owner" : {
+      "account_id" : 4030419,
+      "reputation" : 3640,
+      "user_id" : 5328691,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/9a192a9167fbddc9a2280720264eeb5d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "CJR",
+      "link" : "https://stackoverflow.com/users/5328691/cjr"
+    },
+    "is_answered" : true,
+    "view_count" : 85,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1746003078,
+    "creation_date" : 1745828032,
+    "link" : "https://stackoverflow.com/questions/79596029/error-when-trying-to-use-test-jpa-configuration-in-integration-testing",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79596160,
+    "question_id" : 79596029,
+    "body" : "<p>The jpaAuditingHandler bean is automatically registered by Spring Data JPA when you use the <code>@EnableJpaAuditing</code> annotation. It is not explicitly defined in your code but is created internally by Spring Data JPA to handle auditing functionality.</p>\n<p>When you annotate a configuration class with <code>@EnableJpaAuditing</code>, Spring Data JPA registers the AuditingHandler bean (with the name jpaAuditingHandler) to manage auditing metadata, such as created and modified dates or the user responsible for changes.</p>\n<p>In your case, both <code>JpaConfig</code> and <code>TestJpaConfig</code> are annotated with <code>@EnableJpaAuditing</code>, which causes Spring to attempt to register two <code>jpaAuditingHandler</code> beans, leading to the <code>BeanDefinitionOverrideException</code>.</p>\n<p>I think below solution may work for you.</p>\n<ol>\n<li>Ensure that <code>JpaConfig</code> is excluded from the test context. You are already using <code>@ComponentScan</code> with an <code>excludeFilters</code>, but <code>JpaConfig</code> might still be picked up by Spring Boot's auto-configuration. To ensure it is excluded, explicitly exclude it using <code>@SpringBootTest</code>:</li>\n</ol>\n<pre><code>@SpringBootTest(\n    webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,\n    classes = {SomeControllerIT.class, TestJpaConfig.class} // Explicitly include TestJpaConfig\n)\n@ActiveProfiles(&quot;test&quot;)\n@Testcontainers\n@ComponentScan(excludeFilters = {\n        @ComponentScan.Filter(type = FilterType.ASSIGNABLE_TYPE, classes = JpaConfig.class)\n})\npublic class SomeControllerIT {\n    ...\n}\n</code></pre>\n<ol start=\"2\">\n<li>If you want to allow bean overriding (not recommended for production but may be acceptable for tests), you can enable it in your application-test.properties or programmatically:</li>\n</ol>\n<p><code>spring.main.allow-bean-definition-overriding=true</code></p>\n<p>Alternatively, you can set it programmatically in your test class:</p>\n<pre><code>@SpringBootTest(\n    webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,\n    properties = &quot;spring.main.allow-bean-definition-overriding=true&quot;\n)\n</code></pre>\n<hr/>\n<p>Found this SO <a href=\"https://stackoverflow.com/a/63133532/5241754\">answer</a> which provides an alternative way to handle this error using <code>@ConditionalOnMissingBean</code>. See if it suits your need.</p>\n<hr/>\n<p><b>Update:</b>\nFor <code>missing ServletWebServerFactory bean</code> error,</p>\n<ol>\n<li>Ensure <code>spring-boot-starter-web</code> is present in your pom/gradle.</li>\n<li>If it is present, you can manually define <code>ServletWebServerFactory</code> bean in your test configuration.</li>\n</ol>\n<pre><code>@Configuration\npublic class TestWebServerConfig {\n    @Bean\n    public ServletWebServerFactory servletWebServerFactory() {\n        return new TomcatServletWebServerFactory();\n    }\n}\n</code></pre>\n<p>Then include this configuration in your test:</p>\n<pre><code>@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)\n@ContextConfiguration(classes = {\n        SomeAuthIT.class, TestJpaConfig.class, TestWebServerConfig.class\n})\n@ActiveProfiles(&quot;test&quot;)\n@Testcontainers\n@ComponentScan(excludeFilters = {\n        @ComponentScan.Filter(type = FilterType.ASSIGNABLE_TYPE, classes = JpaConfig.class)\n})\npublic class YourTestClass {\n    // Test methods\n}\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 6811900,
+      "reputation" : 197,
+      "user_id" : 5241754,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2bffb1ffc6a54aab13ca229515665a70?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Ashyboy",
+      "link" : "https://stackoverflow.com/users/5241754/ashyboy"
+    },
+    "creation_date" : 1745832928,
+    "last_activity_date" : 1746003078,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79596160" : [ {
+      "comment_id" : 140383299,
+      "post_id" : 79596160,
+      "body" : "It looks like spring is not able to find the class during test. Updated the answer with some pointers which can help.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 6811900,
+        "reputation" : 197,
+        "user_id" : 5241754,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/2bffb1ffc6a54aab13ca229515665a70?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Ashyboy",
+        "link" : "https://stackoverflow.com/users/5241754/ashyboy"
+      },
+      "creation_date" : 1746003240,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140377194,
+      "post_id" : 79596160,
+      "body" : "Yes it does of course, but when I explicity add SomeAuthIT &amp; TestJpaConfig to SpringBootTest classes, the error above is thrown?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 4030419,
+        "reputation" : 3640,
+        "user_id" : 5328691,
+        "user_type" : "registered",
+        "accept_rate" : 100,
+        "profile_image" : "https://www.gravatar.com/avatar/9a192a9167fbddc9a2280720264eeb5d?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "CJR",
+        "link" : "https://stackoverflow.com/users/5328691/cjr"
+      },
+      "creation_date" : 1745856486,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140376726,
+      "post_id" : 79596160,
+      "body" : "@CJR Yes, that&#39;s first thing I would check. Verify that your main application class is annotated with <code>@SpringBootApplication</code>. Every Spring Boot application should have a main class annotated with <code>@SpringBootApplication</code>. Also, ensure your pom.xml includes the spring-boot dependency",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 6811900,
+        "reputation" : 197,
+        "user_id" : 5241754,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/2bffb1ffc6a54aab13ca229515665a70?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Ashyboy",
+        "link" : "https://stackoverflow.com/users/5241754/ashyboy"
+      },
+      "creation_date" : 1745848900,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140376412,
+      "post_id" : 79596160,
+      "body" : "Thanks for your input!  This does however throw <code>No qualifying bean of type &#39;org.springframework.boot.web.servlet.server.ServletWebServe&zwnj;&#8203;rFactory&#39; available: Unable to start AnnotationConfigServletWebServerApplicationContext due to missing ServletWebServerFactory bean</code> because it can&#39;t find and start @SpringBootApplication ?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 4030419,
+        "reputation" : 3640,
+        "user_id" : 5328691,
+        "user_type" : "registered",
+        "accept_rate" : 100,
+        "profile_image" : "https://www.gravatar.com/avatar/9a192a9167fbddc9a2280720264eeb5d?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "CJR",
+        "link" : "https://stackoverflow.com/users/5328691/cjr"
+      },
+      "creation_date" : 1745844006,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

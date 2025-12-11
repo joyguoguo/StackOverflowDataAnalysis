@@ -1,0 +1,133 @@
+{
+  "question" : {
+    "question_id" : 79575915,
+    "title" : "thenCompose hangs/timeout web graphql application",
+    "body" : "<p>Im trying to create a <code>Java App</code> using <code>SpringBoot 3 framework</code> and <code>GraphQL</code>. I'm trying to resolve a field which depends on several <code>dataLoaders</code> within my App however, I seem to be running into an issue where my app just hangs for while then completely timeouts when I try combining them using <code>thenCompose</code> method.</p>\n<p>Curiously, when I use one dependent <code>data loaded</code> in conjunction with <code>thenCompose</code> method, it works fine, however, when I'm trying to add more it breaks.</p>\n<p>Ive added some example code below:</p>\n<pre><code> @Component\n    public class ListDataLoader implements BiFunction&lt;Set&lt;Page&gt;, BatchLoaderEnvironment, Mono&lt;Map&lt;Page, List&gt;&gt;&gt; {\n    \n        @Override\n        public Mono&lt;Map&lt;Page, List&gt;&gt; apply(Set&lt;Page&gt; page, BatchLoaderEnvironment batchLoaderEnvironment) {\n            return Flux.fromStream(page.stream())\n                    .filter(page -&gt; page.getProperty() != null)\n                    .map(page -&gt;\n                            {\n                              return   Map.entry(page, List.of(1, 2, 3));\n                            }\n                    )\n                    .collect(toMap(Map.Entry::getKey, Map.Entry::getValue));\n        }\n    }\n\n    @Component\n    public class NameDataLoader implements BiFunction&lt;Set&lt;Page&gt;, BatchLoaderEnvironment, Mono&lt;Map&lt;Page, String&gt;&gt;&gt; {\n    \n        @Override\n        public Mono&lt;Map&lt;Page, String&gt;&gt; apply(Set&lt;Page&gt; page, BatchLoaderEnvironment batchLoaderEnvironment) {\n            return Flux.fromStream(page.stream())\n                    .filter(page -&gt; page.getProperty() != null)\n                    .map(page -&gt;\n                            {\n                                return   Map.entry(page, &quot;true&quot;);\n                            }\n                    )\n                    .collect(toMap(Map.Entry::getKey, Map.Entry::getValue));\n        }\n    }\n</code></pre>\n<p>In the resolver:</p>\n<pre><code>@Controller\npublic class FilterController {\n\n    @SchemaMapping(typeName = &quot;Page&quot;, field = &quot;filter&quot;)\n    public CompletableFuture&lt;Filter&gt; filter(\n            Page page,\n            DataFetchingEnvironment env,\n            DataLoader&lt;Page, List&lt;Integer&gt;&gt; list,\n            DataLoader&lt;Page, Filter&gt; filter,\n            DataLoader&lt;Page, String&gt; name\n    ) {\n        return list.load(page, env)\n                .thenCompose(x -&gt; filter.load(page, env));\n    }\n}\n</code></pre>\n<p>However, when I am trying to add one more data loader it breaks.</p>\n<pre><code>return list.load(page, env)\n        .thenCompose(y -&gt; name.load(page, env)\n        .thenCompose(x -&gt; filter.load(page, env)));\n</code></pre>\n",
+    "tags" : [ "java", "spring-boot", "graphql", "completable-future", "java.util.concurrent" ],
+    "owner" : {
+      "account_id" : 1667328,
+      "reputation" : 2224,
+      "user_id" : 1534482,
+      "user_type" : "registered",
+      "accept_rate" : 67,
+      "profile_image" : "https://i.sstatic.net/XKKj6.jpg?s=256",
+      "display_name" : "maxs87",
+      "link" : "https://stackoverflow.com/users/1534482/maxs87"
+    },
+    "is_answered" : true,
+    "view_count" : 215,
+    "answer_count" : 1,
+    "score" : 4,
+    "last_activity_date" : 1749681467,
+    "creation_date" : 1744745711,
+    "link" : "https://stackoverflow.com/questions/79575915/thencompose-hangs-timeout-web-graphql-application",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79586132,
+    "question_id" : 79575915,
+    "body" : "<p>Have you tried using <code>CompletableFuture.allOf(args...)</code> instead of chaining multiple <code>thenCompose()</code> calls?</p>\n<p>Seems that your current approach of nesting <code>DataLoader.load(args...).thenCompose(args...)</code> is causing the <code>GraphQL</code> request to hang and eventually time out, I suspect the issue lies in how those asynchronous operations are getting scheduled, or more accurately, not scheduled properly.</p>\n<p>I noticed this on your <code>return</code> statement:</p>\n<pre><code>return list.load(page, env)\n        .thenCompose(y -&gt; name.load(page, env)\n        .thenCompose(x -&gt; filter.load(page, env)));\n</code></pre>\n<p>Your <code>return</code> statement is creating a deep dependency chain, where <code>filter.load(args...)</code> won’t even be triggered until <code>name.load(args...)</code> completes which only happens after <code>list.load(args...)</code>. Doing it like this could interfere with Spring GraphQL’s batch dispatching lifecycle.</p>\n<p>Spring collects all <code>DataLoader.load(args...)</code> calls before executing them in a batch. However, if one <code>load(args...)</code> depends on the result of another, that batching process can break or deadlock.</p>\n<p>Maybe try resolving all Loads in parallel using <code>CompletableFuture.allOf(args...)</code> . See my example below:</p>\n<pre><code>@SchemaMapping(typeName = &quot;Page&quot;, field = &quot;filter&quot;)\npublic CompletableFuture&lt;Filter&gt; filter(\n  Page page,\n  DataFetchingEnvironment env,\n  DataLoader&lt;Page, List&lt;Integer&gt;&gt; listLoader,\n  DataLoader&lt;Page, Filter&gt; filterLoader,\n  DataLoader&lt;Page, String&gt; nameLoader\n) {\n  CompletableFuture&lt;List&lt;Integer&gt;&gt; listFuture = listLoader.load(page, env);\n  CompletableFuture&lt;String&gt; nameFuture = nameLoader.load(page, env);\n  CompletableFuture&lt;Filter&gt; filterFuture = filterLoader.load(page, env);\n\n  return CompletableFuture.allOf(listFuture, nameFuture, filterFuture)\n          .thenApply(voidResult -&gt; {\n            List&lt;Integer&gt; list = listFuture.join();\n            String name = nameFuture.join();\n            Filter filter = filterFuture.join();\n\n            return filter;\n          });\n}\n</code></pre>\n<p>Doing it like this allows for all three <code>DataLoader</code> calls can run in <strong>parallel</strong>, and Spring can batch them as expected. Once all are resolved, you can safely <code>.join()</code> their results and do whatever processing you need.</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 5595672,
+      "reputation" : 2589,
+      "user_id" : 4433536,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/DM81C.png?s=256",
+      "display_name" : "undefined",
+      "link" : "https://stackoverflow.com/users/4433536/undefined"
+    },
+    "creation_date" : 1745315567,
+    "last_activity_date" : 1745315567,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140370654,
+    "post_id" : 79575915,
+    "body" : "@ArekKubiński yes, didn’t work.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1667328,
+      "reputation" : 2224,
+      "user_id" : 1534482,
+      "user_type" : "registered",
+      "accept_rate" : 67,
+      "profile_image" : "https://i.sstatic.net/XKKj6.jpg?s=256",
+      "display_name" : "maxs87",
+      "link" : "https://stackoverflow.com/users/1534482/maxs87"
+    },
+    "creation_date" : 1745616302,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140368022,
+    "post_id" : 79575915,
+    "body" : "Have you tried to use <code>thenApplyAsync</code> or <code>thenApply</code> instead of <code>thenCompose</code>?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 20107678,
+      "reputation" : 269,
+      "user_id" : 14744778,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/WkJTY.jpg?s=256",
+      "display_name" : "Arek Kubiński",
+      "link" : "https://stackoverflow.com/users/14744778/arek-kubi%c5%84ski"
+    },
+    "creation_date" : 1745564581,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140340486,
+    "post_id" : 79575915,
+    "body" : "this loaders are registered as mappedbatchloaders",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1667328,
+      "reputation" : 2224,
+      "user_id" : 1534482,
+      "user_type" : "registered",
+      "accept_rate" : 67,
+      "profile_image" : "https://i.sstatic.net/XKKj6.jpg?s=256",
+      "display_name" : "maxs87",
+      "link" : "https://stackoverflow.com/users/1534482/maxs87"
+    },
+    "creation_date" : 1744802749,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140338819,
+    "post_id" : 79575915,
+    "body" : "its been a while since i have used that but i think you need a batch loader <a href=\"https://docs.spring.io/spring-graphql/reference/controllers.html#controllers.batch-mapping\" rel=\"nofollow noreferrer\">docs.spring.io/spring-graphql/reference/&hellip;</a>",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 2064278,
+      "reputation" : 15073,
+      "user_id" : 1840146,
+      "user_type" : "registered",
+      "accept_rate" : 86,
+      "profile_image" : "https://i.sstatic.net/JXdxm.png?s=256",
+      "display_name" : "Toerktumlare",
+      "link" : "https://stackoverflow.com/users/1840146/toerktumlare"
+    },
+    "creation_date" : 1744756206,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79586132" : [ {
+      "comment_id" : 140361525,
+      "post_id" : 79586132,
+      "body" : "Thats the thing. They are depent on eatch other in order. ie second one needs data from first one to be executed correctly and so on. If they are running in parallel its not guaranteed that the first dependency is completed before the second one is started its execution, right?",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 1667328,
+        "reputation" : 2224,
+        "user_id" : 1534482,
+        "user_type" : "registered",
+        "accept_rate" : 67,
+        "profile_image" : "https://i.sstatic.net/XKKj6.jpg?s=256",
+        "display_name" : "maxs87",
+        "link" : "https://stackoverflow.com/users/1534482/maxs87"
+      },
+      "creation_date" : 1745414198,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

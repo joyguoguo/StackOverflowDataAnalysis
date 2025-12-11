@@ -1,0 +1,160 @@
+{
+  "question" : {
+    "question_id" : 79552934,
+    "title" : "Jackson XML &amp; JSON serialization of enum with value",
+    "body" : "<p>I am using Jackson Marshaller for generating both XML and JSON from an object, but the JSON serialization of enum values always happens in capital letters.</p>\n<p>I expected</p>\n<pre><code>{&quot;handDrive&quot;: right}\n</code></pre>\n<p>but get</p>\n<pre><code>{&quot;handDrive&quot;: RIGHT}\n</code></pre>\n<p>This is a snippet of my code...</p>\n<pre><code>@XmlType\n@XmlEnum(String.class)\npublic enum HandDrive {\n\n    @XmlEnumValue(&quot;right&quot;)\n    RIGHT(&quot;right&quot;), //\n\n    @XmlEnumValue(&quot;left&quot;)\n    LEFT(&quot;left&quot;);\n}\n\nObjectMapper mapper = new ObjectMapper();\nCar c = new Car();\nc.setHandDrive(HandDrive.RIGHT);\nmapper.setSerializationInclusion(Include.NON_NULL);\n\n// convert Java object to JSON string\nString jsonString = null;\ntry {\n    jsonString = mapper.writeValueAsString(c);\n    System.out.println(jsonString);\n} catch (JsonProcessingException e) {\n    e.printStackTrace();\n}\nreturn jsonString;\n</code></pre>\n",
+    "tags" : [ "java", "jackson", "jackson2" ],
+    "owner" : {
+      "account_id" : 29709751,
+      "reputation" : 85,
+      "user_id" : 22769710,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/ACg8ocKlda8lPkE7tVmY7XOekPZEcUjQsZnxBUz-8pji1Rea=k-s256",
+      "display_name" : "sensen ol",
+      "link" : "https://stackoverflow.com/users/22769710/sensen-ol"
+    },
+    "is_answered" : true,
+    "view_count" : 125,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1743709043,
+    "creation_date" : 1743683576,
+    "link" : "https://stackoverflow.com/questions/79552934/jackson-xml-json-serialization-of-enum-with-value",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79553074,
+    "question_id" : 79552934,
+    "body" : "<p>Since your enum constants are provided with an argument, I assume you omitted a <code>String</code> field and a one-arg constructor in the definition of <code>HandDrive</code> when you posted your question.</p>\n<p>By default, Jackson serializes enum values with the name of the corresponding constant. This is why the JSON produced contains <code>RIGHT</code> or <code>LEFT</code>. If you want to serialize an enum with one of its fields, you could either use the annotation <a href=\"https://www.javadoc.io/doc/com.fasterxml.jackson.core/jackson-annotations/2.9.6/com/fasterxml/jackson/annotation/JsonIgnore.html\" rel=\"nofollow noreferrer\"><code>@JsonValue</code></a> or a custom serializer.</p>\n<h3>@JsonValue Approach</h3>\n<p>By using <code>@JsonValue</code>, you do not need XML annotations anymore. In fact, this annotation works for both JSON and XML serializations. To use it, just annotate the field <code>value</code> or its getter <code>getValue()</code> with it. Here is a demo at <a href=\"https://onecompiler.com/java/43dqznzrv\" rel=\"nofollow noreferrer\">OneCompiler</a>.</p>\n<pre><code>enum HandDrive {\n    RIGHT(&quot;right&quot;),\n    LEFT(&quot;left&quot;);\n\n    @JsonValue\n    private String value;\n\n    HandDrive(String value) {\n        this.value = value;\n    }\n\n    // Alternatively here\n    // @JsonValue\n    public String getValue() {\n        return value;\n    }\n}\n</code></pre>\n<h3>Custom Serializer Approach for Specific Enum</h3>\n<p>If you do not want to use any annotation, you could define a custom serializer for the enum <code>HandDrive</code>, and then register it as a module on both <code>ObjectMapper</code> and <code>XmlMapper</code>. Here is a demo at <a href=\"https://onecompiler.com/java/43dr8gnkh\" rel=\"nofollow noreferrer\">OneCompiler</a>.</p>\n<pre><code>class HardDriveSerializer extends StdSerializer&lt;HandDrive&gt; {\n\n    public HardDriveSerializer(){\n        this(null);\n    }\n\n    public HardDriveSerializer(Class&lt;HandDrive&gt; t) {\n        super(t);\n    }\n\n    @Override\n    public void serialize(HandDrive value, JsonGenerator gen, SerializerProvider provider) throws IOException {\n        gen.writeString(value.getValue());\n    }\n}\n\npublic class Main {\n    public static void main(String[] args) {\n        Car c = new Car();\n        c.setHandDrive(HandDrive.RIGHT);\n\n        SimpleModule module = new SimpleModule();\n        module.addSerializer(HandDrive.class, new HardDriveSerializer());\n\n        ObjectMapper objectMapper = new ObjectMapper();\n        objectMapper.setSerializationInclusion(JsonInclude.Include.NON_NULL);\n        objectMapper.registerModule(module);\n        try {\n            System.out.println(objectMapper.writeValueAsString(c));\n        } catch (JsonProcessingException e) {\n            e.printStackTrace();\n        }\n\n        XmlMapper xmlMapper = new XmlMapper();\n        xmlMapper.registerModule(module);\n        try {\n            System.out.println(xmlMapper.writeValueAsString(c));\n        } catch (JsonProcessingException e) {\n            throw new RuntimeException(e);\n        }\n    }\n}\n\nenum HandDrive {\n    RIGHT(&quot;right&quot;),\n    LEFT(&quot;left&quot;);\n\n    private String value;\n\n    HandDrive(String value) {\n        this.value = value;\n    }\n\n    public String getValue() {\n        return value;\n    }\n}\n</code></pre>\n<h3>Custom Serializer Approach for Any Enum</h3>\n<p>In case you want to define a single custom serializer for any enum encountered during the marshalling process, you could make your custom serializer subtype <code>Enum</code>, provide the name of a field to use as the serialization value, and then use reflection to retrieve the field's value. Here is a demo at <a href=\"https://onecompiler.com/java/43drasna2\" rel=\"nofollow noreferrer\">OneCompiler</a>.</p>\n<pre><code>public class EnumSerializer extends StdSerializer&lt;Enum&gt; {\n\n    private final String fieldName;\n\n    public EnumSerializer(String fieldName) {\n        this(null, fieldName);\n    }\n\n    public EnumSerializer(Class&lt;Enum&gt; t, String fieldName) {\n        super(t);\n        this.fieldName = fieldName;\n    }\n\n    @Override\n    public void serialize(Enum value, JsonGenerator gen, SerializerProvider provider) throws IOException {\n        try {\n            Field field = value.getClass().getDeclaredField(fieldName);\n            field.setAccessible(true);\n            gen.writeString(field.get(value).toString());\n        } catch (NoSuchFieldException | IllegalAccessException e) {\n            throw new RuntimeException(e);\n        }\n    }\n}\n\npublic class Main {\n    public static void main(String[] args) {\n        Car c = new Car();\n        c.setHandDrive(HandDrive.RIGHT);\n        c.setHandDrive2(HandDrive2.DOWN);\n\n        SimpleModule module = new SimpleModule();\n        module.addSerializer(HandDrive.class, new EnumSerializer(&quot;value&quot;));\n        module.addSerializer(HandDrive2.class, new EnumSerializer(&quot;otherValue&quot;));\n\n        ObjectMapper mapper = new ObjectMapper();\n        mapper.setSerializationInclusion(JsonInclude.Include.NON_NULL);\n        mapper.registerModule(module);\n        try {\n            System.out.println(mapper.writeValueAsString(c));\n        } catch (JsonProcessingException e) {\n            e.printStackTrace();\n        }\n\n        XmlMapper xmlMapper = new XmlMapper();\n        xmlMapper.registerModule(module);\n        try {\n            System.out.println(xmlMapper.writeValueAsString(c));\n        } catch (JsonProcessingException e) {\n            throw new RuntimeException(e);\n        }\n    }\n}\n\nenum HandDrive {\n    RIGHT(&quot;right&quot;),\n    LEFT(&quot;left&quot;);\n\n    private String value;\n\n    HandDrive(String value) {\n        this.value = value;\n    }\n\n    public String getValue() {\n        return value;\n    }\n}\n\nenum HandDrive2 {\n    UP(&quot;up&quot;),\n    DOWN(&quot;down&quot;);\n\n    private String otherValue;\n\n    HandDrive2(String otherValue) {\n        this.otherValue = otherValue;\n    }\n\n    public String getOtherValue() {\n        return otherValue;\n    }\n}\n</code></pre>\n",
+    "score" : 2,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 5569841,
+      "reputation" : 8664,
+      "user_id" : 4415625,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/0ea1713807527aa1cf52e40579e35ec4?s=256&d=identicon&r=PG",
+      "display_name" : "dani-vta",
+      "link" : "https://stackoverflow.com/users/4415625/dani-vta"
+    },
+    "creation_date" : 1743686636,
+    "last_activity_date" : 1743709043,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79553074" : [ {
+      "comment_id" : 140295640,
+      "post_id" : 79553074,
+      "body" : "@sensenol Kinda. You could define a single custom serializer that subtypes <code>Enum</code> and requires a field name (the one used for serialization) to retrieve a value via reflection. However, you need to register anyway a module for every single enum that will be encountered during serialization, but at least you will be able to minimize the boilerplate code for custom serialization. I&#39;ll update my answer to include this approach.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 5569841,
+        "reputation" : 8664,
+        "user_id" : 4415625,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/0ea1713807527aa1cf52e40579e35ec4?s=256&d=identicon&r=PG",
+        "display_name" : "dani-vta",
+        "link" : "https://stackoverflow.com/users/4415625/dani-vta"
+      },
+      "creation_date" : 1743694811,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140295562,
+      "post_id" : 79553074,
+      "body" : "Cool thx, is it also possible to do it general for all enums because in the example above it is explicitly for the enum of type <code>HandDrive</code>. So it should be applicable for all enums.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 29709751,
+        "reputation" : 85,
+        "user_id" : 22769710,
+        "user_type" : "registered",
+        "profile_image" : "https://lh3.googleusercontent.com/a/ACg8ocKlda8lPkE7tVmY7XOekPZEcUjQsZnxBUz-8pji1Rea=k-s256",
+        "display_name" : "sensen ol",
+        "link" : "https://stackoverflow.com/users/22769710/sensen-ol"
+      },
+      "creation_date" : 1743693846,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140295475,
+      "post_id" : 79553074,
+      "body" : "@sensenol Sure thing! You can define a custom serializer and add it as a module to your <code>ObjectMapper</code>. I&#39;ll update my answer",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 5569841,
+        "reputation" : 8664,
+        "user_id" : 4415625,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/0ea1713807527aa1cf52e40579e35ec4?s=256&d=identicon&r=PG",
+        "display_name" : "dani-vta",
+        "link" : "https://stackoverflow.com/users/4415625/dani-vta"
+      },
+      "creation_date" : 1743692693,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140295430,
+      "post_id" : 79553074,
+      "body" : "Is their also a way to do it via the Jackson <code>ObjectMapper</code> without adding the annotations for JSON?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 29709751,
+        "reputation" : 85,
+        "user_id" : 22769710,
+        "user_type" : "registered",
+        "profile_image" : "https://lh3.googleusercontent.com/a/ACg8ocKlda8lPkE7tVmY7XOekPZEcUjQsZnxBUz-8pji1Rea=k-s256",
+        "display_name" : "sensen ol",
+        "link" : "https://stackoverflow.com/users/22769710/sensen-ol"
+      },
+      "creation_date" : 1743692053,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140294998,
+      "post_id" : 79553074,
+      "body" : "yeah correct support marshalling json and xml",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 29709751,
+        "reputation" : 85,
+        "user_id" : 22769710,
+        "user_type" : "registered",
+        "profile_image" : "https://lh3.googleusercontent.com/a/ACg8ocKlda8lPkE7tVmY7XOekPZEcUjQsZnxBUz-8pji1Rea=k-s256",
+        "display_name" : "sensen ol",
+        "link" : "https://stackoverflow.com/users/22769710/sensen-ol"
+      },
+      "creation_date" : 1743687634,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140294942,
+      "post_id" : 79553074,
+      "body" : "I&#39;m sorry, I didn&#39;t understand your question. Are you asking &quot;what if you need to provide support for both XML and JSON marshalling?&quot;",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 5569841,
+        "reputation" : 8664,
+        "user_id" : 4415625,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/0ea1713807527aa1cf52e40579e35ec4?s=256&d=identicon&r=PG",
+        "display_name" : "dani-vta",
+        "link" : "https://stackoverflow.com/users/4415625/dani-vta"
+      },
+      "creation_date" : 1743687007,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140294933,
+      "post_id" : 79553074,
+      "body" : "what in case of support XML and JSON, is additonal annotation needed?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 29709751,
+        "reputation" : 85,
+        "user_id" : 22769710,
+        "user_type" : "registered",
+        "profile_image" : "https://lh3.googleusercontent.com/a/ACg8ocKlda8lPkE7tVmY7XOekPZEcUjQsZnxBUz-8pji1Rea=k-s256",
+        "display_name" : "sensen ol",
+        "link" : "https://stackoverflow.com/users/22769710/sensen-ol"
+      },
+      "creation_date" : 1743686906,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

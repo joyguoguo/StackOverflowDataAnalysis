@@ -1,0 +1,63 @@
+{
+  "question" : {
+    "question_id" : 79605387,
+    "title" : "Jackson inheritence deserialize causing infinite loop",
+    "body" : "<p>I'm trying to deserialize JSON data into <code>Animal.class</code> and <code>Dog.class</code> which extends <code>Animal.class</code> using custom deserializer. The JSON data below is a simplified one and the real JSON data cannot be deserialized with <code>@JsonSubTypes</code>.</p>\n<p>This is how code looks:</p>\n<ol>\n<li>Given JSON data (I can't modify the JSON data format)</li>\n</ol>\n<pre class=\"lang-json prettyprint-override\"><code>[\n  {\n    &quot;name&quot;: &quot;dog name&quot;,\n    &quot;type&quot;: &quot;dog&quot;,\n    &quot;age&quot;: 5\n  },\n  {\n    &quot;name&quot;: &quot;cat name&quot;,\n    &quot;type&quot;: &quot;cat&quot;,\n    &quot;color&quot;: &quot;black&quot;\n  }\n]\n</code></pre>\n<ol start=\"2\">\n<li>Classes</li>\n</ol>\n<pre class=\"lang-java prettyprint-override\"><code>class Animal {\n  String name;\n}\n\n@JsonDeserialize()\nclass Dog extends Animal {\n    String name;\n    int age;\n}\n</code></pre>\n<ol start=\"3\">\n<li>Custom deserializer : deserialize JSON data with <code>&quot;type&quot;: &quot;dog&quot;</code> to <code>Dog</code> and all other animals to <code>Animal</code>.</li>\n</ol>\n<pre class=\"lang-java prettyprint-override\"><code>public class AnimalDeserializer extends StdDeserializer&lt;Animal&gt; {\n  @Override\n  public Animal deserialize(JsonParser p, DeserializationContext ctxt) throws IOException {\n    ObjectCodec codec = p.getCodec();\n    JsonNode node = codec.readTree(p);\n\n    JsonNode typeNode = node.get(&quot;type&quot;);\n    if (typeNode != null &amp;&amp; !typeNode.isNull()) {\n      String typeText = typeNode.asText();\n\n      if (typeText.equals(&quot;dog&quot;)) {\n        return codec.treeToValue(node, Dog.class);\n      }\n    }\n\n    return codec.treeToValue(node, Animal.class);\n  }\n}\n</code></pre>\n<p>It seems like <code>return codec.treeToValue(node, Animal.class);</code> is causing infinite loop. I solved the problem by making <code>Animal.class</code> abstract and creating a new class <code>DefaultAnimal.class</code>, but this way I have to make a lot of redundant default classes.</p>\n<p>Please let me know if you have any good ideas.</p>\n",
+    "tags" : [ "java", "jackson", "deserialization", "json-deserialization" ],
+    "owner" : {
+      "account_id" : 30071908,
+      "reputation" : 51,
+      "user_id" : 23045658,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/7e3d8aaf13937ffd35169e8a6aad9a98?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "evol1102",
+      "link" : "https://stackoverflow.com/users/23045658/evol1102"
+    },
+    "is_answered" : false,
+    "view_count" : 154,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1746353207,
+    "creation_date" : 1746344442,
+    "link" : "https://stackoverflow.com/questions/79605387/jackson-inheritence-deserialize-causing-infinite-loop",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79605455,
+    "question_id" : 79605387,
+    "body" : "<p>You are right. <code>return codec.treeToValue(node, Animal.class);</code> is a guaranteed reason for the infinite loop. And even the call <code>return codec.treeToValue(node, Dog.class);</code> a few lines above <em>might</em> cause a infinite loop. Because you tell Jackson to deserialize the node into a <code>Dog</code>. Since <code>Dog</code> extends <code>Animal</code> and you did not provide a specific deserializer just for <code>Dog</code> Jackson might fall back to the <code>AnimalDeserializer</code> .</p>\n<p>As you mentioned your use case is too complex to be be deserialized with <code>@JsonSubTypes</code>. The key to fixing the infinite loop is to avoid asking Jackson to deserialize the same base type using the same custom deserializer.</p>\n<p>Maybe you have simplified your implementation for this question, too. In full implementation you would need not just handling for <code>typeText.equals(&quot;dog&quot;)</code> but for all cases. And you should take some fallback handling into account like returning null or returning some fallback object:</p>\n<pre><code>    @Override\n    public Animal deserialize(JsonParser p, DeserializationContext ctxt) throws IOException {\n        ObjectCodec codec = p.getCodec();\n        JsonNode node = codec.readTree(p);\n\n        JsonNode typeNode = node.get(&quot;type&quot;);\n        if (typeNode != null &amp;&amp; !typeNode.isNull()) {\n            String typeText = typeNode.asText();\n\n            if (typeText.equals(&quot;dog&quot;)) {\n                // this is risky, tried it with 2.18.3 and seems to work in this case\n                return codec.treeToValue(node, Dog.class);\n            }\n        }\n\n        // return codec.treeToValue(node, Animal.class);\n        Animal fallback = new Animal();\n        fallback.name = node.get(&quot;name&quot;).asText();\n        fallback.type = node.get(&quot;type&quot;).asText() + &quot; (fallback)&quot;;\n        return fallback;\n    }\n</code></pre>\n",
+    "score" : -1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 282040,
+      "reputation" : 2003,
+      "user_id" : 578700,
+      "user_type" : "registered",
+      "accept_rate" : 83,
+      "profile_image" : "https://www.gravatar.com/avatar/797dee8fa8005533f5030a483b8a0ffc?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Marc",
+      "link" : "https://stackoverflow.com/users/578700/marc"
+    },
+    "creation_date" : 1746349734,
+    "last_activity_date" : 1746349734,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140394500,
+    "post_id" : 79605387,
+    "body" : "As an idea: have a look at <a href=\"https://stackoverflow.com/questions/48619460/custom-deserialization-with-jackson-extend-default-deserializer\" title=\"custom deserialization with jackson extend default deserializer\">stackoverflow.com/questions/48619460/&hellip;</a>. Maybe a BeanDeserializerModifier with a special handling for the Dog class is what you need",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 8026267,
+      "reputation" : 5044,
+      "user_id" : 6053084,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/616306286f1da49445d0f5f944440c2d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Turo",
+      "link" : "https://stackoverflow.com/users/6053084/turo"
+    },
+    "creation_date" : 1746366254,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

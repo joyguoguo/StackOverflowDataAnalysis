@@ -1,0 +1,115 @@
+{
+  "question" : {
+    "question_id" : 79559932,
+    "title" : "how do I properly annotate hibernate persist EntityA which contains a Map&lt;String, List&lt;EntityB&gt;&gt; and EntityB contains a List&lt;EntityB&gt;?",
+    "body" : "<p>I have the following classes:</p>\n<pre><code>@Entity\n@Getter\npublic class EntityA \n{\n    @Id\n    private long id;\n    Map&lt;String, List&lt;EntityB&gt;&gt; map;\n}\n\n@Entity\n@Getter\npublic class EntityB\n{\n    @Id\n    private long id;\n    List&lt;EntityB&gt; list;\n}\n</code></pre>\n<p>How do I further annotate the List and Map in Hibernate 6.6 to get these to persist?</p>\n<p>I've tried various combinations of @ElementCollection and @OneToMany without success. I keep getting the following message (even when I comment out the List in EntityB):</p>\n<p>Basic collection has element type 'EntityB' which is not a known basic type (attribute is not annotated '@ElementCollection', '@OneToMany', or '@ManyToMany')</p>\n<p>An initial way to do this is to build an EntityBList as follows:</p>\n<pre><code>public class EntityBList\n{\n    @Id\n    private long id;\n    @OneToMany\n    private List&lt;EntityB&gt; elements;\n}\n</code></pre>\n<p>and in EntityA, change the map to</p>\n<pre><code>    @ElementCollection\n    @CollectionTable(name = &quot;mapping&quot;, joinColumns = {\n        @JoinColumn(name = &quot;entitya_id&quot;, referencedColumnName = &quot;id&quot;) })\n    @MapKeyColumn(name = &quot;name&quot;)\n    @Column(name = &quot;entityblist&quot;)\n    Map&lt;String, EntityBList&gt; map;\n</code></pre>\n<p>in EntityB, replace the list with:</p>\n<pre><code>@OneToOne\nEntityBList list;\n\nI'd rather do it without interposing a new class if possible.\n</code></pre>\n",
+    "tags" : [ "java", "spring-data-jpa", "hibernate-mapping" ],
+    "owner" : {
+      "account_id" : 3939519,
+      "reputation" : 1288,
+      "user_id" : 3779941,
+      "user_type" : "registered",
+      "accept_rate" : 44,
+      "profile_image" : "https://www.gravatar.com/avatar/cbdeced4c64e319eb2220d57a71d18ec?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "AixNPanes",
+      "link" : "https://stackoverflow.com/users/3779941/aixnpanes"
+    },
+    "is_answered" : false,
+    "view_count" : 111,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1744220394,
+    "creation_date" : 1744029917,
+    "link" : "https://stackoverflow.com/questions/79559932/how-do-i-properly-annotate-hibernate-persist-entitya-which-contains-a-mapstring",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79564996,
+    "question_id" : 79559932,
+    "body" : "<p>I'll first tell you why the annotations you used won't work for your fields:</p>\n<p><code>@ElementCollection</code> problem: this annotation is only for basic types or embeddables(i.e a class that doesn't have its own table in the db., rather it shares space), but, in your case, it is obvious that you don't use a basic type and it is clearly that your entities don't just share space. This post that I found on Stack Overflow: <a href=\"https://stackoverflow.com/questions/18406516/jpa-how-to-use-elementcollection-annotation\">JPA: how to use @ElementCollection annotation?</a> also sustains what I told you about this annotation.</p>\n<p><code>@OneToMany</code> problem: this one requires a properly mapped entity, but because you can't use it, I assume there's a problem with the mapping of EntityB in your code. If the code suggestions that I provided won't help you, please also see if this documentation on how to properly map entities is of any help: <a href=\"https://www.codingshuttle.com/spring-boot-hand-book/entity-mapping/\" rel=\"nofollow noreferrer\">https://www.codingshuttle.com/spring-boot-hand-book/entity-mapping/</a>.</p>\n<p>Also, as you might have come so far, you can not let your list and map without annotations.</p>\n<p>Now here are the configurations that I would try to add in the @OneToMany annotations and also some additional modifications:</p>\n<p><em><strong>First possible solution:</strong></em></p>\n<p>- Modify EntityB correspondingly:</p>\n<pre><code>@Entity\n@Getter\npublic class EntityB\n{\n    @Id\n    @GeneratedValue(strategy = GenerationTYPE.IDENTITY)\n    private long id;\n\n    @OneToMany(mappedBy = &quot;parentEntity&quot;, cascade = CascadeType.ALL,\n     fetch = FetchType.EAGER) //added 3 configs.\n    List&lt;EntityB&gt; list;\n}\n</code></pre>\n<p>Doing so, you simplify the functionality, not adding an extra entity, and you also make sure that Hibernate manages correctly the relationships between EntityA and EntityB.</p>\n<p>This @OneToMany annotation contains a mappedBy reference, needed for proper mapping. It also contains a cascade reference, which might help Hibernate to persist correctly the entities. Also, the fetch configuration set to <code>EAGER</code> makes sure you don't have to explicitly access the list.</p>\n<p>I can not guarantee that those configurations made in the @OneToMany annotation will solve the problem, but they should definitely help.</p>\n<p>- Because we modified EntityB this way, we will not use the EntityBList anymore, therefore, EnityA will look something like:</p>\n<pre><code>@Entity\n@Getter\npublic class EntityA {\n    @Id\n    @GeneratedValue(strategy = GenerationType.IDENTITY)\n    private long id;\n\n    @OneToMany(cascade = CascadeType.ALL, fetch = FetchType.EAGER)\n    @JoinTable(\n        name = &quot;entitya_entityb_mapping&quot;,\n        joinColumns = @JoinColumn(name = &quot;entitya_id&quot;),\n        inverseJoinColumns = @JoinColumn(name = &quot;entityb_id&quot;)\n    )\n    private Map&lt;String, List&lt;EntityB&gt;&gt; map;\n}\n</code></pre>\n<p>Again, I added some configurations in the @OneToMany anntotation.</p>\n<p><em><strong>Second possible solution:</strong></em></p>\n<p>If EntityB is not a full entity and doesn't need its own table, you can make it an embeddable, therefore, the map in EntityA will look something like:</p>\n<pre><code>@ElementCollection\n@CollectionTable(name = &quot;entitya_entityb_mapping&quot;, joinColumns = @JoinColumn(name = &quot;entitya_id&quot;))\n@MapKeyColumn(name = &quot;name&quot;)\nprivate Map&lt;String, List&lt;EntityB&gt;&gt; map;\n</code></pre>\n",
+    "score" : -1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 38890247,
+      "reputation" : 156,
+      "user_id" : 29003408,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/LhjH9Wyd.jpg?s=256",
+      "display_name" : "Andrei Greblă",
+      "link" : "https://stackoverflow.com/users/29003408/andrei-grebl%c4%83"
+    },
+    "creation_date" : 1744220394,
+    "last_activity_date" : 1744220394,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79564996" : [ {
+      "comment_id" : 140321975,
+      "post_id" : 79564996,
+      "body" : "You are right to question this, from what I know, Hibernate struggles a bit with this topic, but like I said, I&#39;ll get back to your problem as soon as I can and I&#39;ll try to solve it.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 38890247,
+        "reputation" : 156,
+        "user_id" : 29003408,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/LhjH9Wyd.jpg?s=256",
+        "display_name" : "Andrei Greblă",
+        "link" : "https://stackoverflow.com/users/29003408/andrei-grebl%c4%83"
+      },
+      "creation_date" : 1744313539,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140320469,
+      "post_id" : 79564996,
+      "body" : "I&#39;m wondering if Hibernate/JPA just can&#39;t handle a Map of Lists or for that matter any Collection of Collections without interposing another class. I&#39;m assuming that this kind of thing would require 2 keys, not just the one and there&#39;s no way to specify that.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 3939519,
+        "reputation" : 1288,
+        "user_id" : 3779941,
+        "user_type" : "registered",
+        "accept_rate" : 44,
+        "profile_image" : "https://www.gravatar.com/avatar/cbdeced4c64e319eb2220d57a71d18ec?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "AixNPanes",
+        "link" : "https://stackoverflow.com/users/3779941/aixnpanes"
+      },
+      "creation_date" : 1744290526,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140318782,
+      "post_id" : 79564996,
+      "body" : "Got it, when I have time I’ll try to research more on the topic and edit my solution.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 38890247,
+        "reputation" : 156,
+        "user_id" : 29003408,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/LhjH9Wyd.jpg?s=256",
+        "display_name" : "Andrei Greblă",
+        "link" : "https://stackoverflow.com/users/29003408/andrei-grebl%c4%83"
+      },
+      "creation_date" : 1744259313,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140318337,
+      "post_id" : 79564996,
+      "body" : "EntityB is a full entity. The first solution results in the error: Association &#39;EntityA.map&#39; targets the type &#39;java.util.List&#39; which is not an &#39;@Entity&#39; type",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 3939519,
+        "reputation" : 1288,
+        "user_id" : 3779941,
+        "user_type" : "registered",
+        "accept_rate" : 44,
+        "profile_image" : "https://www.gravatar.com/avatar/cbdeced4c64e319eb2220d57a71d18ec?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "AixNPanes",
+        "link" : "https://stackoverflow.com/users/3779941/aixnpanes"
+      },
+      "creation_date" : 1744239924,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

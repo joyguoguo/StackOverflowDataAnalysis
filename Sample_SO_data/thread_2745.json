@@ -1,0 +1,101 @@
+{
+  "question" : {
+    "question_id" : 79598160,
+    "title" : "Severe and Minor Location Fluctuations Using FusedLocationProviderClient in 24/7 Java Android Device (Mining Environment)",
+    "body" : "<p>I am working on an Android Java app that runs 24/7 on regular Android devices deployed in a mining environment.<br />\nThe devices are rebooted once a week but otherwise stay running continuously.</p>\n<p>I am facing a serious issue:<br />\nThe app shows both minor and major GPS location fluctuations — sometimes small drifts, and sometimes very large jumps (hundreds of meters), even when the device is stationary or moving slowly inside mining trucks.</p>\n<p>I use <code>FusedLocationProviderClient</code> to request location updates.<br />\nLocation updates are handled on a custom background thread (<code>CurrentLocationThread</code>) with its own <code>Looper</code>, to avoid blocking the main UI thread. I also use a <code>GpsHelper</code> class to assist with location calculations.</p>\n<p>Here’s the simplified code:</p>\n<pre><code>// On the main thread\nlocationRequest = LocationRequest.create();\nlocationRequest.setPriority(LocationRequest.PRIORITY_HIGH_ACCURACY);\nlocationRequest.setInterval(LOCATION_REQUEST_INTERVAL); // Initially 15s (15000 ms)\n\ncurrentLocationThread = new CurrentLocationThread();\ncurrentLocationThread.setPriority(9);\ncurrentLocationThread.start();\n\nprivate void getCurrentLocation() {\n    if (Build.VERSION.SDK_INT &gt;= Build.VERSION_CODES.M) {\n        if (ActivityCompat.checkSelfPermission(MainActivity.this, Manifest.permission.ACCESS_FINE_LOCATION) \n                == PackageManager.PERMISSION_GRANTED) {\n            \n            if (isGPSEnabled()) {\n                LOCATION_PERMISSION_STATUS = &quot;TRUE&quot;;\n                mFusedLocationProviderClient = LocationServices.getFusedLocationProviderClient(MainActivity.this);\n                mFusedLocationProviderClient.requestLocationUpdates(\n                    locationRequest,\n                    mLocationCallback = new LocationCallback() {\n                        @Override\n                        public void onLocationResult(LocationResult locationResult) {\n                            if (locationResult == null || locationResult.getLocations().isEmpty()) return;\n\n                            int index = locationResult.getLocations().size() - 1;\n\n                            latitude = locationResult.getLocations().get(index).getLatitude();\n                            longitude = locationResult.getLocations().get(index).getLongitude();\n\n                            try {\n                                double altitude;\n                                boolean hasAltitude = locationResult.getLocations().get(index).hasAltitude();\n                                if (hasAltitude) {\n                                    altitude = locationResult.getLocations().get(index).getAltitude();\n                                } else {\n                                    altitude = 0.0;\n                                }\n                                ALTITUDE = altitude;\n                            } catch (Exception e) {\n                                ALTITUDE = -1;\n                            }\n\n                            current_speed = locationResult.getLocations().get(index).getSpeed();\n                            current_location = gpsHelper.getLatLngToLocation(\n                                &quot;called from getCurrentLocation()&quot;, \n                                String.valueOf(latitude), \n                                String.valueOf(longitude)\n                            );\n                        }\n                    },\n                    currentLocationThread.mHandler.getLooper()\n                );\n\n            } else {\n                LOCATION_PERMISSION_STATUS = &quot;FALSE&quot;;\n                GPS_SIGNAL_STATUS = false;\n                runOnUiThread(() -&gt; turnOnGPS(locationRequest));\n            }\n\n        } else {\n            LOCATION_PERMISSION_STATUS = &quot;TRUE&quot;;\n            requestPermissions(\n                new String[]{\n                    Manifest.permission.ACCESS_FINE_LOCATION,\n                    Manifest.permission.RECORD_AUDIO,\n                    Manifest.permission.CAMERA,\n                    Manifest.permission.BLUETOOTH_CONNECT\n                }, \n                1\n            );\n        }\n    }\n}\n\nclass CurrentLocationThread extends Thread {\n    public Handler mHandler;\n\n    @Override\n    public void run() {\n        Looper.prepare();\n        mHandler = new Handler(Looper.myLooper()) {\n            @Override\n            public void handleMessage(Message msg) {\n                // Currently no handling inside the thread\n            }\n        };\n        try {\n            if (Build.VERSION.SDK_INT &gt;= Build.VERSION_CODES.S) {\n                gps_connected_datetime = getCurrentDateTime();\n                getCurrentLocation();\n            }\n        } catch (Exception e) {\n            e.printStackTrace();\n        }\n        Looper.loop();\n    }\n}\n</code></pre>\n<pre><code>public class GpsHelper {\n\n    public double getDistance(Location from, Location to) {\n        // Returns distance in kilometers, rounded to 2 decimal places\n        float distance = from.distanceTo(to) / 1000;\n        return Math.round(distance * 100.0) / 100.0;\n    }\n\n    public double getDistanceInKm(Location from, Location to) {\n        // Returns distance in kilometers\n        float distance = from.distanceTo(to) / 1000;\n        return distance;\n    }\n\n    public double getDistanceInMeter(Location from, Location to) {\n        // Returns distance in meters\n        float distance = from.distanceTo(to);\n        return distance;\n    }\n\n    public Location getLatLngToLocation(String method_name, String lat, String lng) {\n        Double lat1 = Double.parseDouble(lat);\n        Double lng1 = Double.parseDouble(lng);\n\n        Location location = new Location(LocationManager.GPS_PROVIDER);\n        location.setLatitude(lat1);\n        location.setLongitude(lng1);\n        return location;\n    }\n}\n</code></pre>\n<p>Dynamic Interval Updates: If I update the location request interval dynamically, I use the following method in the main thread:</p>\n<pre><code>public void initializeParameterVariables() {\n    ArrayList&lt;ParameterModel&gt; list = dbhelper.getParameter();\n    for (ParameterModel item : list) {\n        try {\n            if (LOCATION_REQUEST_INTERVAL != item.location_request_interval * 1000) {\n                LOCATION_REQUEST_INTERVAL = item.location_request_interval * 1000;\n                if (LOCATION_REQUEST_INTERVAL == 0) {\n                    LOCATION_REQUEST_INTERVAL = 15000;\n                }\n\n                if (locationRequest != null) {\n                    locationRequest.setInterval(LOCATION_REQUEST_INTERVAL);\n                    locationRequest.setFastestInterval(LOCATION_REQUEST_INTERVAL);\n\n                    if (mFusedLocationProviderClient != null) {\n                        mFusedLocationProviderClient.removeLocationUpdates(mLocationCallback);\n                        mFusedLocationProviderClient = null;\n                    }\n\n                    if (Build.VERSION.SDK_INT &gt;= Build.VERSION_CODES.S) {\n                        currentLocationThread = null;\n                        currentLocationThread = new CurrentLocationThread();\n                        currentLocationThread.setPriority(9);\n                        currentLocationThread.start();\n                    }\n                }\n            }\n        } catch (Exception e) {}\n    }\n}\n</code></pre>\n<h3>Environment:</h3>\n<ul>\n<li><p>Devices: Regular Android phones (not industrial-grade)</p>\n</li>\n<li><p>Android Versions: 12 and above.</p>\n</li>\n<li><p>Usage: Mining environment.</p>\n</li>\n<li><p>Conditions: Dust, rough weather, open sky, low network area, 24/7 device operation (rebooted weekly)</p>\n</li>\n</ul>\n<p>What I've Tried:</p>\n<ul>\n<li><p>Set <code>PRIORITY_HIGH_ACCURACY</code> in <code>LocationRequest</code></p>\n</li>\n<li><p>Changed location intervals (1s, 10s, 15s)</p>\n</li>\n<li><p>Verified permissions handling</p>\n</li>\n<li><p>Restarting devices weekly</p>\n</li>\n<li><p>Using a dedicated background thread with Looper for location update.</p>\n</li>\n</ul>\n<p>How can I stop GPS location fluctuations and get an accurate speed value while using FusedLocationProviderClient in Android (Java)?</p>\n",
+    "tags" : [ "java", "android", "fusedlocationproviderclient" ],
+    "owner" : {
+      "account_id" : 25395220,
+      "reputation" : 1,
+      "user_id" : 19205598,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/6f162cd404fa3ba0f150e501b2712c3e?s=256&d=identicon&r=PG",
+      "display_name" : "Nitesh Singh",
+      "link" : "https://stackoverflow.com/users/19205598/nitesh-singh"
+    },
+    "is_answered" : false,
+    "view_count" : 67,
+    "answer_count" : 2,
+    "score" : 0,
+    "last_activity_date" : 1745929913,
+    "creation_date" : 1745923185,
+    "link" : "https://stackoverflow.com/questions/79598160/severe-and-minor-location-fluctuations-using-fusedlocationproviderclient-in-24-7",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79598222,
+    "question_id" : 79598160,
+    "body" : "<p>I am not sure it can be done using the fusedClient. (I am sure somebody will disagree with this). The FusedLocationListner requires a data connection so it can send a request to goggle who then return your location. This means getting your location is dependent on the strength of your device's internet connection and the servers at goggle returning in a timely fashion.</p>\n<p>Previously the LocationListener and LocationListenerCompat used the gps on the android device to get the location. These are deprecated interfaces so you will not be able to publish them to the play store. But if this just for your own use I would suggest giving them a try.</p>\n<p>(LocationListener no longer works with android Q and above so try the compat. Also you cannot have a silent listener, it must be implemented by the class.)</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 7668324,
+      "reputation" : 163,
+      "user_id" : 5811436,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/SLHtg.jpg?s=256",
+      "display_name" : "MunterMan",
+      "link" : "https://stackoverflow.com/users/5811436/munterman"
+    },
+    "creation_date" : 1745925085,
+    "last_activity_date" : 1745925085,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79598376,
+    "question_id" : 79598160,
+    "body" : "<p>You wont be able to stop the fluctuations as there are a number of different factors that can cause disruptions.</p>\n<p>Being in as you say a low network area means its probably going to be relying completely on the <code>GPS</code> chip vs using <code>AGPS</code> (Assisted GPS) with network triangulation and being in a remote area if the device does not have a good lock on a satellite then you will get jumping as you  move plus anything that may be blocking the signal ie. trees, clouds, rough weather, metals.</p>\n<p>The quality of the GPS chips in phones are also not great if you need very precise locations, its just not what they are made for.</p>\n<p>There is also no need for a background thread for location updates thats what the LocationCallback is for</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 295108,
+      "reputation" : 74839,
+      "user_id" : 599346,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/be66588cfacdbed6f5b7581e4eec4c95?s=256&d=identicon&r=PG",
+      "display_name" : "tyczj",
+      "link" : "https://stackoverflow.com/users/599346/tyczj"
+    },
+    "creation_date" : 1745929913,
+    "last_activity_date" : 1745929913,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140381404,
+    "post_id" : 79598160,
+    "body" : "I suggest you to process all results received via LocationResult, not only the most recent one in the list - smooth all readings by means of moving average or other filter, and use it as the final scalar result. As a sidenote, I don&#39;t see a reason why you convert latitute/longitude to strings and then parse them back into double in getLatLngToLocation.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1111648,
+      "reputation" : 8778,
+      "user_id" : 1102014,
+      "user_type" : "registered",
+      "accept_rate" : 79,
+      "profile_image" : "https://www.gravatar.com/avatar/277a5c47a66031df5a833941873017e6?s=256&d=identicon&r=PG",
+      "display_name" : "Stan",
+      "link" : "https://stackoverflow.com/users/1102014/stan"
+    },
+    "creation_date" : 1745951931,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79598222" : [ {
+      "comment_id" : 140380065,
+      "post_id" : 79598222,
+      "body" : "The fused location API does not require a network connection, that is simply not how GPS works, a network connection assists with accuracy by network triangulation, you can still get GPS without it",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 295108,
+        "reputation" : 74839,
+        "user_id" : 599346,
+        "user_type" : "registered",
+        "accept_rate" : 85,
+        "profile_image" : "https://www.gravatar.com/avatar/be66588cfacdbed6f5b7581e4eec4c95?s=256&d=identicon&r=PG",
+        "display_name" : "tyczj",
+        "link" : "https://stackoverflow.com/users/599346/tyczj"
+      },
+      "creation_date" : 1745930227,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

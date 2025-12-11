@@ -1,0 +1,47 @@
+{
+  "question" : {
+    "question_id" : 79614301,
+    "title" : "Apache Camel kafka consumer offset manual commit does not work correctly",
+    "body" : "<p>I have a problem with commit Kafka offset after camel aggregation. My rout commit offset per every event but I would like the application to save the Kafka offset after sending a data packet to GCS.</p>\n<p>I use :</p>\n<ul>\n<li>quarkus 3.21.4</li>\n<li>camel Kafka 4.10.2</li>\n<li>java 17</li>\n</ul>\n<p>My case example :</p>\n<pre><code>from(&quot;kafka://topicName&quot;)\n    .process(exchange -&gt; {\n        // do something;\n    })\n    .aggregate(new MyAggregationStrategy())\n    .constant(true)\n    .completionTimeout(60000)\n    .marshal()\n    .json(JsonLibrary.Jackson)\n    .to(&quot;google-storage://BucketName&quot;)\n    .process(exchange -&gt; {\n        KafkaManualCommit kafkaManualCommit = exchange.getIn().getHeader(\n            KafkaConstants.MANUAL_COMMIT,\n            KafkaAsyncManualCommit.class\n        );\n        kafkaManualCommit.commit();\n    });\n</code></pre>\n<p>My Kafka component factory looks like:</p>\n<pre class=\"lang-java prettyprint-override\"><code>KafkaComponentBuilderFactory.kafka()\n    .kafkaClientFactory(new QuarkusKafkaClientFactory(kafkaConfig))\n    .brokers((String) kafkaConfig.get(&quot;bootstrap.servers&quot;))\n    .allowManualCommit(true)\n    .autoCommitEnable(false)\n    .groupId(kafkaGroupId)\n    .autoOffsetReset(autoReset)\n    .kafkaManualCommitFactory(new DefaultKafkaManualAsyncCommitFactory())\n    .build(camelContext);\n</code></pre>\n",
+    "tags" : [ "java", "apache-kafka", "apache-camel", "quarkus" ],
+    "owner" : {
+      "account_id" : 41879265,
+      "reputation" : 11,
+      "user_id" : 30492502,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/dca43a550a12fc87119c6d82b624c7a9?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Michał M",
+      "link" : "https://stackoverflow.com/users/30492502/micha%c5%82-m"
+    },
+    "is_answered" : true,
+    "view_count" : 163,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1746809205,
+    "creation_date" : 1746799839,
+    "link" : "https://stackoverflow.com/questions/79614301/apache-camel-kafka-consumer-offset-manual-commit-does-not-work-correctly",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79614502,
+    "question_id" : 79614301,
+    "body" : "<p>To get a single offset‐commit after your GCS upload, instead of one per incoming message, you need to do two things:</p>\n<p>1- Propagate the manual‐commit handle through the aggregator\nBy default the aggregator spins off a new exchange and you lose the original KafkaManualCommit header. If you tell the aggregator to share the same UnitOfWork, that header will stay available on the aggregated exchange:</p>\n<pre><code>\nfrom(&quot;kafka:topicName?allowManualCommit=true&amp;autoCommitEnable=false…&quot;)\n  .aggregate(constant(true), new MyAggregationStrategy())\n    .completionTimeout(60_000)\n    .shareUnitOfWork()                   // &lt;-- preserve the MANUAL_COMMIT header\n  .marshal().json(JsonLibrary.Jackson)\n  .to(&quot;google-storage://BucketName&quot;)\n  .process(exchange -&gt; {\n      // now MANUAL_COMMIT is still on the aggregated exchange\n      KafkaManualCommit manual = exchange.getIn()\n        .getHeader(KafkaConstants.MANUAL_COMMIT, KafkaManualCommit.class);\n      manual.commitSync();               // &lt;-- see next point\n  });\n\n</code></pre>\n<p>The shareUnitOfWork() is what makes the aggregator reuse the same Camel Exchange (and its headers) rather than creating a fresh one</p>\n<p>2- Use a synchronous commit\nYou’re currently plugging in DefaultKafkaManualAsyncCommitFactory(), so calling manual.commit() simply schedules the commit for the next poll loop. To force an immediate commit once the GCS write succeeds, either:\nSwitch to the default (synchronous) commit factory:\n<code>.kafkaManualCommitFactory(new DefaultKafkaManualCommitFactory())</code></p>\n<p>so that manual.commit() == commitSync(), or Explicitly call the sync API:\n<code>manual.commitSync();</code>\nThat will block until Kafka acknowledges the offset commit</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 71015,
+      "reputation" : 5322,
+      "user_id" : 205463,
+      "user_type" : "registered",
+      "accept_rate" : 71,
+      "profile_image" : "https://i.sstatic.net/mCr5C.png?s=256",
+      "display_name" : "Vahid Hashemi",
+      "link" : "https://stackoverflow.com/users/205463/vahid-hashemi"
+    },
+    "creation_date" : 1746806667,
+    "last_activity_date" : 1746806667,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : { }
+}

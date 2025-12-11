@@ -1,0 +1,133 @@
+{
+  "question" : {
+    "question_id" : 79688856,
+    "title" : "Spring Boot 3 + Aspectj with Load Time Weaving = java.lang.NoSuchMethodError: aspectOf()",
+    "body" : "<p>I'm trying to configure AspectJ LTW (Load-Time Weaving) in my Spring Boot library. The goal is to intercept the execution of every method in the classpath (including non-Spring beans) to monitor execution time. During test execution, I'm encountering the following error: <code>java.lang.NoSuchMethodError: 'LoadTimeWeavingAspect.aspectOf()'</code>.</p>\n<p>My configuration class:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Configuration\n@EnableLoadTimeWeaving(aspectjWeaving = EnableLoadTimeWeaving.AspectJWeaving.ENABLED)\npublic class AspectJWeaverConfiguration {}\n</code></pre>\n<p>My <code>META-INF/aop.xml</code> file:</p>\n<pre class=\"lang-xml prettyprint-override\"><code>&lt;aspectj&gt;\n    &lt;aspects&gt;\n        &lt;aspect name=&quot;project.base.package.performance_monitor.LoadTimeWeavingAspect&quot;/&gt;\n    &lt;/aspects&gt;\n    &lt;weaver options=&quot;-verbose -showWeaveInfo&quot;&gt;\n        &lt;include within=&quot;project.base.package..*&quot;/&gt;\n    &lt;/weaver&gt;\n&lt;/aspectj&gt;\n</code></pre>\n<p>My Aspect class:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Aspect\npublic class LoadTimeWeavingAspect {\n\n    @Around(&quot;within(project.base.package..*)&quot;)\n    public Object around(final ProceedingJoinPoint pjp) throws Throwable {\n        Method method = ((MethodSignature) pjp.getSignature()).getMethod();\n        PerformanceWatcher.start(method.getDeclaringClass().getName() + &quot;.&quot; + method.getName());\n        try {\n            return pjp.proceed();\n        } finally {\n            PerformanceWatcher.stop();\n        }\n    }\n\n}\n</code></pre>\n<p>My <code>pom.xml</code> file:</p>\n<pre class=\"lang-xml prettyprint-override\"><code>&lt;dependencies&gt;\n        &lt;dependency&gt;\n            &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;\n            &lt;artifactId&gt;spring-boot-starter-aop&lt;/artifactId&gt;\n        &lt;/dependency&gt;\n        &lt;dependency&gt;\n            &lt;groupId&gt;org.springframework&lt;/groupId&gt;\n            &lt;artifactId&gt;spring-instrument&lt;/artifactId&gt;\n            &lt;version&gt;${spring-instrument.version}&lt;/version&gt;\n        &lt;/dependency&gt;\n        &lt;dependency&gt;\n            &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;\n            &lt;artifactId&gt;spring-boot-starter-test&lt;/artifactId&gt;\n        &lt;/dependency&gt;\n        &lt;dependency&gt;\n            &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;\n            &lt;artifactId&gt;spring-boot-starter-actuator&lt;/artifactId&gt;\n        &lt;/dependency&gt;\n        &lt;dependency&gt;\n            &lt;groupId&gt;io.micrometer&lt;/groupId&gt;\n            &lt;artifactId&gt;micrometer-tracing-bridge-otel&lt;/artifactId&gt;\n            &lt;version&gt;${micrometer-tracing.version}&lt;/version&gt;\n        &lt;/dependency&gt;\n&lt;/dependencies&gt;\n</code></pre>\n<p>I'm passing the following java agent when executing the tests: <code>-javaagent:&quot;C:\\Users\\user\\.m2\\repository\\org\\springframework\\spring-instrument\\6.2.8\\spring-instrument-6.2.8.jar&quot;</code></p>\n<p>Any idea how to do it the right way? It's been a challenge to find documentation to guide me.</p>\n<p>I'm following this two publications to guide me:</p>\n<ul>\n<li><a href=\"https://docs.spring.io/spring-framework/reference/core/aop/using-aspectj.html\" rel=\"nofollow noreferrer\">https://docs.spring.io/spring-framework/reference/core/aop/using-aspectj.html</a></li>\n<li><a href=\"https://www.credera.com/en-us/insights/aspect-oriented-programming-in-spring-boot-part-3-setting-up-aspectj-load-time-weaving\" rel=\"nofollow noreferrer\">https://www.credera.com/en-us/insights/aspect-oriented-programming-in-spring-boot-part-3-setting-up-aspectj-load-time-weaving</a></li>\n</ul>\n",
+    "tags" : [ "java", "spring-boot", "aspectj", "load-time-weaving" ],
+    "owner" : {
+      "account_id" : 8594703,
+      "reputation" : 208,
+      "user_id" : 9824708,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/ee505664f17fd64a4dadd61f049390d6?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Daniel Gimenez",
+      "link" : "https://stackoverflow.com/users/9824708/daniel-gimenez"
+    },
+    "is_answered" : true,
+    "view_count" : 174,
+    "answer_count" : 2,
+    "score" : 0,
+    "last_activity_date" : 1751627753,
+    "creation_date" : 1751545740,
+    "link" : "https://stackoverflow.com/questions/79688856/spring-boot-3-aspectj-with-load-time-weaving-java-lang-nosuchmethoderror-as",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79688882,
+    "question_id" : 79688856,
+    "body" : "<p>You need to weave the aspects before the <code>aspectOf</code> method is being added. You can do this through 1 of 2 means.</p>\n<ol>\n<li>Add the aspject maven compiler to your <code>pom.xml</code></li>\n<li>Include the <code>aspectjweaver</code> as an additional Java agent</li>\n</ol>\n<h2>Add the compiler</h2>\n<pre class=\"lang-xml prettyprint-override\"><code>&lt;build&gt;\n  &lt;plugins&gt;\n        &lt;plugin&gt;\n            &lt;groupId&gt;org.codehaus.mojo&lt;/groupId&gt;\n            &lt;artifactId&gt;aspectj-maven-plugin&lt;/artifactId&gt;\n            &lt;version&gt;1.15.0&lt;/version&gt;\n            &lt;configuration&gt;\n                &lt;showWeaveInfo&gt;true&lt;/showWeaveInfo&gt;\n                &lt;release&gt;${java.version}&lt;/source&gt;\n                &lt;Xlint&gt;ignore&lt;/Xlint&gt;\n                &lt;encoding&gt;UTF-8&lt;/encoding&gt;\n                &lt;verbose&gt;true&lt;/verbose&gt;\n            &lt;/configuration&gt;\n            &lt;executions&gt;\n                &lt;execution&gt;\n                    &lt;!-- IMPORTANT --&gt;\n                    &lt;phase&gt;process-sources&lt;/phase&gt;\n                    &lt;goals&gt;\n                        &lt;goal&gt;compile&lt;/goal&gt;\n                        &lt;goal&gt;test-compile&lt;/goal&gt;\n                    &lt;/goals&gt;\n                &lt;/execution&gt;\n            &lt;/executions&gt;\n            &lt;dependencies&gt;\n                &lt;dependency&gt;\n                    &lt;groupId&gt;org.aspectj&lt;/groupId&gt;\n                    &lt;artifactId&gt;aspectjtools&lt;/artifactId&gt;\n                    &lt;version&gt;${aspectj.version}&lt;/version&gt;\n                &lt;/dependency&gt;\n            &lt;/dependencies&gt;\n        &lt;/plugin&gt;  \n  &lt;/plugins&gt;\n&lt;/build&gt;\n</code></pre>\n<p>Something along these lines.</p>\n<h2>Add the javaagent</h2>\n<p>Or you can add an additional java agent for AspectJ.</p>\n<pre class=\"lang-bash prettyprint-override\"><code>-javaagent:/path/to/aspectjweaver.jar\n-javaagent:&quot;C:\\Users\\user\\.m2\\repository\\org\\springframework\\spring-instrument\\6.2.8\\spring-instrument-6.2.8.jar&quot;\n</code></pre>\n<p>See also <a href=\"https://stackoverflow.com/questions/56942234/compiling-with-maven-compiler-plugin-and-aspectj-maven-plugin\">Compiling with maven-compiler-plugin and aspectj-maven-plugin</a> for a more detailed explanation and links to other answers with more indepth answers.</p>\n",
+    "score" : 0,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126800,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1751547061,
+    "last_activity_date" : 1751547061,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79690100,
+    "question_id" : 79688856,
+    "body" : "<p>As I can see in your <em>aop.xml</em>, <code>LoadTimeWeavingAspect</code> is itself in a subpackage of <code>project.base.package</code>.</p>\n<ol>\n<li>I.e., <code>within(project.base.package..*)</code> will make the aspect to try to weave into itself.</li>\n<li>Additionally, it will weave many more joinpoints than just <code>execution</code> ones. In contrast to Spring AOP, which only knows <code>execution</code> joinpoints, AspectJ supports additional ones you are probably not interested in when measuring performance.</li>\n</ol>\n<p>To address both problems, I recommend to extend your pointcut to</p>\n<pre class=\"lang-none prettyprint-override\"><code>within(project.base.package..*)\n  &amp;&amp; !within(LoadTimeWeavingAspect)\n  &amp;&amp; execution(* *(..))\n</code></pre>\n<p>I am currently too busy to actually reproduce your issue and test my suggestion, but assuming that LTW itself is configured correctly, this should help.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 1087271,
+      "reputation" : 68569,
+      "user_id" : 1082681,
+      "user_type" : "registered",
+      "accept_rate" : 90,
+      "profile_image" : "https://i.sstatic.net/lDK9h.png?s=256",
+      "display_name" : "kriegaex",
+      "link" : "https://stackoverflow.com/users/1082681/kriegaex"
+    },
+    "creation_date" : 1751627753,
+    "last_activity_date" : 1751627753,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140588680,
+    "post_id" : 79688856,
+    "body" : "Daniel, two persons have tried to help you by writing answers, and you did not react at all. I do not find that particularly polite and respectful. Please, either accept an appropriate answer or comment on answers, if you have problems understanding them or think they are wrong.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1087271,
+      "reputation" : 68569,
+      "user_id" : 1082681,
+      "user_type" : "registered",
+      "accept_rate" : 90,
+      "profile_image" : "https://i.sstatic.net/lDK9h.png?s=256",
+      "display_name" : "kriegaex",
+      "link" : "https://stackoverflow.com/users/1082681/kriegaex"
+    },
+    "creation_date" : 1752510948,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140561977,
+    "post_id" : 79688856,
+    "body" : "You need to add the aspectj maven plugin, to enrich the <code>@Aspect</code> annotationed classes with said method or add an additional agent the <code>aspectjweaver</code> one. Either will work.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126800,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1751546340,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79688882" : [ {
+      "comment_id" : 140569706,
+      "post_id" : 79688882,
+      "body" : "Agree, I did mis on that detail. I did run into the missing <code>aspectOf</code> more then once due to the missing compilation stuff. But frankly that was years ago, assumed that it would still apply.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 3192259,
+        "reputation" : 126800,
+        "user_id" : 2696260,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+        "display_name" : "M. Deinum",
+        "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+      },
+      "creation_date" : 1751868183,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140564773,
+      "post_id" : 79688882,
+      "body" : "I do not think this will help much for an aspect trying to weave itself.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1087271,
+        "reputation" : 68569,
+        "user_id" : 1082681,
+        "user_type" : "registered",
+        "accept_rate" : 90,
+        "profile_image" : "https://i.sstatic.net/lDK9h.png?s=256",
+        "display_name" : "kriegaex",
+        "link" : "https://stackoverflow.com/users/1082681/kriegaex"
+      },
+      "creation_date" : 1751627243,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

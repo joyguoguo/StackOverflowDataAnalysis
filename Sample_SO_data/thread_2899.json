@@ -1,0 +1,95 @@
+{
+  "question" : {
+    "question_id" : 79587023,
+    "title" : "Strictly enforce timeouts on JVM for arbitrary code?",
+    "body" : "<p>I have a situation where a multithreaded service is making parallel calls to user-submitted code over which I have no control. I'm hoping to find a mechanism by which these calls can be timed out if they enter into deadlock/infinite loop/other non-returning states, regardless of what the code being called is. For the timeout, I need:</p>\n<ol>\n<li>To recoverably continue past a non-returning call within a bounded time and</li>\n<li>To kill the non-returning thread and yield whatever resources it held</li>\n</ol>\n<p>So far, the mechanism I've been using to handle timeouts uses <a href=\"https://openjdk.org/jeps/444\" rel=\"nofollow noreferrer\">virtual threads</a>, and meets the first criterion but not the second:</p>\n<pre><code>public static String maybeTimeout(Callable&lt;String&gt; task, long timeOutMs) {\n    try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {\n        Future&lt;String&gt; taskFuture = executor.submit(task);\n\n        try {\n            return taskFuture.get(timeOutMs, TimeUnit.MILLISECONDS);\n        } catch (Exception e) {\n            taskFuture.cancel(true);\n            System.out.println(&quot;Timed out!&quot;);\n            return &quot;Timed out&quot;;\n        }\n    }\n}\n</code></pre>\n<p>This works for code which yields, (here with a <code>Thread.sleep</code> call)</p>\n<pre><code>public static Boolean sneakyTrue() {\n    return true;\n}\n\npublic static String sleepy() {\n    return maybeTimeout(\n            () -&gt; {\n                var x = 0;\n                while (sneakyTrue()) {\n                    x = x + 1;\n                    System.out.println(&quot;Sleeping again: &quot; + x);\n                    Thread.sleep(1000);\n                }\n                return &quot;Unreachable&quot;;\n            },\n            5000);\n}\n</code></pre>\n<p>But not with code that doesn't:</p>\n<pre><code>public static String spinny() {\n    return maybeTimeout(\n            () -&gt; {\n                var x = 0;\n                var y = 0;\n                while (sneakyTrue()) {\n                    x = x + 1;\n                    if (x == 0) {\n                        System.out.println(&quot;Spinning another maxInt times:&quot; + y);\n                        y = y + 1;\n                    }\n                }\n                return &quot;Unreachable&quot;;\n            },\n            5000);\n}\n</code></pre>\n<p>The tests I have that confirm this behavior:</p>\n<pre><code>import org.junit.jupiter.api.Test;\nimport java.util.concurrent.*;\n\n...\n\n@Test\nvoid sleepyShouldBeAbleToTimeout() {\n    assert (sleepy().equals(&quot;Timed out&quot;));\n    try {\n        Thread.sleep(10 * 1000);\n    } catch (InterruptedException e) {\n        throw new RuntimeException(e);\n    }\n}\n\n@Test\nvoid spinnyShouldBeAbleToTimeout() {\n    assert (spinny().equals(&quot;Timed out&quot;));\n    try {\n        Thread.sleep(10 * 1000);\n    } catch (InterruptedException e) {\n        throw new RuntimeException(e);\n    }\n}\n</code></pre>\n<p>If you run the above tests, both &quot;pass&quot;, but notice that during the 10-second sleep, <code>spinny</code> continues to run/print to the console, while <code>sleepy</code> is quickly killed. My concern is that this could lead to thread/resource starvation if many threads get stuck in non-yielding user code. Is there any mechanism that can more strictly terminate threads?</p>\n",
+    "tags" : [ "java", "multithreading", "timeout" ],
+    "owner" : {
+      "account_id" : 7971577,
+      "reputation" : 4336,
+      "user_id" : 6016064,
+      "user_type" : "registered",
+      "accept_rate" : 71,
+      "profile_image" : "https://www.gravatar.com/avatar/ef21e8114f58b4d82ea6c3056812f557?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Edward Peters",
+      "link" : "https://stackoverflow.com/users/6016064/edward-peters"
+    },
+    "is_answered" : false,
+    "view_count" : 77,
+    "answer_count" : 0,
+    "score" : 1,
+    "last_activity_date" : 1745450018,
+    "creation_date" : 1745339412,
+    "link" : "https://stackoverflow.com/questions/79587023/strictly-enforce-timeouts-on-jvm-for-arbitrary-code",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140359813,
+    "post_id" : 79587023,
+    "body" : "Well ... sorry ... but Java can&#39;t do that.  This is one of the many reasons why Java no longer supports security sandboxes.  It is not possible to isolate badly behaved Java code ... apart from running it in a separate OS process.  (And I&#39;m not aware of any other programming language that can do this either.)",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 47283,
+      "reputation" : 723428,
+      "user_id" : 139985,
+      "user_type" : "registered",
+      "accept_rate" : 69,
+      "profile_image" : "https://www.gravatar.com/avatar/147c5a9cc1feec049c50da791ac7d144?s=256&d=identicon&r=PG",
+      "display_name" : "Stephen C",
+      "link" : "https://stackoverflow.com/users/139985/stephen-c"
+    },
+    "creation_date" : 1745372518,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140359300,
+    "post_id" : 79587023,
+    "body" : "It&#39;s mostly a case of needing to balance trust vs. performance - the process of running user code has to be kept fairly lightweight.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7971577,
+      "reputation" : 4336,
+      "user_id" : 6016064,
+      "user_type" : "registered",
+      "accept_rate" : 71,
+      "profile_image" : "https://www.gravatar.com/avatar/ef21e8114f58b4d82ea6c3056812f557?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Edward Peters",
+      "link" : "https://stackoverflow.com/users/6016064/edward-peters"
+    },
+    "creation_date" : 1745354910,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140359238,
+    "post_id" : 79587023,
+    "body" : "How much can you trust that user code? Even if you trust in it not being malicious, you might want to virtualize it with something like Docker and assign e.g. CPU/memory limits.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 15064163,
+      "reputation" : 17100,
+      "user_id" : 10871900,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/720202b6e19abc330dcd92e6a1254562?s=256&d=identicon&r=PG",
+      "display_name" : "dan1st",
+      "link" : "https://stackoverflow.com/users/10871900/dan1st"
+    },
+    "creation_date" : 1745353352,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140358773,
+    "post_id" : 79587023,
+    "body" : "All the more murdery methods of forcibly ending threads have been marked deprecated and some have been removed or are slated for removal. How about launching another JVM and using the operating system&#39;s facilities to kill that if needed? If there are lots of the user threads, then possibly one JVM for a batch of these?",
+    "score" : 4,
+    "owner" : {
+      "account_id" : 19435569,
+      "reputation" : 2968,
+      "user_id" : 21105992,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/kKQkV.png?s=256",
+      "display_name" : "teapot418",
+      "link" : "https://stackoverflow.com/users/21105992/teapot418"
+    },
+    "creation_date" : 1745343319,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

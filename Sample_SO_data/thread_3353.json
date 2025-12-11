@@ -1,0 +1,82 @@
+{
+  "question" : {
+    "question_id" : 79554436,
+    "title" : "Trying to add stubs in a loop and getting a Mockito exception: Incorrect use of API detected here",
+    "body" : "<p>I'm using Mockito to creating unit tests for Java however I encountered a weird issue</p>\n<p>Say I have an <code>ObjectUnderTest</code> with a <code>mainMethod</code>, and a dependency <code>Dependency</code> mocked, with a method <code>mockedMethod</code>:</p>\n<pre><code>class ObjectUnderTest {\n    private Dependency dependency;\n\n    public mainMethod() {\n        // some logic...\n        // now calling the `mockedMethod` with some retry config\n        // this is pseudocode but you get it\n        retryOn(RETRY_TIMES, SOME_INTERVAL,\n          () -&gt; dependency.mockedMethod(&quot;mockedValue&quot;) != null, // do this each retry and returns when dependency returns non-null\n          () -&gt; new SomeException(&quot;kaboom&quot;) // throw some exception after retry exhausted\n        );\n        // some other logic...\n    }\n}\n\n\nclass MyTestClass {\n    // say Dependency has a method \n    // public ReturnValueDep mockedMethod(String)\n    private Dependency mockedDep;\n\n    private ObjectUnderTest testObj;\n\n    @BeforeEach\n    public void setUp() {\n        // set up mocks...\n        this.testObj = new ObjectUnderTest(mockedDep, // other params...\n        );\n    }\n\n    @Test\n    public void thisTestFailed() {\n        final OngoingStubbing&lt;ReturnValueDep&gt; stubbing = lenient().when(mockedDep.mockedMethod(eq(&quot;mockedValue&quot;)));\n        IntStream.rangeClosed(0, RETRY_TIMES).forEach((int i) -&gt; stubbing.thenReturn(null));\n        stubbing.thenReturn(SOME_NON_NULL_VALUE);\n\n        assertThrows(SomeException.class, () -&gt; testObj.mainMethod());\n    }\n}\n</code></pre>\n<p>However I'm getting a Mockito error like this:</p>\n<pre><code>=&gt; org.mockito.exceptions.base.MockitoException: \n     [java] Incorrect use of API detected here:\n     [java] -&gt; at xxxxxx (redacted)\n     [java] You probably stored a reference to OngoingStubbing returned by when() and called stubbing methods like thenReturn() on this reference more than once.\n     [java] Examples of correct usage:\n     [java]     when(mock.isOk()).thenReturn(true).thenReturn(false).thenThrow(exception);\n     [java]     when(mock.isOk()).thenReturn(true, false).thenThrow(exception);\n</code></pre>\n<p>Any idea why this isn't allowed? This is so strange.</p>\n<p>Adding <code>lenient()</code> to it does not resolve the error. Seems like it cannot be bypassed.</p>\n",
+    "tags" : [ "java", "spring", "unit-testing", "mockito" ],
+    "owner" : {
+      "account_id" : 12441065,
+      "reputation" : 3,
+      "user_id" : 9059259,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/kBN1x.jpg?s=256",
+      "display_name" : "Kate",
+      "link" : "https://stackoverflow.com/users/9059259/kate"
+    },
+    "is_answered" : true,
+    "view_count" : 53,
+    "answer_count" : 2,
+    "score" : 0,
+    "last_activity_date" : 1743752557,
+    "creation_date" : 1743739484,
+    "link" : "https://stackoverflow.com/questions/79554436/trying-to-add-stubs-in-a-loop-and-getting-a-mockito-exception-incorrect-use-of",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79554749,
+    "question_id" : 79554436,
+    "body" : "<p>The error message is quite clear about the problem: you cannot call <code>.thenReturn</code> on the same <code>OngoingStubbing</code> instance multiple times. So this is forbidden:</p>\n<pre><code>final OngoingStubbing&lt;ReturnValueDep&gt; stubbing = when(mockedDep.mockedMethod(&quot;mockedValue&quot;));\nstubbing.thenReturn(null);\nstubbing.thenReturn(null);\nstubbing.thenReturn(SOME_NON_NULL_VALUE);\n</code></pre>\n<p>Each <code>.thenReturn</code> call returns a new <code>OngoingStubbing</code> instance, which you can use to chain the stub calls. This works without problems:</p>\n<pre><code>final OngoingStubbing&lt;ReturnValueDep&gt; stubbing = when(mockedDep.mockedMethod(&quot;mockedValue&quot;));\nstubbing.thenReturn(null)\n        .thenReturn(null)\n        .thenReturn(SOME_NON_NULL_VALUE);\n</code></pre>\n<p>With a plain old loop and a non-final variable, this is trivial to write – simply reassign the <code>stubbing</code> variable:</p>\n<pre><code>OngoingStubbing&lt;ReturnValueDep&gt; stubbing = .when(mockedDep.mockedMethod(&quot;mockedValue&quot;));\nfor (int i = 0; i &lt;= RETRY_TIMES; ++i) {\n  stubbing = stubbing.thenReturn(null);\n}\nstubbing.thenReturn(SOME_NON_NULL_VALUE);\n</code></pre>\n<p>If you need to use a stream, reducers come in handy:</p>\n<pre><code>OngoingStubbing&lt;ReturnValueDep&gt; stubbing = when(mockedDep.mockedMethod(eq(&quot;mockedValue&quot;)));\nIntStream.rangeClosed(0, RETRY_TIMES)\n    .reduce(\n        when(mockedDep.mockedMethod(&quot;mockedValue&quot;)),\n        (stubbing, i) -&gt; stubbing.thenReturn(null))\n    .thenReturn(SOME_NON_NULL_VALUE);\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 39208,
+      "reputation" : 269387,
+      "user_id" : 112968,
+      "user_type" : "registered",
+      "accept_rate" : 68,
+      "profile_image" : "https://i.sstatic.net/zHTaT.png?s=256",
+      "display_name" : "knittl",
+      "link" : "https://stackoverflow.com/users/112968/knittl"
+    },
+    "creation_date" : 1743752557,
+    "last_activity_date" : 1743752557,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79554588,
+    "question_id" : 79554436,
+    "body" : "<p>It looks like you already have a solution in the error description: you shouldn't keep a reference to a mocked object and apply <code>thenRteturn</code> in a loop. Instead you should apply multiple <code>thenReturn</code> to a <code>when()</code> clause or apply <code>thenReturn</code> once but with multiple arguments.</p>\n<p>Here is an example:</p>\n<pre><code>class ObjectUnderTest {\n    private static final int RETRY_TIMES = 5;\n    private Dependency dependency;\n\n    public ObjectUnderTest(Dependency dependency) {\n        this.dependency = dependency;\n    }\n\n    public void mainMethod() {\n        for (int i = 0; i &lt; RETRY_TIMES; i++) {\n            System.out.println(String.format(&quot;Retry %s, result: %s&quot;, i, dependency.mockedMethod(&quot;mockedValue&quot;)));\n        }\n    }\n}\n\nclass Dependency {\n    public Integer mockedMethod(String arg) {\n        return null;\n    }\n}\n\n\nclass MyTestClass {\n    private Dependency mockedDep = mock(Dependency.class);\n\n    private ObjectUnderTest testObj = new ObjectUnderTest(mockedDep);\n\n    @Test\n    public void thisTestFailed() {\n        // one `thenReturn` with multiple values\n        when(mockedDep.mockedMethod(&quot;mockedValue&quot;)).thenReturn(null, null, null, null, 1);\n        testObj.mainMethod();\n\n        // multiple `thenReturn` with different values. In such case you could check complex scenario, for example with throwing exceptions(not even for the last method call, maybe for testing exception handling and retries). \n        when(mockedDep.mockedMethod(&quot;mockedValue&quot;))\n                .thenReturn(null)\n                .thenReturn(null)\n                .thenReturn(null)\n                .thenReturn(null)\n                .thenThrow(RuntimeException.class);\n        testObj.mainMethod();\n    }\n}\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 3013356,
+      "reputation" : 188,
+      "user_id" : 2556249,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/4150b2df8aab80288670f883a02be72f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "NoisyFlasher",
+      "link" : "https://stackoverflow.com/users/2556249/noisyflasher"
+    },
+    "creation_date" : 1743747601,
+    "last_activity_date" : 1743747601,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140297867,
+    "post_id" : 79554436,
+    "body" : "There is no technical reason for this constraint. Psychological reason should be discussed in another sub stack.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 4497436,
+      "reputation" : 20786,
+      "user_id" : 3656904,
+      "user_type" : "registered",
+      "accept_rate" : 67,
+      "profile_image" : "https://www.gravatar.com/avatar/8bdbd1f89f8907e8e8b15ab88c084c65?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "talex",
+      "link" : "https://stackoverflow.com/users/3656904/talex"
+    },
+    "creation_date" : 1743746137,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

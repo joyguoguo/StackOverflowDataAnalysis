@@ -1,0 +1,78 @@
+{
+  "question" : {
+    "question_id" : 79574532,
+    "title" : "Spring Boot @Transactional(readOnly=true) not releasing connection with AWS RDS + HikariCP",
+    "body" : "<p>I am using Spring Boot 3.4.3 with MySQL 8.0 and Hibernate 6.6.8.Final on AWS RDS.</p>\n<p>I have implemented CRUD operations using JPA and QueryDSL. Everything is working fine except for one issue.\nI added @Transactional(readOnly = true) annotation to read-only query method as below. However, connection is not being returned and is being created continuously in sleep state.</p>\n<p><div class=\"snippet\" data-lang=\"js\" data-hide=\"false\" data-console=\"true\" data-babel=\"false\" data-babel-preset-react=\"false\" data-babel-preset-ts=\"false\">\n<div class=\"snippet-code\">\n<pre class=\"snippet-code-html lang-html prettyprint-override\"><code>@Transactional(readOnly = true)\n    public Page&lt;BarCode&gt; getAllActiveBarcodes(Pageable pageable, Boolean isAction, String keyword, String searchType, String type) throws IllegalArgumentException {\n        return barCodeRepository.searchBarcodes(pageable, isAction, keyword, searchType, type);\n    }\n\n    @Transactional(readOnly = true)\n    public List&lt;BarCode&gt; barCodeSearch(String keyword) throws IllegalArgumentException {\n        return barCodeRepository.searchKeyword(keyword);\n    }\n\n    @Transactional(readOnly = true)\n    public List&lt;BarCode&gt; barCodeList(){\n        return barCodeRepository.findAll();\n    }</code></pre>\n</div>\n</div>\n`</p>\n<p><div class=\"snippet\" data-lang=\"js\" data-hide=\"false\" data-console=\"true\" data-babel=\"false\" data-babel-preset-react=\"false\" data-babel-preset-ts=\"false\">\n<div class=\"snippet-code\">\n<pre class=\"snippet-code-html lang-html prettyprint-override\"><code>@Override\n    public List&lt;BarCode&gt; searchKeyword(String keyword) {\n        BooleanBuilder builder = new BooleanBuilder();\n        builder.and(barCode.isActive.isTrue());\n        builder.and(barCode.deleteDate.isNull());\n\n        if (keyword != null &amp;&amp; !keyword.trim().isEmpty()) {\n            BooleanBuilder keywordBuilder = new BooleanBuilder();\n            keywordBuilder.or(barCode.barcode.containsIgnoreCase(keyword));\n            keywordBuilder.or(barCode.type.containsIgnoreCase(keyword));\n            keywordBuilder.or(barCode.message.containsIgnoreCase(keyword));\n            keywordBuilder.or(barCode.descText.containsIgnoreCase(keyword));\n            keywordBuilder.or(barCode.createUser.containsIgnoreCase(keyword));\n            builder.and(keywordBuilder);\n        }\n\n        return queryFactory\n                .selectFrom(barCode)\n                .where(builder)\n                .orderBy(barCode.createDate.desc())\n                .fetch();\n    } @Override\n    public Page&lt;BarCode&gt; searchBarcodes(Pageable pageable, Boolean isAction, String keyword, String searchType, String type) {\n        BooleanBuilder builder = new BooleanBuilder();\n\n        if (isAction != null) {\n            builder.and(barCode.isActive.eq(isAction));\n        }\n        if(type != null &amp;&amp; !type.trim().isEmpty()) {\n            builder.and(barCode.type.eq(type));\n        }\n\n        if (keyword != null &amp;&amp; !keyword.trim().isEmpty()) {\n            switch (searchType.toLowerCase()) {\n                case \"barcode\" -&gt; builder.and(barCode.barcode.containsIgnoreCase(keyword));\n                case \"message\" -&gt; builder.and(barCode.message.containsIgnoreCase(keyword));\n                case \"desc_text\" -&gt; builder.and(barCode.descText.containsIgnoreCase(keyword));\n                case \"create_user\" -&gt; builder.and(barCode.createUser.containsIgnoreCase(keyword));\n                default -&gt; throw new IllegalArgumentException(\"잘못된 검색 유형입니다.\");\n            }\n        }\n\n        long total = Optional.ofNullable(\n                queryFactory\n                        .select(barCode.count())\n                        .from(barCode)\n                        .where(builder)\n                        .fetchOne()).orElse(0L);\n\n\n        if (total == 0) {\n            return Page.empty(pageable);\n        }\n\n        List&lt;BarCode&gt; result = queryFactory\n                .selectFrom(barCode)\n                .where(builder)\n                .offset(pageable.getOffset())\n                .limit(pageable.getPageSize())\n                .orderBy(barCode.createDate.desc())\n                .fetch();\n\n        return new PageImpl&lt;&gt;(result, pageable, total);\n    }</code></pre>\n</div>\n</div>\n</p>\n<p><div class=\"snippet\" data-lang=\"js\" data-hide=\"false\" data-console=\"true\" data-babel=\"false\" data-babel-preset-react=\"false\" data-babel-preset-ts=\"false\">\n<div class=\"snippet-code\">\n<pre class=\"snippet-code-html lang-html prettyprint-override\"><code>@GetMapping(\"/barcodes\")\n    public ResponseEntity&lt;Page&lt;BarCode&gt;&gt; getAllBarcodes(@PageableDefault(page = 0, size = 32) Pageable pageable,\n                                                        @RequestParam(value = \"isAction\", required = false) Boolean isAction,\n                                                        @RequestParam(\"type\") String type,\n                                                        @RequestParam(\"searchType\") String searchType,\n                                                        @RequestParam(\"keyword\") String keyword)  {\n\n        try {\n            Page&lt;BarCode&gt; barcodeList = barcodeService.getAllActiveBarcodes(pageable, isAction, keyword, searchType, type);\n\n            if(barcodeList.isEmpty()){\n                return ResponseEntity.noContent().build();\n            }\n\n            return ResponseEntity.ok(barcodeList);\n        } catch (IllegalStateException e) {\n            return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();\n        } catch (Exception e) {\n            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();\n        }\n    }\n\n    @GetMapping(\"/barcodes/all\")\n    public ResponseEntity&lt;List&lt;BarCode&gt;&gt; getBarcode() throws IllegalArgumentException {\n        try {\n            List&lt;BarCode&gt; barCodeList = barcodeService.barCodeList();\n            return ResponseEntity.ok(barCodeList);\n        }catch (IllegalStateException e){\n            return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();\n        }catch (Exception e){\n            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();\n        }\n    }\n\n\n    @GetMapping(\"/barcodes/active\")\n    public ResponseEntity&lt;List&lt;BarCode&gt;&gt; getActiveBarcode(@RequestParam(required = false) String keyword) throws IllegalArgumentException {\n\n        try{\n            List&lt;BarCode&gt; search = barcodeService.barCodeSearch(keyword);\n            return ResponseEntity.ok(search);\n        }catch (IllegalStateException e){\n            return ResponseEntity.status(HttpStatus.BAD_REQUEST).build();\n        }catch (Exception e){\n            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();\n        }\n    }</code></pre>\n</div>\n</div>\n</p>\n",
+    "tags" : [ "java", "spring-boot", "jpa", "mysql-connector" ],
+    "owner" : {
+      "account_id" : 34462493,
+      "reputation" : 11,
+      "user_id" : 26582592,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/ddb57b539435247d140d740187d358ef?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "박아론",
+      "link" : "https://stackoverflow.com/users/26582592/%eb%b0%95%ec%95%84%eb%a1%a0"
+    },
+    "is_answered" : false,
+    "view_count" : 49,
+    "answer_count" : 0,
+    "score" : 1,
+    "last_activity_date" : 1744741625,
+    "creation_date" : 1744700264,
+    "link" : "https://stackoverflow.com/questions/79574532/spring-boot-transactionalreadonly-true-not-releasing-connection-with-aws-rds",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140340595,
+    "post_id" : 79574532,
+    "body" : "You said you are using Hikari Connection Pool in your question title. One of the functions of a connection pool is to create a connection and then keep the connection open for further requests to use. The problem you are describing is that your connections aren&#39;t being closed, which sounds like something I would expect if you are using a connection pool. Your Hikari Connection Pool settings would be a key piece of information to include in your question.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7501,
+      "reputation" : 203309,
+      "user_id" : 13070,
+      "user_type" : "registered",
+      "accept_rate" : 90,
+      "profile_image" : "https://i.sstatic.net/G3J7P8QE.jpg?s=256",
+      "display_name" : "Mark B",
+      "link" : "https://stackoverflow.com/users/13070/mark-b"
+    },
+    "creation_date" : 1744804342,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140339360,
+    "post_id" : 79574532,
+    "body" : "I&#39;m really sorry. I&#39;m a junior developer with 6 months of experience. Could you please tell me what code information is missing in the current situation?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 34462493,
+      "reputation" : 11,
+      "user_id" : 26582592,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/ddb57b539435247d140d740187d358ef?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "박아론",
+      "link" : "https://stackoverflow.com/users/26582592/%eb%b0%95%ec%95%84%eb%a1%a0"
+    },
+    "creation_date" : 1744780195,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140336964,
+    "post_id" : 79574532,
+    "body" : "This sounds like something your connection pool would be doing. You only mention your connection pool in the title and don&#39;t include any of your connection pool details in your question so I don&#39;t think there is enough information here to help you.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7501,
+      "reputation" : 203309,
+      "user_id" : 13070,
+      "user_type" : "registered",
+      "accept_rate" : 90,
+      "profile_image" : "https://i.sstatic.net/G3J7P8QE.jpg?s=256",
+      "display_name" : "Mark B",
+      "link" : "https://stackoverflow.com/users/13070/mark-b"
+    },
+    "creation_date" : 1744723753,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

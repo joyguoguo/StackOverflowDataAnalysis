@@ -1,0 +1,78 @@
+{
+  "question" : {
+    "question_id" : 79578019,
+    "title" : "How to implement in Java a callback to be called by a COM object?",
+    "body" : "<p>I'm integrating in Java with a DLL that allows me to add an instance to be notified.</p>\n<p>I have tried several solutions and in none of them was the COM object able to notify me. I suspect that the way I am creating my object, COM is not able to locate it by its GUID.</p>\n<p>The DLL has no documentation. I'm trying to integrate it into Java just by looking at an example made in C#. I'll summarize the example code and attach it here.</p>\n<p>Could someone save me?</p>\n<p>Below is the definition of the object that I use to define my notifiable. This object is created by the DLL itself from another call and so far I have managed to implement it correctly in Java.</p>\n<p>C# example:</p>\n<pre><code>    [Guid(&quot;A23FF6FE-1240-436B-A885-000000000000&quot;), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]\n    public interface INotifier\n    {\n        [PreserveSig]\n        int AddNotifiable([MarshalAs(UnmanagedType.IUnknown)] object a_Notifiable);\n        [PreserveSig]\n        int RemoveNotifiable([MarshalAs(UnmanagedType.IUnknown)] object a_Notifiable);\n    }\n</code></pre>\n<p>My Java class:</p>\n<pre><code>@ComInterface(iid = &quot;{A23FF6FE-1240-436B-A885-000000000000}&quot;)\npublic class Notifier extends Unknown {\n\n    public Notifier() {\n        super();\n    }\n\n    public Notifier( Pointer pointer ) {\n        super( pointer );\n    }\n\n    public int addNotifiable( IUnknown notifiable ) {\n        return this._invokeNativeInt( 3, new Object[] { this.getPointer(), notifiable } );\n    }\n\n    public int removeNotifiable( IUnknown notifiable ) {\n        return this._invokeNativeInt( 4, new Object[] { this.getPointer(), notifiable } );\n    }\n}\n</code></pre>\n<p>So far, so good. Now comes the problem, when I add my notifiable, the DLL accepts it but I am not notified at any time.</p>\n<p>How notifiable is defined in the C# example:</p>\n<pre><code>[Guid(&quot;4069843E-7584-4C9A-B167-000000000000&quot;), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]\npublic interface INotifiable\n{\n    [PreserveSig]\n    void Event([MarshalAs(UnmanagedType.IUnknown)] object a_Sender);\n}\n</code></pre>\n<p>How I defined my notifiable in Java:</p>\n<pre><code>@ComInterface(iid = &quot;{4069843E-7584-4C9A-B167-000000000000}&quot;)\npublic class Notifiable extends Unknown {\n    public Notifiable() {\n    }\n\n    public Notifiable( Pointer pointer ) {\n        super( pointer );\n    }\n\n    public void Event( final Object sender ) {\n        System.err.println( &quot;Notifiable.Event Sender: &quot; + sender );\n    }\n}\n</code></pre>\n<p>When I add my notifiable to the notifier, nothing happens. How I did it in Java:</p>\n<pre><code>Notifiable myNotifiable = new Notifiable();\n// notifier was created by DLL and is a valid object\nnotifier.addNotifiable( myNotifiable ); // returns OK code\n</code></pre>\n<p>I've already tried creating my notifiable using the <code>Ole32.INSTANCE.CoCreateInstance</code> method, but this DLL is not a DLL registered in the system (and it shouldn't be). I've also tried creating the COM object's VTable manually, and I wasn't successful either.</p>\n<p>Here's how I tried to implement it by creating the VTable manually:</p>\n<pre><code>@ComInterface(iid = &quot;{4069843E-7584-4C9A-B167-000000000000}&quot;)\npublic class Notifiable implements IUnknownCallback {\n\n    public final static IID IID_NOTIFIABLE = new IID( &quot;{4069843E-7584-4C9A-B167-000000000000}&quot; ); //$NON-NLS-1$\n\n    private int refCounter = 1;\n\n    private final Pointer pointer;\n    private final Pointer vtable;\n\n    private final QueryInterfaceCallback queryInterfaceCallback;\n    private final AddRefCallback addRefCallback;\n    private final ReleaseCallback releaseCallback;\n    private final OnEventCallback onEventCallback;\n\n    public Notifiable() {\n        queryInterfaceCallback = this::QueryInterface;\n        addRefCallback = this::AddRef;\n        releaseCallback = this::Release;\n        onEventCallback = this::Event;\n\n        vtable = new Memory( Native.POINTER_SIZE * 4 );\n        vtable.setPointer( 0 * Native.POINTER_SIZE, CallbackReference.getFunctionPointer( queryInterfaceCallback ) );\n        vtable.setPointer( 1 * Native.POINTER_SIZE, CallbackReference.getFunctionPointer( addRefCallback ) );\n        vtable.setPointer( 2 * Native.POINTER_SIZE, CallbackReference.getFunctionPointer( releaseCallback ) );\n        vtable.setPointer( 3 * Native.POINTER_SIZE, CallbackReference.getFunctionPointer( onEventCallback ) );\n\n        pointer = new Memory( Native.POINTER_SIZE );\n        pointer.setPointer( 0, vtable );\n    }\n\n    @Override\n    public Pointer getPointer() {\n        return pointer;\n    }\n\n    @Override\n    public HRESULT QueryInterface( REFIID refid, PointerByReference ppvObject ) {\n        if ( null == ppvObject ) {\n            return new HRESULT( WinError.E_POINTER );\n        }\n\n        if ( refid.getValue().equals( IID_NOTIFIABLE ) ) {\n            ppvObject.setValue( this.getPointer() );\n        } else if ( refid.getValue().equals( Unknown.IID_IUNKNOWN ) ) {\n            ppvObject.setValue( this.getPointer() );\n        } else {\n            return new HRESULT( WinError.E_NOINTERFACE );\n        }\n\n        AddRef();\n\n        return WinError.S_OK;\n    }\n\n    @Override\n    public int AddRef() {\n        return ++refCounter;\n    }\n\n    @Override\n    public int Release() {\n        return --refCounter;\n    }\n\n    public void Event( final Object sender ) {\n        System.err.println( &quot;Notifiable.Event Sender: &quot; + sender );\n    }\n\n    public interface QueryInterfaceCallback extends StdCallLibrary.StdCallCallback {\n        HRESULT invoke( Guid.REFIID riid, PointerByReference ppvObject );\n    }\n\n    public interface AddRefCallback extends StdCallLibrary.StdCallCallback {\n        int invoke();\n    }\n\n    public interface ReleaseCallback extends StdCallLibrary.StdCallCallback {\n        int invoke();\n    }\n\n    public interface OnEventCallback extends StdCallLibrary.StdCallCallback {\n        void invoke( Pointer val );\n    }\n}\n</code></pre>\n<p>I'm new to dealing with COM objects, could someone tell me where I'm going wrong please?</p>\n",
+    "tags" : [ "java", "com", "jna" ],
+    "owner" : {
+      "account_id" : 14805506,
+      "reputation" : 85,
+      "user_id" : 10692612,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/6338b73e2a4712662f5e3f84d40893e4?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Kildary Klein",
+      "link" : "https://stackoverflow.com/users/10692612/kildary-klein"
+    },
+    "is_answered" : false,
+    "view_count" : 84,
+    "answer_count" : 0,
+    "score" : 2,
+    "last_activity_date" : 1744833678,
+    "creation_date" : 1744833678,
+    "link" : "https://stackoverflow.com/questions/79578019/how-to-implement-in-java-a-callback-to-be-called-by-a-com-object",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140358683,
+    "post_id" : 79578019,
+    "body" : "I&#39;ve been digging into this and think it may be as simple as overriding <code>QueryInterface</code> on a class that extends <code>Unknown</code> Take a look at <a href=\"https://github.com/java-native-access/jna/blob/a9db983d2211eab6f073225e3b9ffa82cd00267e/contrib/platform/test/com/sun/jna/platform/win32/COM/ComEventCallbacks_Test.java#L248-L272\" rel=\"nofollow noreferrer\">this test class</a> and see if you can do something similar.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1187908,
+      "reputation" : 9345,
+      "user_id" : 1161484,
+      "user_type" : "registered",
+      "accept_rate" : 93,
+      "profile_image" : "https://www.gravatar.com/avatar/371797a0137ad4519049f88afac2d4e7?s=256&d=identicon&r=PG",
+      "display_name" : "Daniel Widdis",
+      "link" : "https://stackoverflow.com/users/1161484/daniel-widdis"
+    },
+    "creation_date" : 1745341747,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140345686,
+    "post_id" : 79578019,
+    "body" : "@DanielWiddis, thank you for your reply. I understand, but the COM I am using does not have exposed functions for creating objects. I think I will have to create a bridge DLL to access COM.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 14805506,
+      "reputation" : 85,
+      "user_id" : 10692612,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/6338b73e2a4712662f5e3f84d40893e4?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Kildary Klein",
+      "link" : "https://stackoverflow.com/users/10692612/kildary-klein"
+    },
+    "creation_date" : 1744911969,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140345394,
+    "post_id" : 79578019,
+    "body" : "In your definition of Notifiable you added Event but give no instructions on invoking it. It looks like you&#39;re trying to print to stderr instead of doing anything, but that output may be being swallowed by an error stream that never reaches you.    Also you can&#39;t just instantiate a COM object on the Java side, you need to create the COM object using the COM functions.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 1187908,
+      "reputation" : 9345,
+      "user_id" : 1161484,
+      "user_type" : "registered",
+      "accept_rate" : 93,
+      "profile_image" : "https://www.gravatar.com/avatar/371797a0137ad4519049f88afac2d4e7?s=256&d=identicon&r=PG",
+      "display_name" : "Daniel Widdis",
+      "link" : "https://stackoverflow.com/users/1161484/daniel-widdis"
+    },
+    "creation_date" : 1744906586,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

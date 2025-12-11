@@ -1,0 +1,66 @@
+{
+  "question" : {
+    "question_id" : 79607184,
+    "title" : "drools decision tables and Factory returning null",
+    "body" : "<p>I am upgrading a drools project from an ancient version to 9.44 because it's recommended here: <a href=\"https://www.baeldung.com/drools-excel\" rel=\"nofollow noreferrer\">https://www.baeldung.com/drools-excel</a>.</p>\n<p>I have written a unit test to verify my rules classes and make sure that the new setup is going to work. Here is my function under test.</p>\n<pre><code>/**\n * From a decision table, create a KIE container\n * @param is the input stream to read\n * @return a kie container\n */\npublic static KieContainer getKieContainerFromStream(InputStream is){\n    KieServices kieServices = KieServices.Factory.get();\n    Resource resource = ResourceFactory.newInputStreamResource(is);\n    KieFileSystem kieFileSystem = kieServices.newKieFileSystem().write(resource);\n    KieBuilder kieBuilder = kieServices.newKieBuilder(kieFileSystem);\n    kieBuilder.buildAll();\n    KieRepository kieRepository = kieServices.getRepository();\n    ReleaseId krDefaultReleaseId = kieRepository.getDefaultReleaseId();\n    KieContainer result = kieServices.newKieContainer(krDefaultReleaseId);\n    return result;\n}\n</code></pre>\n<p>and then I wrote a unit test to begin walking through the code:</p>\n<pre><code>    InputStream is = getClass().getClassLoader().getResourceAsStream(POSTPONE_RULES);\n    KieContainer kieContainer = DroolsUtil.getKieContainerFromStream(is);\n</code></pre>\n<p>This test crashes because <code>KieServices.Factory.get()</code> returns null.</p>\n<p>After thinking about this for a while, I pulled the example code and it starts with:</p>\n<pre><code>    KieContainer kc = KieServices.Factory.get().getKieClasspathContainer();\n</code></pre>\n<p>and it is not blowing up with a NPE on the call to getKie...so it's not returning null.</p>\n<p>Hmm. Exactly the same code and different results???</p>\n<p>Also, I found other questions without answers like: <a href=\"https://stackoverflow.com/questions/53373116/drools-kieservices-factory-get-returns-null\">Drools - KieServices.Factory.get() returns null</a></p>\n<p>So after some head-scratching, I began to wonder if the problem was the unit test class path itself.</p>\n<p>So it occurred to me to go into the examples project and drop my util method right next to the working example above and then create a unit test there and run it and see what happens.</p>\n<p>Answer: It returned null from Factory.get()</p>\n<p>Hmmm...Maybe it's a difference with unit tests. So I create a new unit test for the PricingRuleDTExample out of drools. First, I retool the example a little:</p>\n<pre><code>/**\n * This shows off a decision table.\n */\npublic class PricingRuleDTExample {\n\n    public static final void main(String[] args) {\n        KieContainer kc = getContainer();\n        System.out.println(kc.verify().getMessages().toString());\n        execute( kc );\n    }\n\n    public static KieContainer getContainer() {\n        KieContainer result = KieServices.Factory.get().getKieClasspathContainer();\n        return result;\n    }\n\n    public static void execute( KieContainer kc ) {\n        StatelessKieSession ksession = kc.newStatelessKieSession( &quot;DecisionTableKS&quot;);\n\n        //now create some test data\n        Driver driver = new Driver();\n        Policy policy = new Policy();\n\n        ksession.execute( Arrays.asList(driver, policy));\n\n        System.out.println( &quot;BASE PRICE IS: &quot; + policy.getBasePrice() );\n        System.out.println( &quot;DISCOUNT IS: &quot; + policy.getDiscountPercent() );\n\n        policy.getBasePrice();\n    }\n}\n</code></pre>\n<p>Then I create a unit test:</p>\n<pre><code>public class PricingRuleDTExampleTest {\n\n    @Before\n    public void setUp() throws Exception {\n    }\n\n    @Test\n    public void getContainer() {\n        assertNotNull(PricingRuleDTExample.getContainer());\n    }\n}\n</code></pre>\n<p>and it works perfectly. ????</p>\n<p>OK, this is not funny anymore.</p>\n<p>So, running in the drools-example environment against 9.44, I rework my method just to see what will happen:</p>\n<pre><code>    public static KieContainer getKieContainerFromStream(InputStream is){\n        KieContainer result = KieServices.Factory.get().getKieClasspathContainer();\n//      KieServices kieServices = KieServices.Factory.get();\n//      Resource resource = ResourceFactory.newInputStreamResource(is);\n//      KieFileSystem kieFileSystem = kieServices.newKieFileSystem().write(resource);\n//      KieBuilder kieBuilder = kieServices.newKieBuilder(kieFileSystem);\n//      kieBuilder.buildAll();\n//      KieRepository kieRepository = kieServices.getRepository();\n//      ReleaseId krDefaultReleaseId = kieRepository.getDefaultReleaseId();\n//      KieContainer result = kieServices.newKieContainer(krDefaultReleaseId);\n        return result;\n    }\n</code></pre>\n<p>and it returns successfully.</p>\n<p>My head spins...how does adding a method call to the return value make Factory.get() return a value instead of null?</p>\n<p>Can someone please review what I've done and show me where I missed it?</p>\n",
+    "tags" : [ "java", "drools" ],
+    "owner" : {
+      "account_id" : 938881,
+      "reputation" : 15310,
+      "user_id" : 967330,
+      "user_type" : "registered",
+      "accept_rate" : 90,
+      "profile_image" : "https://www.gravatar.com/avatar/b731ee0bd2400959e9d13737e42c6418?s=256&d=identicon&r=PG",
+      "display_name" : "Thom",
+      "link" : "https://stackoverflow.com/users/967330/thom"
+    },
+    "is_answered" : true,
+    "view_count" : 128,
+    "answer_count" : 2,
+    "score" : 0,
+    "last_activity_date" : 1746563936,
+    "creation_date" : 1746457604,
+    "link" : "https://stackoverflow.com/questions/79607184/drools-decision-tables-and-factory-returning-null",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79608646,
+    "question_id" : 79607184,
+    "body" : "<p>The issue turned out to be a classpath problem. I added drools-compiler to the classpath and it fixed it.</p>\n<p>Kie/Drools uses a number of these factory methods that simply return null if an implementing class is not found on the classpath. It would be nice if these threw an exception with a better explanation instead of simply returning null.</p>\n",
+    "score" : 0,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 938881,
+      "reputation" : 15310,
+      "user_id" : 967330,
+      "user_type" : "registered",
+      "accept_rate" : 90,
+      "profile_image" : "https://www.gravatar.com/avatar/b731ee0bd2400959e9d13737e42c6418?s=256&d=identicon&r=PG",
+      "display_name" : "Thom",
+      "link" : "https://stackoverflow.com/users/967330/thom"
+    },
+    "creation_date" : 1746532387,
+    "last_activity_date" : 1746532387,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79609455,
+    "question_id" : 79607184,
+    "body" : "<h3>Decision-tables and the <em>Compiler</em></h3>\n<p>The mentioned tutorial <a href=\"https://www.baeldung.com/drools-excel\" rel=\"nofollow noreferrer\">Drools Using Rules from Excel Files | Baeldung</a> is about sourcing rules from Excel files.</p>\n<p>The Excel files define what Drools calls <strong>decision-tables</strong>. These decision-tables serve as rule source for Drools. It reads them and builds executable rule bases. For this step of building executable rule bases Drools uses a so called <strong>&quot;compiler&quot; component</strong>.</p>\n<h3>Dependencies</h3>\n<p>In <a href=\"https://docs.drools.org/5.4.0.CR1/droolsjbpm-introduction-docs/html_single/#d0e58\" rel=\"nofollow noreferrer\">Drools Introduction and General User Guide (5.4.0)</a>, there is a section &quot;2.1.1. Dependencies and jars&quot; which lists and explains the required dependencies. Thereof two are essential here:</p>\n<blockquote>\n<ul>\n<li><strong><code>drools-compiler.jar</code></strong> - this contains the compiler/builder components to take rule source, and build executable rule bases. This is often a runtime dependency of your application, but it need not be if you are pre-compiling your rules. This depends on <code>drools-core</code>.</li>\n</ul>\n</blockquote>\n<blockquote>\n<ul>\n<li><strong><code>drools-decisiontables.jar</code></strong> - this is the decision tables 'compiler' component, which uses the <code>drools-compiler</code> component. This supports both excel and CSV input formats.</li>\n</ul>\n</blockquote>\n<h3>KIE can use a Maven-plugin to 'compile'</h3>\n<p>In <a href=\"https://docs.drools.org/6.1.0.CR1/drools-docs/html/KIEChapter.html#KIEBuildingSection\" rel=\"nofollow noreferrer\">Chapter 4. KIE, 4.2.2.3. Building with Maven</a> the purpose of the &quot;KIE plugin for Maven&quot; is explained as:</p>\n<blockquote>\n<p>The KIE plugin for Maven ensures that artifact <strong>resources are validated and pre-compiled</strong>, it is recommended that this is used at all times. To use the plugin simply add it to the build section of the Maven pom.xml</p>\n</blockquote>\n<p>and after the POM-example, it is explained what happens when not using this plugin:</p>\n<blockquote>\n<p>Building a KIE module without the Maven plugin will copy all the resources, as is, into the resulting JAR. When that JAR is loaded by the runtime, it will attempt to build all the resources then. <strong>If there are compilation issues it will return a <code>null</code> KieContainer</strong>. It also pushes the compilation overhead to the runtime. In general this is not recommended, and the Maven plugin should always be used.</p>\n</blockquote>\n<h3>Why did the KIE-factory return <code>null</code> ?</h3>\n<p>This incomplete classpath setup may explain, why the compilation failed silently and the KIE-factory call returned <code>null</code>. It was missing a required dependency at runtime.</p>\n<p>See also:</p>\n<ul>\n<li><a href=\"https://stackoverflow.com/questions/54304712/how-to-fix-noclassdeffounderror-kieservices-factory\">How to fix &quot;NoClassDefFoundError KieServices.Factory&quot;</a></li>\n</ul>\n",
+    "score" : -1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 7547772,
+      "reputation" : 9694,
+      "user_id" : 5730279,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/9GYwj.jpg?s=256",
+      "display_name" : "hc_dev",
+      "link" : "https://stackoverflow.com/users/5730279/hc-dev"
+    },
+    "creation_date" : 1746563936,
+    "last_activity_date" : 1746563936,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : { }
+}

@@ -1,0 +1,201 @@
+{
+  "question" : {
+    "question_id" : 79546941,
+    "title" : "How to prevent Insecure Direct Object Reference (IDOR) using self issued JWT",
+    "body" : "<p>I was reading the Spring documentation on authorising <code>HttpServletRequests</code> and <code>JWTs</code>.</p>\n<p>My application allows multiple tenants therefore I need to check for every user which tenant they belong to and then allow or disallow the request.</p>\n<p><strong>Edit</strong>:\nI forgot to mention that I have other micro services using that API which need to be able to access all tenants and users. That is why the path variables are necessary and cannot be replaces by extracting them from JWT claims.</p>\n<h2>Example:</h2>\n<p>I have the endpoint: <code>/api/v1/tenants/{tenantId}/users/{userId}/settings</code></p>\n<p>I need to make sure that the User 123 of Tenant 1 can only CRUD their own settings. Neither the settings of other users of the same tenant, nor settings of users of other tenants.</p>\n<p>I know that the JWT resource server lets you set certain authorisation checks like shown in this <a href=\"https://docs.spring.io/spring-security/reference/servlet/oauth2/resource-server/jwt.html#oauth2resourceserver-jwt-authorization\" rel=\"nofollow noreferrer\">example</a>:</p>\n<pre><code>@Configuration\n@EnableWebSecurity\npublic class DirectlyConfiguredJwkSetUri {\n    @Bean\n    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {\n        http\n            .authorizeHttpRequests(authorize -&gt; authorize\n                .requestMatchers(&quot;/contacts/**&quot;).access(hasScope(&quot;contacts&quot;))\n                .requestMatchers(&quot;/messages/**&quot;).access(hasScope(&quot;messages&quot;))\n                .anyRequest().authenticated()\n            )\n            .oauth2ResourceServer(oauth2 -&gt; oauth2\n                .jwt(Customizer.withDefaults())\n            );\n        return http.build();\n    }\n}\n</code></pre>\n<p>Or, on the method level:</p>\n<pre><code>@PreAuthorize(&quot;hasAuthority('SCOPE_messages')&quot;)\npublic List&lt;Message&gt; getMessages(...) {}\n</code></pre>\n<p>I was thinking of giving all my users a scope <code>SCOPE_TENANT:{tenantId}</code> when issuing their JWT and doing something like this (their username is their email address therefore I can't use @PreAuthorize(&quot;#userId == authentication.name&quot;):</p>\n<pre class=\"lang-java prettyprint-override\"><code>@PreAuthorize(&quot;hasAuthority('TENANT:' + #tenantId) or hasAuthority('ADMIN')&quot;)\n@GetMapping(&quot;{tenantId}/users/{userId}/settings&quot;)\npublic ResponseEntity&lt;Settings&gt; getTenantResources(@PathVariable long tenantId,\n@PathVariable long userId Authentication authentication) {\n    User user = (User) authentication.getPrincipal();\n    if (user.getId != userId) {\n        throw new IdConflicException;\n    }\n    // Retrieve and return settings from DB using the userId\n}\n</code></pre>\n<p>However, I am searching for a better solution, since this would mean a lot of code duplication, and would therefore be error prone and hard to maintain.</p>\n<p>Do you know a better solution, like using a filter or a decision in order to make these checks?</p>\n<h1>Edit:</h1>\n<p>Thanks to some answers and comments I now settled for a solution that does not involve any method level annotations.</p>\n<p>I created a custom utility that extracts the tenantId and userId claims out of the authenticated users JWT with a method to validate the path variables against those.</p>\n<p>Then I will manually call this method in each endpoint.</p>\n<pre class=\"lang-java prettyprint-override\"><code>  public static void checkAllowedToAccessTenantAndUser(long tenantId, long userId, Jwt jwt) {\n        long jwtUserId = jwt.getClaim(&quot;userId&quot;);\n        long jwtTenantId = jwt.getClaim(&quot;tenantId&quot;);\n\n        if (scope.contains(Authorities.CLIENT.getAuthority())) {\n            return;\n        }\n\n        if (jwtUserId != userId || jwtTenantId != tenantId) {\n            throw new IdorException();\n        }\n    }\n</code></pre>\n",
+    "tags" : [ "java", "spring-security", "jwt" ],
+    "owner" : {
+      "account_id" : 26002845,
+      "reputation" : 25,
+      "user_id" : 19713056,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/3cd42942602ba9feafb4add7df199789?s=256&d=identicon&r=PG",
+      "display_name" : "GeekChap",
+      "link" : "https://stackoverflow.com/users/19713056/geekchap"
+    },
+    "is_answered" : true,
+    "view_count" : 252,
+    "answer_count" : 2,
+    "score" : 1,
+    "last_activity_date" : 1743640759,
+    "creation_date" : 1743443539,
+    "link" : "https://stackoverflow.com/questions/79546941/how-to-prevent-insecure-direct-object-reference-idor-using-self-issued-jwt",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79549374,
+    "question_id" : 79546941,
+    "body" : "<p>This is as simple as writing a custom validator that you insert into your default JWT validation</p>\n<p><a href=\"https://docs.spring.io/spring-security/reference/servlet/oauth2/resource-server/jwt.html#oauth2resourceserver-jwt-validation-custom\" rel=\"nofollow noreferrer\">https://docs.spring.io/spring-security/reference/servlet/oauth2/resource-server/jwt.html#oauth2resourceserver-jwt-validation-custom</a></p>\n<p>No need for any custom homemade security filters.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 2064278,
+      "reputation" : 15073,
+      "user_id" : 1840146,
+      "user_type" : "registered",
+      "accept_rate" : 86,
+      "profile_image" : "https://i.sstatic.net/JXdxm.png?s=256",
+      "display_name" : "Toerktumlare",
+      "link" : "https://stackoverflow.com/users/1840146/toerktumlare"
+    },
+    "creation_date" : 1743550169,
+    "last_activity_date" : 1743550169,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79548925,
+    "question_id" : 79546941,
+    "body" : "<p>This is something probably best done with a Filter and not using method or class annotations <code>@PreAuthorize</code>.  Your JWT integration should already have a filter registered that you just need to slightly modify.  Your JWT should possess the tenant ID within it along with the User ID.  Then your user has no option to erroneously control the tenant ID or user ID.  This means there are far less options for them to manipulate the program to cause you to make a mistake.  So if the JWT is the source of this information then...</p>\n<p>You should forgo having the tenant ID in your URL.  This stops someone from sending you bad mojo that you have to defend against, but it also makes it simpler for the API users.  The user doesn't have to manage the tenantID or UserID as separate things that need to be added to the URLs.  Your URL would go from this:</p>\n<pre><code>/api/v1/tenants/{tenantId}/users/{userId}/settings\n</code></pre>\n<p>To this:</p>\n<pre><code>/api/v1/settings\n</code></pre>\n<p>This also would mean API users would need to authenticate first to acquire their JWT token.</p>\n<p>There is one good reason to keep the tenant ID in your URL which is if users are allowed access to multiple tenants.  The tenant ID does provide the ability to select which tenant you want to access.   This could be in the URL as you've shown, or it could be at login time and not included in the URL.  Possibly a user authenticates to a single tenantID (ie <code>/api/v1/{tenantID}/login</code>).   That's a design decision for you to consider.  Multi-tenancy might change how you build the JWT claims too as you may need to package all accessible tenants in there (or support wildcards for admins).</p>\n<p>You probably already have a custom filter for authenticating the JWT token.  To include the tenantID and userID in your JWT token you just need to change your claims like so:</p>\n<pre><code>    private String createToken(User user) {\n        return Jwts.builder()\n                .claims(Map.of(&quot;tenantID&quot;, user.getTenantID(), \n                               &quot;userID&quot;, user.getId())\n                .subject(subject)\n                .header().empty().add(&quot;typ&quot;,&quot;JWT&quot;)\n                .and()\n                .issuedAt(new Date(System.currentTimeMillis()))\n                // 5 minutes expiration time\n                .expiration(new Date(System.currentTimeMillis() + 1000 * 60 * 50)) \n                .signWith(getSigningKey())\n                .compact();\n    }\n</code></pre>\n<p>Then in your JWT Filter you'd do something like this:</p>\n<pre><code>String username = jwtUtil.extractUsername(jwt);\nMap&lt;String,Object&gt; claims = jwtUtil.extractClaims(jwt);\nInteger tenantID = claims.get(&quot;tenantID&quot;);\nUserDetails userDetails = userDetailsService.loadUserByUsername(username);\nMyDetails myDetails = (MyDetails)userDetails;\nif( myDetails.getTenantID() == tenantID ) {\n    // todo construct the Authorization objects and ...\n    SecurityContextHolder.getContext().setAuthentication(auth);\n}\n</code></pre>\n<p>In your request method you can do the following now:</p>\n<pre><code>@PreAuthorize(&quot;...&quot;)\n@GetMapping(&quot;settings&quot;)\npublic ResponseEntity&lt;Settings&gt; getTenantResources(Authentication authentication) {\n    User user = (User) authentication.getPrincipal();\n    Integer tenantId = user.getTenantId();\n    Integer userId = user.getId();\n    // Retrieve and return settings from DB using the userId and possibly the tenantId    \n}\n</code></pre>\n<p>Depending on how you are doing multi-tenancy in your DB you may need to provide both tenantID and userID in your queries (to make sure things are safely retrieved).  If you have separate DB per tenant then you might not need that information within your endpoints.</p>\n",
+    "score" : -1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 51881,
+      "reputation" : 39410,
+      "user_id" : 155020,
+      "user_type" : "registered",
+      "accept_rate" : 80,
+      "profile_image" : "https://i.sstatic.net/fEqVo.png?s=256",
+      "display_name" : "chubbsondubs",
+      "link" : "https://stackoverflow.com/users/155020/chubbsondubs"
+    },
+    "creation_date" : 1743533149,
+    "last_activity_date" : 1743533149,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140288031,
+    "post_id" : 79546941,
+    "body" : "why not write a custom validator for the JWT <a href=\"https://docs.spring.io/spring-security/reference/servlet/oauth2/resource-server/jwt.html#oauth2resourceserver-jwt-validation-custom\" rel=\"nofollow noreferrer\">docs.spring.io/spring-security/reference/servlet/oauth2/&hellip;</a> no custom filter",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2064278,
+      "reputation" : 15073,
+      "user_id" : 1840146,
+      "user_type" : "registered",
+      "accept_rate" : 86,
+      "profile_image" : "https://i.sstatic.net/JXdxm.png?s=256",
+      "display_name" : "Toerktumlare",
+      "link" : "https://stackoverflow.com/users/1840146/toerktumlare"
+    },
+    "creation_date" : 1743545741,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140286593,
+    "post_id" : 79546941,
+    "body" : "If I understand correctly the problem, you can move all the stuff to a separated filter. For Instance a filter that extends <a href=\"https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/web/filter/OncePerRequestFilter.html\" rel=\"nofollow noreferrer\">OncePerRequestFilter</a>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 24440940,
+      "reputation" : 5259,
+      "user_id" : 18364656,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/70eb650df3e935255b17e62942f30620?s=256&d=identicon&r=PG",
+      "display_name" : "Andrei Lisa",
+      "link" : "https://stackoverflow.com/users/18364656/andrei-lisa"
+    },
+    "creation_date" : 1743506944,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79548925" : [ {
+      "comment_id" : 140287893,
+      "post_id" : 79548925,
+      "body" : "thank you very much for the detailed feedback. Your approach to remove the tenant and user ID from the uri makes total sense but unfortunately I cannot do that since I also have other micro services using this API and some of them are allowed to read / write multiple tenants and users.   Thanks to your feedback I now came up with a solution that is very similar to yours. I add the tenantId and userId to the claims and then have a custom filter / utility that is validating if the request path variables match those of the jwt claims. Thanks for your help!",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 26002845,
+        "reputation" : 25,
+        "user_id" : 19713056,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/3cd42942602ba9feafb4add7df199789?s=256&d=identicon&r=PG",
+        "display_name" : "GeekChap",
+        "link" : "https://stackoverflow.com/users/19713056/geekchap"
+      },
+      "creation_date" : 1743542127,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79549374" : [ {
+      "comment_id" : 140295267,
+      "post_id" : 79549374,
+      "body" : "its very hard to provide a good answer if you &quot;forget to mention&quot; things... just for future questions.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2064278,
+        "reputation" : 15073,
+        "user_id" : 1840146,
+        "user_type" : "registered",
+        "accept_rate" : 86,
+        "profile_image" : "https://i.sstatic.net/JXdxm.png?s=256",
+        "display_name" : "Toerktumlare",
+        "link" : "https://stackoverflow.com/users/1840146/toerktumlare"
+      },
+      "creation_date" : 1743690425,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140292666,
+      "post_id" : 79549374,
+      "body" : "I know that that&#39;s &quot;poor design&quot; but I don&#39;t have a better idea. I forgot to mention that I have other internal micro services that need to be able to access all tenants and all users to do some processing. Therefore I need to keep the capability to query objects based on their id. These micro services will have a certain scope allowing them to bypass the checkAllowedToAccessTenantAndUser. Thanks for the hint with injecting the JWT into the controllers. Gonna do that.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 26002845,
+        "reputation" : 25,
+        "user_id" : 19713056,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/3cd42942602ba9feafb4add7df199789?s=256&d=identicon&r=PG",
+        "display_name" : "GeekChap",
+        "link" : "https://stackoverflow.com/users/19713056/geekchap"
+      },
+      "creation_date" : 1743639119,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140292578,
+      "post_id" : 79549374,
+      "body" : "also your solution calling that function in every endpoint, is very poor design when it comes to testing, and why would you manually get the authentication from the SecurityContext statically when you can just dependency inject the JWTToken straight into the controllers?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2064278,
+        "reputation" : 15073,
+        "user_id" : 1840146,
+        "user_type" : "registered",
+        "accept_rate" : 86,
+        "profile_image" : "https://i.sstatic.net/JXdxm.png?s=256",
+        "display_name" : "Toerktumlare",
+        "link" : "https://stackoverflow.com/users/1840146/toerktumlare"
+      },
+      "creation_date" : 1743636351,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140292566,
+      "post_id" : 79549374,
+      "body" : "i read this comment <code>I add the tenantId and userId to the claims</code>, if you insist on having it in the path (which i wont recommend) you will only make things harder for yourself, and is most likely the reason why you had to write this question in the first place, as tennant id has nothing to do with rest, and is information that is tied to each individual user.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2064278,
+        "reputation" : 15073,
+        "user_id" : 1840146,
+        "user_type" : "registered",
+        "accept_rate" : 86,
+        "profile_image" : "https://i.sstatic.net/JXdxm.png?s=256",
+        "display_name" : "Toerktumlare",
+        "link" : "https://stackoverflow.com/users/1840146/toerktumlare"
+      },
+      "creation_date" : 1743636063,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140291787,
+      "post_id" : 79549374,
+      "body" : "I have looked at that but I did not see how this validator would be able use the path variable values inside the requested URI without me explicitly calling the validator with method parameters.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 26002845,
+        "reputation" : 25,
+        "user_id" : 19713056,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/3cd42942602ba9feafb4add7df199789?s=256&d=identicon&r=PG",
+        "display_name" : "GeekChap",
+        "link" : "https://stackoverflow.com/users/19713056/geekchap"
+      },
+      "creation_date" : 1743619823,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

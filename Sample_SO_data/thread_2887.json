@@ -1,0 +1,101 @@
+{
+  "question" : {
+    "question_id" : 79588257,
+    "title" : "How to register hooks in Java?",
+    "body" : "<p>For analyzing the runtime behavior of applications, or for implementing plug-ins, is there any way to add hooks to methods' input, output, etc. inside the running application?</p>\n<p>The idea:</p>\n<pre class=\"lang-java prettyprint-override\"><code>Collection.class.getHooks().add(&quot;size&quot;, Event.BEGIN, (args, vars) -&gt; {\n    System.out.println(&quot;Collection.size() called with args: &quot; + args);\n    vars.put(&quot;start&quot;, System.nanoTime());\n});\n\nCollection.class.getHooks().add(&quot;size&quot;, Event.END, (returnValue, vars) -&gt; {\n    System.out.println(&quot;Collection.size() returned: &quot; + returnValue);\n    Long start = (Long) vars.get(&quot;start&quot;);\n    System.out.println(&quot;Collection.size() took &quot; + (System.nanoTime() - start) + &quot; ns&quot;);\n});\n\nCollection&lt;String&gt; c = new ArrayList&lt;&gt;();\nc.add(&quot;foo&quot;);\nc.size();\n</code></pre>\n<p>Should print something like:</p>\n<pre><code>Collection.size() called with args: null\nCollection.size() returned: 1\nCollection.size() took 123 ns\n</code></pre>\n",
+    "tags" : [ "java", "debugging", "plugins", "hook" ],
+    "owner" : {
+      "account_id" : 1628184,
+      "reputation" : 10230,
+      "user_id" : 1503237,
+      "user_type" : "registered",
+      "accept_rate" : 67,
+      "profile_image" : "https://i.sstatic.net/piBNb.jpg?s=256",
+      "display_name" : "Matthias Ronge",
+      "link" : "https://stackoverflow.com/users/1503237/matthias-ronge"
+    },
+    "is_answered" : true,
+    "view_count" : 120,
+    "answer_count" : 2,
+    "score" : -1,
+    "last_activity_date" : 1745596145,
+    "creation_date" : 1745400407,
+    "link" : "https://stackoverflow.com/questions/79588257/how-to-register-hooks-in-java",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79588569,
+    "question_id" : 79588257,
+    "body" : "<p>You have 4 options. None of them are anywhere near as 'simple' as what you wrote. That's because what you wrote requires a virtual machine that is at its core a <a href=\"https://en.m.wikipedia.org/wiki/Monkey_patch\" rel=\"nofollow noreferrer\">monkeypatch</a> party: All lookups are always redirected to a program-modifying <a href=\"https://en.m.wikipedia.org/wiki/Hash_table\" rel=\"nofollow noreferrer\">hashmap</a>-esque key/value map, where methods are themselves possible values. Languages like <a href=\"https://en.m.wikipedia.org/wiki/Python_(programming_language)\" rel=\"nofollow noreferrer\">Python</a> and <a href=\"https://en.m.wikipedia.org/wiki/JavaScript\" rel=\"nofollow noreferrer\">JavaScript</a> are like that. Java is not: That kind of 'anything goes' is detrimental to maintainability (it turns all types into global mutable state.</p>\n<p>I leave it as an exercise to the reader to do some reading on what global mutable state is, and finding the <em>very many</em> blogposts and articles that demonize it. I mostly happen to agree with that stance - they are indeed tricky things that tend to lead to unmaintainable code, but we're delving into opinion which is beyond the bailiwick of Stack Overflow).</p>\n<h2>Proxy</h2>\n<p>Option one is a Proxy, but [A] this requires an interface, and [B] Requires modifying the code at the point where the object is created, or at least modifying the code you want to 'measure' by replacing the instance with the proxy wrapper.</p>\n<p>Probably not what you want.</p>\n<p>But if it is, just find any tutorial on how to use <a href=\"https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/lang/reflect/Proxy.html\" rel=\"nofollow noreferrer\">java.lang.reflect.Proxy</a> - start with the javadoc (linked).</p>\n<h2>Agent: ClassLoad intercept</h2>\n<p>Agents are debug tools. The functionality they offer:</p>\n<ul>\n<li>Right before a class is actually loaded, you get the opportunity to see the bytecode, and replace it by returning different bytecode.</li>\n<li>You can even force a class to be 'reloaded', though, you can't add or remove any fields, or change any signatures. (Think about it: if instances of this class you're reloading already exist, what does it mean to add or remove a field? Even if you have a good answer for that, 'reload the class' now also involves 'find every instance of this anywhere on the heap and rewrite it to include/remove/change fields accordingly which likely means the object's size is now different: You see how that's a complicated maneuvre!)</li>\n</ul>\n<p>This means you can use them to 'rewrite' the bytecode of anything being loaded, though, as an agent is itself java code, it can be a bit tricky to rewrite <code>java.*</code> core classes. It should still be possible (the agent gets its own tiny little classloader independent of the 'main' app for just this purpose), but if all you care about is not-core classes invoking core classes methods, you can instead just check all bytecode for e.g. <code>INVOKEINTERFACE java.util.Collection size()I</code> and inject a call to your logging thing beforehand, or replace the call to a static method that serves the purpose of 'wrapping' the call.</p>\n<p>To do this, make an agent (these are jars with instead of in the manifest <code>Main-Class</code>, an <code>Premain-Class</code> or <code>Agent-Class</code> entry. A good place to start reading up on how this works is the javadoc of the <a href=\"https://docs.oracle.com/javase/9/docs/api/java/lang/instrument/package-summary.html\" rel=\"nofollow noreferrer\"><code>java.lang.instrument</code></a> package.</p>\n<h2>AOP</h2>\n<p>AOP stands for Aspect Oriented Programming.</p>\n<p>Look into tools like <a href=\"https://www.baeldung.com/spring-aop\" rel=\"nofollow noreferrer\">Spring AOP</a>, but we're back to requiring you to include this as part of your build. It's all about this sort of thing, really.</p>\n<h2>Flight Recorder</h2>\n<p>A fourth option is the <a href=\"https://www.baeldung.com/java-flight-recorder-monitoring\" rel=\"nofollow noreferrer\">Java Flight Recorder</a>. It's designed for monitoring only, but your example code appears to want to do just that.</p>\n<h2>A warning</h2>\n<p>What you're doing is microbenchmarking <strong>which does not work</strong>. Computers and JVMs are way, way more complicated than 'I can just nanotime all the things and the numbers that roll out will have some meaning'. They mostly don't, and trying to do performance measurements in this way is going to lead to gobbledygook: You get numbers. They won't mean what you think they mean. So don't do it.</p>\n<p>If you must microbenchmark, you need to write code that is explicitly designed to do that, and you need to use <a href=\"https://www.baeldung.com/java-microbenchmark-harness\" rel=\"nofollow noreferrer\">JMH</a>.</p>\n<p>Happy reading!</p>\n",
+    "score" : 3,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 401843,
+      "reputation" : 107186,
+      "user_id" : 768644,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+      "display_name" : "rzwitserloot",
+      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+    },
+    "creation_date" : 1745409474,
+    "last_activity_date" : 1745596145,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79588369,
+    "question_id" : 79588257,
+    "body" : "<p>You can add a Proxy class for any interface and insert your own debug statements. With this enabled you can see what any interface is doing. Here is example:</p>\n<pre><code>Collection&lt;String&gt; c = new ArrayList&lt;&gt;();\n// Swap c for proxy with debug statement:\nc = TraceHandler.create(c, Collection.class);\nc.add(&quot;foo&quot;);\nc.size();\n</code></pre>\n<p>Prints something like this, and works for any interface when invoked as <code>interf  = TraceHandler.create(interf, SomeInterface.class);</code>:</p>\n<pre><code>TraceHandler[target=[]].toString() ms=0.022 OK return []\nTraceHandler[target=[]].add[foo] ms=0.028 OK return true\nTraceHandler[target=[foo]].size() ms=0.032 OK return 1\n</code></pre>\n<p>The proxy is set up as follows:</p>\n<pre><code>public record TraceHandler&lt;T&gt;(T target) implements InvocationHandler {\n    @SuppressWarnings(&quot;unchecked&quot;)\n    public static &lt;T&gt; T create(final T impl, final Class&lt;?&gt;... interfaces) {\n        return (T)Proxy.newProxyInstance(impl.getClass().getClassLoader(), interfaces, new TraceHandler&lt;&gt;(Objects.requireNonNull(impl, &quot;No impl class!&quot;)));\n    }\n\n    /**\n     * Single entrypoint for all interface methods.\n     * This logs the details of a call and the time it took\n     */\n    public Object invoke(Object proxy, Method m, Object[] args) throws Throwable {\n\n        boolean ok = false;\n        Object result = null;\n        String toStr = this.toString();\n        long start = System.nanoTime();\n        try {\n            // invoke actual method\n            result = m.invoke(target, args);\n            ok = true;\n            return result;\n        } finally {\n            long end = System.nanoTime();\n            System.out.println(toStr+'.'+m.getName()\n                    +(args != null ? Arrays.toString(args) : &quot;()&quot;)\n                    +&quot; ms=&quot;+(TimeUnit.NANOSECONDS.toMicros(end-start) / 1000.0)\n                    +(ok ? &quot; OK&quot; : &quot; FAILED&quot;)\n                    +&quot; return &quot;+result);\n        }\n    }\n}\n</code></pre>\n",
+    "score" : -1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 5998820,
+      "reputation" : 16283,
+      "user_id" : 4712734,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f6e922a2cb7e2da59286f27b162aaca5?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "DuncG",
+      "link" : "https://stackoverflow.com/users/4712734/duncg"
+    },
+    "creation_date" : 1745403607,
+    "last_activity_date" : 1745409068,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140360853,
+    "post_id" : 79588257,
+    "body" : "<a href=\"https://www.baeldung.com/java-instrumentation#creating-a-java-agent\" rel=\"nofollow noreferrer\">baeldung.com/java-instrumentation#creating-a-java-agent</a> might be helpful",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1580843,
+      "reputation" : 13706,
+      "user_id" : 1466267,
+      "user_type" : "registered",
+      "accept_rate" : 91,
+      "profile_image" : "https://www.gravatar.com/avatar/c47d1f7544a8c4a1bb7a41d511f53604?s=256&d=identicon&r=PG",
+      "display_name" : "SpaceTrucker",
+      "link" : "https://stackoverflow.com/users/1466267/spacetrucker"
+    },
+    "creation_date" : 1745401033,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79588569" : [ {
+      "comment_id" : 140379283,
+      "post_id" : 79588569,
+      "body" : "Thanks for this highly detailed answer. Benchmarking like this does work when function response times differ by magnitudes, because opaque frameworks are running under the code, and a seemingly innocuous function call may—or may not—load billions of objects, suddenly taking very many minutes to return; but only on one giant database that you can&#39;t test on a PC with a debugger, you only experience that on one site without a development environment, but you need real-life return times. (Yes, it&#39;s learning through the back door. I didn&#39;t introduce the frameworks, but I have to deal with them.)",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1628184,
+        "reputation" : 10230,
+        "user_id" : 1503237,
+        "user_type" : "registered",
+        "accept_rate" : 67,
+        "profile_image" : "https://i.sstatic.net/piBNb.jpg?s=256",
+        "display_name" : "Matthias Ronge",
+        "link" : "https://stackoverflow.com/users/1503237/matthias-ronge"
+      },
+      "creation_date" : 1745915504,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

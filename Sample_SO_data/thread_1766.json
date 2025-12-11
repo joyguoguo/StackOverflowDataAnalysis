@@ -1,0 +1,258 @@
+{
+  "question" : {
+    "question_id" : 79676544,
+    "title" : "Why does manual SQL query work but not in hibernate?",
+    "body" : "<p>I have a MySQL query that works fine in MySQL workbench, and from the console, but not in Hibernate.  This is the manual query:</p>\n<pre class=\"lang-sql prettyprint-override\"><code>select myfood.*, meals.date, meals.meal, meal_food.servings \nfrom myfood \nleft join meal_food on myfood.fdc_id = meal_food.myfood_id \nleft join meals on meal_food.meal_id = meals.id \nwhere myfood.user_id = 0 and meals.user_id = 0 and meals.date = '2025-06-19';\n</code></pre>\n<p>One record is returned:</p>\n<pre class=\"lang-none prettyprint-override\"><code>fdc_id  user_id brand  category date        meal      servings    \n1872514 0       Kroger Juice    2025-06-19  Breakfast 1\n</code></pre>\n<p>Here is the Spring Boot Hibernate query</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Repository\npublic interface MealRepo extends JpaRepository&lt;Meal, Integer&gt; {\n\n    @Query(value = &quot;select myfood.*, meals.date, meals.meal, meal_food.servings_consumed &quot; +\n            &quot;from myfood &quot; +\n            &quot;left join meal_food on myfood.fdc_id = meal_food.myfood_id &quot; +\n            &quot;left join meals on meal_food.meal_id = meals.id &quot; +\n            &quot;where myfood.user_id =0 and meals.user_id = 0 and meals.date = '2025-06-19'&quot;, nativeQuery = true)\n    List&lt;MealGui&gt; findMyFood();\n}\n</code></pre>\n<p>That query is called from Java Spring Boot like this:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@GetMapping(&quot;/get-meals&quot;)\npublic List&lt;MealGui&gt; getMeals() {\n    List&lt;MealGui&gt; meals = mealRepo.findMyFood();\n    System.out.println(&quot;MealController.getMeals: meals.size() = &quot; + meals.size());\n    return meals;\n}\n</code></pre>\n<p>I see the hibernate query returned in the console:</p>\n<blockquote>\n<pre><code>Hibernate: select myfood.*, meals.date, meals.meal,\nmeal_food.servings from myfood left join meal_food on\nmyfood.fdc_id = meal_food.myfood_id left join meals on\nmeal_food.meal_id = meals.id where myfood.user_id = 0 and\nmeals.user_id = 0 and meals.date = '2025-06-19'\n</code></pre>\n</blockquote>\n<p>Which returns 0 records, not the expected 1.</p>\n<pre class=\"lang-none prettyprint-override\"><code>MealController.getMeals: meals.size() = 0\n</code></pre>\n<p>I have triple checked that the MealGui.java model matches the expected return values:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@NoArgsConstructor\n@AllArgsConstructor\n@Setter\n@Getter\npublic class MealGui {  \n    private Long fdc_id;      // from myfood table\n    private Integer user_id;  // from myfood table and meal table\n    private String brand;     // from myfood table\n    private String category;  // from myfood table\n    private String date;      // from meal table\n    private String meal;      // from meal table (e.g., Breakfast, Lunch, Dinner)\n    private Float servings;   // from meal_food table\n}\n</code></pre>\n<p>and that the model fields match the respective table column names, for example:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Entity\n@Setter\n@Getter\n@NoArgsConstructor\n@AllArgsConstructor\n@ToString\npublic class Meal {\n    @Id\n    @GeneratedValue(strategy = GenerationType.IDENTITY)\n    @Column(name = &quot;id&quot;)   \n    private Integer id;\n\n    @Column(name = &quot;user_id&quot;)   \n    private Integer user_id;\n\n    @Column(name = &quot;date&quot;)   \n    private String date;\n\n    @Column(name = &quot;meal&quot;)   \n    private String meal;\n}\n</code></pre>\n<p>Here are the column definitions for the tables:</p>\n<p><strong>meals</strong></p>\n<pre><code>id       INT\nuser_id  INT\ndate     VARCHAR(10)\nmeal     VARCHAR(9)\n</code></pre>\n<p><strong>meal_food</strong></p>\n<pre><code>id         BIGINT\nmeal_id    INT\nmyfood_id  INT\nservings   FLOAT\n</code></pre>\n<p><strong>myfood</strong></p>\n<pre><code>fdc_id    BIGINT\nuser_id   INT\nbrand     VARCHAR(255)\ncategory  VARCHAR(255)\n</code></pre>\n<p>What am I missing?</p>\n",
+    "tags" : [ "java", "sql", "mysql", "hibernate" ],
+    "owner" : {
+      "account_id" : 16323640,
+      "reputation" : 61,
+      "user_id" : 30073408,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-nMUaxpvujdE/AAAAAAAAAAI/AAAAAAAAAAA/ACHi3rep07WjeFbpgapchr9kOFJ0GAbB8A/s256-rj/photo.jpg",
+      "display_name" : "flyski",
+      "link" : "https://stackoverflow.com/users/30073408/flyski"
+    },
+    "is_answered" : false,
+    "view_count" : 153,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1751067355,
+    "creation_date" : 1750698956,
+    "link" : "https://stackoverflow.com/questions/79676544/why-does-manual-sql-query-work-but-not-in-hibernate",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79681570,
+    "question_id" : 79676544,
+    "body" : "<p>The sql part:</p>\n<pre><code>WHERE myfood.user_id = 0 AND meals.user_id = 0\n</code></pre>\n<p>nullifies the benefit of the LEFT JOIN, because it behaves like an INNER JOIN. If meals may not always be present but you still want to include <code>myfood</code>, then move the <code>meals.user_id = 0 and meals.date = '2025-06-19'</code> into the JOIN:</p>\n<pre><code>SELECT myfood.*, meals.date, meals.meal, meal_food.servings \nFROM myfood \nLEFT JOIN meal_food ON myfood.fdc_id = meal_food.myfood_id \nLEFT JOIN meals ON meal_food.meal_id = meals.id AND meals.user_id = 0 \n                 AND meals.date = '2025-06-19' \nWHERE myfood.user_id = 0;\n</code></pre>\n<p>This retains the behavior of LEFT JOIN and avoids filtering out rows due to meals fields being NULL.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 4826077,
+      "reputation" : 885,
+      "user_id" : 3895513,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/3712894ed0d78c2af9c6cb5bb9680c21?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "being_ethereal",
+      "link" : "https://stackoverflow.com/users/3895513/being-ethereal"
+    },
+    "creation_date" : 1751009725,
+    "last_activity_date" : 1751014319,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140670927,
+    "post_id" : 79676544,
+    "body" : "@flyski - If you still have problems, please provide <code>SHOW CREATE TABLE</code> and the generated SQL.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 529143,
+      "reputation" : 143636,
+      "user_id" : 1766831,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/1ee974306d2def46eb69534fbcf95cc5?s=256&d=identicon&r=PG",
+      "display_name" : "Rick James",
+      "link" : "https://stackoverflow.com/users/1766831/rick-james"
+    },
+    "creation_date" : 1755404467,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140670926,
+    "post_id" : 79676544,
+    "body" : "@AlexG - The string &#39;2025-06-19&#39; is treated as a date in that context; need to use <code>STR_TO_DATE</code>.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 529143,
+      "reputation" : 143636,
+      "user_id" : 1766831,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/1ee974306d2def46eb69534fbcf95cc5?s=256&d=identicon&r=PG",
+      "display_name" : "Rick James",
+      "link" : "https://stackoverflow.com/users/1766831/rick-james"
+    },
+    "creation_date" : 1755404385,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140649681,
+    "post_id" : 79676544,
+    "body" : "try to use STR_TO_DATE(&#39;2025-06-19&#39;, &#39;%Y-%m-%d&#39;) instead of &#39;2025-06-19&#39;",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3703630,
+      "reputation" : 41,
+      "user_id" : 3082691,
+      "user_type" : "registered",
+      "profile_image" : "https://graph.facebook.com/582368912/picture?type=large",
+      "display_name" : "Alex G",
+      "link" : "https://stackoverflow.com/users/3082691/alex-g"
+    },
+    "creation_date" : 1754584129,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140546676,
+    "post_id" : 79676544,
+    "body" : "You show nothing from your mapping/repository, we only see the Query. What Magic should map your select list to MealGui?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 8026267,
+      "reputation" : 5044,
+      "user_id" : 6053084,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/616306286f1da49445d0f5f944440c2d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Turo",
+      "link" : "https://stackoverflow.com/users/6053084/turo"
+    },
+    "creation_date" : 1751014721,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140544790,
+    "post_id" : 79676544,
+    "body" : "That was my theory too but I&#39;ve looked long and hard at the mappings and they seem correct.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 16323640,
+      "reputation" : 61,
+      "user_id" : 30073408,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-nMUaxpvujdE/AAAAAAAAAAI/AAAAAAAAAAA/ACHi3rep07WjeFbpgapchr9kOFJ0GAbB8A/s256-rj/photo.jpg",
+      "display_name" : "flyski",
+      "link" : "https://stackoverflow.com/users/30073408/flyski"
+    },
+    "creation_date" : 1750950679,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140539435,
+    "post_id" : 79676544,
+    "body" : "Is it possible that the issue is not with the query, but how the query results are mapped to the  various list objects in the java code?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7035840,
+      "reputation" : 34520,
+      "user_id" : 5389997,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/50ce1e08eea42756ffa9415a9e8df140?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Shadow",
+      "link" : "https://stackoverflow.com/users/5389997/shadow"
+    },
+    "creation_date" : 1750796644,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140538952,
+    "post_id" : 79676544,
+    "body" : "I updated the post to include the table schemas.  Yes, database is the same.  I only have one.  I have other tables in the database where queries on them work fine.  Yes, data is absolutely commited.  I can run individual select queries on each and they return correct data.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 16323640,
+      "reputation" : 61,
+      "user_id" : 30073408,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-nMUaxpvujdE/AAAAAAAAAAI/AAAAAAAAAAA/ACHi3rep07WjeFbpgapchr9kOFJ0GAbB8A/s256-rj/photo.jpg",
+      "display_name" : "flyski",
+      "link" : "https://stackoverflow.com/users/30073408/flyski"
+    },
+    "creation_date" : 1750784634,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140537319,
+    "post_id" : 79676544,
+    "body" : "Are you sure you&#39;re connecting to the same database, and that the data you see in MySQL Workbench is actually committed?",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 213468,
+      "reputation" : 110282,
+      "user_id" : 466862,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/d873f397779db38cd510d9ee5416fd43?s=256&d=identicon&r=PG",
+      "display_name" : "Mark Rotteveel",
+      "link" : "https://stackoverflow.com/users/466862/mark-rotteveel"
+    },
+    "creation_date" : 1750751249,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140536937,
+    "post_id" : 79676544,
+    "body" : "Your WHERE conditions by <code>meals</code> converts your LEFT JOIN to INNER JOIN. You&#39;d either use correct JOIN type or move these conditions to ON clause, depends on needed logic.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 9744358,
+      "reputation" : 43176,
+      "user_id" : 10138734,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/sf6Zj.jpg?s=256",
+      "display_name" : "Akina",
+      "link" : "https://stackoverflow.com/users/10138734/akina"
+    },
+    "creation_date" : 1750741508,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140536374,
+    "post_id" : 79676544,
+    "body" : "you can also try after removing some/all conditions of the where part of the query to see if the problem is there",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 31180,
+      "reputation" : 29752,
+      "user_id" : 85421,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/kKvXH.gif?s=256",
+      "display_name" : "user85421",
+      "link" : "https://stackoverflow.com/users/85421/user85421"
+    },
+    "creation_date" : 1750712320,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140536130,
+    "post_id" : 79676544,
+    "body" : "I agree with @JorgeCampos, this is unlikely to be a programming error. The same query runs in both environments, but produce different results, then the underlying data must be different.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 7035840,
+      "reputation" : 34520,
+      "user_id" : 5389997,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/50ce1e08eea42756ffa9415a9e8df140?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Shadow",
+      "link" : "https://stackoverflow.com/users/5389997/shadow"
+    },
+    "creation_date" : 1750705772,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140535886,
+    "post_id" : 79676544,
+    "body" : "What&#39;s the actual <code>date</code> definition in the table? is it varchar or date? the second thing I can think of is are you absolutely sure your application is connected to the same database as workbench?",
+    "score" : 6,
+    "owner" : {
+      "account_id" : 209503,
+      "reputation" : 23867,
+      "user_id" : 460557,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/b4565f97815833390c9c880e9e8522e4?s=256&d=identicon&r=PG",
+      "display_name" : "Jorge Campos",
+      "link" : "https://stackoverflow.com/users/460557/jorge-campos"
+    },
+    "creation_date" : 1750699218,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79681570" : [ {
+      "comment_id" : 140548956,
+      "post_id" : 79681570,
+      "body" : "While what you say is true, and is good advice, it does not in any way answer the question.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 93689,
+        "reputation" : 427434,
+        "user_id" : 256196,
+        "user_type" : "moderator",
+        "accept_rate" : 77,
+        "profile_image" : "https://www.gravatar.com/avatar/d84b558fd67be10d5a718fb94231909d?s=256&d=identicon&r=PG",
+        "display_name" : "Bohemian",
+        "link" : "https://stackoverflow.com/users/256196/bohemian"
+      },
+      "creation_date" : 1751093481,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

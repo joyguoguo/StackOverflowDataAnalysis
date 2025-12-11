@@ -1,0 +1,83 @@
+{
+  "question" : {
+    "question_id" : 79687527,
+    "title" : "Quarkus Hibernate ORM Panache - batching inserts not working",
+    "body" : "<p>Ive been running some volume tests on an application recently, and I noticed that the application is way to slow during high volume transactions. Doing some debugging, I noticed that the the inserts are not being batched. I ran into the same problem building a minimal reproducer from scratch.</p>\n<p>Ive also tried using the EntityManager directly and not use any Panache, but had the same result.</p>\n<ul>\n<li>Java 21</li>\n<li>Quarkus version 3.22.3</li>\n<li>Postgresql 15 database</li>\n</ul>\n<p><strong>TestEntity.java</strong></p>\n<pre class=\"lang-java prettyprint-override\"><code>package org.example;\n\nimport io.quarkus.hibernate.orm.panache.PanacheEntityBase;\nimport jakarta.persistence.Column;\nimport jakarta.persistence.Entity;\nimport jakarta.persistence.GeneratedValue;\nimport jakarta.persistence.GenerationType;\nimport jakarta.persistence.Id;\nimport jakarta.persistence.Table;\n\nimport java.util.UUID;\n\n@Entity\n@Table(name = &quot;TestEntity&quot;, schema = &quot;testdb&quot;)\npublic class TestEntity extends PanacheEntityBase {\n\n    @Id\n    @GeneratedValue(strategy = GenerationType.UUID)\n    @Column(name = &quot;id&quot;)\n    private UUID id;\n\n    @Column(name = &quot;testCol&quot;)\n    private final Integer testCol;\n\n    private TestEntity(final Builder builder) {\n        this.testCol = builder.testCol;\n    }\n\n    protected TestEntity() {\n        this.id = null;\n        this.testCol = null;\n    }\n\n    public UUID getId() {\n        return id;\n    }\n\n    public Integer getTestCol() {\n        return testCol;\n    }\n\n    public static final class Builder {\n        private Integer testCol;\n\n        public Builder testCol(final Integer testCol) {\n            this.testCol = testCol;\n            return this;\n        }\n\n        public TestEntity build() {\n            return new TestEntity(this);\n        }\n    }\n}\n</code></pre>\n<p><strong>TestResource.java</strong></p>\n<pre class=\"lang-java prettyprint-override\"><code>package org.example;\n\nimport jakarta.transaction.Transactional;\nimport jakarta.ws.rs.POST;\nimport jakarta.ws.rs.Path;\nimport jakarta.ws.rs.Produces;\nimport jakarta.ws.rs.core.Response;\n\nimport java.util.ArrayList;\nimport java.util.List;\n\n@Path(&quot;/test&quot;)\npublic class TestResource {\n\n    @POST\n    @Transactional\n    public Response hello() {\n        try {\n\n            List&lt;TestEntity&gt; testEntities = new ArrayList&lt;&gt;();\n            for (int i = 0; i &lt; 10; i++) {\n                testEntities.add(new TestEntity.Builder().testCol(i).build());\n            }\n\n            TestEntityRepository testEntityRepository = new TestEntityRepository();\n\n            testEntityRepository.persist(testEntities);\n\n            return Response.ok().build();\n        } catch (Exception e) {\n            return Response.status(Response.Status.INTERNAL_SERVER_ERROR).build();\n        }\n\n    }\n}\n</code></pre>\n<p><strong>TestEntityRepository.java</strong></p>\n<pre class=\"lang-java prettyprint-override\"><code>package org.example;\n\nimport io.quarkus.hibernate.orm.panache.PanacheRepository;\nimport jakarta.enterprise.context.ApplicationScoped;\n\nimport java.util.Optional;\nimport java.util.UUID;\n\n@ApplicationScoped\npublic class TestEntityRepository implements PanacheRepository&lt;TestEntity&gt; {\n\npublic Optional&lt;TestEntity&gt; findById(final UUID id) {\n    return find(&quot;id&quot;, id).firstResultOptional();\n  }\n}\n</code></pre>\n<p>In the quarkus console, I get multiple identical insert statements, clearly showing that there is no batching.</p>\n<p><strong>Quarkus Console</strong></p>\n<pre><code>2025-07-02 15:20:59,929 DEBUG [org.hib.eng.jdb.spi.SqlStatementLogger] (executor-thread-2)\n    insert \n    into\n        testdb.TestEntity\n        (testCol, id) \n    values\n        (?, ?)\n2025-07-02 15:20:59,930 DEBUG [org.hib.eng.jdb.spi.SqlStatementLogger] (executor-thread-2)\n    insert \n    into\n        testdb.TestEntity\n        (testCol, id) \n    values\n        (?, ?)\n 2025-07-02 15:20:59,930 DEBUG [org.hib.cac.int.TimestampsCacheEnabledImpl] (executor-thread-2) Pre-invalidating space [testdb.TestEntity], timestamp: 1751462519930\n 2025-07-02 15:20:59,932 DEBUG [org.hib.eng.jdb.bat.int.BatchImpl] (executor-thread-2) PreparedStatementDetails did not contain PreparedStatement on #releaseStatements : insert into testdb.TestEntity (testCol,id) values (?,?)\n 2025-07-02 15:20:59,933 DEBUG [org.hib.eng.tra.int.TransactionImpl] (executor-thread-2) On TransactionImpl creation, JpaCompliance#isJpaTransactionComplianceEnabled == false\n 2025-07-02 15:20:59,933 DEBUG [org.hib.res.jdb.int.LogicalConnectionManagedImpl] (executor-thread-2) Initiating JDBC connection release from beforeTransactionCompletion\n 2025-07-02 15:20:59,933 DEBUG [org.hib.eng.jdb.bat.int.BatchImpl] (executor-thread-2) PreparedStatementDetails did not contain PreparedStatement on #releaseStatements : insert into testdb.TestEntity (testCol,id) values (?,?)\n 2025-07-02 15:20:59,946 FINE [org.pos.jdb.PgConnection] (executor-thread-2) setAutoCommit = true\n 2025-07-02 15:20:59,947 DEBUG [org.hib.eng.jdb.bat.int.BatchImpl] (executor-thread-2) PreparedStatementDetails did not contain PreparedStatement on #releaseStatements : insert into testdb.TestEntity (testCol,id) values (?,?)\n 2025-07-02 15:20:59,947 DEBUG [org.hib.res.jdb.int.LogicalConnectionManagedImpl] (executor-thread-2) Initiating JDBC connection release from afterTransaction\n 2025-07-02 15:20:59,947 DEBUG [org.hib.cac.int.TimestampsCacheEnabledImpl] (executor-thread-2) Invalidating space [testdb.TestEntity], timestamp: 1751462459947\n 2025-07-02 15:20:59,948 DEBUG [org.hib.eng.jdb.int.JdbcCoordinatorImpl] (executor-thread-2) HHH000420: Closing un-released batch\n 2025-07-02 15:20:59,948 DEBUG [org.hib.eng.jdb.bat.int.BatchImpl] (executor-thread-2) PreparedStatementDetails did not contain PreparedStatement on #releaseStatements : insert into testdb.TestEntity (testCol,id) values (?,?)\n 2025-07-02 15:20:59,948 DEBUG [org.hib.eng.jdb.bat.int.BatchImpl] (executor-thread-2) PreparedStatementDetails did not contain PreparedStatement on #releaseStatements : insert into testdb.TestEntity (testCol,id) values (?,?)\n</code></pre>\n<p>Here are some application.properties that might be of interest.\n<strong>application.properties</strong></p>\n<pre><code>quarkus.datasource.jdbc.transactions=enabled\nquarkus.transaction-manager.default-transaction-timeout=6000 #high timeout for testing purposes\nquarkus.hibernate-orm.jdbc.statement-batch-size=1000\nquarkus.hibernate-orm.unsupported-properties.&quot;hibernate.order_inserts&quot; = true\n</code></pre>\n",
+    "tags" : [ "java", "hibernate", "quarkus", "quarkus-panache" ],
+    "owner" : {
+      "account_id" : 42838168,
+      "reputation" : 13,
+      "user_id" : 30948330,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/ac3527f243cab801a2d521e9b5ce3429?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "mrlihere",
+      "link" : "https://stackoverflow.com/users/30948330/mrlihere"
+    },
+    "is_answered" : true,
+    "view_count" : 264,
+    "answer_count" : 2,
+    "score" : 1,
+    "last_activity_date" : 1759333353,
+    "creation_date" : 1751463787,
+    "link" : "https://stackoverflow.com/questions/79687527/quarkus-hibernate-orm-panache-batching-inserts-not-working",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79688519,
+    "question_id" : 79687527,
+    "body" : "<blockquote>\n<p>In the quarkus console, I get multiple identical insert statements, clearly showing that there is no batching.</p>\n</blockquote>\n<p>You're assuming batching means merging multiple insert statements into one. <strong>It does not</strong>.</p>\n<p>First, let's clarify that <code>quarkus.hibernate-orm.jdbc.statement-batch-size</code> <strong>is about batching statements in fewer network packets</strong>. You'll still have multiple <code>insert</code> statements, it's just that the JDBC driver will try its best to send them in one network packet (&quot;batch&quot;), avoiding latency issues: for two statements, if you trigger one DB round-trip (request/response), you'd get half the latency you would have gotten with two round-trips. <em>This</em> is what gets you better performance.</p>\n<p>Second, this:</p>\n<pre><code>quarkus.hibernate-orm.unsupported-properties.&quot;hibernate.order_inserts&quot; = true\n</code></pre>\n<p>... is obviously unsupported (from the name of the property), though it might still work in most cases. That being said, <strong>it's not about merging statements either</strong>. It's about executing statements in an specific order, which <strong>will help batch them</strong>: only identical statements (ignoring parameters) can be batched, and with statement ordering, multiple identical statements will be more likely to happen in succession.</p>\n<p><strong>None of what you're using here is supposed to merge multiple insert statements together.</strong></p>\n<p>But that's fine! Once the statements reach the database, <code>INSERT INTO ... VALUES (...), (...);</code> (what you were hoping for) should not make much of a difference compared to <code>INSERT INTO ... VALUES (...); INSERT INTO ... VALUES (...);</code> (what you're getting) in terms of performance -- at least, if these statements are batched in the same network packets.</p>\n<p>If you want to know more, you might be interested in this (old) conversation: <a href=\"https://hibernate.zulipchat.com/#narrow/channel/132096-hibernate-user/topic/Hibernate.20batching.20performance.20to.20network.20DB/with/449107284\" rel=\"nofollow noreferrer\">https://hibernate.zulipchat.com/#narrow/channel/132096-hibernate-user/topic/Hibernate.20batching.20performance.20to.20network.20DB/with/449107284</a>\nSomeone tried to achieve this statement merging by using features that are specific to the MariaDB/MySQL JDBC drivers, and confirmed that, no, merging statements doesn't help performance.</p>\n",
+    "score" : 5,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 8974783,
+      "reputation" : 10107,
+      "user_id" : 6692043,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/3673815784047b7e0673677a0bc7dde0?s=256&d=identicon&r=PG",
+      "display_name" : "yrodiere",
+      "link" : "https://stackoverflow.com/users/6692043/yrodiere"
+    },
+    "creation_date" : 1751530786,
+    "last_activity_date" : 1759333353,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79776261,
+    "question_id" : 79687527,
+    "body" : "<p>It seems Postgre jdbc driver doesn't rewrite multiple insert requests into a single one.</p>\n<p>That doesn't mean batching isn't working. When batching is enabled, pg driver sends multiple requests at one time of execution.</p>\n<p>To check that batching is working, you must enable TRACE logging :</p>\n<pre class=\"lang-yaml prettyprint-override\"><code>quarkus:\n  hibernate-orm:\n    jdbc:\n      statement-batch-size: 10\n  log:\n    min-level: TRACE\n    category:\n      &quot;org.hibernate.orm.jdbc.batch&quot;:\n        level: TRACE\n</code></pre>\n<p>When inserting two entities, you should see this log :</p>\n<pre><code>TRACE [org.hib.orm.jdb.batch] (executor-thread-1) Executing JDBC batch (2 / 10)\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 7236580,
+      "reputation" : 18533,
+      "user_id" : 5521607,
+      "user_type" : "registered",
+      "accept_rate" : 25,
+      "profile_image" : "https://i.sstatic.net/ZYe7e.jpg?s=256",
+      "display_name" : "Olivier Boiss&#233;",
+      "link" : "https://stackoverflow.com/users/5521607/olivier-boiss%c3%a9"
+    },
+    "creation_date" : 1758910649,
+    "last_activity_date" : 1758979180,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79688519" : [ {
+      "comment_id" : 140564452,
+      "post_id" : 79688519,
+      "body" : "Hi, it seems I may have misunderstood the meaning behind batching here, thank you for clarifying how it works.  Before I read this, I managed to get it to batch the statements now, and I dont know how. I did append <code>?rewriteBatchedStatements=TRUE</code> at the end of the databse url. But that should only really affect my cascading entities. And from my understanding this should not affect batching (I think).  Combining rewrite and batching  15000 rows: &gt;60s to &lt;10s 120000 rows: &gt;240s to &lt;25s  Thank you for the help.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 42838168,
+        "reputation" : 13,
+        "user_id" : 30948330,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/ac3527f243cab801a2d521e9b5ce3429?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "mrlihere",
+        "link" : "https://stackoverflow.com/users/30948330/mrlihere"
+      },
+      "creation_date" : 1751619119,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

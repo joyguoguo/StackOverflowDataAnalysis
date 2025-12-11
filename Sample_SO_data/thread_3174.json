@@ -1,0 +1,61 @@
+{
+  "question" : {
+    "question_id" : 79567187,
+    "title" : "Unable to create user for an oracle db running in docker container",
+    "body" : "<p>I've got an Oracle FREEPDB running in Docker, and I would like to create a user with appropriate Roles &amp; Grants when the database is initialized.  I have a docker-compose.yml:</p>\n<pre><code>services:\n  oracle-db:\n    image: gvenzl/oracle-free:23-slim-faststart\n    container_name: oracle-db\n    environment:\n      - ORACLE_PASSWORD=test\n      - ORACLE_PDB=FREEPDB1\n    ports:\n      - &quot;1521:1521&quot;\n    volumes:\n      - ./app/src/main/resources/db/changelog/init-scripts:/docker-entrypoint-initdb.d\n    command: &gt;\n      bash -c &quot;\n      /opt/oracle/runOracle.sh &amp;&amp;\n      sqlplus system/test@localhost:1521/FREEPDB1 @/docker-entrypoint-initdb.d/create-user-ddl.sql&quot;\n</code></pre>\n<p>And my init script:</p>\n<pre><code>-- create-user-ddl.sql\n\nSET SERVEROUTPUT ON;\n\nBEGIN\n  \nEXECUTE IMMEDIATE 'CREATE USER TESTACC IDENTIFIED BY &quot;StrongP4ssword12345&quot; DEFAULT TABLESPACE USERS QUOTA UNLIMITED ON USERS';\nEXECUTE IMMEDIATE 'GRANT CREATE SESSION TO TESTACC';\nEXECUTE IMMEDIATE 'GRANT CONNECT TO TESTACC';\nEXECUTE IMMEDIATE 'GRANT RESOURCE TO TESTACC';\nEXECUTE IMMEDIATE 'GRANT CREATE SEQUENCE TO TESTACC';\nEXECUTE IMMEDIATE 'GRANT CREATE TABLE TO TESTACC';\nEXECUTE IMMEDIATE 'GRANT CREATE TRIGGER TO TESTACC';\n\nEXCEPTION\n   WHEN OTHERS THEN\n      DBMS_OUTPUT.PUT_LINE(SQLERRM);\nEND;\n/\n-- verify &amp; output\nSELECT granted_role FROM dba_role_privs WHERE grantee = 'TESTACC';\nSELECT privilege FROM dba_sys_privs WHERE grantee = 'TESTACC';\nSELECT owner, table_name, privilege FROM dba_tab_privs WHERE grantee = 'TESTACC';\n</code></pre>\n<p>It's all working nicely. When I start the container (docker-compose up), I see the dbms output and can see all the privileges &amp; roles assigned to my_user.  I even exec into the container and double check:</p>\n<pre><code>sqlplus system/test\nSELECT granted_role FROM dba_role_privs WHERE grantee = 'TESTACC';\nSELECT privilege FROM dba_sys_privs WHERE grantee = 'TESTACC';\nSELECT owner, table_name, privilege FROM dba_tab_privs WHERE grantee = 'TESTACC';\n</code></pre>\n<p>and verified that user is created with appropriate permissions.  Logging in again as testaccount and I verify I am able to connect and perform the actions that I have permissions for.</p>\n<p>The Problem:</p>\n<p>When I start my SpringBootApplication, I cannot connect to the datasource because I do not have the CONNECT role.  Here is my environment configuration (the relevant datasource props):</p>\n<pre><code>spring:\n  config:\n    activate:\n      on-profile: local\n  liquibase:\n    primary:\n      enabled: true\n      change-log: classpath:/db/changelog/db-changelog-fgl.xml\n  datasource:\n    app1:\n      primary:\n        username: testacc\n        password: StrongP4ssword12345\n        jdbc-url: jdbc:oracle:thin:@//localhost:1521/FREEPDB1\n        driver-class-name: oracle.jdbc.OracleDriver\n</code></pre>\n<p><strong><code>ORA-01045: Login denied. User TESTACC does not have CREATE SESSION privilege.</code></strong></p>\n<p>What's even more confusing is I use a sql client (dbeaver) to connect to that db on localhost as system user and I can see the user was created, but there are no roles or privileges associated to it.</p>\n<p>Does anyone have a solution for this issue?</p>\n<p>Thanks!</p>\n",
+    "tags" : [ "java", "oracle-database", "spring-boot", "docker-compose", "liquibase" ],
+    "owner" : {
+      "account_id" : 41300223,
+      "reputation" : 11,
+      "user_id" : 30223833,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/470afc47db8194b3de7ea074730a00bb?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Denis Labelle",
+      "link" : "https://stackoverflow.com/users/30223833/denis-labelle"
+    },
+    "is_answered" : false,
+    "view_count" : 186,
+    "answer_count" : 0,
+    "score" : 1,
+    "last_activity_date" : 1744303151,
+    "creation_date" : 1744303151,
+    "link" : "https://stackoverflow.com/questions/79567187/unable-to-create-user-for-an-oracle-db-running-in-docker-container",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140322551,
+    "post_id" : 79567187,
+    "body" : "The only slightly suspicious thing I see in your code is the exception handler: <code>EXCEPTION WHEN OTHERS THEN DBMS_OUTPUT.PUT_LINE(SQLERRM);</code>  It is easier and safer to remove the custom exception handling and let Oracle use its default error propagation. That will ensure that errors and all relevant debug information are included. (Although you say you can see the DBMS_OUTPUT, so this likely isn&#39;t the cause. But it&#39;s a good habit to get into anyway.)",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 177686,
+      "reputation" : 37069,
+      "user_id" : 409172,
+      "user_type" : "registered",
+      "accept_rate" : 50,
+      "profile_image" : "https://i.sstatic.net/a2zRR.png?s=256",
+      "display_name" : "Jon Heller",
+      "link" : "https://stackoverflow.com/users/409172/jon-heller"
+    },
+    "creation_date" : 1744326195,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140321787,
+    "post_id" : 79567187,
+    "body" : "We haven&#39;t made the migration to multitenant in our org yet, so I&#39;m just throwing out a hunch, but I&#39;d suggest digging into which PDB you&#39;re being connected to in each case - both where you created the user and where your app is connecting.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 26978029,
+      "reputation" : 12767,
+      "user_id" : 20542862,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/57e3944ce39fc5b4ff00d4017cdf251e?s=256&d=identicon&r=PG",
+      "display_name" : "Paul W",
+      "link" : "https://stackoverflow.com/users/20542862/paul-w"
+    },
+    "creation_date" : 1744309535,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

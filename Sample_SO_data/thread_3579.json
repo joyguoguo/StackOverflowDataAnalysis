@@ -1,0 +1,115 @@
+{
+  "question" : {
+    "question_id" : 79539223,
+    "title" : "Is it possible to write data from spark executors in java spark?",
+    "body" : "<p>I have a java spark application that gets data from kafka, performs some work on said data and then save parquet files to s3 using spark's <code>.write()</code> command. Up until this point my app was saving all received data into spark driver and then would save data using current spark session. Which works fine.</p>\n<p>The simplified, generic code of what I have now is as so:</p>\n<p><em>Main class</em></p>\n<pre><code>public static void main(String[] args) throws Exception {\n  ... // setting configs\n  Processing pr = new Processing(...); // initialising all the classes here\n  pr.run();\n}\n</code></pre>\n<p><em>Processing class</em></p>\n<pre><code>private DummyClass dummyClass;\n\n// constructor is here\npublic void run() {\n  ... // some work and fetching data\n  Dataset&lt;Row&gt; myData = ... // selecting and preparing the data\n  myData.collectAsList().forEach(row -&gt; {\n    String myField = row.getAs(&quot;colName&quot;)\n    ... //some more work\n    dummyClass.createParquet(myField);\n  });\n}\n</code></pre>\n<p><em>DummyClass class</em></p>\n<pre><code>private SparkUtility sparkUtility;\n\n// constructor here\n\npublic void createParquet(String myField) {\n  List&lt;Row&gt; rowVals = new ArrayList&lt;&gt;();\n  StructType schema = createSchema();\n  ...// some work to populate rowVals list\n  String s3Path = &quot;s3a://bucket/key/key/&quot;;\n  sparkUtility.writeParquet(rowVals,schema,s3Path);\n}\n\nprivate StructType createSchema() {\n  StructType structType = new StructType();\n  structType = structType.add(&quot;col1&quot;, DataTypes.StringType, false);\n  structType = structType.add(&quot;col1w&quot;, DataTypes.StringType, false);\n  return structType;\n}\n</code></pre>\n<p><em>SparkUtility class</em></p>\n<pre><code>private SparkSession session;\n\n// constructor here\n\nprivate SparkSession getSparkSession() {\n  SparkConf sparkConf = new SparkConf()\n                          .setAppName(&quot;myName&quot;)\n                          // further settings here\n                          .set(&quot;fs.s3a.endpoint&quot;, &quot;s3-us-east-1.amazonaws.com&quot;);\n  return SparkSession.builder().config(sparkConf).getOrCreate();\n}\n\npublic void writeParquet(List&lt;Row&gt; entries, StructType structType,String path) {\n  session.createDataFrame(entries,structType)\n    .write().mode(&quot;overwrite&quot;).format(&quot;parquet&quot;).save(path);\n}\n</code></pre>\n<p>This works and it is fine. However, I now want to make change to <code>Processing</code> class as so:</p>\n<pre><code>// constructor is here\npublic void run() {\n  ... // some work and fetching data\n  Dataset&lt;Row&gt; myData = ... // selecting and preparing the data\n  kafkaDF.foreachPartition(partition -&gt; {\n            DummyClass dummy = new DummyClass(...); // initialising classes in executors\n            partition.forEachRemaining(record -&gt; {\n              String myField = row.getAs(&quot;colName&quot;);\n              ... //some more work\n              dummyClass.createParquet(myField);\n            });\n  });\n</code></pre>\n<p>The rest of the code right now is unchanged. The code executes fine but it fails to save data and throws the following exception:</p>\n<pre><code>Cannot invoke &quot;scala.Option.map(scala.Function1)&quot; because the return value of &quot;org.apache.spark.sql.SparkSession.parentSessionState()&quot; is null\n</code></pre>\n<p>From what I understand, this is because I am trying to use spark session in executors. So how can I convert Dataset into parquet and save in s3? If there a way to access session and tell it to save data using <code>.write()</code> method?</p>\n<p>I tried to create a fresh session but that is not permitted. And various attempts to fetch session results in the same error.</p>\n",
+    "tags" : [ "java", "scala", "apache-spark", "parquet" ],
+    "owner" : {
+      "account_id" : 10568655,
+      "reputation" : 455,
+      "user_id" : 7786149,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/ca6ff7779fa37dd5f0077d413622ad91?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Joe",
+      "link" : "https://stackoverflow.com/users/7786149/joe"
+    },
+    "is_answered" : true,
+    "view_count" : 151,
+    "answer_count" : 3,
+    "score" : 0,
+    "last_activity_date" : 1743588839,
+    "creation_date" : 1743086754,
+    "link" : "https://stackoverflow.com/questions/79539223/is-it-possible-to-write-data-from-spark-executors-in-java-spark",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79541078,
+    "question_id" : 79539223,
+    "body" : "<p>You shouldn't attempt to collect or foreachpartition and write, these are very much anti-patterns in Spark.  Use Spark's inbuilt functions for transforming data and for saving parquet files from the Dataset itself.</p>\n<p>It's not clear from your code samples what you are trying to do for each row but look at the Dataset.map function and the functions.explode if you want to create more rows from each input row.  Ideally, for performance, your transformations should use the Spark functions directly and not map with Row changing code.</p>\n<p>Move your logic to use Spark's inbuilt functionality which is designed to run in a distributed fashion.</p>\n",
+    "score" : 3,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 1017255,
+      "reputation" : 2965,
+      "user_id" : 1028537,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f929a8e1ab37c0667f6991744a3f3ca1?s=256&d=identicon&r=PG",
+      "display_name" : "Chris",
+      "link" : "https://stackoverflow.com/users/1028537/chris"
+    },
+    "creation_date" : 1743155611,
+    "last_activity_date" : 1743155611,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79546177,
+    "question_id" : 79539223,
+    "body" : "<p>So, after looking into this for few days, I failed to use spark session to save my parquet file to s3 from the executors. This can probably be achieved via <a href=\"https://dzone.com/articles/spark-structured-streaming-using-java\" rel=\"nofollow noreferrer\">structured streams</a> but that requires reading data via the same streams (which is a bit too much refactoring for my use case).</p>\n<p>I also tried to use transformation functions like map (as suggested by Chris above) but I faced the same issue: you cannot use spark session after transformations without collecting dataset first (similar to executors).</p>\n<p>With that I gave up on spark and decided to implement java parquet writer instead which worked. It makes use of hadoop which I am personally not a big fan of but other than that, it turned out to work just fine.</p>\n<p>I made use of this <a href=\"https://www.hydrogen18.com/blog/writing-parquet-records.html\" rel=\"nofollow noreferrer\">blog post</a>, to build a parquet writer. Fair warning thou, the way it is defined in the blog is now deprecated. So you would need to make use of a builder. For reference, that is how I defined my writer:</p>\n<pre><code>try(ParquetWriter&lt;DummyAvro&gt; parquetWriter = AvroParquetWriter.&lt;DummyAvro&gt;builder(new Path(&quot;s3a://bucket/key/example.parquet&quot;))\n        .withSchema(DummyAvro.getClassSchema())\n        .withWriteMode(ParquetFileWriter.Mode.OVERWRITE)\n        .withCompressionCodec(CompressionCodecName.SNAPPY)\n        .withConf(getConfig())\n        .withPageSize(4 * 1024 * 1024) //For compression\n        .withRowGroupSize(16L * 1024 * 1024)\n        .build()) {\n    for(DummyAvro row : rows) {\n        parquetWriter.write(row);\n    }\n}\n</code></pre>\n<p>Where <code>rows</code> is my list of <code>DummyAvro</code> records and  <code>getConfig()</code> is a method defined as so:</p>\n<pre><code>private Configuration getConfig() {\n    Configuration conf = new Configuration();\n    conf.set(&quot;fs.s3a.access.key&quot;, &quot;&quot;);\n    conf.set(&quot;fs.s3a.path.style.access&quot;, &quot;true&quot;);\n    conf.set(&quot;fs.s3a.connection.establish.timeout&quot;, &quot;501000&quot;);\n    conf.set(&quot;fs.s3a.secret.key&quot;, &quot;&quot;);\n    conf.set(&quot;fs.s3a.session.token&quot;,&quot;&quot;);\n    conf.set(&quot;fs.s3a.endpoint&quot;, &quot;s3-us-east-2.amazonaws.com&quot;);\n    conf.set(&quot;fs.s3a.connection.ssl.enabled&quot;, &quot;true&quot;);\n\n    return conf;\n}\n</code></pre>\n<p>This is certainly not a great way to go around doing this but after a week of bashing my head against the wall, I was all out of ideas.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 10568655,
+      "reputation" : 455,
+      "user_id" : 7786149,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/ca6ff7779fa37dd5f0077d413622ad91?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Joe",
+      "link" : "https://stackoverflow.com/users/7786149/joe"
+    },
+    "creation_date" : 1743422713,
+    "last_activity_date" : 1743447173,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79550360,
+    "question_id" : 79539223,
+    "body" : "<p>After some more time looking into this, I managed to make transformation functions work as well, as suggested by @Chris in his answer. The sketch of my Processing class is as so:</p>\n<pre><code>Dataset&lt;Row&gt; dummyDf = myData.map((MapFunction&lt;Row, DummyModel&gt;) record -&gt; {\n    DummyClass dummyClass = new DummyClass(...);\n    String myField = row.getAs(&quot;colName&quot;)\n    ... //some more work\n    return dummyClass.createParquet(myField);\n}, Encoders.bean(DummyModel.class)).toDF();\n\nString s3Path = &quot;s3a://bucket/key/&quot;;\ndeltaTableDf.write().format(&quot;parquet&quot;)\n                .mode(&quot;overwrite&quot;)\n                .option(&quot;overwriteSchema&quot;, &quot;true&quot;)\n                .save(s3Path);\n</code></pre>\n<p>Where <code>DummyModel</code> is a POJO class with fields containing values for your columns. By using <code>overwriteSchema</code> option, we can adopt the schema of our Dummy class to be a schema of our df (which would make names of fields to become names of parquet columns).</p>\n<p>If you have a situation where multiple outputs are being produced (of the same type), you can use <code>flatMap</code> and return an iterator of values. Basically, this:</p>\n<pre><code>Dataset&lt;Row&gt; dummyDf = myData.flatMap((FlatMapFunction&lt;Row, DummyModel&gt;) record -&gt; {\n    DummyClass dummyClass = new DummyClass(...);\n    String myField = row.getAs(&quot;colName&quot;)\n    ... //some more work\n    List&lt;DummyModel&gt; myPojosToBeRows = dummyClass.createParquet(myField);\n    return myPojosToBeRows.iterator();\n}, Encoders.bean(DummyModel.class)).toDF();\n\nString s3Path = &quot;s3a://bucket/key/&quot;;\ndeltaTableDf.write().format(&quot;parquet&quot;)\n                .mode(&quot;overwrite&quot;)\n                .option(&quot;overwriteSchema&quot;, &quot;true&quot;)\n                .save(s3Path);\n</code></pre>\n<p>This if <code>myPojosToBeRows</code> 3 elements for each record, the final number of rows in my <code>dummyDf</code> with 5 records would be 15.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 10568655,
+      "reputation" : 455,
+      "user_id" : 7786149,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/ca6ff7779fa37dd5f0077d413622ad91?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Joe",
+      "link" : "https://stackoverflow.com/users/7786149/joe"
+    },
+    "creation_date" : 1743588839,
+    "last_activity_date" : 1743588839,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140282296,
+    "post_id" : 79539223,
+    "body" : "Thanks @Chris for your input! I tried to make it work via map and then with other transformation functions but I always end up needing to collect dataset (as list or otherwise). I could not find a working example, so if you end up providing any I would be happy to try it and accept it as an answer.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10568655,
+      "reputation" : 455,
+      "user_id" : 7786149,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/ca6ff7779fa37dd5f0077d413622ad91?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Joe",
+      "link" : "https://stackoverflow.com/users/7786149/joe"
+    },
+    "creation_date" : 1743422897,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140271119,
+    "post_id" : 79539223,
+    "body" : "Might want to read a few guides and work with pyspark or scala instead",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 8324450,
+      "reputation" : 18471,
+      "user_id" : 6933993,
+      "user_type" : "registered",
+      "accept_rate" : 97,
+      "profile_image" : "https://i.sstatic.net/8rS8O.jpg?s=256",
+      "display_name" : "Ged",
+      "link" : "https://stackoverflow.com/users/6933993/ged"
+    },
+    "creation_date" : 1743100924,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

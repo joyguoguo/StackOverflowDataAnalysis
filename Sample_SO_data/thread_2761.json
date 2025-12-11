@@ -1,0 +1,135 @@
+{
+  "question" : {
+    "question_id" : 79597143,
+    "title" : "Redundant non-roundtrip byte mappings in JDK generated charset classes",
+    "body" : "<p>I'm currently investigating how SBCS/DBCS decoding works in the JDK, and I've stumbled upon a weird piece of code in the <code>IBM930</code> charset implementation (although it's not the only one).</p>\n<p>First of all - per my understanding - JDK implementers use <em>mapping files</em> to generate most charset classes. For example:</p>\n<pre><code>IBM930.map\nIBM930.nr    non-roundtrip bytes override\nIBM930.c2b   non-roundtrip codepoints override\n</code></pre>\n<p>are the files the <a href=\"https://github.com/openjdk/jdk/blob/master/make/jdk/src/classes/build/tools/charsetmapping/DBCS.java\" rel=\"nofollow noreferrer\">DBCS</a> utility interpret to generate <code>IBM930.java</code>.</p>\n<p>If we look into <code>IBM930.nr</code>, we see:</p>\n<pre class=\"lang-none prettyprint-override\"><code>25  000a\n</code></pre>\n<p>Which means byte <code>0x25</code> <em>must</em> map to <code>\\u000a</code>.</p>\n<p>If we now look into <code>IBM930.map</code>, we see:</p>\n<pre class=\"lang-none prettyprint-override\"><code>...\n24  0084\n25  000A  &lt;---\n26  0017\n...\n</code></pre>\n<p>So, the non-roundtrip override has already been specified in the main .map file.<br />\nIf we open <code>IBM930.java</code>, we can see at the very bottom:</p>\n<pre class=\"lang-java prettyprint-override\"><code>static class EncodeHolder {\n    static final char[] c2b = new char[0x7400];\n    static final char[] c2bIndex = new char[0x100];\n\n    static {\n        String b2cNR = &quot;\\u0025\\n&quot;;\n        String c2bNR = ...\n        DoubleByte.Encoder.initC2B(DecodeHolder.b2cStr, DecodeHolder.b2cSBStr,\n                                   b2cNR, c2bNR,\n                                   0x40, 0xfe,\n                                   c2b, c2bIndex);\n    }\n}\n</code></pre>\n<p>Specifically I'm pointing to <code>String b2cNR = &quot;\\u0025\\n&quot;</code>.</p>\n<p>Given the main .map file already contains NR overrides, why does the generation process generate a non-null <code>b2cNR</code> anyway?</p>\n<p>Is it because not all .map files are adjusted to include .nr entries?<br />\nOr am I missing a very specific behavior of the <code>initC2B</code> method.</p>\n",
+    "tags" : [ "java", "charset" ],
+    "owner" : {
+      "account_id" : 1483504,
+      "reputation" : 21274,
+      "user_id" : 1392277,
+      "user_type" : "registered",
+      "accept_rate" : 84,
+      "profile_image" : "https://i.sstatic.net/yJUSK.jpg?s=256",
+      "display_name" : "LppEdd",
+      "link" : "https://stackoverflow.com/users/1392277/lppedd"
+    },
+    "is_answered" : true,
+    "view_count" : 58,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1745873940,
+    "creation_date" : 1745867226,
+    "link" : "https://stackoverflow.com/questions/79597143/redundant-non-roundtrip-byte-mappings-in-jdk-generated-charset-classes",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79597281,
+    "question_id" : 79597143,
+    "body" : "<blockquote>\n<p>If we look into <code>IBM930.nr</code>, we see:</p>\n<pre><code>25  000a\n</code></pre>\n</blockquote>\n<p>Yes.</p>\n<blockquote>\n<p>Which means byte <code>0x25</code> <em>must</em> map to <code>\\u000a</code>.</p>\n</blockquote>\n<p>No, not really.  Certainly it's not how that data is used.</p>\n<p>The source for the relevant <code>sun.nio.cs.DoubleByte</code> class can be found here: <a href=\"https://github.com/openjdk/jdk/blob/master/src/java.base/share/classes/sun/nio/cs/DoubleByte.java\" rel=\"nofollow noreferrer\">https://github.com/openjdk/jdk/blob/master/src/java.base/share/classes/sun/nio/cs/DoubleByte.java</a>.  If you trace what <code>DoubleByte.Encoder.initCB()</code> does with the data coming from that file via <code>b2cNR</code>, you will see that it is not used to define a decoding of <code>0x25</code> to <code>\\u000a</code>.  Rather, it is used to ensure that the mapped decoding of <code>0x25</code> to <code>\\u000a</code> (from the <code>.map</code> file) is not used to also define an encoding from <code>\\u000a</code> back to <code>0x25</code>.  And if there were no such decoding mapped, then the <code>b2cNR</code> item and the corresponding <code>.nr</code> entry would have no effect.</p>\n<blockquote>\n<p>Given the main .map file already contains NR overrides, why does the generation process generate a non-null <code>b2cNR</code> anyway?</p>\n</blockquote>\n<p>The NR data are not well characterized as overrides.  At least, not mapping overrides.  Rather, they flag mappings that are one way in the bytes to character (decoding) direction.  You might think, then, that repeating the full mapping instead of just giving the bytes would be redundant, and perhaps you would be right, but giving the whole mapping provides a consistency check, and perhaps also is convenient in the event that there is a different character that is encoded to those bytes.</p>\n<blockquote>\n<p>Is it because not all .map files are adjusted to include .nr entries?</p>\n</blockquote>\n<p>It is because you misunderstand the significance of the .nr entries.  The .map file is expected to provide <em>all</em> the bytes &lt;--&gt; character correspondances.  The .nr entries flag some of those mappings as unidirectional.</p>\n",
+    "score" : 2,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 2792262,
+      "reputation" : 190832,
+      "user_id" : 2402272,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+      "display_name" : "John Bollinger",
+      "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+    },
+    "creation_date" : 1745873940,
+    "last_activity_date" : 1745873940,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140377997,
+    "post_id" : 79597143,
+    "body" : "@JohnBollinger indeed. However, <a href=\"https://github.com/openjdk/jdk/blob/62d165d0e4e5ab1bcef35d5031554a354052c6d5/make/jdk/src/classes/build/tools/charsetmapping/DBCS.java#L101-L120\" rel=\"nofollow noreferrer\">here</a> is where the substitution string is actually evaluated. It seems like they simply say &quot;if there is an .nr file, just read it&quot;. I would expect the .nr file to have been deleted tho, since it&#39;s of no use.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1483504,
+      "reputation" : 21274,
+      "user_id" : 1392277,
+      "user_type" : "registered",
+      "accept_rate" : 84,
+      "profile_image" : "https://i.sstatic.net/yJUSK.jpg?s=256",
+      "display_name" : "LppEdd",
+      "link" : "https://stackoverflow.com/users/1392277/lppedd"
+    },
+    "creation_date" : 1745873231,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140377895,
+    "post_id" : 79597143,
+    "body" : "For one thing, the class you&#39;re looking at appears to have been generated from <a href=\"https://github.com/openjdk/jdk/blob/master/make/data/charsetmapping/DoubleByte-X.java.template\" rel=\"nofollow noreferrer\">a template</a>.  Probably that means any redundancy in the class reflects redundancy in the template inputs, which I guess are generated from the data files.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 2792262,
+      "reputation" : 190832,
+      "user_id" : 2402272,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+      "display_name" : "John Bollinger",
+      "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+    },
+    "creation_date" : 1745870154,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79597281" : [ {
+      "comment_id" : 140378084,
+      "post_id" : 79597281,
+      "body" : "And, just for future reference: a subtle detail is that the original <code>b2c</code> tables are preserved, and <i>copies</i> of those tables are passed to <code>initC2B</code>.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1483504,
+        "reputation" : 21274,
+        "user_id" : 1392277,
+        "user_type" : "registered",
+        "accept_rate" : 84,
+        "profile_image" : "https://i.sstatic.net/yJUSK.jpg?s=256",
+        "display_name" : "LppEdd",
+        "link" : "https://stackoverflow.com/users/1392277/lppedd"
+      },
+      "creation_date" : 1745875754,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140378068,
+      "post_id" : 79597281,
+      "body" : "This is also valid for SBCS charsets (e.g. check <code>IBM037</code> where it does <code>b2cMap[165] = UNMAPPABLE_DECODING</code> - although the table layout is totally different). So yeah: .nr entries <i>delete</i> mappings pretty much. Mistery solved, this was a piece of context I could not understand.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 1483504,
+        "reputation" : 21274,
+        "user_id" : 1392277,
+        "user_type" : "registered",
+        "accept_rate" : 84,
+        "profile_image" : "https://i.sstatic.net/yJUSK.jpg?s=256",
+        "display_name" : "LppEdd",
+        "link" : "https://stackoverflow.com/users/1392277/lppedd"
+      },
+      "creation_date" : 1745875112,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140378055,
+      "post_id" : 79597281,
+      "body" : "Thank you! For what I can see (now that you pointed out the mechanism), the code checks if <code>(b2cSB_ca[b] == c)</code>, in which case it forces <code>b2cSB_ca[b] = UNMAPPABLE_DECODING</code>. So I&#39;ve been mis-interpreting the .nr entries the whole time... damn.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1483504,
+        "reputation" : 21274,
+        "user_id" : 1392277,
+        "user_type" : "registered",
+        "accept_rate" : 84,
+        "profile_image" : "https://i.sstatic.net/yJUSK.jpg?s=256",
+        "display_name" : "LppEdd",
+        "link" : "https://stackoverflow.com/users/1392277/lppedd"
+      },
+      "creation_date" : 1745874734,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

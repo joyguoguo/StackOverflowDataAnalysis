@@ -1,0 +1,65 @@
+{
+  "question" : {
+    "question_id" : 79703036,
+    "title" : "Does VaadinSession automatically start a session after entering the url in the browser?",
+    "body" : "<p><strong>Context:</strong>\nI'm trying to start a session using VaadinSession component.\nI'm showing a login page in which I'm entering username and password and after hitting the login button, I'll be redirected to another UI page called &quot;/dashboard&quot;. In this UI, I can validate a session(using a validation login inside a button), and a logout button.</p>\n<p><strong>Problem:</strong>\nWhat I'm experiencing is that, as soon as I deploy the .war file in tomcat and I paste the url in the browser and hit enter, the session is automatically starting.</p>\n<p><strong>What I want:</strong>\nI want the session to start after I enter my credentials and hit the login button. And the session should only end if I hit logout button or if the Session timeout is reached(session expiry).</p>\n<p><strong>Techstack used:</strong></p>\n<ul>\n<li>Java 11</li>\n<li>Vaadin 23.3.11</li>\n<li>Tomcat 9.0.106</li>\n<li>Spring 5.3.30</li>\n</ul>\n<p><strong>My code:</strong></p>\n<p><strong>LoginView.java</strong></p>\n<pre><code> public LoginView() {\n        this.userRepository = SpringContext.getBean(UserRepository.class); // manual injection\n\n        TextField username = new TextField(&quot;Username&quot;);\n        PasswordField password = new PasswordField(&quot;Password&quot;);\n\n        Button loginButton = new Button(&quot;Login&quot;, e -&gt; {\n            logger.info(&quot;Inside LoginView.class. Clicked login Button after entering username and password.&quot;);\n            String u = username.getValue();\n            String p = password.getValue();\n\n            logger.info(&quot;Username is: {}&quot;, u);\n            logger.info(&quot;Password is: {}&quot;, p);\n\n            if (userRepository.validateUser(u, p)) {\n                logger.info(&quot;Valid credentials&quot;);\n\n                VaadinSession.getCurrent().setAttribute(&quot;user&quot;, u);\n                String sessionId = VaadinSession.getCurrent().getSession().getId();\n                logger.info(&quot;Session Id is: {}&quot;, sessionId);\n                \n                getUI().ifPresent(ui -&gt; ui.navigate(&quot;dashboard&quot;));\n            } else {\n                logger.info(&quot;Invalid credentials&quot;);\n                Notification.show(&quot;Invalid credentials&quot;);\n            }\n        });\n        add(username, password, loginButton);\n    }\n</code></pre>\n<p>** Dashboard.java**</p>\n<pre><code>public Dashboard(){\n        logger.info(&quot;Entered Dashboard View.&quot;);\n\n        String user = (String) VaadinSession.getCurrent().getAttribute(&quot;user&quot;);\n        if (user == null) {\n            logger.info(&quot;Session missing or expired. Redirecting to login.&quot;);\n            UI.getCurrent().getPage().setLocation(&quot;login&quot;);\n            return;\n        }\n\n        VaadinSession session = VaadinSession.getCurrent();\n        String sessionId = session.getSession().getId();\n        logger.info(&quot;Session ID: {}&quot;, sessionId);\n\n        Button validateButton = new Button(&quot;Validate&quot;, e-&gt;{\n            logger.info(&quot;Clicked Validate button.&quot;);\n            String currentUserSessionId = VaadinSession.getCurrent().getSession().getId();\n\n            if(currentUserSessionId != null){\n                Notification.show(&quot;Session is valid &quot; + currentUserSessionId);\n            }else{\n                Notification.show(&quot;No session found.&quot;);\n            }\n        });\n\n        Button logoutButton = new Button(&quot;Logout&quot;, e-&gt;{\n            logger.info(&quot;Clicked logout button.&quot;);\n            session.getSession().invalidate();\n            session.close();\n            getUI().ifPresent(ui -&gt; ui.getPage().setLocation(&quot;login&quot;));\n\n        });\n        add(validateButton, logoutButton);\n    }\n</code></pre>\n<p><strong>SessionConfigListener.java</strong></p>\n<pre><code>public class SessionConfigListener implements HttpSessionListener {\n\n    private static final Logger logger = LoggerFactory.getLogger(SessionConfigListener.class);\n\n    @Override\n    public void sessionCreated(HttpSessionEvent se) {\n        se.getSession().setMaxInactiveInterval(30); // 30 seconds\n        logger.info(&quot;Session created: &quot; + se.getSession().getId());\n    }\n\n    @Override\n    public void sessionDestroyed(HttpSessionEvent se) {\n        logger.info(&quot;Session expired: &quot; + se.getSession().getId());\n    }\n}\n</code></pre>\n",
+    "tags" : [ "java", "spring", "tomcat", "vaadin23", "vaadin-session" ],
+    "owner" : {
+      "account_id" : 28712267,
+      "reputation" : 23,
+      "user_id" : 21987550,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/AAcHTtfD5VHQPsJAdYYyrCENDAmfCG2fsqnkXivwuRywOw=k-s256",
+      "display_name" : "K G S Varun Teja",
+      "link" : "https://stackoverflow.com/users/21987550/k-g-s-varun-teja"
+    },
+    "is_answered" : true,
+    "view_count" : 76,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1753035298,
+    "creation_date" : 1752649667,
+    "link" : "https://stackoverflow.com/questions/79703036/does-vaadinsession-automatically-start-a-session-after-entering-the-url-in-the-b",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79703098,
+    "question_id" : 79703036,
+    "body" : "<h2>HTTP Session versus user work session</h2>\n<p>You may be conflating the HTTP session with your user’s work session.</p>\n<p>Let’s review how HTTP works. HTTP is a stateless protocol, built of a single request-response interaction. A single request made by the client results in a single response from the server. After that response is sent to the client, the server has no memory of the now-terminated interaction.</p>\n<p>An HTTP session is a trick to hold some state between two or more of these request-response interactions. By creating a session identifier to be passed back-and-forth across multiple request-response interactions, the server can associate some data values (some state) with that identifier. This kept state means the server can remember the particular client, and keep track of on-going work.</p>\n<p>As a Vaadin programmer, you need this HTTP session to begin immediately, even as you establish a login panel as a gate to be passed before allowing the user access to other functionality. That initial login panel requires some state to be held on the server so the server-side Vaadin knows what is currently being displayed on the client-side Vaadin. For example, you’ll want server-side Vaadin to execute some of your logic in Java code when the user types in the name- and password-fields, or the user presses a “login” button. Vaadin needs a stateful HTTP session to be established to make that work.</p>\n<p>I suspect that you are thinking of this HTTP session as representing your user’s credentialed work session. But no, tracking your user’s credentials and permission to proceed in accessing your app’s functionality is up to you.</p>\n<p>The way to track your user’s credentials and permissions is to represent them as some ongoing state on the server. As discussed above, the way to maintain ongoing state on the server for your user’s work session is to utilize an HTTP session, the same HTTP session that was already established when the client connected to your Vaadin <a href=\"https://en.wikipedia.org/wiki/Jakarta_Servlet\" rel=\"nofollow noreferrer\">Servlet</a> app.</p>\n<p>So, your Question is misframed. You do <em>not</em> want to delay the HTTP session’s creation. The architecture of HTTP, and Vaadin, requires that the HTTP session be created immediately upon first contact by the client. To track your user’s work session’s authentication, your own code needs to add some state to that HTTP session.</p>\n<p>Define a class to represent a user being authenticated to begin their work session. Likely a Java record would do. Have fields on that record for username, <code>Instant</code> when the authentication was established, and so on. Your code in your Login panel will instantiate an object of this class after the user submits successful credentials. Then you add that associate that work session object with the HTTP session. That HTTP session is wrapped as a <a href=\"https://vaadin.com/api/platform/23.5.15/com/vaadin/flow/server/VaadinSession.html\" rel=\"nofollow noreferrer\"><code>VaadinSession</code></a> object. Store your user’s work session authentication info by calling <a href=\"https://vaadin.com/api/platform/23.5.15/com/vaadin/flow/server/VaadinSession.html#setAttribute(java.lang.Class,T)\" rel=\"nofollow noreferrer\"><code>setAttribute</code></a>.</p>\n<p>You’ve done just that in your <code>LoginView</code> code. You used a mere <code>String</code> for username to store as a <code>VaadinSession</code> attribute rather than my suggested custom class, but that is sufficient in a simple app.</p>\n<p>When you want to verify that your user has completed a proper login, look for the login object (username string in your case) by calling <code>getAttribute</code>. If present, the user has completed their login. If absent, the user has not yet completed their login.</p>\n<p>This too you do properly in your code examples. Indeed, all of your code shown seems solid.  If you have a concern about that code, edit your Question to say so explicitly.</p>\n<p>You said:</p>\n<blockquote>\n<p>I'm trying to start a session using VaadinSession component</p>\n</blockquote>\n<p>No you do not explicitly start an HTTP session. Vaadin does that for you. And Vaadin will automatically instantiate the <code>VaadinSession</code> object for you.</p>\n<blockquote>\n<p>as soon as I deploy the .war file in tomcat and I paste the url in the browser and hit enter, the session is automatically starting</p>\n</blockquote>\n<p>Yes, that is proper behavior.</p>\n<blockquote>\n<p>I want the session to start after I enter my credentials and hit the login button.</p>\n</blockquote>\n<p>No, you don’t want to delay the session start. You need that session in place in order to use Vaadin to display your Login form.</p>\n<hr />\n<p>By the way, you are using outdated versions of Vaadin 23 and Tomcat 9. I recommend keeping updated.</p>\n<ul>\n<li>Vaadin\n<ul>\n<li><a href=\"https://vaadin.com/roadmap#current-releases\" rel=\"nofollow noreferrer\">See website</a> for info.</li>\n<li>The last free version was 23.4.0.</li>\n<li>The latest extended maintenance version is 23.6.0, published on Jun 06, 2025.</li>\n<li>I suggest migrating to Vaadin 24 or new 25.</li>\n</ul>\n</li>\n<li>Tomcat\n<ul>\n<li>Latest update to <a href=\"https://tomcat.apache.org/download-90.cgi\" rel=\"nofollow noreferrer\">Tomcat 9</a> is 9.0.107.</li>\n</ul>\n</li>\n</ul>\n",
+    "score" : 2,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 322981,
+      "reputation" : 346951,
+      "user_id" : 642706,
+      "user_type" : "registered",
+      "accept_rate" : 58,
+      "profile_image" : "https://i.sstatic.net/ZWEI3.jpg?s=256",
+      "display_name" : "Basil Bourque",
+      "link" : "https://stackoverflow.com/users/642706/basil-bourque"
+    },
+    "creation_date" : 1752652851,
+    "last_activity_date" : 1753035298,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79703098" : [ {
+      "comment_id" : 140593414,
+      "post_id" : 79703098,
+      "body" : "Thank you for giving me the best possible answer. I&#39;ve understood the underlying concept and will be implementing the changes you suggested.  All of my doubts &amp; misinterpretations have been answered. Thank you.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 28712267,
+        "reputation" : 23,
+        "user_id" : 21987550,
+        "user_type" : "registered",
+        "profile_image" : "https://lh3.googleusercontent.com/a/AAcHTtfD5VHQPsJAdYYyrCENDAmfCG2fsqnkXivwuRywOw=k-s256",
+        "display_name" : "K G S Varun Teja",
+        "link" : "https://stackoverflow.com/users/21987550/k-g-s-varun-teja"
+      },
+      "creation_date" : 1752658085,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

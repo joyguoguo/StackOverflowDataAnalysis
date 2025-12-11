@@ -1,0 +1,161 @@
+{
+  "question" : {
+    "question_id" : 79686481,
+    "title" : "Create an extra trace representing the &quot;time spent inside Kafka&quot; using Spring Kafka / OpenTelemetry",
+    "body" : "<p>I'm working with a Spring Boot Kafka consumer that uses OpenTelemetry for tracing.</p>\n<p>Currently, I have a single span that covers the entire message processing, but I want to create a separate, an extra span, dedicated span specifically for measuring the time the message was inside Kafka before being processed.</p>\n<p>Here's my current implementation:</p>\n<pre><code>package org.example;\n\nimport org.springframework.kafka.annotation.KafkaListener;\nimport org.springframework.stereotype.Service;\nimport org.apache.kafka.clients.consumer.ConsumerRecord;\nimport io.opentelemetry.api.trace.Span;\nimport io.opentelemetry.api.trace.Tracer;\nimport io.opentelemetry.api.trace.StatusCode;\nimport io.opentelemetry.context.Context;\nimport io.opentelemetry.context.propagation.TextMapGetter;\nimport io.opentelemetry.context.propagation.TextMapPropagator;\nimport io.opentelemetry.api.OpenTelemetry;\nimport org.springframework.beans.factory.annotation.Autowired;\n\nimport java.time.Instant;\nimport java.util.Map;\nimport java.util.HashMap;\n\n@Service\npublic class ConsumerService {\n\n    @Autowired\n    private Tracer tracer;\n\n    @Autowired\n    private OpenTelemetry openTelemetry;\n\n    @KafkaListener(topics = &quot;sample-topic&quot;, groupId = &quot;group-2&quot;)\n    public void consumeLinksWithRecord(ConsumerRecord&lt;String, String&gt; record) {\n        String word = record.value();\n\n        String traceparent = record.headers().lastHeader(&quot;traceparent&quot;) != null\n                ? new String(record.headers().lastHeader(&quot;traceparent&quot;).value())\n                : &quot;No traceparentid header found&quot;;\n\n        // Create a span for Kafka message processing with ConsumerRecord\n        Span span = tracer.spanBuilder(&quot;inside-kafka&quot;)\n                .setAttribute(&quot;service.name&quot;, &quot;insidekafkaservice&quot;)\n                .setAttribute(&quot;kafka.topic&quot;, record.topic())\n                .setAttribute(&quot;kafka.partition&quot;, record.partition())\n                .setAttribute(&quot;kafka.offset&quot;, record.offset())\n                .setAttribute(&quot;kafka.key&quot;, record.key() != null ? record.key() : &quot;null&quot;)\n                .setAttribute(&quot;kafka.message&quot;, word)\n                .setAttribute(&quot;kafka.traceparent&quot;, traceparent)\n                .setStartTimestamp(Instant.ofEpochMilli(record.timestamp()))\n                .startSpan();\n\n        try (var scope = span.makeCurrent()) {\n\n                extractTraceContext(traceparent, span);\n\n            System.out.println(&quot;Received Message: &quot; + word + &quot; from partition: &quot; + record.partition());\n            System.out.println(&quot;Trace Parent ID: &quot; + traceparent);\n\n            // Add custom attributes to the span\n            span.setAttribute(&quot;message.length&quot;, word.length());\n            span.setAttribute(&quot;header.count&quot;, record.headers().spliterator().getExactSizeIfKnown());\n\n            try {\n                Thread.sleep(80);\n            } catch (InterruptedException e) {\n                Thread.currentThread().interrupt();\n                span.setStatus(StatusCode.ERROR, &quot;Processing interrupted&quot;);\n                return;\n            }\n            \n            span.setStatus(StatusCode.OK);\n            \n        } catch (Exception e) {\n            span.setStatus(StatusCode.ERROR, e.getMessage());\n            span.recordException(e);\n            throw e;\n        } finally {\n            span.end();\n        }\n    }\n\n    private void extractTraceContext(String traceparentId, Span span) {\n        try {\n            // Create a carrier map with the traceparentid\n            Map&lt;String, String&gt; carrier = new HashMap&lt;&gt;();\n            carrier.put(&quot;traceparent&quot;, traceparentId);\n            \n            // Extract the context using the W3C trace context propagator\n            TextMapPropagator propagator = openTelemetry.getPropagators().getTextMapPropagator();\n            Context extractedContext = propagator.extract(Context.current(), carrier, new TextMapGetter&lt;Map&lt;String, String&gt;&gt;() {\n                @Override\n                public String get(Map&lt;String, String&gt; carrier, String key) {\n                    return carrier.get(key);\n                }\n                \n                @Override\n                public Iterable&lt;String&gt; keys(Map&lt;String, String&gt; carrier) {\n                    return carrier.keySet();\n                }\n            });\n            \n            // Link the extracted context to the current span\n            if (extractedContext != Context.current()) {\n                span.addLink(Span.fromContext(extractedContext).getSpanContext());\n            }\n            \n        } catch (Exception e) {\n            // Log the error but don't fail the processing\n            System.err.println(&quot;Failed to extract trace context: &quot; + e.getMessage());\n        }\n    }\n}\n\n</code></pre>\n<p>For instance, if:</p>\n<ul>\n<li>the producer starts their logic at 00:00</li>\n<li>the producer finishes their logic and puts the message inside Kafka at 00:01</li>\n<li>the consumer picked up the message at 00:04</li>\n<li>the consumer finished their business logic on the message at 00:05</li>\n</ul>\n<p>that would mean the message stayed inside Kafka from 00:01 to 00:04.</p>\n<p>I would expect to see traces like this:</p>\n<p><a href=\"https://i.sstatic.net/6HldxjMB.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/6HldxjMB.png\" alt=\"enter image description here\" /></a></p>\n<p>But instead, I am currently seeing this:</p>\n<p><a href=\"https://i.sstatic.net/yFlSLt0w.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/yFlSLt0w.png\" alt=\"enter image description here\" /></a></p>\n<p>How to create the extra trace representing the time spent in Kafka?</p>\n",
+    "tags" : [ "java", "spring-boot", "open-telemetry", "open-telemetry-java" ],
+    "owner" : {
+      "account_id" : 14482834,
+      "reputation" : 5468,
+      "user_id" : 10461625,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/fgo5D.jpg?s=256",
+      "display_name" : "PatPanda",
+      "link" : "https://stackoverflow.com/users/10461625/patpanda"
+    },
+    "is_answered" : true,
+    "view_count" : 213,
+    "answer_count" : 1,
+    "score" : 3,
+    "last_activity_date" : 1752485028,
+    "creation_date" : 1751394917,
+    "link" : "https://stackoverflow.com/questions/79686481/create-an-extra-trace-representing-the-time-spent-inside-kafka-using-spring-ka",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79699789,
+    "question_id" : 79686481,
+    "body" : "<pre><code>@Service\npublic class ConsumerService {\n\n    @Autowired\n    private Tracer tracer;\n\n    @Autowired\n    private OpenTelemetry openTelemetry;\n\n    @KafkaListener(topics = &quot;sample-topic&quot;, groupId = &quot;group-2&quot;)\n    public void consume(ConsumerRecord&lt;String, String&gt; record) {\n        String message = record.value();\n        long kafkaTimestamp = record.timestamp();\n        long now = System.currentTimeMillis();\n\n        String traceparent = getHeader(record, &quot;traceparent&quot;);\n        Context parentContext = extractTraceContext(traceparent);\n\n        Span kafkaDelaySpan = tracer.spanBuilder(&quot;kafka.queue.delay&quot;)\n                .setParent(parentContext)\n                .setStartTimestamp(Instant.ofEpochMilli(kafkaTimestamp))\n                .startSpan();\n        kafkaDelaySpan.setAttribute(&quot;service.name&quot;, &quot;kafka-delay-service&quot;); //added\n        kafkaDelaySpan.setAttribute(&quot;kafka.topic&quot;, record.topic());\n        kafkaDelaySpan.setAttribute(&quot;kafka.partition&quot;, record.partition());\n        kafkaDelaySpan.setAttribute(&quot;kafka.offset&quot;, record.offset());\n        kafkaDelaySpan.end(Instant.ofEpochMilli(now));\n\n        Span processingSpan = tracer.spanBuilder(&quot;kafka.consumer.process&quot;)\n                .setParent(parentContext)\n                .startSpan();\n\n        processingSpan.setAttribute(&quot;service.name&quot;, &quot;consumer-service&quot;);  //added\n\n        try (Scope scope = processingSpan.makeCurrent()) {\n            Thread.sleep(80);\n            processingSpan.setAttribute(&quot;message.length&quot;, message.length());\n            processingSpan.setStatus(StatusCode.OK);\n        } catch (Exception e) {\n            processingSpan.setStatus(StatusCode.ERROR, e.getMessage());\n            processingSpan.recordException(e);\n        } finally {\n            processingSpan.end();\n        }\n    }\n\n    private String getHeader(ConsumerRecord&lt;String, String&gt; record, String key) {\n        if (record.headers().lastHeader(key) != null) {\n            return new String(record.headers().lastHeader(key).value());\n        }\n        return &quot;&quot;;\n    }\n\n    private Context extractTraceContext(String traceparentId) {\n        try {\n            Map&lt;String, String&gt; carrier = new HashMap&lt;&gt;();\n            carrier.put(&quot;traceparent&quot;, traceparentId);\n\n            TextMapPropagator propagator = openTelemetry.getPropagators().getTextMapPropagator();\n            return propagator.extract(Context.current(), carrier, new TextMapGetter&lt;&gt;() {\n                @Override\n                public String get(Map&lt;String, String&gt; carrier, String key) {\n                    return carrier.get(key);\n                }\n\n                @Override\n                public Iterable&lt;String&gt; keys(Map&lt;String, String&gt; carrier) {\n                    return carrier.keySet();\n                }\n            });\n        } catch (Exception e) {\n            return Context.current();\n        }\n    }\n}\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 17244389,
+      "reputation" : 919,
+      "user_id" : 12486001,
+      "user_type" : "registered",
+      "profile_image" : "https://lh6.googleusercontent.com/-gm81pTvxOs0/AAAAAAAAAAI/AAAAAAAAAAA/ACHi3rdUtP3KYe2kl6PBD6cE4yKy2CcLWw/s256-rj/photo.jpg",
+      "display_name" : "Idris Olokunola",
+      "link" : "https://stackoverflow.com/users/12486001/idris-olokunola"
+    },
+    "creation_date" : 1752390116,
+    "last_activity_date" : 1752485028,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140585681,
+    "post_id" : 79686481,
+    "body" : "How about you try Extracting the timestamp from the Kafka message (ConsumerRecord.timestamp()), which is usually the time the producer sent it, then you Record the current time when the consumer gets the message.   Creating a custom span between those two times to represent the delay inside Kafka.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 17244389,
+      "reputation" : 919,
+      "user_id" : 12486001,
+      "user_type" : "registered",
+      "profile_image" : "https://lh6.googleusercontent.com/-gm81pTvxOs0/AAAAAAAAAAI/AAAAAAAAAAA/ACHi3rdUtP3KYe2kl6PBD6cE4yKy2CcLWw/s256-rj/photo.jpg",
+      "display_name" : "Idris Olokunola",
+      "link" : "https://stackoverflow.com/users/12486001/idris-olokunola"
+    },
+    "creation_date" : 1752389597,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140583806,
+    "post_id" : 79686481,
+    "body" : "Hello @JorgeCampos, thank you for the message. Just for this case, I would like to keep it simple. Meaning, the consumer always processes the message at some point. Once processed, the message is committed. There are no errors and no dead letters.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 14482834,
+      "reputation" : 5468,
+      "user_id" : 10461625,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/fgo5D.jpg?s=256",
+      "display_name" : "PatPanda",
+      "link" : "https://stackoverflow.com/users/10461625/patpanda"
+    },
+    "creation_date" : 1752276012,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140583804,
+    "post_id" : 79686481,
+    "body" : "Hello @AlexanderPavlov, thank you for the comment. I am ok with some small precision error. The issue is more like how to create the extra trace. If you look at the two screenshots, the actual versus expected are totally different now",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 14482834,
+      "reputation" : 5468,
+      "user_id" : 10461625,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/fgo5D.jpg?s=256",
+      "display_name" : "PatPanda",
+      "link" : "https://stackoverflow.com/users/10461625/patpanda"
+    },
+    "creation_date" : 1752275897,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140583797,
+    "post_id" : 79686481,
+    "body" : "what happens if the message is processed, errors out, does not get committed? are you considering with/out DLT implementation?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 209503,
+      "reputation" : 23867,
+      "user_id" : 460557,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/b4565f97815833390c9c880e9e8522e4?s=256&d=identicon&r=PG",
+      "display_name" : "Jorge Campos",
+      "link" : "https://stackoverflow.com/users/460557/jorge-campos"
+    },
+    "creation_date" : 1752275583,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140570809,
+    "post_id" : 79686481,
+    "body" : "Could be clocks on producer and consumer sides are not exactly the same at millisecond precision",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 977507,
+      "reputation" : 2229,
+      "user_id" : 998126,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/e23b9f507484921713e922fc39604fad?s=256&d=identicon&r=PG",
+      "display_name" : "Alexander Pavlov",
+      "link" : "https://stackoverflow.com/users/998126/alexander-pavlov"
+    },
+    "creation_date" : 1751896041,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79699789" : [ {
+      "comment_id" : 140587654,
+      "post_id" : 79699789,
+      "body" : "@PatPanda Apologies @ pat, both the Kafka delay and consumer processing spans were originally under the same service.name, which made them show up as the same color.    I’ve updated the code now to set different service names for each(i added comments to the edited code so that you would know where the new insertion was done):    kafka.queue.delay -----&gt;  kafka-delay-service     and    kafka.consumer.process -----&gt; consumer-service    the edited code should now show the different colors",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 17244389,
+        "reputation" : 919,
+        "user_id" : 12486001,
+        "user_type" : "registered",
+        "profile_image" : "https://lh6.googleusercontent.com/-gm81pTvxOs0/AAAAAAAAAAI/AAAAAAAAAAA/ACHi3rdUtP3KYe2kl6PBD6cE4yKy2CcLWw/s256-rj/photo.jpg",
+        "display_name" : "Idris Olokunola",
+        "link" : "https://stackoverflow.com/users/12486001/idris-olokunola"
+      },
+      "creation_date" : 1752485364,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140587450,
+      "post_id" : 79699789,
+      "body" : "Hello @Idris, I am about to accept and award the bounty. But just wondering. In your solution, there are only &quot;two colors&quot;. One for the consumer. But for the Kafka delay AND the consumer processing, you put them under the same service. This is resulting in a visual that has only two colors. Your example (which is working by the way) would have one color yellow, and two colors green (looking at my Excel mock-up). I am looking for something which would have three different colors (like in my example). Do you know how to do so?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 14482834,
+        "reputation" : 5468,
+        "user_id" : 10461625,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/fgo5D.jpg?s=256",
+        "display_name" : "PatPanda",
+        "link" : "https://stackoverflow.com/users/10461625/patpanda"
+      },
+      "creation_date" : 1752479881,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

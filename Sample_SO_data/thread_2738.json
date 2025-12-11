@@ -1,0 +1,48 @@
+{
+  "question" : {
+    "question_id" : 79598549,
+    "title" : "Keycloak plugin: Add group to existing permission",
+    "body" : "<p>In a custom keycloak plugin, I try to create and change <a href=\"https://github.com/keycloak/keycloak/discussions/37133\" rel=\"nofollow noreferrer\">Fine Grained Admin Permissions</a>. After some digging, I found that this code works perfectly for creating a permission (the policy is already created)</p>\n<pre><code>public void createPermission(PolicyStore policyStore, ResourceServer resourceServer, GroupModel group, String policyName) {\n    final Set&lt;String&gt; scopes = Set.of(&quot;view-members&quot;, &quot;manage-membership&quot;, &quot;manage-members&quot;, &quot;view&quot;, &quot;manage&quot;);\n\n    Policy policy = requireNonNull(policyStore.findByName(resourceServer, policyName));\n\n    ScopePermissionRepresentation permissionRep = new ScopePermissionRepresentation();\n    permissionRep.setName(&quot;My new permission&quot;);\n    permissionRep.setResourceType(&quot;Groups&quot;);\n    permissionRep.addResource(group.getId()); // initial set of groups\n    permissionRep.setPolicies(Set.of(policy.getId()));\n    permissionRep.setScopes(scopes);\n    policyStore.create(resourceServer, permissionRep);\n}\n</code></pre>\n<p>As you can see, you can call addResource multiple times and only a group id is needed.</p>\n<p>When I try to change an existing permission, I struggle with a completely different object structure:</p>\n<pre><code>public void addAnotherGroupToExistingPermission(String permissionName, GroupModel group, Set&lt;String&gt; scopes, PolicyStore policyStore, StoreFactory storeFactory, ResourceServer resourceServer, String policyName) {\n    final Policy permission = requireNonNull(policyStore.findByName(resourceServer, permissionName));\n    final List&lt;Scope&gt; availableScopes = storeFactory.getScopeStore().findByResourceServer(resourceServer);\n\n    permission.addResource(new ResourceWrapper(\n            null /* some id */, group.getName(),\n            availableScopes.stream().filter(s -&gt; scopes.contains(s.getName())).collect(Collectors.toSet()),\n            resourceServer));\n}\n</code></pre>\n<p>This is only a first approach. Obviously, using ResourceWrapper is wrong here and should probably be an object retrieved from the database. The current code either throws a db constraint exception (if I use the existing permission id) or one that says that the id is not set. I have no clue what type it should be, and I also wonder that the underlying interface contains name and scope, but no field which could be used as <code>groupid</code>, while I more expect to find a single set of group IDs.</p>\n<p>All I want is to simply add a second, or third, group to the existing permission, eg do another <code>addResource</code> call <em>after</em> <code>create()</code> was called, something like this (fictive code):</p>\n<pre><code>public void addAnotherGroupFictiveExample(GroupModel group2, PolicyStore policyStore, ResourceServer resourceServer) {\n    ScopePermissionRepresentation permissionRep = policyStore.findByName(resourceServer, &quot;My new permission&quot;);\n    // permissionRep.getResources().size() is now 1\n    permissionRep.addResource(group2.getId());\n    // permissionRep.getResources().size() is now 2\n    // maybe something like policyStore.update()\n}\n</code></pre>\n<p>I can do this change in the UI, it calls <code>PUT /admin/realms/scicat/clients/{clientid}/authz/resource-server/permission/scope/{permissionid}</code>. The json of this call has a completely different structure (<code>ScopePermissionRepresentation</code>) than what I get from <code>policyStore.findByName</code>. What's the easiest way to change this permission from inside the java environment (<em>without</em> going through the REST api)?</p>\n",
+    "tags" : [ "java", "keycloak-plugin" ],
+    "owner" : {
+      "account_id" : 1431635,
+      "reputation" : 5523,
+      "user_id" : 1353930,
+      "user_type" : "registered",
+      "accept_rate" : 50,
+      "profile_image" : "https://www.gravatar.com/avatar/eb10a7255a6d7fa4a4068d05c53ac0fa?s=256&d=identicon&r=PG",
+      "display_name" : "Daniel Alder",
+      "link" : "https://stackoverflow.com/users/1353930/daniel-alder"
+    },
+    "is_answered" : false,
+    "view_count" : 47,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1747155280,
+    "creation_date" : 1745935142,
+    "link" : "https://stackoverflow.com/questions/79598549/keycloak-plugin-add-group-to-existing-permission",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79618015,
+    "question_id" : 79598549,
+    "body" : "<p>Finally, I found a possible solution in the question of a <a href=\"https://github.com/keycloak/keycloak/discussions/26869\" rel=\"nofollow noreferrer\">discussion</a> on github.</p>\n<p>Here is my implementation:</p>\n<pre><code>public boolean addGroupToExistingPermission(String permissionName, GroupModel group, Set&lt;String&gt; scopes) {\n    Policy permissionToBeEdited = policyStore.findByName(resourceServer, permissionName);\n    if (permissionToBeEdited == null) return false; // not found -&gt; need to create a new permisson\n\n    PolicyRepresentation representation = ModelToRepresentation.toRepresentation(permissionToBeEdited, authorization);\n    representation.setResources(permissionToBeEdited.getResources().stream().map(Resource::getId).collect(Collectors.toSet()));\n    LOG.trace(&quot;num res before: {0}&quot;, representation.getResources().size());\n    representation.addResource(group.getId());\n    LOG.trace(&quot;num res after: {0}&quot;, representation.getResources().size());\n    // representation.setId(permissionToBeEdited.getId()); - seems not necessary\n    RepresentationToModel.toModel(representation, authorization, permissionToBeEdited);\n\n    // try enabling some of the following lines if you have problems:\n    // AdminAuth adminAuth = new AdminAuth(realm, auth.getToken(), auth.getUser(), auth.getClient());\n    // AdminEventBuilder adminEvent = new AdminEventBuilder(realm, adminAuth, session, session.getContext().getConnection());\n    // session.getTransactionManager().commit();\n    // adminEvent.operation(OperationType.UPDATE).resourcePath(authz.getKeycloakSession().getContext().getUri()).representation(representation).success();\n\n    return true;\n}\n</code></pre>\n<p>For me, it is still not everything clear, but the code works. It seems that the <code>representation</code> contains mainly <code>null</code> fields after <code>ModelToRepresentation.toRepresentation()</code> was called. So I have to set everything that changes. Especially the resources set is also null and will throw an NPE if you don't pre-populate it with the already-existing group list.</p>\n<p>Also, in the original code there was code for committing and for sending events. At least the commit was not necessary in my case where I used it during the execution of an event listener. Let me know if you know more about these lines.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 1431635,
+      "reputation" : 5523,
+      "user_id" : 1353930,
+      "user_type" : "registered",
+      "accept_rate" : 50,
+      "profile_image" : "https://www.gravatar.com/avatar/eb10a7255a6d7fa4a4068d05c53ac0fa?s=256&d=identicon&r=PG",
+      "display_name" : "Daniel Alder",
+      "link" : "https://stackoverflow.com/users/1353930/daniel-alder"
+    },
+    "creation_date" : 1747059136,
+    "last_activity_date" : 1747155280,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : { }
+}

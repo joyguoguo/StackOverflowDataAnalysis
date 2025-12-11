@@ -1,0 +1,179 @@
+{
+  "question" : {
+    "question_id" : 79550515,
+    "title" : "Jsoup 1.19.1 StreamParser duplicating hrefs in a valid html documents",
+    "body" : "<p>On using  StreamParser.parse(), it is found that hrefs links are duplicated , whereas using Jsoup.parse() returns the expected document.  Is there any reason why StreamParser would create additional references to href?</p>\n<p>Is this expected behaviour when using a StreamParser?</p>\n<pre><code>String s1= &quot;&lt;!DOCTYPE html&gt;\\n&quot;\n                + &quot;&lt;html&gt;\\n&quot;\n                + &quot;&lt;head&gt;\\n&quot;\n                + &quot;  &lt;title&gt;&lt;/title&gt;\\n&quot;\n                + &quot;&lt;/head&gt;\\n&quot;\n                + &quot;&lt;body&gt;\\n&quot;\n                + &quot;  &lt;a href=\\&quot;https://fake.com/:x:/g/gibberishtext\\&quot;&gt;Some link&lt;/a&gt;\\n&quot;\n                + &quot;&lt;/body&gt;\\n&quot;\n                + &quot;&lt;/html&gt;&quot;;\n\n  StreamParser streamParser = new StreamParser(Parser.htmlParser());\n  StreamParser parse = streamParser.parse(s1, &quot;&quot;);\n  parse.stream().forEach(System.out::println);\n\n</code></pre>\n<p>// Output from StreamParser, Returns five references to href</p>\n<pre><code>&lt;title&gt;&lt;/title&gt;\n&lt;head&gt;\n &lt;title&gt;&lt;/title&gt;\n&lt;/head&gt;\n&lt;a href=&quot;https://fake.com/:x:/g/gibberishtext&quot;&gt;Some link&lt;/a&gt;\n&lt;body&gt;\n &lt;a href=&quot;https://fake.com/:x:/g/gibberishtext&quot;&gt;Some link&lt;/a&gt;\n&lt;/body&gt;\n&lt;a href=&quot;https://fake.com/:x:/g/gibberishtext&quot;&gt;Some link&lt;/a&gt;\n&lt;body&gt;\n &lt;a href=&quot;https://fake.com/:x:/g/gibberishtext&quot;&gt;Some link&lt;/a&gt;\n&lt;/body&gt;\n&lt;html&gt;\n &lt;head&gt;\n  &lt;title&gt;&lt;/title&gt;\n &lt;/head&gt;\n &lt;body&gt;\n  &lt;a href=&quot;https://fake.com/:x:/g/gibberishtext&quot;&gt;Some link&lt;/a&gt;\n &lt;/body&gt;\n&lt;/html&gt;\n&lt;!doctype html&gt;\n&lt;html&gt;\n &lt;head&gt;\n  &lt;title&gt;&lt;/title&gt;\n &lt;/head&gt;\n &lt;body&gt;\n  &lt;a href=&quot;https://fake.com/:x:/g/gibberishtext&quot;&gt;Some link&lt;/a&gt;\n &lt;/body&gt;\n&lt;/html&gt;\n\n</code></pre>\n<p>Whereas  using  Jsoup.parse() returns the expected document</p>\n<pre><code> Document parse1 = Jsoup.parse(s1);\n System.out.println(parse1.toString());\n\n</code></pre>\n<p>//Output from using Jsoup 1.19.1</p>\n<pre><code>&lt;!doctype html&gt;\n&lt;html&gt;\n &lt;head&gt;\n  &lt;title&gt;&lt;/title&gt;\n &lt;/head&gt;\n &lt;body&gt;\n  &lt;a href=&quot;https://fake.com/:x:/g/gibberishtext&quot;&gt;Some link&lt;/a&gt;\n &lt;/body&gt;\n&lt;/html&gt;\n</code></pre>\n<p>Further update....</p>\n<p>Now to make it more interesting..</p>\n<p>If I call  <em>Jsoup.parse(s1).stream().forEach(System.out::println)</em>  it gives the result similar to StreamParser.</p>\n<p>Why calling stream() is causing duplication?</p>\n",
+    "tags" : [ "java", "jsoup" ],
+    "owner" : {
+      "account_id" : 975767,
+      "reputation" : 521,
+      "user_id" : 997044,
+      "user_type" : "registered",
+      "accept_rate" : 50,
+      "profile_image" : "https://www.gravatar.com/avatar/bdafb7fe6bbafa401412d5982c7529b8?s=256&d=identicon&r=PG",
+      "display_name" : "George",
+      "link" : "https://stackoverflow.com/users/997044/george"
+    },
+    "is_answered" : true,
+    "view_count" : 128,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1743603889,
+    "creation_date" : 1743594107,
+    "link" : "https://stackoverflow.com/questions/79550515/jsoup-1-19-1-streamparser-duplicating-hrefs-in-a-valid-html-documents",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79550868,
+    "question_id" : 79550515,
+    "body" : "<p>That's an interesting question! There are in fact two kinds of duplications going on.</p>\n<h2>1st Duplication</h2>\n<p>First of, when you print an element, you also print all of its children. That makes your output a bit verbose. Perhaps it'd be more prudent to replace:</p>\n<pre class=\"lang-java prettyprint-override\"><code>parse.stream().forEach(System.out::println);\n</code></pre>\n<p>with something like:</p>\n<pre class=\"lang-java prettyprint-override\"><code>parse.stream().forEach(el -&gt; System.out.println(el.tagName()));\n</code></pre>\n<p>to only print element tags.</p>\n<h2>2nd Duplication</h2>\n<p>Fixing <strong>1</strong>, you'd then observe the following output:</p>\n<pre class=\"lang-none prettyprint-override\"><code>title\nhead\na\nbody\na\nbody\nhtml\n#root\n</code></pre>\n<p>There's still some duplication but not nearly as much. Let's first focus on the output order. With <code>StreamParser</code>...</p>\n<blockquote>\n<p>Elements are emitted as they are completed... <a href=\"https://jsoup.org/cookbook/input/streamparser-dom-sax\" rel=\"nofollow noreferrer\"><em>[Source]</em></a></p>\n</blockquote>\n<p>This means that whenever a full element is parsed, it will be <em>emitted</em>. It's easy to check that <code>title</code> is the first element that's fully parsed.</p>\n<p>However, the following sequence:</p>\n<pre><code>a\nbody\n</code></pre>\n<p>appearing twice in the output seems wrong. One would expect only one occurrence. I can't say whether that's intended behavior or a bug.</p>\n<p>But if I replace:</p>\n<pre class=\"lang-java prettyprint-override\"><code>StreamParser streamParser = new StreamParser(Parser.htmlParser());\n</code></pre>\n<p>with:</p>\n<pre class=\"lang-java prettyprint-override\"><code>StreamParser streamParser = new StreamParser(Parser.xmlParser());\n</code></pre>\n<p>I get the output I'd expect:</p>\n<pre class=\"lang-none prettyprint-override\"><code>title\nhead\na\nbody\nhtml\n#root\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 8490813,
+      "reputation" : 4344,
+      "user_id" : 6367213,
+      "user_type" : "registered",
+      "profile_image" : "https://graph.facebook.com/10208200060392228/picture?type=large",
+      "display_name" : "Janez Kuhar",
+      "link" : "https://stackoverflow.com/users/6367213/janez-kuhar"
+    },
+    "creation_date" : 1743603068,
+    "last_activity_date" : 1743603068,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79550868" : [ {
+      "comment_id" : 140378920,
+      "post_id" : 79550868,
+      "body" : "@George it&#39;s out now, see <a href=\"https://jsoup.org/news/release-1.20.1\" rel=\"nofollow noreferrer\">jsoup.org/news/release-1.20.1</a>",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 51278,
+        "reputation" : 10532,
+        "user_id" : 153184,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/dca582d0d725ddd6deb5fddedc598375?s=256&d=identicon&r=PG",
+        "display_name" : "Jonathan Hedley",
+        "link" : "https://stackoverflow.com/users/153184/jonathan-hedley"
+      },
+      "creation_date" : 1745908638,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140293898,
+      "post_id" : 79550868,
+      "body" : "Nope! But you can always use a snapshot.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 51278,
+        "reputation" : 10532,
+        "user_id" : 153184,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/dca582d0d725ddd6deb5fddedc598375?s=256&d=identicon&r=PG",
+        "display_name" : "Jonathan Hedley",
+        "link" : "https://stackoverflow.com/users/153184/jonathan-hedley"
+      },
+      "creation_date" : 1743671775,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140293870,
+      "post_id" : 79550868,
+      "body" : "@JonathanHedley thanks for the quick fix,  is there a due date for release 1.20.1",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 975767,
+        "reputation" : 521,
+        "user_id" : 997044,
+        "user_type" : "registered",
+        "accept_rate" : 50,
+        "profile_image" : "https://www.gravatar.com/avatar/bdafb7fe6bbafa401412d5982c7529b8?s=256&d=identicon&r=PG",
+        "display_name" : "George",
+        "link" : "https://stackoverflow.com/users/997044/george"
+      },
+      "creation_date" : 1743671292,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140292624,
+      "post_id" : 79550868,
+      "body" : "OK, fixed that now",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 51278,
+        "reputation" : 10532,
+        "user_id" : 153184,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/dca582d0d725ddd6deb5fddedc598375?s=256&d=identicon&r=PG",
+        "display_name" : "Jonathan Hedley",
+        "link" : "https://stackoverflow.com/users/153184/jonathan-hedley"
+      },
+      "creation_date" : 1743638098,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140292441,
+      "post_id" : 79550868,
+      "body" : "@janez-kuhar tracking the final elements being emitted twice in this <a href=\"https://github.com/jhy/jsoup/issues/2295\" rel=\"nofollow noreferrer\">issue</a>",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 51278,
+        "reputation" : 10532,
+        "user_id" : 153184,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/dca582d0d725ddd6deb5fddedc598375?s=256&d=identicon&r=PG",
+        "display_name" : "Jonathan Hedley",
+        "link" : "https://stackoverflow.com/users/153184/jonathan-hedley"
+      },
+      "creation_date" : 1743632335,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140292415,
+      "post_id" : 79550868,
+      "body" : "Janez: the <code>a</code> <code>body</code> sequence being emitted when using the HTML parser is a bug, will take a look. I guess it&#39;s coming from how the stack gets wound up when the parse is completed. (There are some odd rules in HTML that keep the body on the stack even after the <code>&lt;&#47;body&gt;</code> so that trailing text nodes can be added afterwards, and that may be causing this odd interaction.)",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 51278,
+        "reputation" : 10532,
+        "user_id" : 153184,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/dca582d0d725ddd6deb5fddedc598375?s=256&d=identicon&r=PG",
+        "display_name" : "Jonathan Hedley",
+        "link" : "https://stackoverflow.com/users/153184/jonathan-hedley"
+      },
+      "creation_date" : 1743631537,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140292408,
+      "post_id" : 79550868,
+      "body" : "George: In that <code>getElementBYAttribute</code> example you are are calling a select function repeatedly (e.g. one the <code>a</code> and then the <code>body</code> and then the <code>html</code>; and so you will correctly see it multiple times. Perhaps you could outline what you&#39;re ultimately trying to achieve?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 51278,
+        "reputation" : 10532,
+        "user_id" : 153184,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/dca582d0d725ddd6deb5fddedc598375?s=256&d=identicon&r=PG",
+        "display_name" : "Jonathan Hedley",
+        "link" : "https://stackoverflow.com/users/153184/jonathan-hedley"
+      },
+      "creation_date" : 1743631281,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140291296,
+      "post_id" : 79550868,
+      "body" : "getElementByAttribute() will still give you duplicate href even when using xmlParser.   new StreamParser(Parser.xmlParser()).stream().forEach(el -&gt; System.out.println(el.getElementByAttribute(&quot;href&quot;)));    it does appear to be a bug..",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 975767,
+        "reputation" : 521,
+        "user_id" : 997044,
+        "user_type" : "registered",
+        "accept_rate" : 50,
+        "profile_image" : "https://www.gravatar.com/avatar/bdafb7fe6bbafa401412d5982c7529b8?s=256&d=identicon&r=PG",
+        "display_name" : "George",
+        "link" : "https://stackoverflow.com/users/997044/george"
+      },
+      "creation_date" : 1743611890,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

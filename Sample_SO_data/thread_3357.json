@@ -1,0 +1,132 @@
+{
+  "question" : {
+    "question_id" : 79554266,
+    "title" : "How do I set a final hashcode value in a Java Record",
+    "body" : "<p>For immutable classes, I like to set the hashCode value when the object is constructed. (I sometimes do this for the toString value too.) I want to do this in a Record as well. For example, I have a game that uses rows and columns, and rows never exceed 18, and columns never exceed 3. So if I'm writing it as a class, I could write this:</p>\n<pre><code>public final class RowColumn {\n  private final int row;\n  private final int column;\n  private final int hashCode\n  private final String toString;\n\n  public RowColumn(int row, int column) {\n    this.row = row;\n    this.column = column;\n    this.hash = row * 100 + column;\n    this.toString = String.format(&quot;%02d %2d&quot;, row, column);\n  }\n\n  @Override\n  public int hashCode() { return hash; }\n\n  @Override\n  public String toString() { return toString; }\n\n  // ... getters, equals methods go here.\n}\n</code></pre>\n<p>I like this hashCode because I can read the row and column from it, which may be very helpful in debugging. And since the hashcode is computed from two final values, there's no point in recomputing it each time we call <code>hashCode()</code>. And since I intend to use this in a hash set, there's no point in lazy instantiation like this:</p>\n<pre><code>private int hash = -1;\n@Override\npublic int hashCode() {\n  if (hash == -1) {\n    hash = row * 100 + column;\n  }\n  return hash;\n}\n</code></pre>\n<p>So I pre-compute the hash value. But as far as I can tell, if I write this class as a record, I can't pre-compute these values. (I'm less concerned about the <code>toString()</code> method, since I will only use it in debugging.)</p>\n<p>Before you tell me that this class is so simple that any performance hit is minor, I should point out that most records are more complicated. If the Record has a lot of fields, of various immutable types, pre-computing the hash value and String become more useful.</p>\n<p>Is there a way to do this in a Record?</p>\n",
+    "tags" : [ "java", "java-record" ],
+    "owner" : {
+      "account_id" : 2309641,
+      "reputation" : 5070,
+      "user_id" : 2028066,
+      "user_type" : "registered",
+      "accept_rate" : 52,
+      "profile_image" : "https://i.sstatic.net/U9hAY.jpg?s=256",
+      "display_name" : "MiguelMunoz",
+      "link" : "https://stackoverflow.com/users/2028066/miguelmunoz"
+    },
+    "is_answered" : true,
+    "view_count" : 190,
+    "answer_count" : 2,
+    "score" : 1,
+    "last_activity_date" : 1743854449,
+    "creation_date" : 1743727932,
+    "link" : "https://stackoverflow.com/questions/79554266/how-do-i-set-a-final-hashcode-value-in-a-java-record",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79554359,
+    "question_id" : 79554266,
+    "body" : "<pre class=\"lang-java prettyprint-override\"><code>record MyRecord(int a, int b, int hash) {\n\n    MyRecord(int a, int b) {\n        this(a, b, Objects.hash(a, b));\n    }\n\n    /**\n     * @deprecated This is intended to be internal; it exposes the hash\n     * parameter meant to store the precomputed hash code. Call\n     * {@link #MyRecord(int, int)} instead which does the precomputation for\n     * you.\n     */\n    @Deprecated\n    MyRecord {\n    }\n\n    @Override\n    public int hashCode() {\n        return hash;\n    }\n}\n</code></pre>\n<p>That said, I consider this an odd usage of records and would never do it myself. If I was convinced that I needed to precompute hash codes I would go with an old fashioned hand written value class.</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 1544842,
+      "reputation" : 635,
+      "user_id" : 6036446,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-v4u_YcpdVno/AAAAAAAAAAI/AAAAAAAAKXc/ITrtXij-cec/s256-rj/photo.jpg",
+      "display_name" : "Juan C Nuno",
+      "link" : "https://stackoverflow.com/users/6036446/juan-c-nuno"
+    },
+    "creation_date" : 1743734603,
+    "last_activity_date" : 1743823494,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79554644,
+    "question_id" : 79554266,
+    "body" : "<p>The naive implementation for your requirement would look like this:</p>\n<pre class=\"lang-java prettyprint-override\"><code>record MyRecord( int a, int b )\n{\n  int hash; // Does not compile!!\n  \n  MyRecord\n  {\n    hash = a * 100 + b;\n  }\n       \n  @Override\n  public int hashCode() { return hash; }\n}\n</code></pre>\n<p>When compiling that, JShell tells you:</p>\n<pre><code>|  Error:\n|  field declaration must be static\n|    (consider replacing field with record component)\n|      int hash;\n|          ^---^\n</code></pre>\n<p>Presumably, the error message returned by <code>javac</code> would look slightly different, but with more or less the same meaning: a <code>record</code> cannot have additional attributes other than the record components. And that would lead to a construct as shown in <a href=\"https://stackoverflow.com/a/79554359/1554195\">this answer</a>.</p>\n<p>If the hashcode calculation is really, really, REALLY time consuming, you can consider something like this:</p>\n<pre><code>record MyRecord( int a, int b )\n{\n  static final Map&lt;MyRecord,Integer&gt; hashes = new IdentityHashMap&lt;&gt;();\n       \n  public MyRecord\n  {\n    hashes.put( this, a * 100 + b );\n  }\n       \n  @Override\n  public int hashCode() { return hashes.get( this );}\n}\n</code></pre>\n<p>But as this simple implementation is causing significant memory dissipation, you need to implement also a cleanup for the <code>hashes</code> map; otherwise an <code>OutOfMemoryError</code> will be thrown at some time …</p>\n",
+    "score" : -1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 1692034,
+      "reputation" : 4140,
+      "user_id" : 1554195,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b67f6a3639e7924c531053212048be5c?s=256&d=identicon&r=PG",
+      "display_name" : "tquadrat",
+      "link" : "https://stackoverflow.com/users/1554195/tquadrat"
+    },
+    "creation_date" : 1743749789,
+    "last_activity_date" : 1743854449,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140302101,
+    "post_id" : 79554266,
+    "body" : "maybe Java (compiler and/or VM) will do the <i>caching</i> for you... in future, if not already doing it... maybe the gain is just that small, it will never happen...",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 31180,
+      "reputation" : 29752,
+      "user_id" : 85421,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/kKvXH.gif?s=256",
+      "display_name" : "user85421",
+      "link" : "https://stackoverflow.com/users/85421/user85421"
+    },
+    "creation_date" : 1743847426,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79554359" : [ {
+      "comment_id" : 140311055,
+      "post_id" : 79554359,
+      "body" : "Yeah. I knew this was a longshot, but I thought I&#39;d ask.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2309641,
+        "reputation" : 5070,
+        "user_id" : 2028066,
+        "user_type" : "registered",
+        "accept_rate" : 52,
+        "profile_image" : "https://i.sstatic.net/U9hAY.jpg?s=256",
+        "display_name" : "MiguelMunoz",
+        "link" : "https://stackoverflow.com/users/2028066/miguelmunoz"
+      },
+      "creation_date" : 1744103642,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140301630,
+      "post_id" : 79554359,
+      "body" : "I added javadoc to the canonical constructor to further dissuade clients from calling it. You&#39;re right though; I really can&#39;t prevent misuse by folks determined enough. And I do agree it&#39;s a bad idea. :)",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1544842,
+        "reputation" : 635,
+        "user_id" : 6036446,
+        "user_type" : "registered",
+        "profile_image" : "https://lh3.googleusercontent.com/-v4u_YcpdVno/AAAAAAAAAAI/AAAAAAAAKXc/ITrtXij-cec/s256-rj/photo.jpg",
+        "display_name" : "Juan C Nuno",
+        "link" : "https://stackoverflow.com/users/6036446/juan-c-nuno"
+      },
+      "creation_date" : 1743823786,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140297999,
+      "post_id" : 79554359,
+      "body" : "Although this works, it is a bad idea, because you have now made the hash part of the public API, which means you can also create instances with a mismatch in hash. You could add a check in the parameterless constructor to ensure the hash is correct, or just overwrite it by calculating it again. That said, I did upvote.",
+      "score" : 5,
+      "owner" : {
+        "account_id" : 213468,
+        "reputation" : 110282,
+        "user_id" : 466862,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/d873f397779db38cd510d9ee5416fd43?s=256&d=identicon&r=PG",
+        "display_name" : "Mark Rotteveel",
+        "link" : "https://stackoverflow.com/users/466862/mark-rotteveel"
+      },
+      "creation_date" : 1743749787,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

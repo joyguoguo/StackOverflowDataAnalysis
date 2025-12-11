@@ -1,0 +1,231 @@
+{
+  "question" : {
+    "question_id" : 79640603,
+    "title" : "Can&#39;t force to work compaction in Apache Kafka",
+    "body" : "<p>I have problem with kafka cleanup policy compact.\nI want events with the same key to be deduplicated or at least contained within the same segment. But I can't get it to work properly.\nStep to reproduce:</p>\n<ol>\n<li>create docker container</li>\n</ol>\n<pre><code>docker run -d \\\n  --name kafka \\\n  -e KAFKA_NODE_ID=1 \\\n  -e KAFKA_PROCESS_ROLES=broker,controller \\\n  -p 9092:9092 \\\n  -p 9999:9999 \\\n  -e KAFKA_LISTENERS=PLAINTEXT://:9092,CONTROLLER://:9093 \\\n  -e KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://localhost:9092 \\\n  -e KAFKA_CONTROLLER_LISTENER_NAMES=CONTROLLER \\\n  -e KAFKA_LISTENER_SECURITY_PROTOCOL_MAP=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT \\\n  -e KAFKA_CONTROLLER_QUORUM_VOTERS=1@localhost:9093 \\\n  -e KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR=1 \\\n  -e KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR=1 \\\n  -e KAFKA_TRANSACTION_STATE_LOG_MIN_ISR=1 \\\n  -e KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS=0 \\\n  -e KAFKA_NUM_PARTITIONS=3 \\\n  -e KAFKA_LOG_CLEANER_ENABLE=true \\\n  -e KAFKA_LOG_CLEANER_THREADS=2 \\\n  -e KAFKA_LOG_CLEANER_DEDUPE_BUFFER_SIZE=134217728 \\\n  -e KAFKA_LOG_CLEANER_IO_BUFFER_SIZE=524288 \\\n  -e KAFKA_JMX_PORT=9999 \\\n  apache/kafka:3.7.2\n</code></pre>\n<ol start=\"2\">\n<li>create topic</li>\n</ol>\n<pre><code>docker exec -it kafka bash\n</code></pre>\n<pre><code>cd /opt/kafka/bin/\n</code></pre>\n<pre><code>./kafka-topics.sh --create \\\n  --bootstrap-server localhost:9092 \\\n  --topic compact-topic1 \\\n  --partitions 4 \\\n  --replication-factor 1 \\\n  --config cleanup.policy=compact \\\n  --config segment.bytes=100000 \\\n  --config min.cleanable.dirty.ratio=0.01 \\\n  --config delete.retention.ms=10000 \\\n  --config min.compaction.lag.ms=5000 \\\n  --config max.compaction.lag.ms=30000 \\\n  --config segment.ms=60000\n</code></pre>\n<ol start=\"3\">\n<li>send events (SpringBoot 3.4.5)</li>\n</ol>\n<pre><code>package com.example.kafka_compact_playground;\n\nimport jakarta.annotation.PostConstruct;\nimport lombok.RequiredArgsConstructor;\nimport lombok.extern.slf4j.Slf4j;\nimport org.springframework.kafka.core.KafkaTemplate;\nimport org.springframework.stereotype.Component;\n\nimport java.time.LocalDateTime;\n\n@RequiredArgsConstructor\n@Component\n@Slf4j\npublic class KafkaGeneratorService {\n    private static final String TOPIC = &quot;compact-topic1&quot;;\n    private final KafkaTemplate&lt;String, String&gt; kafkaTemplate;\n\n    public void sendMessage(String key, String message) {\n        // For compact topics, always use a key\n        kafkaTemplate.send(TOPIC, key, message)\n\n                ;\n    }\n\n    @PostConstruct\n    void init(){\n        int k = 0;\n        for(int j = 0; j &lt; 500000; j++) {\n            for (int i = 0; i &lt; 10; i++) { // More keys\n                String key = &quot;key&quot; + i;\n                String message = &quot;message&quot; + i + &quot;_version_&quot; + j + &quot; data: &quot; + LocalDateTime.now();\n                sendMessage(key, message);\n                k++;\n\n                if (k % 1000 == 0) {\n                    log.info(&quot;Batch {}: Sent message with key: {}&quot;, k, key);\n                    try {\n                        Thread.sleep(10);\n                    } catch (InterruptedException e) {\n                        Thread.currentThread().interrupt();\n                        break;\n                    }\n                }\n            }\n\n            // Add small delay to allow segments to close\n\n        }\n    }\n}\n</code></pre>\n<p>Waiting...\nCheck with offset explorer - 5000000 events\nWhat I'm expecting - a little bit less events.\nWhat I'm doing wrong?</p>\n",
+    "tags" : [ "java", "apache-kafka", "spring-kafka" ],
+    "owner" : {
+      "account_id" : 13928922,
+      "reputation" : 11,
+      "user_id" : 10057529,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-z6U1gtYNmnY/AAAAAAAAAAI/AAAAAAAAAiQ/0O471DoYJOY/s256-rj/photo.jpg",
+      "display_name" : "Александр Новомлинов",
+      "link" : "https://stackoverflow.com/users/10057529/%d0%90%d0%bb%d0%b5%d0%ba%d1%81%d0%b0%d0%bd%d0%b4%d1%80-%d0%9d%d0%be%d0%b2%d0%be%d0%bc%d0%bb%d0%b8%d0%bd%d0%be%d0%b2"
+    },
+    "is_answered" : true,
+    "view_count" : 68,
+    "answer_count" : 2,
+    "score" : 0,
+    "last_activity_date" : 1751006513,
+    "creation_date" : 1748353299,
+    "link" : "https://stackoverflow.com/questions/79640603/cant-force-to-work-compaction-in-apache-kafka",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79681498,
+    "question_id" : 79640603,
+    "body" : "<p>Eventually the problem was resolved. A component was written that counted the number of events in a topic by enumeration and worked directly in k8s. This showed the real number of events in the topic, and only after that it became possible to track changes. In addition, the effect after applying the settings occurred in 2-3 days. As a result, we can conclude that compaction works as it should, but it is necessary to correctly estimate the number of records.</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 13928922,
+      "reputation" : 11,
+      "user_id" : 10057529,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-z6U1gtYNmnY/AAAAAAAAAAI/AAAAAAAAAiQ/0O471DoYJOY/s256-rj/photo.jpg",
+      "display_name" : "Александр Новомлинов",
+      "link" : "https://stackoverflow.com/users/10057529/%d0%90%d0%bb%d0%b5%d0%ba%d1%81%d0%b0%d0%bd%d0%b4%d1%80-%d0%9d%d0%be%d0%b2%d0%be%d0%bc%d0%bb%d0%b8%d0%bd%d0%be%d0%b2"
+    },
+    "creation_date" : 1751006513,
+    "last_activity_date" : 1751006513,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79642930,
+    "question_id" : 79640603,
+    "body" : "<ol>\n<li>The offset number is always increasing</li>\n<li>Compaction doesn't run until a record segment is closed (default to 1GB of data in a <em>partition</em>, not a topic)</li>\n</ol>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 2671330,
+      "reputation" : 192983,
+      "user_id" : 2308683,
+      "user_type" : "registered",
+      "accept_rate" : 90,
+      "profile_image" : "https://www.gravatar.com/avatar/fb8f5877d244f223b4b6d29e0afb3a4e?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "OneCricketeer",
+      "link" : "https://stackoverflow.com/users/2308683/onecricketeer"
+    },
+    "creation_date" : 1748462792,
+    "last_activity_date" : 1748462792,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140492539,
+    "post_id" : 79640603,
+    "body" : "We don&#39;t need to have exactly one key in topic. The  problem is that the topic takes up more space than expected. And non-working compaction was considered as a problem. Next step I think will be writing tool which can count events inside uat environment.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 13928922,
+      "reputation" : 11,
+      "user_id" : 10057529,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-z6U1gtYNmnY/AAAAAAAAAAI/AAAAAAAAAiQ/0O471DoYJOY/s256-rj/photo.jpg",
+      "display_name" : "Александр Новомлинов",
+      "link" : "https://stackoverflow.com/users/10057529/%d0%90%d0%bb%d0%b5%d0%ba%d1%81%d0%b0%d0%bd%d0%b4%d1%80-%d0%9d%d0%be%d0%b2%d0%be%d0%bc%d0%bb%d0%b8%d0%bd%d0%be%d0%b2"
+    },
+    "creation_date" : 1749199142,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140491555,
+    "post_id" : 79640603,
+    "body" : "No, you need to use RocksDB in Kafka Streams, or Flink/KafkaConnect with a database. You cannot guarantee unique keys within a topic, ever",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2671330,
+      "reputation" : 192983,
+      "user_id" : 2308683,
+      "user_type" : "registered",
+      "accept_rate" : 90,
+      "profile_image" : "https://www.gravatar.com/avatar/fb8f5877d244f223b4b6d29e0afb3a4e?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "OneCricketeer",
+      "link" : "https://stackoverflow.com/users/2308683/onecricketeer"
+    },
+    "creation_date" : 1749155726,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140489757,
+    "post_id" : 79640603,
+    "body" : "I can&#39;t now check it on uat/prod because I don&#39;t have access to do operations except reading events and get some information about partitions. So I understand now that I can&#39;t say for sure does compaction work on uat/prod topic or doesn&#39;t.  So I think I need to search or create effective tools for calculating events in topic",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 13928922,
+      "reputation" : 11,
+      "user_id" : 10057529,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-z6U1gtYNmnY/AAAAAAAAAAI/AAAAAAAAAiQ/0O471DoYJOY/s256-rj/photo.jpg",
+      "display_name" : "Александр Новомлинов",
+      "link" : "https://stackoverflow.com/users/10057529/%d0%90%d0%bb%d0%b5%d0%ba%d1%81%d0%b0%d0%bd%d0%b4%d1%80-%d0%9d%d0%be%d0%b2%d0%be%d0%bc%d0%bb%d0%b8%d0%bd%d0%be%d0%b2"
+    },
+    "creation_date" : 1749117823,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140489732,
+    "post_id" : 79640603,
+    "body" : "I think my solution is standard. The idea is that topic contains at least last state by key, so new users of topic can have all information about each key and users that are already connected can receive changes near real time. But the topic is very big and I can&#39;t count events effectively. On my sandbox if I produce events with some pauses compaction happens normally. If I produce without pauses I see many segments but a lot of events. And if I don&#39;t produce anything else compaction doesn&#39;t happen. If I produce some data in partition compaction happen on this partition.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 13928922,
+      "reputation" : 11,
+      "user_id" : 10057529,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-z6U1gtYNmnY/AAAAAAAAAAI/AAAAAAAAAiQ/0O471DoYJOY/s256-rj/photo.jpg",
+      "display_name" : "Александр Новомлинов",
+      "link" : "https://stackoverflow.com/users/10057529/%d0%90%d0%bb%d0%b5%d0%ba%d1%81%d0%b0%d0%bd%d0%b4%d1%80-%d0%9d%d0%be%d0%b2%d0%be%d0%bc%d0%bb%d0%b8%d0%bd%d0%be%d0%b2"
+    },
+    "creation_date" : 1749117387,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140488882,
+    "post_id" : 79640603,
+    "body" : "Except your solution isn&#39;t standard nor recommended, it&#39;s a hack and never guaranteed",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2671330,
+      "reputation" : 192983,
+      "user_id" : 2308683,
+      "user_type" : "registered",
+      "accept_rate" : 90,
+      "profile_image" : "https://www.gravatar.com/avatar/fb8f5877d244f223b4b6d29e0afb3a4e?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "OneCricketeer",
+      "link" : "https://stackoverflow.com/users/2308683/onecricketeer"
+    },
+    "creation_date" : 1749095147,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140482412,
+    "post_id" : 79640603,
+    "body" : "Surprisingly, after a long pause, I sent the events and the partitions compacted. Need some more investigation.  About kv-store - the ideal solution for us is the current solution as it is intended.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 13928922,
+      "reputation" : 11,
+      "user_id" : 10057529,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-z6U1gtYNmnY/AAAAAAAAAAI/AAAAAAAAAiQ/0O471DoYJOY/s256-rj/photo.jpg",
+      "display_name" : "Александр Новомлинов",
+      "link" : "https://stackoverflow.com/users/10057529/%d0%90%d0%bb%d0%b5%d0%ba%d1%81%d0%b0%d0%bd%d0%b4%d1%80-%d0%9d%d0%be%d0%b2%d0%be%d0%bc%d0%bb%d0%b8%d0%bd%d0%be%d0%b2"
+    },
+    "creation_date" : 1748936360,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140473755,
+    "post_id" : 79640603,
+    "body" : "The data format wouldn&#39;t matter, no, but while keys are sent to the same partition, compaction does not de-dedupe until the LogCleaner process runs on the broker side, for all closed segment files. If you want to build a KV-store, you would use Interactive Queries features within Spring-Kafka which maintains a client-side database",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2671330,
+      "reputation" : 192983,
+      "user_id" : 2308683,
+      "user_type" : "registered",
+      "accept_rate" : 90,
+      "profile_image" : "https://www.gravatar.com/avatar/fb8f5877d244f223b4b6d29e0afb3a4e?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "OneCricketeer",
+      "link" : "https://stackoverflow.com/users/2308683/onecricketeer"
+    },
+    "creation_date" : 1748636487,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140471521,
+    "post_id" : 79640603,
+    "body" : "Does data structuring somehow affect compaction? And yes, we use avro in prod and have the same problem. In this example, I simplified everything as much as possible. &quot;Kafka batches data automatically&quot; I expect this, but it doesn&#39;t happen.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 13928922,
+      "reputation" : 11,
+      "user_id" : 10057529,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-z6U1gtYNmnY/AAAAAAAAAAI/AAAAAAAAAiQ/0O471DoYJOY/s256-rj/photo.jpg",
+      "display_name" : "Александр Новомлинов",
+      "link" : "https://stackoverflow.com/users/10057529/%d0%90%d0%bb%d0%b5%d0%ba%d1%81%d0%b0%d0%bd%d0%b4%d1%80-%d0%9d%d0%be%d0%b2%d0%be%d0%bc%d0%bb%d0%b8%d0%bd%d0%be%d0%b2"
+    },
+    "creation_date" : 1748588240,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140467399,
+    "post_id" : 79640603,
+    "body" : "Kafka batches data automatically; you do not need to do that manually. Also, it is better to use structured binary data like protobuf or avro over strings.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2671330,
+      "reputation" : 192983,
+      "user_id" : 2308683,
+      "user_type" : "registered",
+      "accept_rate" : 90,
+      "profile_image" : "https://www.gravatar.com/avatar/fb8f5877d244f223b4b6d29e0afb3a4e?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "OneCricketeer",
+      "link" : "https://stackoverflow.com/users/2308683/onecricketeer"
+    },
+    "creation_date" : 1748462822,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79642930" : [ {
+      "comment_id" : 140471555,
+      "post_id" : 79642930,
+      "body" : "1. &quot;The offset number is always increasing&quot; - I expect the total number of segments in the topic to be equal to the number of partitions, since there are only 10 unique data, and the number of events to be less than 5 million. 2.&quot;Compaction doesn&#39;t run until a record segment is closed (default to 1GB of data in a partition, not a topic)&quot;  I set the segment size explicitly --config segment.bytes=100000 \\ I do the calculation of the number of segments as follows 139e50156d29:/$ find /tmp/kafka-logs/compact-topic1-* -name &quot;*.log&quot; | wc -l 80 We get 80 segments for 4 partitions.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 13928922,
+        "reputation" : 11,
+        "user_id" : 10057529,
+        "user_type" : "registered",
+        "profile_image" : "https://lh3.googleusercontent.com/-z6U1gtYNmnY/AAAAAAAAAAI/AAAAAAAAAiQ/0O471DoYJOY/s256-rj/photo.jpg",
+        "display_name" : "Александр Новомлинов",
+        "link" : "https://stackoverflow.com/users/10057529/%d0%90%d0%bb%d0%b5%d0%ba%d1%81%d0%b0%d0%bd%d0%b4%d1%80-%d0%9d%d0%be%d0%b2%d0%be%d0%bc%d0%bb%d0%b8%d0%bd%d0%be%d0%b2"
+      },
+      "creation_date" : 1748589193,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

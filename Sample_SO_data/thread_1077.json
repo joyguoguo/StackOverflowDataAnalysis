@@ -1,0 +1,76 @@
+{
+  "question" : {
+    "question_id" : 79745904,
+    "title" : "how to implement a ConversionService from LocalDateTime to String in spring boot",
+    "body" : "<p>I have a spring boot webapp, which uses thymeleaf for html templating and as templating engine for emails sent by this webapp, too. In my email I want to use a LocalDateTime, which does not work.</p>\n<p>Stacktrace</p>\n<pre><code>Caused by: org.springframework.expression.spel.SpelEvaluationException: EL1001E: Type conversion problem, cannot convert from java.time.LocalDateTime to java.lang.String\n        at org.springframework.expression.spel.support.StandardTypeConverter.convertValue(StandardTypeConverter.java:87)\n        at org.springframework.expression.common.ExpressionUtils.convertTypedValue(ExpressionUtils.java:57)\n        at org.springframework.expression.spel.standard.SpelExpression.getValue(SpelExpression.java:369)\n        at org.thymeleaf.spring6.expression.SPELVariableExpressionEvaluator.evaluate(SPELVariableExpressionEvaluator.java:279)\n        ... 49 common frames omitted\nCaused by: org.springframework.core.convert.ConverterNotFoundException: No converter found capable of converting from type [java.time.LocalDateTime] to type [java.lang.String]\n        at org.springframework.core.convert.support.GenericConversionService.handleConverterNotFound(GenericConversionService.java:288)\n        at org.springframework.core.convert.support.GenericConversionService.convert(GenericConversionService.java:184)\n        at org.springframework.expression.spel.support.StandardTypeConverter.convertValue(StandardTypeConverter.java:82)\n\n</code></pre>\n<p>I already tried using a @Bean with a @Configuration to register the following converter:</p>\n<pre><code>public class LocalDateTimeConverter implements Converter&lt;LocalDateTime, String&gt;, ConditionalConverter {\n    \n    @Bean\n    public LocalDateTimeConverter ldtConverter() {  \n        return new LocalDateTimeConverter();\n    }\n\n    @Override\n    public String convert(LocalDateTime source) {\n        return source.format(DateTimeFormatter.ofPattern(&quot;yyy-MM-dd HH:mm:ss&quot;));\n    }\n    \n    @Override\n    public boolean matches(TypeDescriptor sourceType, TypeDescriptor targetType) {\n        if (sourceType.getType() == LocalDateTime.class &amp;&amp; targetType.getType() == String.class ) {\n            return true;\n        } else {\n            return false;\n        }\n    }\n}\n</code></pre>\n<p>I also tried to register (another) LocalDateTimeConverter2 in the thymeleafTemplateEngine which is directly referenced when sending an email.</p>\n<pre><code>public class LocalDateTimeConverter2 extends GenericConversionService\n        implements ConditionalConverter, ConfigurableConversionService, ConversionService {\n\n    LocalDateTimeConverter2() {\n    }\n\n    @Override\n    public Object convert(Object source, TypeDescriptor sourceType, TypeDescriptor targetType) {\n        return (Object) (((LocalDateTime) source).format(DateTimeFormatter.ofPattern(&quot;yyy-MM-dd HH:mm:ss&quot;)));\n    }\n\n    @Override\n    public boolean matches(TypeDescriptor sourceType, TypeDescriptor targetType) {\n        if (sourceType.getType() == LocalDateTime.class &amp;&amp; targetType.getType() == String.class) {\n            return true;\n        } else {\n            return false;\n        }\n    }\n\n    public static &lt;t&gt; boolean matches(Class&lt;? extends Object&gt; class1, Class&lt;t&gt; targetClass) {\n        if (class1.equals(LocalDateTime.class) &amp;&amp; targetClass.equals(String.class)) {\n            return true;\n        } else {\n            return false;\n        }\n    }\n}\n</code></pre>\n<p>Therefore a ConversionService is used (according to the <a href=\"https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/core/convert/ConversionService.html#convert(java.lang.Object,org.springframework.core.convert.TypeDescriptor)\" rel=\"nofollow noreferrer\">documentation</a>), which falls back to the default ConfigurationService, when it does not match LocalDateTime &amp; String.</p>\n<pre><code>@Configuration\npublic class MyLocalDateTimeConversionService implements IStandardConversionService {\n\n    GenericConversionService myConverter = LocalDateTimeConverter2();\n    StandardConversionService standardConversionService = new StandardConversionService();\n\n    @Override\n    public &lt;T&gt; T convert(IExpressionContext context, Object object, Class&lt;T&gt; targetClass) {\n        if (LocalDateTimeConverter2.matches(object.getClass(), targetClass)) {\n            return myConverter.convert(object.getClass(), targetClass);\n        } else {\n            return standardConversionService.convert(context, object, targetClass);\n        }\n    }\n\n    private GenericConversionService LocalDateTimeConverter2() {\n        return new LocalDateTimeConverter2();\n    }\n}\n</code></pre>\n<p>The previously defined TemplateEngine is used like this. When I replace the LocalDateTime with a String, the following code works and sends emails:</p>\n<pre><code>public class TemplateResolver {\n\n    @Bean\n    public ITemplateResolver thymeleafTemplateResolver() {\n        ClassLoaderTemplateResolver templateResolver = new ClassLoaderTemplateResolver();\n        templateResolver.setResolvablePatterns(Collections.singleton(&quot;html/*&quot;));\n        templateResolver.setSuffix(&quot;.html&quot;);\n        templateResolver.setTemplateMode(&quot;HTML&quot;);\n        templateResolver.setCharacterEncoding(&quot;UTF-8&quot;);\n        templateResolver.setCacheable(false);\n        return templateResolver;\n    }\n\n    @Bean\n    public SpringTemplateEngine thymeleafTemplateEngine(ITemplateResolver templateResolver) {\n\n        SpringTemplateEngine templateEngine = new SpringTemplateEngine();\n        Set&lt;IDialect&gt; dialects = templateEngine.getDialects();\n        StandardDialect standardDialect = (StandardDialect) dialects.iterator().next();\n        IStandardConversionService conversionService = new MyLocalDateTimeConversionService();\n        standardDialect.setConversionService(conversionService);\n        templateEngine.setTemplateResolver(templateResolver);\n        return templateEngine;\n    }\n    \n}\n</code></pre>\n<p>The actual email sending process is implemented like this</p>\n<pre><code>@Service\npublic class EmailService {\n\n    @Autowired\n    private JavaMailSender mailSender;\n\n    @Autowired\n    private EmailServiceConfig emailServiceConfig;\n\n    @Autowired\n    TemplateEngine templateEngine;\n\n    public void sendHtmlEmail(String subject, LocalDateTime date) {\n        Context ctx = new Context();\n        ctx.setVariable(&quot;date&quot;, date);\n\n        MimeMessage mimeMessage = mailSender.createMimeMessage();\n        MimeMessageHelper message = new MimeMessageHelper(mimeMessage, &quot;UTF-8&quot;);\n        try {\n            message.setFrom(emailServiceConfig.getFrom());\n            message.setTo(emailServiceConfig.getTo());\n            message.setSubject(subject);\n            String htmlContent = this.templateEngine.process(&quot;mail/default.html&quot;, ctx);\n\n            message.setText(htmlContent, true);\n\n            mailSender.send(mimeMessage);\n        } catch (MessagingException e) {\n            e.printStackTrace();\n        }\n    }\n}\n</code></pre>\n<p>Any ideas what I am missing, did wrong or how it is done properly? After all, conceptionally, it should not be so difficult to parse a datetime.</p>\n<p>For sake of completeness of a minimum reproducable sample:</p>\n<pre><code>public class Helper {\n\n    @Autowired\n    private EmailService mailer;\n    \n    @Scheduled(fixedRate = 15 * 1000)\n    public void schedule() {\n        sendAMail(&quot;Test&quot;, LocalDateTime.now());\n    }\n    \n    private void sendAMail(String subject, LocalDateTime date) {\n        mailer.sendHtmlEmail(subject, date);\n    }\n}\n</code></pre>\n<p>And finally the &quot;main&quot; method</p>\n<pre><code>@SpringBootApplication\n@Configuration\n@EnableScheduling\npublic class Webapp {\n    \n    public static void main(String[] args) {\n        SpringApplication.run(SosApplication.class, args);\n    }\n}\n</code></pre>\n<p>Using the information of <a href=\"https://stackoverflow.com/questions/27732460/how-to-register-conversion-service-for-springtemplateengine\">another question</a> did not really help. However the answer is in fact ten years old.</p>\n<p>The @EnableWebMvc annontation, which is refered to being a possible solution, is roughly seven years old (SpringFramework Web Servlet's most recent release was 2018) and not supported by Spring Boot.</p>\n<p>EDIT:\nI now found out, that I made a mistake in my template. Instead of ${date} I used ${{date}} (which only works for strings). With that fixed, it kind of works. However I may still want to change the format of the date from 2025-08-25T19:42:58.836682488 to something different. Therefore a ConversionService may be helpful or is there some other way?</p>\n",
+    "tags" : [ "java", "spring-boot", "datetime", "thymeleaf", "java-time" ],
+    "owner" : {
+      "account_id" : 12405064,
+      "reputation" : 133,
+      "user_id" : 9040433,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/7083395cfda3c16ddc8be94ca94a5308?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "dietzi96",
+      "link" : "https://stackoverflow.com/users/9040433/dietzi96"
+    },
+    "is_answered" : false,
+    "view_count" : 79,
+    "answer_count" : 0,
+    "score" : 2,
+    "last_activity_date" : 1756143912,
+    "creation_date" : 1756133650,
+    "link" : "https://stackoverflow.com/questions/79745904/how-to-implement-a-conversionservice-from-localdatetime-to-string-in-spring-boot",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140692247,
+    "post_id" : 79745904,
+    "body" : "Your template shouild do the formatting not a converter. Also your premise &quot;it should not be so difficult to parse a datetime&quot; is so wrong, if there is something difficult it is parsing dates, times and combinations of those. Add timezones and you are in for a treat. So add the formatting to the template not in a conversion service.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126800,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1756187150,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140691289,
+    "post_id" : 79745904,
+    "body" : "After reading the documention [1], #temporals is a good solution. But there is the (constructed) edge case where there are many dates in a template. There a ConversionService may be another option. [1] <a href=\"https://www.thymeleaf.org/doc/tutorials/3.1/usingthymeleaf.html#temporals-java.time\" rel=\"nofollow noreferrer\">thymeleaf.org/doc/tutorials/3.1/&hellip;</a>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 12405064,
+      "reputation" : 133,
+      "user_id" : 9040433,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/7083395cfda3c16ddc8be94ca94a5308?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "dietzi96",
+      "link" : "https://stackoverflow.com/users/9040433/dietzi96"
+    },
+    "creation_date" : 1756144013,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140690939,
+    "post_id" : 79745904,
+    "body" : "I don&#39;t see why you would need a converter in the first place. Use the the <code>#temporals</code> expression to format java.time classes. Not the spring conversion service.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126800,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1756134575,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

@@ -1,0 +1,101 @@
+{
+  "question" : {
+    "question_id" : 79740228,
+    "title" : "Creating a camel route that can describe the camel context",
+    "body" : "<p>Is there some sort of way to convert the camel context into a visual thing so people can see the Camel &quot;context&quot; in visual format?</p>\n<p>I thought maybe there would be something like &quot;graphviz&quot; or a JSON schema kind of thing maybe?</p>\n",
+    "tags" : [ "java", "apache-camel" ],
+    "owner" : {
+      "account_id" : 1203915,
+      "reputation" : 10731,
+      "user_id" : 1174024,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://i.sstatic.net/9zaVE.jpg?s=256",
+      "display_name" : "Nicholas DiPiazza",
+      "link" : "https://stackoverflow.com/users/1174024/nicholas-dipiazza"
+    },
+    "is_answered" : true,
+    "view_count" : 80,
+    "answer_count" : 2,
+    "score" : 0,
+    "last_activity_date" : 1758266198,
+    "creation_date" : 1755624477,
+    "link" : "https://stackoverflow.com/questions/79740228/creating-a-camel-route-that-can-describe-the-camel-context",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79740229,
+    "question_id" : 79740228,
+    "body" : "<p>Doesn't seem like there is anything built into the library that could really do this.</p>\n<p>So a simple camel route that can &quot;describe itself&quot; is really what I needed.</p>\n<p>I played with GraphViz and realized quickly that this is overkill.</p>\n<p>So I created a simple [html + css + javascript] generating widget that you can just run and dump into your camel build to describe your camel routes.</p>\n<p>Careful, if you have username/password copy pasted into your routes (which YOU SHOUDLN'T) this will print them out and expose them to people so yeah... use with caution.</p>\n<p><a href=\"https://i.sstatic.net/TLBWTyJj.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/TLBWTyJj.png\" alt=\"Shows the example\" /></a></p>\n<pre><code>import org.apache.camel.CamelContext;\nimport org.apache.camel.builder.RouteBuilder;\nimport org.apache.camel.model.ChoiceDefinition;\nimport org.apache.camel.model.FilterDefinition;\nimport org.apache.camel.model.LogDefinition;\nimport org.apache.camel.model.ModelCamelContext;\nimport org.apache.camel.model.OtherwiseDefinition;\nimport org.apache.camel.model.ProcessorDefinition;\nimport org.apache.camel.model.RouteDefinition;\nimport org.apache.camel.model.SetHeaderDefinition;\nimport org.apache.camel.model.SetPropertyDefinition;\nimport org.apache.camel.model.ToDefinition;\nimport org.apache.camel.model.WhenDefinition;\nimport org.apache.camel.model.language.ExpressionDefinition;\nimport org.springframework.stereotype.Component;\n\nimport java.util.List;\n\n@Component\npublic class RouteHtmlBuilder extends RouteBuilder {\n\n    private final CamelContext camelContext;\n\n    public RouteHtmlBuilder(CamelContext camelContext) {\n        this.camelContext = camelContext;\n    }\n\n    @Override\n    public void configure() {\n            from(&quot;servlet:/camel-routes-view&quot;)\n                .setHeader(&quot;Content-Type&quot;, constant(&quot;text/html&quot;))\n                .process(exchange -&gt; {\n                    String html = generateHtml();\n                    exchange.getMessage().setBody(html);\n                });\n    }\n\n    private String generateHtml() {\n        ModelCamelContext model = camelContext.adapt(ModelCamelContext.class);\n        List&lt;RouteDefinition&gt; routes = model.getRouteDefinitions();\n\n        StringBuilder html = new StringBuilder(&quot;&quot;&quot;\n                &lt;html lang=&quot;en&quot;&gt;\n                &lt;head&gt;\n                    &lt;meta charset=&quot;UTF-8&quot;&gt;\n                    &lt;title&gt;Camel Routes&lt;/title&gt;\n                    &lt;style&gt;\n                        body { font-family: Arial; margin: 20px; background: #f5f5f5; }\n                        .route { margin-bottom: 20px; padding: 10px; background: #fff; border-radius: 6px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }\n                        .step { margin: 5px 0; padding: 5px 10px; border-left: 3px solid #3498db; background: #ecf0f1; cursor: pointer; user-select: none; }\n                        .step.when { border-color: #27ae60; background: #e9f7ef; }\n                        .step.otherwise { border-color: #c0392b; background: #fdecea; }\n                        .step.choice { border-color: #f39c12; background: #fcf3e4; }\n                        .children { margin-left: 20px; display: none; }\n                        .toggle { font-weight: bold; margin-right: 6px; cursor: pointer; }\n                    &lt;/style&gt;\n                    &lt;script&gt;\n                        function toggleChildren(id) {\n                            const el = document.getElementById(id);\n                            if (el.style.display === 'none') {\n                                el.style.display = 'block';\n                                document.getElementById(id + '_toggle').textContent = '▼';\n                            } else {\n                                el.style.display = 'none';\n                                document.getElementById(id + '_toggle').textContent = '▶';\n                            }\n                        }\n                    &lt;/script&gt;\n                &lt;/head&gt;\n                &lt;body&gt;\n                &lt;h1&gt;Camel Routes&lt;/h1&gt;\n                &quot;&quot;&quot;);\n\n        for (RouteDefinition route : routes) {\n            html.append(&quot;&lt;div class='route'&gt;&quot;)\n                    .append(&quot;&lt;h2&gt;&quot;).append(route.getId()).append(&quot;&lt;/h2&gt;&quot;);\n\n            for (ProcessorDefinition&lt;?&gt; step : route.getOutputs()) {\n                renderStep(html, step, 0);\n            }\n\n            html.append(&quot;&lt;/div&gt;&quot;);\n        }\n\n        html.append(&quot;&lt;/body&gt;&lt;/html&gt;&quot;);\n        return html.toString();\n    }\n\n    private void renderStep(StringBuilder html, ProcessorDefinition&lt;?&gt; step, int level) {\n        if (step == null) return;\n\n        int indent = level * 20;\n        String cssClass = &quot;step&quot;;\n\n        if (step instanceof ChoiceDefinition) cssClass += &quot; choice&quot;;\n        else if (step instanceof WhenDefinition) cssClass += &quot; when&quot;;\n        else if (step instanceof OtherwiseDefinition) cssClass += &quot; otherwise&quot;;\n\n        List&lt;ProcessorDefinition&lt;?&gt;&gt; children = safeOutputs(step);\n\n        String stepId = &quot;children_&quot; + step.hashCode();\n        String label = step.getShortName();\n\n        // Add metadata for certain processors\n        if (step instanceof FilterDefinition) {\n            ExpressionDefinition expr = ((FilterDefinition) step).getExpression();\n            label += &quot;: &quot; + expressionToString(expr);\n        } else if (step instanceof LogDefinition) {\n            label += &quot;: &quot; + ((LogDefinition) step).getMessage();\n        } else if (step instanceof SetPropertyDefinition) {\n            label += &quot;: &quot; + step.getLabel() + &quot; = &quot;\n                    + expressionToString(((SetPropertyDefinition) step).getExpression());\n        } else if (step instanceof SetHeaderDefinition) {\n            label += &quot;: &quot; + step.getLabel() + &quot; = &quot;\n                    + expressionToString(((SetHeaderDefinition) step).getExpression());\n        } else if (step instanceof ToDefinition) {\n            label += &quot;: &quot; + ((ToDefinition) step).getUri();\n        } else if (step instanceof WhenDefinition) {\n            ExpressionDefinition expr = ((WhenDefinition) step).getExpression();\n            label = &quot;When: &quot; + expressionToString(expr);\n        } else if (step instanceof OtherwiseDefinition) {\n            label = &quot;Otherwise&quot;;\n        }\n        if (!children.isEmpty()) {\n            html.append(&quot;&lt;div class='&quot;)\n                    .append(cssClass)\n                    .append(&quot;' style='margin-left:&quot;)\n                    .append(indent).append(&quot;px;'&gt;&quot;)\n                    .append(&quot;&lt;span class='toggle' id='&quot;)\n                    .append(stepId).append(&quot;_toggle'&quot;)\n                    .append(&quot; onclick=\\&quot;toggleChildren('&quot;).append(stepId).append(&quot;')\\&quot;&gt;▶&lt;/span&gt;&quot;)\n                    .append(label)\n                    .append(&quot;&lt;/div&gt;&quot;);\n            html.append(&quot;&lt;div class='children' id='&quot;).append(stepId).append(&quot;'&gt;&quot;);\n            for (ProcessorDefinition&lt;?&gt; child : children) {\n                renderStep(html, child, level + 1);\n            }\n            html.append(&quot;&lt;/div&gt;&quot;);\n        } else {\n            html.append(&quot;&lt;div class='&quot;).append(cssClass).append(&quot;' style='margin-left:&quot;)\n                    .append(indent).append(&quot;px;'&gt;&quot;)\n                    .append(label)\n                    .append(&quot;&lt;/div&gt;&quot;);\n        }\n    }\n\n    private List&lt;ProcessorDefinition&lt;?&gt;&gt; safeOutputs(ProcessorDefinition&lt;?&gt; step) {\n        if (step.getOutputs() == null) return List.of();\n        return step.getOutputs();\n    }\n\n    private String expressionToString(ExpressionDefinition expr) {\n        if (expr == null) return &quot;&quot;;\n        try {\n            var method = expr.getClass().getMethod(&quot;getExpression&quot;);\n            Object value = method.invoke(expr);\n            if (value != null) return value.toString();\n        } catch (Exception e) {\n            // fallback to toString\n        }\n        return expr.toString();\n    }\n}\n</code></pre>\n",
+    "score" : 2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 1203915,
+      "reputation" : 10731,
+      "user_id" : 1174024,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://i.sstatic.net/9zaVE.jpg?s=256",
+      "display_name" : "Nicholas DiPiazza",
+      "link" : "https://stackoverflow.com/users/1174024/nicholas-dipiazza"
+    },
+    "creation_date" : 1755624477,
+    "last_activity_date" : 1755624477,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79769223,
+    "question_id" : 79740228,
+    "body" : "<p><a href=\"https://hawt.io/\" rel=\"nofollow noreferrer\">https://hawt.io/</a> should be what you're looking for. It visualize all the characteristics of a Camel application and it works both on prem and on Kubernetes.</p>\n",
+    "score" : 2,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 15208882,
+      "reputation" : 462,
+      "user_id" : 10974363,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2ec60119c6d31bb147ffde7864d3bc1e?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Squake",
+      "link" : "https://stackoverflow.com/users/10974363/squake"
+    },
+    "creation_date" : 1758266198,
+    "last_activity_date" : 1758266198,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79769223" : [ {
+      "comment_id" : 140751291,
+      "post_id" : 79769223,
+      "body" : "@NicholasDiPiazza Yes, it&#39;s open source and the project is contributed by Camel contributors as well.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 15208882,
+        "reputation" : 462,
+        "user_id" : 10974363,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/2ec60119c6d31bb147ffde7864d3bc1e?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Squake",
+        "link" : "https://stackoverflow.com/users/10974363/squake"
+      },
+      "creation_date" : 1758522839,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140749023,
+      "post_id" : 79769223,
+      "body" : "Is there a cost? Looked open source",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1203915,
+        "reputation" : 10731,
+        "user_id" : 1174024,
+        "user_type" : "registered",
+        "accept_rate" : 85,
+        "profile_image" : "https://i.sstatic.net/9zaVE.jpg?s=256",
+        "display_name" : "Nicholas DiPiazza",
+        "link" : "https://stackoverflow.com/users/1174024/nicholas-dipiazza"
+      },
+      "creation_date" : 1758371721,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

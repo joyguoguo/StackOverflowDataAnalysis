@@ -1,0 +1,97 @@
+{
+  "question" : {
+    "question_id" : 79647745,
+    "title" : "Expired JWT accepted in Spring Boot test",
+    "body" : "<p>Doesn't Spring check the expiration date of a JWT token, at least in tests?</p>\n<p>If so, do I have to do it manually in my code, or is there a way to make Spring do it itself?</p>\n<pre class=\"lang-xml prettyprint-override\"><code>    &lt;parent&gt;\n        &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;\n        &lt;artifactId&gt;spring-boot-starter-parent&lt;/artifactId&gt;\n        &lt;version&gt;3.4.5&lt;/version&gt;\n        &lt;relativePath/&gt; &lt;!-- lookup parent from repository --&gt;\n    &lt;/parent&gt;\n\n&lt;!-- ... --&gt;\n\n        &lt;dependency&gt;\n            &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;\n            &lt;artifactId&gt;spring-boot-starter-web&lt;/artifactId&gt;\n        &lt;/dependency&gt;\n        &lt;dependency&gt;\n            &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;\n            &lt;artifactId&gt;spring-boot-starter-oauth2-resource-server&lt;/artifactId&gt;\n        &lt;/dependency&gt;\n        &lt;dependency&gt;\n            &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;\n            &lt;artifactId&gt;spring-boot-starter-test&lt;/artifactId&gt;\n            &lt;scope&gt;test&lt;/scope&gt;\n        &lt;/dependency&gt;\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>import org.junit.jupiter.api.Test;\nimport org.springframework.beans.factory.annotation.Autowired;\nimport org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;\nimport org.springframework.boot.test.context.SpringBootTest;\nimport org.springframework.http.MediaType;\nimport org.springframework.test.web.servlet.MockMvc;\n\nimport java.time.Instant;\nimport java.time.temporal.ChronoUnit;\n\nimport static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;\nimport static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;\nimport static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;\n\n@AutoConfigureMockMvc\n@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)\nclass TransferControllerTest {\n\n    @Autowired\n    MockMvc mockMvc;\n\n    @Test\n    void testUnauthorized() throws Exception {\n        mockMvc\n                .perform(patch(&quot;/api/money-transfer&quot;)\n                        .with(jwt().jwt(jwt -&gt; jwt\n                                .claim(&quot;userid&quot;, 15L)\n                                .expiresAt(Instant.now().minus(1, ChronoUnit.DAYS))))\n                .andExpect(status().isUnauthorized());\n    }\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>package com.example.pixel_money_transfer_api.controller;\n\nimport org.springframework.http.ResponseEntity;\nimport org.springframework.web.bind.annotation.PatchMapping;\nimport org.springframework.web.bind.annotation.RequestMapping;\nimport org.springframework.web.bind.annotation.RestController;\n\n@RestController\n@RequestMapping(&quot;/api/money-transfer&quot;)\npublic class TransferController {\n\n    @PatchMapping\n    public ResponseEntity&lt;Void&gt; performTransfer() {\n        return ResponseEntity.ok().build(); // gutted every bit of logic\n    }\n}\n</code></pre>\n<pre><code>java.lang.AssertionError: Status expected:&lt;401&gt; but was:&lt;200&gt;\nExpected :401\nActual   :200\n</code></pre>\n",
+    "tags" : [ "java", "spring", "spring-mvc" ],
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2681,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "is_answered" : true,
+    "view_count" : 81,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1749062044,
+    "creation_date" : 1748796712,
+    "link" : "https://stackoverflow.com/questions/79647745/expired-jwt-accepted-in-spring-boot-test",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79647775,
+    "question_id" : 79647745,
+    "body" : "<p>The test framework does not build or use a JWT.</p>\n<p>What the <code>jwt()</code> request post-processor for <code>MockMvc</code> does is build a <code>JwtAuthenticationToken</code> instance and populate the security context with it, as if a JWT was decoded &amp; validated, and the <code>JwtAuthenticarionConverter</code> called with the result.</p>\n<p>The <code>@WithJwt</code> from <a href=\"https://github.com/ch4mpy/spring-addons/tree/master/spring-addons-OAuth2-test\" rel=\"nofollow noreferrer\"><code>spring-addons-oauth2-tests</code></a>, the process starts one step earlier: the authentication converter in the application context is used (with a fall-back to <code>JwtAuthenticarionConverter</code> if none is exposed as a <code>@Bean</code>). This allows to cover this converter logic during tests (it is in charge of extracting username and authorities) and to have the right type of <code>Authentication</code> in the test security context if the converter returns something else than a <code>JwtAuthenticationToken</code>.</p>\n<p>In any case to use real JWTs, a test framework would need:</p>\n<ul>\n<li>a private key, to sign it</li>\n<li>a mean to expose the JWKs to the JWT decoder so that it can validate the signature with the public key matching the private key</li>\n</ul>\n<p>I don't know a mean to achieve that without using a real authorization server, which goes against the mean of unit tests (and by the way, with <code>MockMvc</code>, you're testing a controller endpoint, not a JWT decoder).</p>\n<p>I wrote a complete article on Baeldung about testing access control in Spring applications secured with OAuth2: <a href=\"https://www.baeldung.com/spring-oauth-testing-access-control\" rel=\"nofollow noreferrer\">https://www.baeldung.com/spring-oauth-testing-access-control</a></p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 308139,
+      "reputation" : 13879,
+      "user_id" : 619830,
+      "user_type" : "registered",
+      "accept_rate" : 75,
+      "profile_image" : "https://www.gravatar.com/avatar/f4d00b0a82e9307b1d68b29867fee4e5?s=256&d=identicon&r=PG",
+      "display_name" : "ch4mp",
+      "link" : "https://stackoverflow.com/users/619830/ch4mp"
+    },
+    "creation_date" : 1748799097,
+    "last_activity_date" : 1749062044,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140477281,
+    "post_id" : 79647745,
+    "body" : "@Ga&#235;lJ because it&#39;s <code>@SpringBootTest</code>. It bootstraps the entire context, including security. I expected those security filters to be present",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2681,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "creation_date" : 1748797627,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140477272,
+    "post_id" : 79647745,
+    "body" : "What makes you think your controller is protected? From what you shared, you could be omitting the JWT token entirely and it&#39;d still work (I mean the response would be 200).",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7034556,
+      "reputation" : 15907,
+      "user_id" : 5389127,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/391c01e15f62cee096b758c4c2815c2c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Ga&#235;l J",
+      "link" : "https://stackoverflow.com/users/5389127/ga%c3%abl-j"
+    },
+    "creation_date" : 1748797124,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79647775" : [ {
+      "comment_id" : 140477415,
+      "post_id" : 79647775,
+      "body" : "Thank you, I get what you&#39;re saying. <i>&quot;which goes against the mean of unit tests&quot;</i> It ceased to be a unit test the moment I got Spring involved. It&#39;s now waaaay beyond that point",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10187542,
+        "reputation" : 2681,
+        "user_id" : 20692967,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+        "display_name" : "Sergey Zolotarev",
+        "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+      },
+      "creation_date" : 1748802091,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

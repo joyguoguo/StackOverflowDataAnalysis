@@ -1,0 +1,81 @@
+{
+  "question" : {
+    "question_id" : 79687121,
+    "title" : "How to define Jackson `ObjectMapper` bean based on Spring Boot&#39;s auto configuration?",
+    "body" : "<p>I want to define an additional Jackson <code>ObjectMapper</code> bean that I'm going to use for just a part of my application. I want to base this bean on Spring Boot's auto configured <code>ObjectMapper</code> bean by calling <code>.copy()</code> on it.</p>\n<p>To give you a basic idea of what I'm trying to do:</p>\n<pre class=\"lang-kotlin prettyprint-override\"><code>@Configuration\nclass WebConfig {\n    @Bean\n    fun customObjectMapper(jacksonObjectMapper: ObjectMapper): ObjectMapper = jacksonObjectMapper.copy()\n        // and other customisations\n}\n</code></pre>\n<p>But because Spring Boot's <code>ObjectMapper</code> bean is annotated with <code>@ConditionalOnMissingBean</code>, the various methods I've tried did not work. I've tried adding <code>@DependsOn(&quot;jacksonObjectMapper&quot;)</code>, I've tried adding <code>@ConditionalOnBean</code>.</p>\n<p>Quoting from Spring Boot's <a href=\"https://github.com/spring-projects/spring-boot/blob/5db3cacde833e9e2652a61f36570c017aad4a789/spring-boot-project/spring-boot-jackson/src/main/java/org/springframework/boot/jackson/autoconfigure/JacksonAutoConfiguration.java#L129-L134\" rel=\"nofollow noreferrer\">source code</a>:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Bean\n@Primary\n@ConditionalOnMissingBean\nObjectMapper jacksonObjectMapper(Jackson2ObjectMapperBuilder builder) {\n    return builder.createXmlMapper(false).build();\n}\n</code></pre>\n<p>I could just depend my bean on <code>Jackson2ObjectMapperBuilder</code>, but I don't know how stable that method will be as I upgrade my Spring Boot version. I figured the option most resilient to upgrades is to depend directly on the <code>ObjectMapper</code> type.</p>\n<p>How can I achieve this?</p>\n",
+    "tags" : [ "java", "spring", "spring-boot", "kotlin" ],
+    "owner" : {
+      "account_id" : 15785838,
+      "reputation" : 119,
+      "user_id" : 11390656,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/67ae9c492635a9a6dbb60b81de84fcbd?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "tearfur",
+      "link" : "https://stackoverflow.com/users/11390656/tearfur"
+    },
+    "is_answered" : true,
+    "view_count" : 440,
+    "answer_count" : 2,
+    "score" : 2,
+    "last_activity_date" : 1751458105,
+    "creation_date" : 1751446148,
+    "link" : "https://stackoverflow.com/questions/79687121/how-to-define-jackson-objectmapper-bean-based-on-spring-boots-auto-configurat",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79687260,
+    "question_id" : 79687121,
+    "body" : "<p><code>Jackson2ObjectMapperBuilder</code> is stable, because the default <code>ObjectMapper</code> is directly built from it. It should be fine to use it to build your own.</p>\n<p>That said, given that the default <code>ObjectMapper</code> is annotated with both <code>ConditionalOnMissingBean</code> and <code>Primary</code>, something tells me it should also be possible to have multiple <code>ObjectMapper</code> beans in the spring context, otherwise, the <code>Primary</code> annotation doesn’t make any sense. You may want to assign your <code>WebConfig</code> a lower priority than the auto-configuration class that defines the spring default <code>ObjectMapper</code>, so, that it is instantiated before your config. The easiest way to debug the start up sequence is simply to put breakpoints in both classes and restart the app from your IDE. If that works, any <code>ObjectMapper</code> dependency without a qualifier will get the spring default, and yours can only be used with an explicit qualifier or by name.</p>\n",
+    "score" : 3,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 446597,
+      "reputation" : 25249,
+      "user_id" : 839733,
+      "user_type" : "registered",
+      "accept_rate" : 69,
+      "profile_image" : "https://i.sstatic.net/2s6lO.jpg?s=256",
+      "display_name" : "Abhijit Sarkar",
+      "link" : "https://stackoverflow.com/users/839733/abhijit-sarkar"
+    },
+    "creation_date" : 1751452191,
+    "last_activity_date" : 1751452191,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79687403,
+    "question_id" : 79687121,
+    "body" : "<p>Alternatively, you could configure an ObjectFactory that you only have to configure once. Additionally you could, if desired, also add caching to a custom factory.</p>\n<p>By using the factory, you end up depending fully on whatever Spring creates without directly having to invoke the same methods, which is I believe what was desired in the first place.</p>\n<pre class=\"lang-java prettyprint-override\"><code>    @Bean\n    public ObjectFactory&lt;ObjectMapper&gt; objectMapper(@Qualifier(&quot;jacksonObjectMapper&quot;) ObjectMapper objectMapper) {\n        return () -&gt; objectMapper.copy()\n                .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false)\n                .registerModule(new JavaTimeModule());\n    }\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>public class MyBean {    \n    private final ObjectMapper objectMapper;\n\n    public MyBean(ObjectFactory&lt;ObjectMapper&gt; objectMapper) {\n        this.objectMapper = objectMapper.getObject();\n    }\n}\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 10164387,
+      "reputation" : 5204,
+      "user_id" : 7506820,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/JcASm.jpg?s=256",
+      "display_name" : "Nico Van Belle",
+      "link" : "https://stackoverflow.com/users/7506820/nico-van-belle"
+    },
+    "creation_date" : 1751458105,
+    "last_activity_date" : 1751458105,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140558133,
+    "post_id" : 79687121,
+    "body" : "Does it really <i>have</i> to be a Spring Bean? Why not make it a static field of a Java class (or a top-level Kotlin val)?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 19118721,
+      "reputation" : 12469,
+      "user_id" : 13963086,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/9df2c3c4c87d8050b8fd6a59c88c7133?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "k314159",
+      "link" : "https://stackoverflow.com/users/13963086/k314159"
+    },
+    "creation_date" : 1751451012,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

@@ -1,0 +1,44 @@
+{
+  "question" : {
+    "question_id" : 79557121,
+    "title" : "How to queue and balance synchronous requests between single-threaded Eureka client instances?",
+    "body" : "<p>I have an Eureka server and multiple clients subscribed to that server.\nThe load balancer service has to redirect external calls to the other customer service.</p>\n<p>I want to redirect the customers calls to the service that is not doing anything because the customer services can only process one request at a time.</p>\n<p>For example I have three service A and I have 20 synchronous calls to those services, what should be the strategy to queue the requests and wait for those to be executed? The execution time for each call is about 6 seconds.</p>\n<p>The goal is to queue the requests and dispatch them only when an instance becomes available, so that no more then two requests hit the same instance simultaneously. what can I do?</p>\n<p>I am using rest template to make the requests and the services that I am calling are cog containers.</p>\n<p>Here the code of\n'''\n@Component\npublic class LoadBalancerComponent {</p>\n<pre><code>private final Logger log = LoggerFactory.getLogger(LoadBalancerComponent.class);\n\nprivate final DiscoveryClient discoveryClient;\nprivate final RestTemplate restTemplate;\n\nprivate static final String STATUS = &quot;READY&quot;;\n\n// Track active requests per instance\nprivate final Map&lt;String, AtomicInteger&gt; instanceLoadMap = new ConcurrentHashMap&lt;&gt;();\n\n// Queue for pending requests\nprivate final BlockingQueue&lt;QueuedRequest&lt;?&gt;&gt; requestQueue = new LinkedBlockingQueue&lt;&gt;();\n\n// Executor service for retrying queued requests\nprivate final ExecutorService requestExecutor = Executors.newFixedThreadPool(10);\n\npublic LoadBalancerComponent(DiscoveryClient discoveryClient, RestTemplate restTemplate) {\n    this.discoveryClient = discoveryClient;\n    this.restTemplate = restTemplate;\n    startQueueProcessor();\n}\n\npublic synchronized ServiceInstance getInstance(String serviceId) {\n    List&lt;ServiceInstance&gt; instances = discoveryClient.getInstances(serviceId);\n    if (instances == null || instances.isEmpty()) {\n        return null; // No instances available\n    }\n\n    // Filter out only healthy instances\n    List&lt;ServiceInstance&gt; healthyInstances = new ArrayList&lt;&gt;();\n    for (ServiceInstance instance : instances) {\n        if (isInstanceHealthy(instance)) {\n            healthyInstances.add(instance);\n        }\n    }\n\n    if (healthyInstances.isEmpty()) {\n        return null; // No healthy instances found\n    }\n\n    // Choose the instance with the least active requests\n    ServiceInstance bestInstance = null;\n    int minLoad = 1;\n\n    for (ServiceInstance instance : healthyInstances) {\n        String instanceId = instance.getUri().toString();\n        int currentLoad = instanceLoadMap.getOrDefault(instanceId, new AtomicInteger(0)).get();\n\n        if (currentLoad &lt; minLoad) {\n            minLoad = currentLoad;\n            bestInstance = instance;\n        }\n    }\n\n    if (bestInstance != null) {\n        incrementRequestCount(bestInstance);\n    }\n\n    return bestInstance;\n}\n\nprivate boolean isInstanceHealthy(ServiceInstance instance) {\n    try {\n        String healthUrl = instance.getUri().toString() + &quot;/health-check&quot;;\n        Map&lt;String, Object&gt; response = restTemplate.getForObject(healthUrl, Map.class);\n        return response != null &amp;&amp; STATUS.equalsIgnoreCase(response.get(&quot;status&quot;).toString());\n    } catch (Exception e) {\n        return false;\n    }\n}\n\nprivate void incrementRequestCount(ServiceInstance instance) {\n    instanceLoadMap.computeIfAbsent(instance.getUri().toString(), key -&gt; new AtomicInteger(0)).incrementAndGet();\n}\n\npublic void decrementRequestCount(ServiceInstance instance) {\n    instanceLoadMap.computeIfPresent(instance.getUri().toString(), (key, count) -&gt; {\n        count.decrementAndGet();\n        return count;\n    });\n}\n\npublic &lt;T&gt; CompletableFuture&lt;String&gt; enqueueRequest(QueuedRequest&lt;T&gt; request, long timeoutMillis) {\n    requestQueue.offer(request);\n    return request.getFutureResponse().orTimeout(timeoutMillis, TimeUnit.MILLISECONDS);\n}\n\nprivate void startQueueProcessor() {\n    Executors.newSingleThreadExecutor().submit(() -&gt; {\n        while (true) {\n            try {\n                QueuedRequest&lt;?&gt; request = requestQueue.take(); // Blocks until a request is available\n                requestExecutor.submit(() -&gt; processQueuedRequest(request));\n            } catch (Exception e) {\n                log.error(e.getMessage());\n            }\n        }\n    });\n}\nprivate void processQueuedRequest(QueuedRequest&lt;?&gt; request) {\n    ServiceInstance instance;\n    do {\n        instance = getInstance(request.getServiceId());\n        if (instance != null) {\n            request.process(instance);\n            return;\n        }\n\n        try {\n            Thread.sleep(500); // Avoid busy-waiting\n        } catch (InterruptedException ignored) {}\n\n    } while (!request.getFutureResponse().isDone()); // Keep checking until the request times out\n}\n</code></pre>\n<p>}\n'''</p>\n",
+    "tags" : [ "java", "spring-boot", "microservices", "load-balancing", "netflix-eureka" ],
+    "owner" : {
+      "account_id" : 29957944,
+      "reputation" : 3,
+      "user_id" : 22958402,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/ACg8ocJdx7zMMiwKmHlo9Gu7dksFLZCUxDamiTJUVEKKj2BpN_0j=k-s256",
+      "display_name" : "Andrea Manzi",
+      "link" : "https://stackoverflow.com/users/22958402/andrea-manzi"
+    },
+    "is_answered" : false,
+    "view_count" : 60,
+    "answer_count" : 0,
+    "score" : 0,
+    "last_activity_date" : 1744225235,
+    "creation_date" : 1743864185,
+    "link" : "https://stackoverflow.com/questions/79557121/how-to-queue-and-balance-synchronous-requests-between-single-threaded-eureka-cli",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140302711,
+    "post_id" : 79557121,
+    "body" : "Please provide enough code so others can better understand or reproduce the problem.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : -1,
+      "reputation" : 1,
+      "user_id" : -1,
+      "user_type" : "moderator",
+      "profile_image" : "https://www.gravatar.com/avatar/a007be5a61f6aa8f3e85ae2fc18dd66e?s=256&d=identicon&r=PG",
+      "display_name" : "Community",
+      "link" : "https://stackoverflow.com/users/-1/community"
+    },
+    "creation_date" : 1743868007,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

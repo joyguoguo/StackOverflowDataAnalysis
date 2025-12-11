@@ -1,0 +1,274 @@
+{
+  "question" : {
+    "question_id" : 79622451,
+    "title" : "How to do Java multithreading properly",
+    "body" : "<p>As shown in the below code snippet, there is a station and there are two trains. Station is a thread, and trains are two different threads.Station thread adds people to the station and train threads remove people from the station.</p>\n<pre class=\"lang-java prettyprint-override\"><code>ThreadGroup group = new ThreadGroup(&quot;MyThreadGroup&quot;);\nMainStation mainStation = new MainStation();\nThread stationThread= new Thread(group,mainStation);\nTrainA trainA = new TrainA(mainStation);\nTrainB trainB=new TrainB(mainStation);\nThread trainAThread=new Thread(group,trainA);\nThread trainBThread=new Thread(group,trainB);\n\nstationThread.setDaemon(true);\n\nExecutorService executorService= Executors.newFixedThreadPool(3);\nexecutorService.submit(stationThread);\nexecutorService.submit(trainAThread);\nexecutorService.submit(trainBThread);\nexecutorService.shutdown();\n</code></pre>\n<p>When I run the program, only one train thread executes with the station thread and not both the train threads.</p>\n<pre class=\"lang-none prettyprint-override\"><code>Main stattion\nTrain a running\nTrain B running\nTrainA Removing people from station value--0\nTrainB Removing people from station value--0\nStation adding people to queue value--0 size--1\nTrainA Queue size after removing --0\nTrainA Removing people from station value--1\nStation adding people to queue value--1 size--0\nTrainA Queue size after removing --0\nStation adding people to queue value--2 size--1\nTrainA Removing people from station value--2\nTrainA Queue size after removing --0\nStation adding people to queue value--3 size--1\nTrainA Removing people from station value--3\nTrainA Queue size after removing --0\nStation adding people to queue value--4 size--1\nTrainA Removing people from station value--4\nTrainA Queue size after removing --0\nStation adding people to queue value--5 size--1\nTrainA Removing people from station value--5\nTrainA Queue size after removing --0\nStation adding people to queue value--6 size--1\nTrainA Removing people from station value--6\nTrainA Queue size after removing --0\nStation adding people to queue value--7 size--1\nTrainA Removing people from station value--7\nTrainA Queue size after removing --0\nStation adding people to queue value--8 size--1\nTrainA Removing people from station value--8\nTrainA Queue size after removing --0\nStation adding people to queue value--9 size--1\nTrainA Removing people from station value--9\nTrainA Queue size after removing --0\n</code></pre>\n<p>If you observe the above log, only train A is removing people from station and not train B.</p>\n<p>Station</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class MainStation implements Runnable{\n\n    private volatile ConcurrentLinkedDeque queue=new ConcurrentLinkedDeque();\n    private final static People people=new People(10);\n\n    @Override\n    public void run() {\n        synchronized(this){\n            for (int i = 0; i &lt; people.getCount(); i++) {\n                //System.out.println(&quot;Station adding people to queue &quot;+i);\n                this.queue.add(i);\n                System.out.println(&quot;Station adding people to queue value--&quot; + i + &quot; size--&quot; + this.queue.size());\n                try {\n                    Thread.sleep(1000);\n                } catch (InterruptedException e) {\n                    throw new RuntimeException(e);\n                }\n            }\n        }\n\n    }\n\n    public ConcurrentLinkedDeque getQueue() {\n        return queue;\n    }\n\n}\n</code></pre>\n<p>Trains A and B</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class TrainA  implements Runnable{\n\n    private MainStation station=null;\n\n    public TrainA(MainStation station){\n        this.station=station;\n    }\n\n    @Override\n    public void run() {\n        System.out.println(&quot;Train a running&quot;);\n        while (true) {\n            for (int i = 0; i &lt; station.getQueue().size(); i++) {\n                System.out.println(&quot;TrainA Removing people from station value--&quot; + station.getQueue().getFirst());\n                if(station!=null&amp;&amp;station.getQueue()!=null)station.getQueue().removeFirst();\n                System.out.println(&quot;TrainA Queue size after removing --&quot; + station.getQueue().size());\n                try {\n                    Thread.sleep(1000);\n                } catch (InterruptedException e) {\n                    throw new RuntimeException(e);\n                }\n            }\n        }\n    }\n\n}\n</code></pre>\n",
+    "tags" : [ "java", "multithreading" ],
+    "owner" : {
+      "account_id" : 36227722,
+      "reputation" : 33,
+      "user_id" : 27631608,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2d671ce89fc6333e12f1e5b4e21dd91d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Music",
+      "link" : "https://stackoverflow.com/users/27631608/music"
+    },
+    "is_answered" : true,
+    "view_count" : 117,
+    "answer_count" : 2,
+    "score" : 0,
+    "last_activity_date" : 1747302069,
+    "creation_date" : 1747268586,
+    "link" : "https://stackoverflow.com/questions/79622451/how-to-do-java-multithreading-properly",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79622615,
+    "question_id" : 79622451,
+    "body" : "<p>The issue arises because both TrainA and TrainB are independently looping over the size of a shared <code>ConcurrentLinkedDeque</code>, and since <code>TrainA</code> frequently gets scheduled first, it removes all elements from the queue before <code>TrainB</code> can access them. This results in <code>TrainB</code> repeatedly seeing an empty queue and doing nothing. Additionally, the use of a <code>for</code> loop with <code>station.getQueue().size()</code> is not thread-safe in a concurrent context, as the queue size can change dynamically during iteration. To resolve this, you should consider replacing the <code>ConcurrentLinkedDeque</code> with a thread-safe <code>BlockingQueue</code> such as <code>LinkedBlockingQueue</code>, which naturally handles concurrent producer-consumer scenarios. This ensures that both trains block and wait when the queue is empty, leading to more balanced consumption of passengers by both TrainA and TrainB.</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "user_type" : "does_not_exist",
+      "display_name" : "user30521622"
+    },
+    "creation_date" : 1747282907,
+    "last_activity_date" : 1747282907,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79622751,
+    "question_id" : 79622451,
+    "body" : "<p>The problem is that your code in <code>TrainA</code> and <code>TrainB</code> is not thread safe.</p>\n<p>Two threads can detect that the queue is not empty (A) and print out the first element (B). But after that only one thread can remove that element from the queue (C) - the other one sees an empty queue, <code>station.getQueue().removeFirst();</code> throw a <code>NoSuchElementException</code> and that thread gets killed.</p>\n<pre><code>    for (int i = 0; i &lt; station.getQueue().size(); i++) { // A\n        System.out.println(&quot;TrainA Removing people from station value--&quot; + station.getQueue().getFirst());  // B\n        station.getQueue().removeFirst(); // C\n</code></pre>\n<p>That this happens is visible in the output you provide (which happens when both threads reach line B):</p>\n<blockquote>\n<pre><code>TrainA Removing people from station value--0\nTrainB Removing people from station value--0\n</code></pre>\n</blockquote>\n<p>--\nHow can you improve your code?</p>\n<p>That depends on your goal.</p>\n<ul>\n<li>If your trains should pick up passengers as passengers arrive you could use a <code>BlockingQueue</code> implementation like <code>ArrayBlockingQueue</code> and its <code>take()</code> method to wait until a passenger arrives and process that passenger.</li>\n<li>If a train should block a station for some amount of time, collect all the passengers arriving during that time and then unblock the station you would need some locking mechanism (like a <code>Semaphore</code> or a <code>ReentrantLock</code>) that lets you lock the station for a specific train.</li>\n</ul>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 7423601,
+      "reputation" : 21950,
+      "user_id" : 5646962,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/950788cd150c2e596944181dfd8421af?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Thomas Kl&#228;ger",
+      "link" : "https://stackoverflow.com/users/5646962/thomas-kl%c3%a4ger"
+    },
+    "creation_date" : 1747290940,
+    "last_activity_date" : 1747295046,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140428088,
+    "post_id" : 79622451,
+    "body" : "The proposed duplicate (<a href=\"https://stackoverflow.com/questions/10663920/calling-thread-sleep-from-synchronized-context-in-java\" title=\"calling thread sleep from synchronized context in java\">stackoverflow.com/questions/10663920/&hellip;</a>) is irrelevant to this question. Since only one thread is synchronized there is no deadlock possible.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7423601,
+      "reputation" : 21950,
+      "user_id" : 5646962,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/950788cd150c2e596944181dfd8421af?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Thomas Kl&#228;ger",
+      "link" : "https://stackoverflow.com/users/5646962/thomas-kl%c3%a4ger"
+    },
+    "creation_date" : 1747302134,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140427228,
+    "post_id" : 79622451,
+    "body" : "@Music, Using one class for both trains is a smart thing to do because the two trains are supposed to behave in almost the same way. Almost-but-not-quite! The class needs a member variable that is set to <code>&quot;A&quot;</code> in one instance, and set to <code>&quot;B&quot;</code> in the other, and the class&#39;s print calls need to use that variable so that each train can correctly print its own identity.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 422870,
+      "reputation" : 27582,
+      "user_id" : 801894,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/67f2ccd17aa6fd622152ad88fc2ae784?s=256&d=identicon&r=PG",
+      "display_name" : "Solomon Slow",
+      "link" : "https://stackoverflow.com/users/801894/solomon-slow"
+    },
+    "creation_date" : 1747278944,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140427219,
+    "post_id" : 79622451,
+    "body" : "@Robert, Your comment should be an <i>answer.</i>",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 422870,
+      "reputation" : 27582,
+      "user_id" : 801894,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/67f2ccd17aa6fd622152ad88fc2ae784?s=256&d=identicon&r=PG",
+      "display_name" : "Solomon Slow",
+      "link" : "https://stackoverflow.com/users/801894/solomon-slow"
+    },
+    "creation_date" : 1747278378,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140427168,
+    "post_id" : 79622451,
+    "body" : "Although <code>ConcurrentLinkedDeque</code> is thread safe, that designation is only about individual methods.  The combination of method invocations on the dequeue contains at least two separate races.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 2792262,
+      "reputation" : 190832,
+      "user_id" : 2402272,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+      "display_name" : "John Bollinger",
+      "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+    },
+    "creation_date" : 1747276074,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140427153,
+    "post_id" : 79622451,
+    "body" : "The <code>synchronized(this)</code> block in <code>MainStation.run()</code> does not do anything useful for you in your particular usage (nor anything harmful) because only one thread ever synchronizes on the monitor of the single <code>MainStation</code> instance used by the program.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 2792262,
+      "reputation" : 190832,
+      "user_id" : 2402272,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+      "display_name" : "John Bollinger",
+      "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+    },
+    "creation_date" : 1747275684,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140427120,
+    "post_id" : 79622451,
+    "body" : "By the way, this looks like a <i>producer-consumer problem / pattern</i>. You might look for tutorials on that subject.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 6606677,
+      "reputation" : 1251,
+      "user_id" : 5103317,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/c81d92487b054d7290b4f36562c0ee02?s=256&d=identicon&r=PG",
+      "display_name" : "Old Dog Programmer",
+      "link" : "https://stackoverflow.com/users/5103317/old-dog-programmer"
+    },
+    "creation_date" : 1747274086,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140427060,
+    "post_id" : 79622451,
+    "body" : "(FWIW: <code>ThreadGroup</code> is rarely used.  Most of the use-cases involved managing groups of threads, but they relied on <code>Thread</code> functions like suspending and resuming threads ... which were Deprecated way back in Java 1.2.)",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 47283,
+      "reputation" : 723428,
+      "user_id" : 139985,
+      "user_type" : "registered",
+      "accept_rate" : 69,
+      "profile_image" : "https://www.gravatar.com/avatar/147c5a9cc1feec049c50da791ac7d144?s=256&d=identicon&r=PG",
+      "display_name" : "Stephen C",
+      "link" : "https://stackoverflow.com/users/139985/stephen-c"
+    },
+    "creation_date" : 1747270663,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140427051,
+    "post_id" : 79622451,
+    "body" : "... and <b>read</b> the latter :-)",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 47283,
+      "reputation" : 723428,
+      "user_id" : 139985,
+      "user_type" : "registered",
+      "accept_rate" : 69,
+      "profile_image" : "https://www.gravatar.com/avatar/147c5a9cc1feec049c50da791ac7d144?s=256&d=identicon&r=PG",
+      "display_name" : "Stephen C",
+      "link" : "https://stackoverflow.com/users/139985/stephen-c"
+    },
+    "creation_date" : 1747270420,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140427048,
+    "post_id" : 79622451,
+    "body" : "To answer this question: <i>&quot;How to do Java Multithreading properly&quot;</i> Read the Java language specification <a href=\"https://docs.oracle.com/javase/specs/jls/se24/html/jls-17.html\" rel=\"nofollow noreferrer\">Chapter 17 Threads and Locks,</a> and get a copy of Brian Goetz&#39;s book <i>Java Concurrency in Practice.</i>",
+    "score" : 4,
+    "owner" : {
+      "account_id" : 2709823,
+      "reputation" : 11069,
+      "user_id" : 2338547,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/QT3fG.png?s=256",
+      "display_name" : "markspace",
+      "link" : "https://stackoverflow.com/users/2338547/markspace"
+    },
+    "creation_date" : 1747270369,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140427045,
+    "post_id" : 79622451,
+    "body" : "So ... in practice ... your code will be running on the threads of the executor service.  The thread objects you are creating in your main code are not going to be started.  They are just used as <code>Runnable</code> instances ... that call the real runnables.  And the thread groups have no effect.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 47283,
+      "reputation" : 723428,
+      "user_id" : 139985,
+      "user_type" : "registered",
+      "accept_rate" : 69,
+      "profile_image" : "https://www.gravatar.com/avatar/147c5a9cc1feec049c50da791ac7d144?s=256&d=identicon&r=PG",
+      "display_name" : "Stephen C",
+      "link" : "https://stackoverflow.com/users/139985/stephen-c"
+    },
+    "creation_date" : 1747270290,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140427041,
+    "post_id" : 79622451,
+    "body" : "You also call <code>synchronized(this)</code> and then latter call <code>Thread.sleep()</code>.  Sleep() does not release the monitor, so that code stays locked until your rather long loop finishes.  You might try looking for some multithreading exercises online, they might be better organized so that you don&#39;t run into odd problems like this. <a href=\"https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/lang/Thread.html#sleep(long,int)\" rel=\"nofollow noreferrer\">docs.oracle.com/en/java/javase/21/docs/api/java.base/java/la&zwnj;&#8203;ng/&hellip;</a>",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 2709823,
+      "reputation" : 11069,
+      "user_id" : 2338547,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/QT3fG.png?s=256",
+      "display_name" : "markspace",
+      "link" : "https://stackoverflow.com/users/2338547/markspace"
+    },
+    "creation_date" : 1747270238,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140427037,
+    "post_id" : 79622451,
+    "body" : "Your code is strange.  You appear to be submitting threads to an executor.  That&#39;s totally wrong.  If you are using an executor, you should be submitting tasks to it.  Not thread objects.  Mixing threads and executors is ... like trying to go to the shops using a car and a bicycle at the same time.",
+    "score" : 3,
+    "owner" : {
+      "account_id" : 47283,
+      "reputation" : 723428,
+      "user_id" : 139985,
+      "user_type" : "registered",
+      "accept_rate" : 69,
+      "profile_image" : "https://www.gravatar.com/avatar/147c5a9cc1feec049c50da791ac7d144?s=256&d=identicon&r=PG",
+      "display_name" : "Stephen C",
+      "link" : "https://stackoverflow.com/users/139985/stephen-c"
+    },
+    "creation_date" : 1747270078,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140427035,
+    "post_id" : 79622451,
+    "body" : "You always print &quot;TrainA&quot; in <code>Train.run</code>, so probably both threads run, you just can&#39;t tell them apart in your log mesages. If that&#39;s not the case, a <a href=\"https://stackoverflow.com/help/minimal-reproducible-example\">minimal reproducible example</a> would help diagnose this.",
+    "score" : 3,
+    "owner" : {
+      "account_id" : 1535561,
+      "reputation" : 9056,
+      "user_id" : 1431720,
+      "user_type" : "registered",
+      "accept_rate" : 89,
+      "profile_image" : "https://www.gravatar.com/avatar/f5a1388d4d3b2bf03b11bb5658c68c29?s=256&d=identicon&r=PG",
+      "display_name" : "Robert",
+      "link" : "https://stackoverflow.com/users/1431720/robert"
+    },
+    "creation_date" : 1747270045,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

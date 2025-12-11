@@ -1,0 +1,145 @@
+{
+  "question" : {
+    "question_id" : 79700202,
+    "title" : "Weird behaviour of Java FFM on Windows platform when creating upcalls accepting both structure and pointer parameters",
+    "body" : "<p>On Windows platform, when creating upcall stubs with Java 22 FFM APIs, if the callback functions has <strong>both</strong> structure (larger than pointer size) <strong>and</strong> pointer parameters, the <code>MemorySegment</code>s accepting these pointer parameters will be linked with a confined memory session. This behavior is not consistent with Linux JVM.</p>\n<p>MWE here:</p>\n<hr />\n<p><code>ccb.c</code>:</p>\n<pre class=\"lang-c prettyprint-override\"><code>#include &lt;stdio.h&gt;\n#include &lt;stdint.h&gt;\n\ntypedef struct {\n    char const *s1;\n    char const *s2;\n} S;\n\ntypedef void (*callback_fn)(S s, char const *data);\n\n#ifdef _MSC_VER\n#define EXPORT __declspec(dllexport)\n#else\n#define EXPORT __attribute__((visibility(&quot;default&quot;)))\n#endif\n\nEXPORT extern void ccb(callback_fn fn) {\n    char const *data = &quot;Let's be together, forever, we are never gonna be apart.&quot;;\n\n    fprintf(stderr, &quot;(C) address of data = %p\\n&quot;, (void*)data);\n\n    fn(\n        ((S) {\n            &quot;Shall I leave you be, Is it love if I can set you free?&quot;,\n            &quot;But even it's not reality,&quot;,\n        }),\n        data\n    );\n}\n</code></pre>\n<p>Here, the <code>data</code> provided to <code>fn</code> is a static string from C world. It's not allocated from Java world, of course.</p>\n<hr />\n<p>Build commands:</p>\n<pre class=\"lang-bash prettyprint-override\"><code>gcc.exe ccb.c -shared -fPIC -o ccb.dll\n</code></pre>\n<p>or</p>\n<pre class=\"lang-none prettyprint-override\"><code>cl.exe /utf-8 /nologo /LD /MD /DWIN32 /Zi ccb.c /Fe:ccb.dll /link User32.lib\n</code></pre>\n<hr />\n<p><code>CCB.java</code>:</p>\n<pre class=\"lang-java prettyprint-override\"><code>import java.lang.foreign.*;\nimport java.lang.invoke.MethodHandle;\nimport java.lang.invoke.MethodHandles;\n\npublic final class CCB {\n    static final StructLayout LAYOUT$S = MemoryLayout.structLayout(\n            ValueLayout.ADDRESS.withTargetLayout(ValueLayout.JAVA_BYTE).withName(&quot;s1&quot;),\n            ValueLayout.ADDRESS.withTargetLayout(ValueLayout.JAVA_BYTE).withName(&quot;s2&quot;)\n    );\n\n    static final FunctionDescriptor DESCRIPTOR$ccb = FunctionDescriptor.ofVoid(ValueLayout.ADDRESS.withName(&quot;fn&quot;));\n\n    static final FunctionDescriptor DESCRIPTOR$callback = FunctionDescriptor.ofVoid(\n            LAYOUT$S.withName(&quot;s&quot;),\n            ValueLayout.ADDRESS.withTargetLayout(ValueLayout.JAVA_BYTE).withName(&quot;data&quot;)\n    );\n\n    static final MethodHandle hCCB;\n    static {\n        System.loadLibrary(&quot;ccb&quot;);\n\n        Linker linker = Linker.nativeLinker();\n        SymbolLookup stdlibLookup = linker.defaultLookup();\n        SymbolLookup loaderLookup = SymbolLookup.loaderLookup();\n\n        MemorySegment pfnCCB = loaderLookup.find(&quot;ccb&quot;)\n                .or(() -&gt; stdlibLookup.find(&quot;ccb&quot;))\n                .orElse(MemorySegment.NULL);\n        if (pfnCCB.equals(MemorySegment.NULL)) {\n            throw new RuntimeException(&quot;Failed to find ccb symbol&quot;);\n        }\n        hCCB = linker.downcallHandle(pfnCCB, DESCRIPTOR$ccb);\n    }\n\n    static final class Ref&lt;T&gt; {\n        T value;\n    }\n\n    @FunctionalInterface\n    interface MemorySegmentConsumer {\n        void accept(MemorySegment segment);\n    }\n\n    static void callback(\n            MemorySegmentConsumer consumer,\n            MemorySegment s,\n            MemorySegment data\n    ) {\n        for (int i = 0; i &lt; 2; i++) {\n            MemorySegment segment = s.getAtIndex(ValueLayout.ADDRESS, i).reinterpret(Long.MAX_VALUE);\n            System.err.println(&quot;(J) callback: s-&gt;s&quot; + (i + 1) + &quot; = &quot; + segment.getString(0));\n        }\n        data = data.reinterpret(Long.MAX_VALUE);\n        System.err.println(&quot;(J) callback: data = &quot; + data.getString(0));\n        System.err.println(&quot;(J) callback: address of data = &quot; + Long.toUnsignedString(data.address(), 16));\n\n        consumer.accept(data);\n    }\n\n    public static void main(String[] args) {\n        Ref&lt;MemorySegment&gt; ref = new Ref&lt;&gt;();\n        MemorySegmentConsumer consumer = segment -&gt; ref.value = segment;\n\n        try (Arena arena = Arena.ofConfined()) {\n            Linker linker = Linker.nativeLinker();\n            MethodHandle MH$callback = MethodHandles.lookup().findStatic(\n                    CCB.class,\n                    &quot;callback&quot;,\n                    DESCRIPTOR$callback.toMethodType().insertParameterTypes(0, MemorySegmentConsumer.class)\n            );\n            MemorySegment pfnCallback = linker.upcallStub(\n                    MH$callback.bindTo(consumer),\n                    DESCRIPTOR$callback,\n                    arena\n            );\n\n            hCCB.invokeExact(pfnCallback);\n\n            System.err.println(&quot;(J) main: data = &quot; + ref.value.getString(0)); // &lt;-- error occurs here\n        } catch (Throwable e) {\n            throw new RuntimeException(e);\n        }\n    }\n}\n</code></pre>\n<hr />\n<p>Program output:</p>\n<pre class=\"lang-none prettyprint-override\"><code>(J) callback: s-&gt;s1 = Shall I leave you be, Is it love if I can set you free?\n(J) callback: s-&gt;s2 = But even it's not reality,\n(J) callback: data = Let's be together, forever, we are never gonna be apart.\n(J) callback: address of data = 7fffa5009000\nException in thread &quot;main&quot; java.lang.RuntimeException: java.lang.IllegalStateException: Already closed\n    at CCB.main(CCB.java:81)\nCaused by: java.lang.IllegalStateException: Already closed\n    at java.base/jdk.internal.foreign.MemorySessionImpl.alreadyClosed(MemorySessionImpl.java:318)\n    at java.base/jdk.internal.misc.ScopedMemoryAccess$ScopedAccessError.newRuntimeException(ScopedMemoryAccess.java:114)\n    at java.base/jdk.internal.misc.ScopedMemoryAccess.getLongUnaligned(ScopedMemoryAccess.java:2574)\n    at java.base/jdk.internal.foreign.StringSupport.strlenByte(StringSupport.java:142)\n    at java.base/jdk.internal.foreign.StringSupport.readByte(StringSupport.java:71)\n    at java.base/jdk.internal.foreign.StringSupport.read(StringSupport.java:54)\n    at java.base/jdk.internal.foreign.AbstractMemorySegmentImpl.getString(AbstractMemorySegmentImpl.java:907)\n    at java.base/jdk.internal.foreign.AbstractMemorySegmentImpl.getString(AbstractMemorySegmentImpl.java:900)\n    at CCB.main(CCB.java:79)\n(C) address of data = 00007fffa5009000\n</code></pre>\n<hr />\n<p>And when observed from IDE:</p>\n<p><a href=\"https://i.sstatic.net/GVeoncQE.png\" rel=\"noreferrer\"><img src=\"https://i.sstatic.net/GVeoncQE.png\" alt=\"Observed ConfinedSession from IDE\" /></a></p>\n<hr />\n<p>Such behavior is not observed when there's only pointer parameters, and not observed when the structure is smaller (only 1 pointer size).</p>\n<p>Also, this behavior is not observed on Linux:</p>\n<p><a href=\"https://i.sstatic.net/GP0wa4FQ.png\" rel=\"noreferrer\"><img src=\"https://i.sstatic.net/GP0wa4FQ.png\" alt=\"Not observed on Linux\" /></a></p>\n<p>Is this some kind of deliberate design, technical limitation or bug?</p>\n",
+    "tags" : [ "java", "c", "java-ffm" ],
+    "owner" : {
+      "account_id" : 19558955,
+      "reputation" : 761,
+      "user_id" : 14312575,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/ajBiC.png?s=256",
+      "display_name" : "test failed in 1.08s",
+      "link" : "https://stackoverflow.com/users/14312575/test-failed-in-1-08s"
+    },
+    "is_answered" : true,
+    "view_count" : 746,
+    "answer_count" : 1,
+    "score" : 15,
+    "last_activity_date" : 1752443728,
+    "creation_date" : 1752435233,
+    "link" : "https://stackoverflow.com/questions/79700202/weird-behaviour-of-java-ffm-on-windows-platform-when-creating-upcalls-accepting",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79700269,
+    "question_id" : 79700202,
+    "body" : "<p>You've found a bug in the FFM implementation.</p>\n<p>As an ABI implementation detail, sometimes a struct that is passed by-value is actually allocated on the stack of the caller, and then a pointer is passed to the callee. The FFM implementation handles that case similarly to plain pointers being passed. After all, in both cases the implementation has to wrap a raw native address (in the form of a <code>long</code>) into a memory segment.</p>\n<p>However, in the case of a struct, the resulting memory segment needs to have the right size, and the right memory session, which is open for the duration of the call (after which the temporary copy is de-allocated by the caller). First, when preparing to call the user code for the upcall, a memory session needs to be created, and then when wrapping the native address into a memory segment, the segment needs to be attached to the created session.</p>\n<p>The implementation has two checks: 1) a check whether <em>any</em> of the parameters need to be attached to a memory session, which tells us if we need to create a session for the upcall as a whole, and 2) a check whether a <em>particular</em> memory segment needs to be attached to that created session.</p>\n<p>The issue is that the first check is <a href=\"https://github.com/openjdk/jdk/blob/77bd417c9990f57525257d9df89b9df4d7991461/src/java.base/share/classes/jdk/internal/foreign/abi/BindingSpecializer.java#L593\" rel=\"noreferrer\">being used</a> in both cases, so if there are any parameters that need to be attached to a memory session, all of them will be:</p>\n<pre class=\"lang-java prettyprint-override\"><code>private void emitBoxAddress(BoxAddress boxAddress) {\n    popType(long.class);\n    cb.loadConstant(boxAddress.size())\n      .loadConstant(boxAddress.align());\n    if (needsSession()) { // &lt;-------- should be `boxAddress.needsSession()`\n        emitLoadInternalSession();\n        cb.invokestatic(CD_Utils, &quot;longToAddress&quot;, MTD_LONG_TO_ADDRESS_SCOPE);\n    } else {\n        cb.invokestatic(CD_Utils, &quot;longToAddress&quot;, MTD_LONG_TO_ADDRESS_NO_SCOPE);\n    }\n    pushType(MemorySegment.class);\n}\n</code></pre>\n<p>Linux/x64 uses the SysV ABI, which doesn't have the quirk for passing structs mentioned above, so that explains why the issue is not observed there (however, Linux/AArch64 passes structs in a similar way, so the issue should also be observable there).</p>\n<hr />\n<p>As a workaround, you can manually attach the global scope to the memory address using <code>reinterpret</code>, which is the scope that it should have in the first place.</p>\n<pre><code>data = data.reinterpret(Long.MAX_VALUE, Arena.global(), null);\n</code></pre>\n",
+    "score" : 14,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 4555218,
+      "reputation" : 34325,
+      "user_id" : 3699139,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/4a510c6ed90917ec02dd4d572cf9e78c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Jorn Vernee",
+      "link" : "https://stackoverflow.com/users/3699139/jorn-vernee"
+    },
+    "creation_date" : 1752443130,
+    "last_activity_date" : 1752443728,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140586861,
+    "post_id" : 79700202,
+    "body" : "@VGR Yes, I meant <code>panama-dev@openjdk.org</code>",
+    "score" : 3,
+    "owner" : {
+      "account_id" : 4555218,
+      "reputation" : 34325,
+      "user_id" : 3699139,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/4a510c6ed90917ec02dd4d572cf9e78c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Jorn Vernee",
+      "link" : "https://stackoverflow.com/users/3699139/jorn-vernee"
+    },
+    "creation_date" : 1752449192,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140586836,
+    "post_id" : 79700202,
+    "body" : "@JornVernee Did you mean <code>panama-dev@openjdk.org</code>?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2053598,
+      "reputation" : 44936,
+      "user_id" : 1831987,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/38b1c37530189ec4471a43a618e33f67?s=256&d=identicon&r=PG",
+      "display_name" : "VGR",
+      "link" : "https://stackoverflow.com/users/1831987/vgr"
+    },
+    "creation_date" : 1752447423,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140586721,
+    "post_id" : 79700202,
+    "body" : "This looks like a bug. Could you please send an email to <code>panama-dev@oprenjdk.org</code>?",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 4555218,
+      "reputation" : 34325,
+      "user_id" : 3699139,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/4a510c6ed90917ec02dd4d572cf9e78c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Jorn Vernee",
+      "link" : "https://stackoverflow.com/users/3699139/jorn-vernee"
+    },
+    "creation_date" : 1752441952,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140586640,
+    "post_id" : 79700202,
+    "body" : "You might want to mention that this behavior is not consistent with Linux JVM.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 9532102,
+      "reputation" : 6619,
+      "user_id" : 7083401,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/f330271ce7e9b501fdcdbd78c6ea03d2?s=256&d=identicon&r=PG",
+      "display_name" : "ice1000",
+      "link" : "https://stackoverflow.com/users/7083401/ice1000"
+    },
+    "creation_date" : 1752436670,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79700269" : [ {
+      "comment_id" : 140586770,
+      "post_id" : 79700269,
+      "body" : "@testfailedin1.08s Yes. If you could please send the reproducer in an email to the mailing list, that would be much appreciated.",
+      "score" : 4,
+      "owner" : {
+        "account_id" : 4555218,
+        "reputation" : 34325,
+        "user_id" : 3699139,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/4a510c6ed90917ec02dd4d572cf9e78c?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Jorn Vernee",
+        "link" : "https://stackoverflow.com/users/3699139/jorn-vernee"
+      },
+      "creation_date" : 1752444108,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140586762,
+      "post_id" : 79700269,
+      "body" : "Thanks for clarification! Do you still need the e-mail?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 19558955,
+        "reputation" : 761,
+        "user_id" : 14312575,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/ajBiC.png?s=256",
+        "display_name" : "test failed in 1.08s",
+        "link" : "https://stackoverflow.com/users/14312575/test-failed-in-1-08s"
+      },
+      "creation_date" : 1752443845,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

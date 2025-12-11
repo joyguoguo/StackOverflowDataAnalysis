@@ -1,0 +1,117 @@
+{
+  "question" : {
+    "question_id" : 79737687,
+    "title" : "Jackson Kotlin Duration Serialization Problem",
+    "body" : "<p>I came across a weird situation where Jackson serializes kotlin.time.Duration in a way I cannot make sense from.\nFor example in this code:</p>\n<pre class=\"lang-kotlin prettyprint-override\"><code>import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper\nimport kotlin.time.DurationUnit\nimport kotlin.time.toDuration\n\nval x = 1.toDuration(DurationUnit.SECONDS)\nval mapper = jacksonObjectMapper()\nval y = mapper.writeValueAsString(x)!!\nprintln(y)\n</code></pre>\n<p>results in:</p>\n<pre><code>2000000000\n</code></pre>\n<p>Which is exactly 2 seconds, in nanoseconds.</p>\n<p>How does this happen?</p>\n<p>Kotlin version: 1.9.21</p>\n<p>Jackson version: 2.15.2</p>\n",
+    "tags" : [ "java", "kotlin", "jackson" ],
+    "owner" : {
+      "account_id" : 22341360,
+      "reputation" : 165,
+      "user_id" : 16561084,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/5711bf0f3eb3bb8a5593a3442d820ae8?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Muhammad Khosravi",
+      "link" : "https://stackoverflow.com/users/16561084/muhammad-khosravi"
+    },
+    "is_answered" : true,
+    "view_count" : 228,
+    "answer_count" : 2,
+    "score" : 8,
+    "last_activity_date" : 1755502169,
+    "creation_date" : 1755414789,
+    "link" : "https://stackoverflow.com/questions/79737687/jackson-kotlin-duration-serialization-problem",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79737717,
+    "question_id" : 79737687,
+    "body" : "<p>The issue is that Kotlin doesn’t keep <code>Duration</code> as “just a number of nanoseconds.” Instead, it squeezes two pieces of information into one <code>Long</code>:</p>\n<ol>\n<li><p><strong>The size of the duration</strong> (like <code>1_000_000_000</code> for one second).</p>\n</li>\n<li><p><strong>The unit it’s stored in</strong> (nanoseconds or milliseconds).</p>\n</li>\n</ol>\n<p>It does this by using the last bit <strong>(LSB)</strong> of the number as a flag:</p>\n<ol>\n<li><p>If the last bit is <code>0</code> -&gt; the rest of the number means nanoseconds.</p>\n</li>\n<li><p>If the last bit is <code>1</code> -&gt; the rest means milliseconds.</p>\n</li>\n</ol>\n<p><strong>To make room for that flag, it shifts the actual number left by one:</strong></p>\n<pre><code>binary number &lt;&lt; 1\n</code></pre>\n<p><em>(which is the same as multiplying by 2).</em></p>\n<hr />\n<h3>f.e <code>1.second</code></h3>\n<p><strong>1.</strong> Convert to nanoseconds:</p>\n<pre><code>1_000_000_000 (decimal)\n= 111011100110101100101000000000 (binary)\n</code></pre>\n<p><strong>2.</strong> Apply the encoding rule (<code>&lt;&lt; 1</code>):</p>\n<pre><code>111011100110101100101000000000 &lt;&lt; 1\n= 1110111001101011001010000000000\n</code></pre>\n<p><strong>3.</strong> Convert it to decimal:</p>\n<pre><code>2_000_000_000\n</code></pre>\n<p>So the hidden <code>Long</code> inside <code>Duration</code> for <code>1.second</code> is actually <code>2_000_000_000</code>.</p>\n<p>What's the issue? Well, Jackson doesn’t know about Kotlin’s encoding or that it should call <code>toString()</code> or <code>inWholeNanoSeconds()</code>: It just serializes the <strong>backing field directly</strong>, and that’s why you see <code>2000000000</code>.</p>\n<p>It’s not really “2 seconds”: it’s just the encoded form of <code>1 second</code>.</p>\n<hr />\n<p>To make Jackson output a <strong>human-friendly</strong> <code>Duration</code> instead of the raw encoded <code>Long</code>, you could use <strong><code>java.time.Duration</code></strong>:</p>\n<pre class=\"lang-kotlin prettyprint-override\"><code>val javaDur: java.time.Duration = 1.seconds.toJavaDuration()\nprintln(mapper.writeValueAsString(javaDur)) // 1PTS - 1000000000\n</code></pre>\n<p>Or use a <code>serializer</code>:</p>\n<pre><code>class DurationNanosSerializer : JsonSerializer&lt;Duration&gt;() {\n    override fun serialize(\n        value: Duration,\n        gen: JsonGenerator,\n        serializers: SerializerProvider\n    ) {\n        gen.writeNumber(value.inWholeNanoseconds) // 1000000000\n    }\n}\n</code></pre>\n<p>Both approaches stop Jackson from dumping the <strong>raw backing <code>Long</code></strong> and instead give it instructions on what to output, that's it, 1 second.</p>\n",
+    "score" : 7,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 2465829,
+      "reputation" : 13577,
+      "user_id" : 2148953,
+      "user_type" : "registered",
+      "accept_rate" : 96,
+      "profile_image" : "https://i.sstatic.net/DVHoP84E.jpg?s=256",
+      "display_name" : "aran",
+      "link" : "https://stackoverflow.com/users/2148953/aran"
+    },
+    "creation_date" : 1755419545,
+    "last_activity_date" : 1755502169,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79738040,
+    "question_id" : 79737687,
+    "body" : "<p>Here's an alternative solution that serializes a <code>kotlin.time.Duration</code> like a <code>java.time.Duration</code> using standard Jackson components.</p>\n<p>It uses <code>JavaTimeModule</code> from <a href=\"https://github.com/FasterXML/jackson-modules-java8\" rel=\"nofollow noreferrer\">jackson-modules-java8</a> and the <code>UseJavaDurationConversion</code> feature of the <a href=\"https://github.com/FasterXML/jackson-module-kotlin\" rel=\"nofollow noreferrer\">Kotlin module</a>.</p>\n<pre><code>import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule\nimport com.fasterxml.jackson.module.kotlin.KotlinFeature\nimport com.fasterxml.jackson.module.kotlin.KotlinModule\nimport com.fasterxml.jackson.module.kotlin.jsonMapper\nimport kotlin.time.Duration.Companion.seconds\n\nfun main() {\n    val mapper = jsonMapper {\n        addModules(\n            JavaTimeModule(),\n            KotlinModule.Builder()\n                .enable(KotlinFeature.UseJavaDurationConversion)\n                .build(),\n        )\n    }\n    println(mapper.writeValueAsString(1.seconds))\n}\n</code></pre>\n<p>Output:</p>\n<pre><code>1.000000000\n</code></pre>\n",
+    "score" : 3,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 303087,
+      "reputation" : 9068,
+      "user_id" : 611819,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://i.sstatic.net/oew2B.png?s=256",
+      "display_name" : "dnault",
+      "link" : "https://stackoverflow.com/users/611819/dnault"
+    },
+    "creation_date" : 1755456730,
+    "last_activity_date" : 1755456730,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140671142,
+    "post_id" : 79737687,
+    "body" : "As long as that deserialises to the same Duration, then I guess it&#39;s working as intended.  If you have your own requirements for the serialised format, then you&#39;ll probably need to customise how Jackson does it.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 13722742,
+      "reputation" : 18887,
+      "user_id" : 10134209,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/XvJ8z.png?s=256",
+      "display_name" : "gidds",
+      "link" : "https://stackoverflow.com/users/10134209/gidds"
+    },
+    "creation_date" : 1755419248,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140671117,
+    "post_id" : 79737687,
+    "body" : "Looks like a perfectly normal artifact of how kotlin.time.Duration is implemented internally that Jackson just ignores.  Duration switches between two different implementations, and uses one bit to indicate which; shifting the result by 1 bit would produce this result.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 465573,
+      "reputation" : 200423,
+      "user_id" : 869736,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/ae7bb06b9a23a4dd7eea69e853d47d12?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Louis Wasserman",
+      "link" : "https://stackoverflow.com/users/869736/louis-wasserman"
+    },
+    "creation_date" : 1755417848,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79737717" : [ {
+      "comment_id" : 140703322,
+      "post_id" : 79737717,
+      "body" : "Great information about how Kotlin processes it. It will be great if you can add a link to the documentation for further reading. Thanks.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2179728,
+        "reputation" : 81041,
+        "user_id" : 10819573,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/MWKel.jpg?s=256",
+        "display_name" : "Arvind Kumar Avinash",
+        "link" : "https://stackoverflow.com/users/10819573/arvind-kumar-avinash"
+      },
+      "creation_date" : 1756548505,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

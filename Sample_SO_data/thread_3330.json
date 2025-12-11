@@ -1,0 +1,164 @@
+{
+  "question" : {
+    "question_id" : 79555533,
+    "title" : "Event-Driven vs. SocketChannel Loop: Best Approach for a simple Java Chat System?",
+    "body" : "<p>I am developing a chat system in Java and evaluating two different approaches for handling communications:</p>\n<ol>\n<li><strong>SocketChannel with a While Loop</strong> – A commonly used method that is straightforward to implement and read, though it may not be the most efficient.</li>\n<li><strong>Event-Driven Model</strong> – A more performance-oriented approach that can potentially offer better efficiency but involves greater complexity in implementation and maintenance.</li>\n</ol>\n<p>Each chat server will support a maximum of 10 clients, meaning the system will not be highly populated. Given these constraints, I am analyzing whether adopting the Event-Driven Model would provide meaningful advantages over the simpler SocketChannel approach.</p>\n<p>My current server looks like this:</p>\n<pre><code>package Chat;\nimport java.io.IOException;\nimport java.net.InetSocketAddress;\nimport java.nio.ByteBuffer;\nimport java.nio.channels.SocketChannel;\nimport java.nio.channels.spi.SelectorProvider;\nimport java.nio.charset.StandardCharsets;\nimport java.util.ArrayList;\nimport java.util.Iterator;\nimport java.util.List;\nimport java.util.concurrent.CopyOnWriteArrayList;\n\npublic class SimpleServerChannel {\n    private List&lt;SocketChannel&gt; clientChannels = new CopyOnWriteArrayList&lt;&gt;();\n    private List&lt;Chat_Interface&gt; clientInterfaces = new ArrayList&lt;&gt;();\n    \n    public void start() {\n        \n            try (CustomServerSocket serverChannel = new CustomServerSocket(SelectorProvider.provider(), clientChannels, clientInterfaces)) {\n                serverChannel.socket().bind(new InetSocketAddress(5000));\n                serverChannel.configureBlocking(false);\n                System.out.println(&quot;Server is listening on port &quot; + serverChannel.socket().getLocalPort());\n                ByteBuffer buffer = ByteBuffer.allocate(1024);\n                \n                clientChannels = serverChannel.getClientChannels();\n                clientInterfaces = serverChannel.getClientInterfaces();\n                \n                while (true) {\n                    SocketChannel clientChannel = serverChannel.accept();\n                    Iterator&lt;SocketChannel&gt; iterator = clientChannels.iterator();\n                    if (clientChannel != null) {\n                        clientChannel.configureBlocking(false);\n                            clientChannels.add(clientChannel);\n                        System.out.printf(&quot;Client %s connected%n&quot;, clientChannel.socket().getRemoteSocketAddress());\n                    }\n                    \n                        while (iterator.hasNext()) {\n                            SocketChannel client = iterator.next();\n                            try {\n                                buffer.clear();\n                                int bytesRead = client.read(buffer);\n                                if (bytesRead == -1) {\n                                    System.out.printf(&quot;Client %s disconnected%n&quot;, client.socket().getRemoteSocketAddress());\n                                    clientChannels.remove(client);\n                                    client.close();\n                                } else if (bytesRead &gt; 0) {\n                                    buffer.flip();\n                                    byte[] data = new byte[buffer.remaining()];\n                                    buffer.get(data);\n                                    String message = String.format(&quot;%s&quot;, new String((data), StandardCharsets.UTF_8));\n                                    \n                                    for (SocketChannel otherClient : clientChannels) {\n                                        buffer.clear();\n                                        buffer.put((message).getBytes());\n                                        buffer.flip();\n                                        while (buffer.hasRemaining()) {\n                                            otherClient.write(buffer);\n                                        }\n                                    }\n                                }\n                            } catch (IOException e) {\n                                System.out.printf(&quot;Client %s disconnected due to error%n&quot;, client.socket().getRemoteSocketAddress());\n                                clientChannels.remove(client);\n                                client.close();\n                            }\n                        }\n                }\n            } catch (IOException e) {\n                throw new RuntimeException(e);\n            }\n    }\n\n    \n    public List&lt;SocketChannel&gt; getClientChannels() {\n        return clientChannels;\n    }\n    \n    public List&lt;Chat_Interface&gt; getClientInterfaces() {\n        return clientInterfaces;\n    }\n}\n</code></pre>\n<p><strong>My question</strong> is if I have to switch with the second approach, or for my needs(mentioned earlier), keeping this approach is enough for understanding low level network programming and build a small feature?</p>\n",
+    "tags" : [ "java", "chat", "socketchannel" ],
+    "owner" : {
+      "account_id" : 38890247,
+      "reputation" : 156,
+      "user_id" : 29003408,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/LhjH9Wyd.jpg?s=256",
+      "display_name" : "Andrei Greblă",
+      "link" : "https://stackoverflow.com/users/29003408/andrei-grebl%c4%83"
+    },
+    "is_answered" : true,
+    "view_count" : 186,
+    "closed_date" : 1743971287,
+    "answer_count" : 1,
+    "score" : -3,
+    "last_activity_date" : 1746057320,
+    "creation_date" : 1743775340,
+    "link" : "https://stackoverflow.com/questions/79555533/event-driven-vs-socketchannel-loop-best-approach-for-a-simple-java-chat-system",
+    "closed_reason" : "Opinion-based"
+  },
+  "answers" : [ {
+    "answer_id" : 79555709,
+    "question_id" : 79555533,
+    "body" : "<blockquote>\n<p><strong>My question</strong> is if I have to switch with the second approach, or for my needs(mentioned earlier), keeping this approach is enough?</p>\n</blockquote>\n<p>Without reviewing the code in detail, no, you do not <em>have to</em> change approach.  By setting the channels to non-blocking, you avoid getting stuck trying to service a client that is unready while other clients have data waiting.  Busy-looping through the clients, attempting to service each one in turn and being appropriately accepting of failures, can provide service to all clients.  That for a certain number of clients and a certain data volume, which is <em>probably</em> more than you will saturate with 10 clients operated interactively by humans.</p>\n<p>But that is dreadfully inefficient at the server, which is a consideration if the server has anything else to do at the same time (which yours apparently does).  It also has latency issues that might become noticeable to human users even at modest load.  And it scales poorly.</p>\n<p>We can't judge in advance whether the system's performance will be good enough for you, both because</p>\n<ol>\n<li>we don't know what your criteria for that are, and I bet you don't either; and</li>\n<li>absolute performance is notoriously difficult to predict.  It needs to be measured.</li>\n</ol>\n<p>And we can't judge whether your approach is enough for your learning objectives, either, because, again, we don't know what those are, and, again, I bet you don't know exactly what those are either.  Certainly I would expect you to learn <em>more</em> by implementing an approach based on <code>Selector</code>s.  I'm uncertain whether that's what you mean by an &quot;event-driven model&quot;, but it is certainly among the better-performing, better-scaling, conventional approaches to I/O multiplexing such as you are trying to do.</p>\n",
+    "score" : 0,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 2792262,
+      "reputation" : 190832,
+      "user_id" : 2402272,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+      "display_name" : "John Bollinger",
+      "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+    },
+    "creation_date" : 1743779918,
+    "last_activity_date" : 1743779918,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140390654,
+    "post_id" : 79555533,
+    "body" : "I am just trying to learn more about the difference of these two different approaches. The code you see is the first alternative, even if it is not really efficient, this is how I got a better understanding of the SocketChannel in Java. I never asked for someone to judge the way my instructor teaches or anything like that. I already have my answer thanks to John Bollinger and there is nothing else to add.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 38890247,
+      "reputation" : 156,
+      "user_id" : 29003408,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/LhjH9Wyd.jpg?s=256",
+      "display_name" : "Andrei Greblă",
+      "link" : "https://stackoverflow.com/users/29003408/andrei-grebl%c4%83"
+    },
+    "creation_date" : 1746200295,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140388685,
+    "post_id" : 79555533,
+    "body" : "Your instructor should know better than to provide you with code like that.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 71739,
+      "reputation" : 311869,
+      "user_id" : 207421,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/5cfe5f7d64f44be04f147295f5c7b88e?s=256&d=identicon&r=PG",
+      "display_name" : "user207421",
+      "link" : "https://stackoverflow.com/users/207421/user207421"
+    },
+    "creation_date" : 1746146599,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140386325,
+    "post_id" : 79555533,
+    "body" : "I just learned how to work with SocketChannels and make a simple chat feature, my example is the first alternative my instructor gave me. Sure, not as performant as the second approach, that’s why I asked this question, if I need, for my use case, to change the approach. This question was answered a long time ago and my code logic is already changed thanks to John Bollinger who took time to answer this question in detail.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 38890247,
+      "reputation" : 156,
+      "user_id" : 29003408,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/LhjH9Wyd.jpg?s=256",
+      "display_name" : "Andrei Greblă",
+      "link" : "https://stackoverflow.com/users/29003408/andrei-grebl%c4%83"
+    },
+    "creation_date" : 1746081809,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140385995,
+    "post_id" : 79555533,
+    "body" : "Your example is just an example of incorrect programming. You are smoking the CPU by spinning in a hard loop when there is no new accepted socket channel and no new input, when you should be using a <code>Selector</code> to determine both. It&#39;s not a viable alternative. It&#39;s not even significantly less complex than using a <code>Selector</code>.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 71739,
+      "reputation" : 311869,
+      "user_id" : 207421,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/5cfe5f7d64f44be04f147295f5c7b88e?s=256&d=identicon&r=PG",
+      "display_name" : "user207421",
+      "link" : "https://stackoverflow.com/users/207421/user207421"
+    },
+    "creation_date" : 1746061531,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140299861,
+    "post_id" : 79555533,
+    "body" : "Enough for studying low level network programming. I am trying to make a small app, where the chat feature is not main. I&#39;ll add this detail right away.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 38890247,
+      "reputation" : 156,
+      "user_id" : 29003408,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/LhjH9Wyd.jpg?s=256",
+      "display_name" : "Andrei Greblă",
+      "link" : "https://stackoverflow.com/users/29003408/andrei-grebl%c4%83"
+    },
+    "creation_date" : 1743778578,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140299857,
+    "post_id" : 79555533,
+    "body" : "<code>keeping this approach is enough?</code> Enough for what ? For studying low level network programming, you&#39;ve just learn blocking socket communication. For even driven you are more likely will need to learn Java NIO asynchronous network communication. As well as there are secure TLS connections etc. For real world application you can check JABBER protocol, and libraries like GAE XMPP for implementing full sutured chat.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 13047412,
+      "reputation" : 2967,
+      "user_id" : 9428851,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-MBhDff_bdY0/AAAAAAAAAAI/AAAAAAAACAY/lx7DUTjS350/s256-rj/photo.jpg",
+      "display_name" : "Victor Gubin",
+      "link" : "https://stackoverflow.com/users/9428851/victor-gubin"
+    },
+    "creation_date" : 1743778477,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79555709" : [ {
+      "comment_id" : 140299980,
+      "post_id" : 79555709,
+      "body" : "Thanks for the detailed solution, it is the exact format I wanted to get! I&#39;ll take your suggestions into consideration. Also, it is true that I don&#39;t have an exact criteria for the performance of the system. I abstracted the term &quot;better&quot; for what I need, not providing full details. Again, thanks!",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 38890247,
+        "reputation" : 156,
+        "user_id" : 29003408,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/LhjH9Wyd.jpg?s=256",
+        "display_name" : "Andrei Greblă",
+        "link" : "https://stackoverflow.com/users/29003408/andrei-grebl%c4%83"
+      },
+      "creation_date" : 1743780299,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

@@ -1,0 +1,94 @@
+{
+  "question" : {
+    "question_id" : 79621437,
+    "title" : "Flatten the annotations in the PDF",
+    "body" : "<p>I would just like to burn all the annotations in the PDF as images. The reason is when any annotation is added to the PDF, it is easily movable using the Mac Preview application.</p>\n<p>Hence if I were to convert those annotations into images and add them to the PDF in the exact same place, it should solve the problem.</p>\n<p>I tried some code and it is working fine for 0 degree rotated documents, but for other rotated documents like 90, 180, 270 degrees, the response is not proper.</p>\n<p>Below is the code I tried for 0 degree rotated documents, which worked perfectly.</p>\n<pre><code>    public static byte[] flattenAnnotations(byte[] data) throws Exception\n    {\n\n        ByteArrayOutputStream baos=new ByteArrayOutputStream();\n        PdfDocument pdfDocument= new PdfDocument(new PdfReader(new ByteArrayInputStream(data)), new PdfWriter(baos));\n\n        Document document = new Document(pdfDocument);\n\n        for (int i = 1; i &lt;= pdfDocument.getNumberOfPages(); i++)\n        {\n            PdfPage page = pdfDocument.getPage(i);\n            if(page.getRotation() != 0)\n            {\n                continue;\n            }\n\n            PdfCanvas canvas = new PdfCanvas(page);\n            List&lt;PdfAnnotation&gt; annotations = page.getAnnotations();\n            for (PdfAnnotation annot : annotations)\n            {\n                if(annot instanceof PdfStampAnnotation)\n                {\n                    PdfDictionary appearanceObject = annot.getAppearanceObject(PdfName.N);\n                    if (appearanceObject != null)\n                    {\n                        PdfFormXObject appearanceXObj = new PdfFormXObject((PdfStream) appearanceObject.clone());\n                        Rectangle rect = annot.getRectangle().toRectangle();\n                        canvas.addXObjectFittedIntoRectangle(appearanceXObj, rect);\n                        page.removeAnnotation(annot);\n                    }\n                }\n            }\n        }\n        //Flatten the acroform\n        PdfAcroForm form = PdfAcroForm.getAcroForm(pdfDocument, true);\n        form.flattenFields();\n        document.close();\n\n\n        return baos.toByteArray();\n    }\n\n</code></pre>\n<p>Below is the code I tried for other rotated documents</p>\n<pre><code>    public static void flattenAnnotations(File file) throws Exception\n    {\n        ByteArrayOutputStream baos = new ByteArrayOutputStream();\n\n        try (\n                PdfReader reader = new PdfReader(file);\n                PdfWriter writer = new PdfWriter(baos);\n                PdfDocument pdf = new PdfDocument(reader, writer)\n        ) {\n            int pageCount = pdf.getNumberOfPages();\n            int[] rotations = new int[pageCount]; // Store original rotation per page\n\n            // Step 1: Remove rotation to allow correct flattening coordinates\n            for (int i = 1; i &lt;= pageCount; i++) {\n                PdfPage page = pdf.getPage(i);\n                rotations[i - 1] = page.getRotation(); // Save original rotation\n                page.getPdfObject().remove(PdfName.Rotate); // Temporarily remove\n            }\n\n            // Step 2: Flatten all visual annotations\n            PdfAnnotationFlattener flattener = new PdfAnnotationFlattener();\n            flattener.flatten(pdf);\n\n            // Step 3: Restore original rotation\n            for (int i = 1; i &lt;= pageCount; i++) {\n                int rotation = rotations[i - 1];\n                if (rotation != 0) {\n                    pdf.getPage(i).setRotation(rotation);\n                }\n            }\n        }\n\n        byte[] resp = baos.toByteArray();\n        FileOutputStream fout = new FileOutputStream(new File(&quot;/Flattened_OUTPUT.pdf&quot;));\n        fout.write(resp);\n        fout.flush();\n        fout.close();\n    }\n</code></pre>\n<p>Attaching both the input and output files, please have a look and suggest what can be done.</p>\n<p>iText version used: 8.0.4</p>\n<p>I'm also comfortable to use PDFBox if it solves the case easily.</p>\n<p><a href=\"https://drive.google.com/file/d/11OtgVUL38MNtLDzeSzBl3f1OvBtQtzDK/view?usp=sharing\" rel=\"nofollow noreferrer\">INPUT.PDF</a></p>\n<p><a href=\"https://drive.google.com/file/d/1EVGQhkX_pf7NTfrOzEIlptibfloLiU9b/view?usp=sharing\" rel=\"nofollow noreferrer\">OUTPUT.PDF</a></p>\n",
+    "tags" : [ "java", "pdf", "itext", "pdfbox" ],
+    "owner" : {
+      "account_id" : 16104341,
+      "reputation" : 25,
+      "user_id" : 11624211,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-eFw9P2uammM/AAAAAAAAAAI/AAAAAAAAAAc/bpV6oR_o0xs/s256-rj/photo.jpg",
+      "display_name" : "Akhil NagaSai",
+      "link" : "https://stackoverflow.com/users/11624211/akhil-nagasai"
+    },
+    "is_answered" : true,
+    "view_count" : 113,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1747319231,
+    "creation_date" : 1747224847,
+    "link" : "https://stackoverflow.com/questions/79621437/flatten-the-annotations-in-the-pdf",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79623579,
+    "question_id" : 79621437,
+    "body" : "<p>Writing an answer because of an example below.</p>\n<p>@mkl is right about PdfCanvas constructor. This is how you can use the one you need:</p>\n<pre><code>public static void flattenAnnotationsRot() throws IOException {\n        try (\n                PdfReader reader = new PdfReader(&quot;in.pdf&quot;);\n                PdfWriter writer = new PdfWriter(&quot;out.pdf&quot;);\n                PdfDocument pdf = new PdfDocument(reader, writer)\n        ) {\n            PdfAnnotationFlattener flattener = new PdfAnnotationFlattener(new CustomPdfAnnotationFlattenFactory());\n            flattener.flatten(pdf);\n        }\n    }\n\n    static class CustomPdfAnnotationFlattenFactory extends PdfAnnotationFlattenFactory {\n        @Override\n        public IAnnotationFlattener getAnnotationFlattenWorker(PdfName name) {\n            return new DefaultAnnotationFlattener() {\n                @Override\n                protected PdfCanvas createCanvas(PdfPage page) {\n                    return new PdfCanvas(page, true);\n                }\n            };\n        }\n    }\n</code></pre>\n<p>But itext takes transformation matrix into account but somehow in a wrong way. Taking the result from the code above you still need to apply some rotation on top.</p>\n",
+    "score" : 2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 31828728,
+      "reputation" : 164,
+      "user_id" : 24642395,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/250eb5be5655e9564abae38db5a8bd87?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "vitalipr",
+      "link" : "https://stackoverflow.com/users/24642395/vitalipr"
+    },
+    "creation_date" : 1747319231,
+    "last_activity_date" : 1747319231,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140428608,
+    "post_id" : 79621437,
+    "body" : "&quot;you have to replace its call by code that respects the Matrix&quot; - How can I handle this programatically then?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 16104341,
+      "reputation" : 25,
+      "user_id" : 11624211,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-eFw9P2uammM/AAAAAAAAAAI/AAAAAAAAAAc/bpV6oR_o0xs/s256-rj/photo.jpg",
+      "display_name" : "Akhil NagaSai",
+      "link" : "https://stackoverflow.com/users/11624211/akhil-nagasai"
+    },
+    "creation_date" : 1747310900,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140425784,
+    "post_id" : 79621437,
+    "body" : "Ok, the main problem is that <code>PdfCanvas.addXObjectFittedIntoRectangle</code> (which also is indirectly used by the <code>PdfAnnotationFlattener</code>) does not take the <b>Matrix</b> entry of the XObject into account. Also, strictly speaking you need special handling of annotations with the <i>NoZoom</i> or <i>NoRotate</i> flag set, but those flags usually are not set Thus, you have to replace its call by code that respects the <b>Matrix</b>. An additional problem is that you chose a <code>PdfCanvas</code> constructor that does not wrap the  existing page content.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1916831,
+      "reputation" : 97003,
+      "user_id" : 1729265,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/VMMeP.jpg?s=256",
+      "display_name" : "mkl",
+      "link" : "https://stackoverflow.com/users/1729265/mkl"
+    },
+    "creation_date" : 1747238979,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140424866,
+    "post_id" : 79621437,
+    "body" : "@mkl Your help is greatly appreciated here!",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 16104341,
+      "reputation" : 25,
+      "user_id" : 11624211,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-eFw9P2uammM/AAAAAAAAAAI/AAAAAAAAAAc/bpV6oR_o0xs/s256-rj/photo.jpg",
+      "display_name" : "Akhil NagaSai",
+      "link" : "https://stackoverflow.com/users/11624211/akhil-nagasai"
+    },
+    "creation_date" : 1747224869,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

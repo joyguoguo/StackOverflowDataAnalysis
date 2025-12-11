@@ -1,0 +1,92 @@
+{
+  "question" : {
+    "question_id" : 79553828,
+    "title" : "Apache Activemq classic scheduled send seems to be bugged with Spring Boot JMS",
+    "body" : "<p>Unless I'm misreading the apache activeMQ docs, it appears that the use of <code>AMQ_SCHEDULED_DELAY</code>, <code>AMQ_SCHEDULED_PERIOD</code>, and <code>AMQ_SCHEDULED_REPEAT</code> is bugged when they are used together when sending messages using Spring JMS. <a href=\"https://activemq.apache.org/components/classic/documentation/delay-and-schedule-message-delivery\" rel=\"nofollow noreferrer\">The docs</a> seem to suggest that when they are used in concert, the expected behavior is:</p>\n<ul>\n<li><code>AMQ_SCHEDULED_DELAY</code>: The time in milliseconds that a message will wait before being scheduled to be delivered by the broker</li>\n<li><code>AMQ_SCHEDULED_PERIOD</code>: The time in milliseconds to wait after the start time to wait before scheduling the message again</li>\n<li><code>AMQ_SCHEDULED_REPEAT</code>: The number of times to repeat scheduling a message for delivery</li>\n</ul>\n<p>except I'm seeing that when using <code>AMQ_SCHEDULED_PERIOD</code> and <code>AMQ_SCHEDULED_REPEAT</code>, the initial message delivery is also delayed, even if <code>AMQ_SCHEDULED_DELAY</code> is explicitly set to 0.\ni.e. if <code>AMQ_SCHEDULED_PERIOD</code> is set to 1000 and <code>AMQ_SCHEDULED_REPEAT</code> is set to 2, and the message is sent at time 0, then the message is delivered at time 1000, 2000, and 3000. The same behavior happens when <code>AMQ_SCHEDULED_DELAY</code> is explicitly set to 0.</p>\n<p>I threw together a small spring boot app to demo this:</p>\n<p>ExampleApplication.java</p>\n<pre><code>package curious.jms.delay.bug.example;\n\nimport jakarta.jms.JMSException;\nimport jakarta.jms.TextMessage;\nimport java.time.Duration;\nimport java.time.Instant;\nimport java.time.ZoneOffset;\nimport java.time.format.DateTimeFormatter;\nimport java.util.ArrayList;\nimport java.util.HashMap;\nimport java.util.List;\nimport java.util.Map;\nimport org.apache.activemq.ScheduledMessage;\nimport org.springframework.beans.factory.annotation.Autowired;\nimport org.springframework.boot.SpringApplication;\nimport org.springframework.boot.autoconfigure.SpringBootApplication;\nimport org.springframework.boot.context.event.ApplicationReadyEvent;\nimport org.springframework.context.ApplicationContext;\nimport org.springframework.context.event.EventListener;\nimport org.springframework.jms.annotation.EnableJms;\nimport org.springframework.jms.annotation.JmsListener;\nimport org.springframework.jms.core.JmsTemplate;\n\n@SpringBootApplication\n@EnableJms\npublic class ExampleApplication {\n\n  @Autowired\n  JmsTemplate jmsTemplate;\n  @Autowired\n  private ApplicationContext context;\n\n  private Map&lt;String, Instant&gt; messageSendTimes = new HashMap&lt;&gt;();\n  private Map&lt;String, List&lt;Instant&gt;&gt; messageReceiveTimes = new HashMap&lt;&gt;();\n  private final String QUEUE_NAME = &quot;example.queue&quot;;\n\n  public static void main(String[] args) {\n    SpringApplication.run(ExampleApplication.class, args);\n  }\n\n  @EventListener(ApplicationReadyEvent.class)\n  public void run() throws InterruptedException {\n    sendRegularMessage();\n    sendDelayedMessage();\n    sendDelayedRepeatedMessage();\n    Thread.sleep(10000);\n    printResults(messageSendTimes, messageReceiveTimes);\n    SpringApplication.exit(context, () -&gt; 0);\n  }\n\n  private void sendRegularMessage() {\n    String text = &quot;regular&quot;;\n    System.out.println(&quot;queueing message &quot; + text);\n    messageSendTimes.put(text, Instant.now());\n    jmsTemplate.send(QUEUE_NAME, s -&gt; s.createTextMessage(text));\n  }\n\n  private void sendDelayedMessage() {\n    String text = &quot;delayed&quot;;\n    System.out.println(&quot;queueing message &quot; + text);\n    messageSendTimes.put(text, Instant.now());\n    jmsTemplate.send(QUEUE_NAME, s -&gt; {\n      TextMessage m = s.createTextMessage(text);\n      m.setLongProperty(ScheduledMessage.AMQ_SCHEDULED_DELAY, 1000);\n      return m;\n    });\n  }\n\n  private void sendDelayedRepeatedMessage() {\n    String text = &quot;delayed repeated&quot;;\n    System.out.println(&quot;queueing message &quot; + text);\n    messageSendTimes.put(text, Instant.now());\n    jmsTemplate.send(QUEUE_NAME, s -&gt; {\n      TextMessage m = s.createTextMessage(text);\n      m.setLongProperty(ScheduledMessage.AMQ_SCHEDULED_DELAY, 0);\n      m.setLongProperty(ScheduledMessage.AMQ_SCHEDULED_PERIOD, 1000);\n      m.setIntProperty(ScheduledMessage.AMQ_SCHEDULED_REPEAT, 5);\n      return m;\n    });\n  }\n\n  @JmsListener(destination = QUEUE_NAME)\n  public void listener(TextMessage m) throws JMSException {\n    if (messageReceiveTimes.containsKey(m.getText())) {\n      messageReceiveTimes.get(m.getText()).add(Instant.now());\n    } else {\n      List&lt;Instant&gt; l = new ArrayList&lt;&gt;();\n      l.add(Instant.now());\n      messageReceiveTimes.put(m.getText(), l);\n    }\n    System.out.println(&quot;received message &quot; + m.getText() + &quot; at &quot; + Instant.now());\n  }\n\n  private void printResults(Map&lt;String, Instant&gt; sendTimes, Map&lt;String, List&lt;Instant&gt;&gt; receiveTimes) {\n    System.out.printf(&quot;%16s | %20s | %20s | %10s %n&quot;, &quot;message&quot;, &quot;sendTime&quot;, &quot;receiveTime&quot;, &quot;diff&quot;);\n    for (String k : sendTimes.keySet()) {\n      Instant sendTime = sendTimes.get(k);\n      for (Instant instant : receiveTimes.get(k)) {\n        System.out.printf(&quot;%16s | %20s | %20s | %8s %n&quot;, k, formatInstant(sendTime), formatInstant(instant),\n          Duration.between(sendTime,\n            instant).toMillis());\n      }\n    }\n  }\n\n  private String formatInstant(Instant i) {\n    return DateTimeFormatter.ISO_TIME.format(i.atOffset(ZoneOffset.UTC));\n  }\n}\n</code></pre>\n<p>application.properties</p>\n<pre><code>spring.application.name=example\nspring.activemq.broker-url=vm://localhost?broker.persistent=true&amp;broker.schedulerSupport=true\n</code></pre>\n<p>build.gradle</p>\n<pre><code>plugins {\n    id 'java'\n    id 'org.springframework.boot' version '3.4.4'\n    id 'io.spring.dependency-management' version '1.1.7'\n}\n\ngroup = 'curious.jms.delay.bug'\nversion = '0.0.1-SNAPSHOT'\n\njava {\n    toolchain {\n        languageVersion = JavaLanguageVersion.of(17)\n    }\n}\n\nrepositories {\n    mavenCentral()\n}\n\ndependencies {\n    implementation 'org.springframework.boot:spring-boot-starter-activemq'\n    implementation 'org.apache.activemq:activemq-kahadb-store:6.1.6'\n    testImplementation 'org.springframework.boot:spring-boot-starter-test'\n    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'\n}\n\ntasks.named('test') {\n    useJUnitPlatform()\n}\n\n</code></pre>\n<p>A run of the above application outputs the following</p>\n<pre><code>         message |             sendTime |          receiveTime |       diff \ndelayed repeated |    19:22:12.0743304Z |    19:22:13.5186246Z |     1444 \ndelayed repeated |    19:22:12.0743304Z |    19:22:14.5030668Z |     2428 \ndelayed repeated |    19:22:12.0743304Z |    19:22:15.5038109Z |     3429 \ndelayed repeated |    19:22:12.0743304Z |    19:22:16.5035174Z |     4429 \ndelayed repeated |    19:22:12.0743304Z |    19:22:17.6968498Z |     5622 \ndelayed repeated |    19:22:12.0743304Z |    19:22:18.5176954Z |     6443 \n         delayed |    19:22:12.0642786Z |    19:22:13.5080843Z |     1443 \n         regular |    19:22:12.0005657Z |    19:22:12.0672787Z |       66 \n</code></pre>\n<p>notice how the first row has a ms diff of <code>1444</code>? I would expect this to be similar to the value of the &quot;regular&quot; row. This seems to indicate that the period is changing the delivery time (delay) of the first message. When sending messages via the activeMQ broker ui, the first message is sent immediately as far as I can tell. Is this a bug, or did I read the docs wrong?</p>\n",
+    "tags" : [ "java", "spring", "spring-boot", "activemq-classic", "spring-jms" ],
+    "owner" : {
+      "account_id" : 13854629,
+      "reputation" : 1,
+      "user_id" : 10001754,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/13ce1b0df07c6963c4ba8be6cd8b503e?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "fantasyTeapot",
+      "link" : "https://stackoverflow.com/users/10001754/fantasyteapot"
+    },
+    "is_answered" : false,
+    "view_count" : 46,
+    "answer_count" : 0,
+    "score" : 0,
+    "last_activity_date" : 1743709892,
+    "creation_date" : 1743708596,
+    "link" : "https://stackoverflow.com/questions/79553828/apache-activemq-classic-scheduled-send-seems-to-be-bugged-with-spring-boot-jms",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140309083,
+    "post_id" : 79553828,
+    "body" : "Does the initial delay match change if you use other values than the ones mentioned here (period = 1000, repeat = 2) ?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 157630,
+      "reputation" : 18561,
+      "user_id" : 375722,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/04770ed0ecf1e91e322484f66c9726ba?s=256&d=identicon&r=PG",
+      "display_name" : "Tim Bish",
+      "link" : "https://stackoverflow.com/users/375722/tim-bish"
+    },
+    "creation_date" : 1744050644,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140299596,
+    "post_id" : 79553828,
+    "body" : "It&#39;s probably worth pointing out that fact. As it&#39;s currently worded your question gives the impression that Spring Boot is essential for reproducing this problem.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 11434008,
+      "reputation" : 36282,
+      "user_id" : 8381946,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-ORs8fPNVzDU/AAAAAAAAAAI/AAAAAAAADBs/F3IsdsProVY/s256-rj/photo.jpg",
+      "display_name" : "Justin Bertram",
+      "link" : "https://stackoverflow.com/users/8381946/justin-bertram"
+    },
+    "creation_date" : 1743774917,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140299537,
+    "post_id" : 79553828,
+    "body" : "@JustinBertram good question. looks like the same happens when sending messages from activeMQ - period delay is also applied to the first message",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 13854629,
+      "reputation" : 1,
+      "user_id" : 10001754,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/13ce1b0df07c6963c4ba8be6cd8b503e?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "fantasyTeapot",
+      "link" : "https://stackoverflow.com/users/10001754/fantasyteapot"
+    },
+    "creation_date" : 1743774000,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140296733,
+    "post_id" : 79553828,
+    "body" : "Does this behave differently when <i>not</i> run via Spring Boot?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 11434008,
+      "reputation" : 36282,
+      "user_id" : 8381946,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-ORs8fPNVzDU/AAAAAAAAAAI/AAAAAAAADBs/F3IsdsProVY/s256-rj/photo.jpg",
+      "display_name" : "Justin Bertram",
+      "link" : "https://stackoverflow.com/users/8381946/justin-bertram"
+    },
+    "creation_date" : 1743712596,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

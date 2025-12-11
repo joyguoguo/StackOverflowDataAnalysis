@@ -1,0 +1,28 @@
+{
+  "question" : {
+    "question_id" : 79724276,
+    "title" : "What is the robust pattern for releasing a shared ByteBuf written to multiple channels, especially with staggered writes and potential failures?",
+    "body" : "<p>I'm trying to implement a high-performance fan-out (broadcast) service in Netty where I need to write the same, immutable ByteBuf to multiple channels. To avoid memory copies, I'm using retainedDuplicate().</p>\n<p>The challenge is handling the lifecycle of the shared buffer, especially when write operations can fail.</p>\n<p>My initial approach was to add a failure listener to each write operation:</p>\n<pre><code>for (Channel channel : allChannels) {\n    final ByteBuf duplicate = masterBuffer.retainedDuplicate();\n    channel.writeAndFlush(duplicate).addListener(future -&gt; {\n        if (!future.isSuccess()) {\n            // Problem: What if another handler in the pipeline already released it?\n            if (duplicate.refCnt() &gt; 0) { // Unsafe check\n                duplicate.release();\n            }\n            channel.close();\n        }\n    });\n}\nmasterBuffer.release();\n</code></pre>\n<p>I quickly discovered several critical issues with this:</p>\n<ol>\n<li>Shared refCnt: retainedDuplicate() creates a view over shared memory, and all duplicates share the same underlying reference count.</li>\n<li>Race Condition: A failure in one channel's pipeline (e.g., in SslHandler) can release the buffer and decrement the shared refCnt. If another channel's write fails, its listener might see a refCnt that is still &gt; 0 and try to release it again, but a third channel might still be actively using the memory, leading to an IllegalReferenceCountException or data corruption. The simple if (refCnt &gt; 0) check is not safe.</li>\n<li>Staggered Writes: My use case is more complex. The writes are staggered over time; I might send the buffer to 100 channels now, and then 50 more channels a few seconds later, all as part of the same logical operation.</li>\n</ol>\n<p>This leads to my question: What is the canonical, thread-safe pattern in Netty for managing the lifecycle of a single buffer that is shared across multiple, potentially staggered, write operations?</p>\n",
+    "tags" : [ "java", "memory-management", "concurrency", "netty", "zero-copy" ],
+    "owner" : {
+      "account_id" : 4816490,
+      "reputation" : 23,
+      "user_id" : 3888453,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/8e5bccbf6840135fe3f81d1cc1af606d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "user3888453",
+      "link" : "https://stackoverflow.com/users/3888453/user3888453"
+    },
+    "is_answered" : false,
+    "view_count" : 67,
+    "answer_count" : 0,
+    "score" : 1,
+    "last_activity_date" : 1754268469,
+    "creation_date" : 1754249111,
+    "link" : "https://stackoverflow.com/questions/79724276/what-is-the-robust-pattern-for-releasing-a-shared-bytebuf-written-to-multiple-ch",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ ],
+  "answer_comments" : { }
+}

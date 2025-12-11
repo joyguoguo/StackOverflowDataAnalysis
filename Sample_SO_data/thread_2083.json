@@ -1,0 +1,330 @@
+{
+  "question" : {
+    "question_id" : 79648661,
+    "title" : "How to use Java 22+ FFM API to get Start Menu and Desktop location via Windows API?",
+    "body" : "<p>How to use <a href=\"https://openjdk.org/jeps/454\" rel=\"nofollow noreferrer\">Java 22+ FFM API</a> to get the Start Menu and Desktop locations via the Windows API?</p>\n<p>The equivalent <a href=\"https://github.com/java-native-access/jna\" rel=\"nofollow noreferrer\">JNA</a> code would look like this:</p>\n<pre class=\"lang-java prettyprint-override\"><code>Guid.GUID guid = KnownFolders.FOLDERID_CommonPrograms;\n//or\n//KnownFolders.FOLDERID_Programs\n//KnownFolders.FOLDERID_PublicDesktop\n//KnownFolders.FOLDERID_Desktop\nString folderPath = Shell32Util.getKnownFolderPath(guid);\n...\n</code></pre>\n<p>I want to replace JNA with the FFM API because JNA uses unsigned DLLs on Windows, which customers and security tools don't like.</p>\n",
+    "tags" : [ "java", "windows", "winapi", "java-ffm" ],
+    "owner" : {
+      "account_id" : 5625687,
+      "reputation" : 175,
+      "user_id" : 4454199,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/7764c65e1536933ac4693c78a984f3a1?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "zebra",
+      "link" : "https://stackoverflow.com/users/4454199/zebra"
+    },
+    "is_answered" : true,
+    "view_count" : 368,
+    "answer_count" : 3,
+    "score" : 2,
+    "last_activity_date" : 1751522654,
+    "creation_date" : 1748864879,
+    "link" : "https://stackoverflow.com/questions/79648661/how-to-use-java-22-ffm-api-to-get-start-menu-and-desktop-location-via-windows-a",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79651899,
+    "question_id" : 79648661,
+    "body" : "<p>An easier alternative is to use <a href=\"https://github.com/manuelbl/WindowsApiGenerator\" rel=\"nofollow noreferrer\">Windows API Generator</a> instead of <em>jextract</em>. It can generate Java FFM code for functions, structs, unions, enumerations, COM interfaces and - most relevant for your case - for constants, including string, GUIDs and more.  (Note: I'm the main author of this tool.)</p>\n<p><em>Windows API Generator</em> is available as a Maven and Gradle plugin. If you are using Maven, it's configured like so:</p>\n<pre class=\"lang-xml prettyprint-override\"><code>&lt;project xmlns=&quot;http://maven.apache.org/POM/4.0.0&quot; xmlns:xsi=&quot;http://www.w3.org/2001/XMLSchema-instance&quot;\n  xsi:schemaLocation=&quot;http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd&quot;&gt;\n  &lt;modelVersion&gt;4.0.0&lt;/modelVersion&gt;\n\n  &lt;groupId&gt;org.eample&lt;/groupId&gt;\n  &lt;artifactId&gt;FolderPath&lt;/artifactId&gt;\n  &lt;version&gt;1.0-SNAPSHOT&lt;/version&gt;\n  &lt;packaging&gt;jar&lt;/packaging&gt;\n  &lt;name&gt;FolderPath&lt;/name&gt;\n  &lt;url&gt;http://maven.apache.org&lt;/url&gt;\n\n  &lt;properties&gt;\n    &lt;maven.compiler.source&gt;23&lt;/maven.compiler.source&gt;\n    &lt;maven.compiler.target&gt;23&lt;/maven.compiler.target&gt;\n    &lt;project.build.sourceEncoding&gt;UTF-8&lt;/project.build.sourceEncoding&gt;\n  &lt;/properties&gt;\n\n  &lt;build&gt;\n    &lt;plugins&gt;\n      &lt;plugin&gt;\n        &lt;groupId&gt;net.codecrete.windows-api&lt;/groupId&gt;\n        &lt;artifactId&gt;windowsapi-maven-plugin&lt;/artifactId&gt;\n        &lt;version&gt;0.8.0&lt;/version&gt;\n        &lt;executions&gt;\n          &lt;execution&gt;\n            &lt;goals&gt;\n              &lt;goal&gt;windows-api&lt;/goal&gt;\n            &lt;/goals&gt;\n            &lt;configuration&gt;\n              &lt;functions&gt;\n                &lt;function&gt;SHGetKnownFolderPath&lt;/function&gt;\n                &lt;function&gt;CoTaskMemFree&lt;/function&gt;\n              &lt;/functions&gt;\n              &lt;constants&gt;\n                &lt;constant&gt;FOLDERID_CommonPrograms&lt;/constant&gt;\n                &lt;constant&gt;FOLDERID_Programs&lt;/constant&gt;\n                &lt;constant&gt;FOLDERID_PublicDesktop&lt;/constant&gt;\n                &lt;constant&gt;FOLDERID_Desktop&lt;/constant&gt;\n              &lt;/constants&gt;\n            &lt;/configuration&gt;\n          &lt;/execution&gt;\n        &lt;/executions&gt;\n      &lt;/plugin&gt;\n    &lt;/plugins&gt;\n  &lt;/build&gt;\n&lt;/project&gt;\n</code></pre>\n<p>Then run <code>mvn generate-sources</code> (or click the <em>Generates Sources</em> button in IntelliJ).</p>\n<p>Now it can be used like so:</p>\n<pre class=\"lang-java prettyprint-override\"><code>package org.example;\n\nimport java.lang.foreign.Arena;\n\nimport static java.lang.foreign.MemorySegment.NULL;\nimport static java.lang.foreign.ValueLayout.ADDRESS;\nimport static java.nio.charset.StandardCharsets.UTF_16LE;\nimport static windows.win32.system.com.Apis.CoTaskMemFree;\nimport static windows.win32.ui.shell.Apis.SHGetKnownFolderPath;\nimport static windows.win32.ui.shell.Constants.FOLDERID_CommonPrograms;\n\npublic class Main {\n    public static void main(String[] args) {\n        try (var arena = Arena.ofConfined()) {\n            var out = arena.allocate(ADDRESS);\n            SHGetKnownFolderPath(FOLDERID_CommonPrograms(), 0, NULL, out);\n            var str = out.get(ADDRESS, 0).reinterpret(1000, arena, Apis::CoTaskMemFree);\n            var folder = str.getString(0, UTF_16LE);\n            System.out.println(&quot;Folder: &quot; + folder);\n        }\n    }\n}\n</code></pre>\n<p>Note that there is no need to mess with GUID details. The generator knows the constants and creates the required code for it.</p>\n<p>The generated code even contains a link to the documentation of the functions.\nThe documentation for <code>SHGetKnownFolderPath</code> will tell you tall call <code>CoTaskMemFree</code>\nto free the memory.</p>\n",
+    "score" : 5,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 180181,
+      "reputation" : 79685,
+      "user_id" : 413337,
+      "user_type" : "registered",
+      "accept_rate" : 64,
+      "profile_image" : "https://www.gravatar.com/avatar/783783f968e84cf5047544e9a0f3ccf4?s=256&d=identicon&r=PG",
+      "display_name" : "Codo",
+      "link" : "https://stackoverflow.com/users/413337/codo"
+    },
+    "creation_date" : 1748985355,
+    "last_activity_date" : 1751522654,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79650082,
+    "question_id" : 79648661,
+    "body" : "<p>Here is an implementation from scratch:</p>\n<pre><code>import java.util.UUID;\nimport java.util.Optional;\nimport java.util.Objects;\n\nimport java.lang.invoke.MethodHandle;\n\nimport java.lang.foreign.Linker;\nimport java.lang.foreign.SymbolLookup;\nimport java.lang.foreign.FunctionDescriptor;\nimport java.lang.foreign.MemoryLayout;\nimport java.lang.foreign.ValueLayout;\nimport java.lang.foreign.MemorySegment;\nimport java.lang.foreign.Arena;\n\nimport static java.lang.foreign.MemoryLayout.PathElement.groupElement;\n\nimport java.nio.charset.StandardCharsets;\n\npublic class WindowsFolderLocator {\n    // https://learn.microsoft.com/en-us/dotnet/desktop/winforms/controls/known-folder-guids-for-file-dialog-custom-places\n    public enum FolderID {\n        COMMON_PROGRAMS(UUID.fromString(&quot;0139D44E-6AFE-49F2-8690-3DAFCAE6FFB8&quot;)),\n        PROGRAMS(UUID.fromString(&quot;A77F5D77-2E2B-44C3-A6A2-ABA601054A51&quot;)),\n        PUBLIC_DESKTOP(UUID.fromString(&quot;C4AA340D-F20F-4863-AFEF-F87EF2E6BA25&quot;)),\n        DESKTOP(UUID.fromString(&quot;B4BFCC3A-DB2C-424C-B029-7FE99A87C641&quot;));\n\n        private final UUID guid;\n\n        FolderID(UUID guid) {\n            this.guid = guid;\n        }\n\n        UUID guid() {\n            return guid;\n        }\n    }\n\n    private static final MemoryLayout HRESULT = ValueLayout.JAVA_INT;\n\n    // https://github.com/tpn/winsdk-10/blob/master/Include/10.0.14393.0/shared/winerror.h#L28549\n    /** HRESULT value. */\n    private static final int S_OK = 0;\n\n    // https://github.com/tpn/winsdk-10/blob/master/Include/10.0.10240.0/shared/guiddef.h\n    private static final MemoryLayout GUIDData4 =\n        MemoryLayout.sequenceLayout(8, ValueLayout.JAVA_BYTE).withName(&quot;Data4&quot;);\n    private static final MemoryLayout GUID = MemoryLayout.structLayout(\n        ValueLayout.JAVA_INT.withName(&quot;Data1&quot;),\n        ValueLayout.JAVA_SHORT.withName(&quot;Data2&quot;),\n        ValueLayout.JAVA_SHORT.withName(&quot;Data3&quot;),\n        GUIDData4\n    ).withName(&quot;GUID&quot;);\n\n    public Optional&lt;String&gt; getFolderPath(FolderID folderID) {\n        Objects.requireNonNull(folderID, &quot;Folder ID cannot be null.&quot;);\n\n        Linker linker = Linker.nativeLinker();\n        SymbolLookup shell32 =\n            SymbolLookup.libraryLookup(&quot;Shell32&quot;, Arena.global());\n        SymbolLookup ole32 =\n            SymbolLookup.libraryLookup(&quot;Ole32&quot;, Arena.global());\n\n        // https://learn.microsoft.com/en-us/windows/win32/api/shlobj_core/nf-shlobj_core-shgetknownfolderpath\n        MethodHandle shGetKnownFolderPath = linker.downcallHandle(\n            shell32.findOrThrow(&quot;SHGetKnownFolderPath&quot;),\n            FunctionDescriptor.of(HRESULT,\n                ValueLayout.ADDRESS.withName(&quot;rfid&quot;), // REFKNOWNFOLDERID rfid\n                ValueLayout.JAVA_INT.withName(&quot;wdFlags&quot;), // DWORD wdFlags\n                ValueLayout.ADDRESS.withName(&quot;hToken&quot;), // HANDLE hToken\n                ValueLayout.ADDRESS.withName(&quot;ppszPath&quot;) // PWSTR ppszPath\n            )\n        );\n\n        MethodHandle coTaskMemFree = linker.downcallHandle(\n            ole32.findOrThrow(&quot;CoTaskMemFree&quot;),\n            FunctionDescriptor.ofVoid(ValueLayout.ADDRESS)\n        );\n\n        try (Arena arena = Arena.ofConfined()) {\n            UUID guid = folderID.guid();\n            long high = guid.getMostSignificantBits();\n            long low = guid.getLeastSignificantBits();\n\n            MemorySegment knownFolderID = arena.allocate(GUID);\n            knownFolderID.set(\n                ValueLayout.JAVA_INT,\n                GUID.byteOffset(groupElement(&quot;Data1&quot;)),\n                (int) (high &gt;&gt; 32));\n            knownFolderID.set(\n                ValueLayout.JAVA_SHORT,\n                GUID.byteOffset(groupElement(&quot;Data2&quot;)),\n                (short) (high &gt;&gt; 16));\n            knownFolderID.set(\n                ValueLayout.JAVA_SHORT,\n                GUID.byteOffset(groupElement(&quot;Data3&quot;)),\n                (short) high);\n            MemorySegment data4 = knownFolderID.asSlice(\n                GUID.byteOffset(groupElement(&quot;Data4&quot;)),\n                GUIDData4);\n            data4.asByteBuffer().asLongBuffer().put(low);\n\n            MemorySegment pathPtr = arena.allocate(ValueLayout.ADDRESS);\n\n            int hresult = (int) shGetKnownFolderPath.invokeExact(\n                knownFolderID, 0, MemorySegment.NULL, pathPtr);\n\n            MemorySegment pathBuffer =\n                pathPtr.getAtIndex(ValueLayout.ADDRESS, 0);\n            if (pathBuffer.equals(MemorySegment.NULL)) {\n                return Optional.empty();\n            }\n\n            pathBuffer = pathBuffer.reinterpret(8192, arena, null);\n\n            Optional&lt;String&gt; path;\n            if (hresult == S_OK) {\n                path = Optional.of(\n                    pathBuffer.getString(0, StandardCharsets.UTF_16LE));\n            } else {\n                path = Optional.empty();\n            }\n\n            coTaskMemFree.invokeExact(pathBuffer);\n\n            return path;\n        } catch (Throwable t) {\n            throw new RuntimeException(t);\n        }\n    }\n\n    public static void main(String[] args) {\n        Optional&lt;String&gt; path =\n            new WindowsFolderLocator().getFolderPath(FolderID.COMMON_PROGRAMS);\n        System.out.println(path);\n    }\n}\n</code></pre>\n",
+    "score" : 4,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 2053598,
+      "reputation" : 44936,
+      "user_id" : 1831987,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/38b1c37530189ec4471a43a618e33f67?s=256&d=identicon&r=PG",
+      "display_name" : "VGR",
+      "link" : "https://stackoverflow.com/users/1831987/vgr"
+    },
+    "creation_date" : 1748885100,
+    "last_activity_date" : 1748885100,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79650015,
+    "question_id" : 79648661,
+    "body" : "<p>Use <a href=\"https://github.com/openjdk/jextract\" rel=\"nofollow noreferrer\">jextract</a> to generate bindings for <code>SHGetKnownFolderPath</code> and <code>_GUID</code>:</p>\n<pre><code># change this path to where you have the Windows SDK installed\n&gt; $I = 'C:\\Program Files (x86)\\Windows Kits\\10\\Include\\10.0.22621.0'\n&gt; jextract --output ShGetKnownFolderPath -I $I\\um '&lt;shlobj.h&gt;' --include-function SHGetKnownFolderPath --include-struct _GUID -t com.windows.shell32 -l Shell32\n</code></pre>\n<p>This generates an <code>shlobj_h</code> and <code>_GUID</code> class in the <code>com.windows.shell32</code> package. Then we use them:</p>\n<pre><code>import java.lang.foreign.*;\nimport java.nio.charset.StandardCharsets;\n\nimport com.windows.shell32._GUID;\nimport static com.windows.shell32.shlobj_h.*;\n\npublic class Main {\n\n    // See: https://learn.microsoft.com/en-us/windows/win32/shell/knownfolderid\n    // 0139D44E-6AFE-49F2-8690-3DAFCAE6FFB8\n    private static final MemorySegment FOLDERID_CommonPrograms\n            = guid(0x0139D44E, 0x6AFE, 0x49F2, 0x86, 0x90, 0x3D, 0xAF, 0xCA, 0xE6, 0xFF, 0xB8);\n\n    public static void main(String[] args) {\n        try (Arena arena = Arena.ofConfined()) {\n            MemorySegment out = arena.allocate(C_POINTER);\n            int result = SHGetKnownFolderPath(\n                FOLDERID_CommonPrograms,\n                0,\n                MemorySegment.NULL,\n                out);\n            if (result != 0) {\n                throw new IllegalStateException(&quot;Call failed: &quot; + result);\n            }\n            System.out.println(&quot;Result: &quot; + out.get(C_POINTER, 0)\n                    .getString(0, StandardCharsets.UTF_16LE));\n            // prints e.g.:\n            // &quot;C:\\ProgramData\\Microsoft\\Windows\\Start Menu\\Programs&quot;\n        }\n    }\n\n    private static MemorySegment guid(int Data1, int Data2, int Data3,\n            int Data4_0, int Data4_1, int Data4_2, int Data4_3,\n            int Data4_4, int Data4_5, int Data4_6, int Data4_7) {\n        MemorySegment result = _GUID.allocate(Arena.global());\n        _GUID.Data1(result, Data1);\n        _GUID.Data2(result, (short) Data2);\n        _GUID.Data3(result, (short) Data3);\n        MemorySegment data4Seg = _GUID.Data4(result);\n        _GUID.Data4(data4Seg, 0, (byte) Data4_0);\n        _GUID.Data4(data4Seg, 1, (byte) Data4_1);\n        _GUID.Data4(data4Seg, 2, (byte) Data4_2);\n        _GUID.Data4(data4Seg, 3, (byte) Data4_3);\n        _GUID.Data4(data4Seg, 4, (byte) Data4_4);\n        _GUID.Data4(data4Seg, 5, (byte) Data4_5);\n        _GUID.Data4(data4Seg, 6, (byte) Data4_6);\n        _GUID.Data4(data4Seg, 7, (byte) Data4_7);\n        return result;\n    }\n}\n</code></pre>\n<p>The tricky part here is that we manually have to re-create the GUID. The GUID is defined as a constant in the Windows SDK <code>KnowFolders.h</code> header file, but it is not included in any DLL as far as I can tell, so we can't just let jextract generate bindings for it, since there is no symbol to link against.</p>\n",
+    "score" : 3,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 4555218,
+      "reputation" : 34325,
+      "user_id" : 3699139,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/4a510c6ed90917ec02dd4d572cf9e78c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Jorn Vernee",
+      "link" : "https://stackoverflow.com/users/3699139/jorn-vernee"
+    },
+    "creation_date" : 1748882103,
+    "last_activity_date" : 1748882414,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140479180,
+    "post_id" : 79648661,
+    "body" : "I need equivalent FFM API code that calls &quot;SHGetKnownFolderPath&quot; for retrieving specific folders in Windows. This is what the mentioned JNA code is doing.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 5625687,
+      "reputation" : 175,
+      "user_id" : 4454199,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/7764c65e1536933ac4693c78a984f3a1?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "zebra",
+      "link" : "https://stackoverflow.com/users/4454199/zebra"
+    },
+    "creation_date" : 1748866819,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140479160,
+    "post_id" : 79648661,
+    "body" : "FFM is replacement for JNI, not JNA. You have to ask specific question about specific function to find replacement without custom unsigned libs.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 4497436,
+      "reputation" : 20786,
+      "user_id" : 3656904,
+      "user_type" : "registered",
+      "accept_rate" : 67,
+      "profile_image" : "https://www.gravatar.com/avatar/8bdbd1f89f8907e8e8b15ab88c084c65?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "talex",
+      "link" : "https://stackoverflow.com/users/3656904/talex"
+    },
+    "creation_date" : 1748866464,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79650015" : [ {
+      "comment_id" : 140481032,
+      "post_id" : 79650015,
+      "body" : "I had the same experience:  there appears to be no library which contains the KnownFolders.h constant definitions.",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 2053598,
+        "reputation" : 44936,
+        "user_id" : 1831987,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/38b1c37530189ec4471a43a618e33f67?s=256&d=identicon&r=PG",
+        "display_name" : "VGR",
+        "link" : "https://stackoverflow.com/users/1831987/vgr"
+      },
+      "creation_date" : 1748885169,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79651899" : [ {
+      "comment_id" : 140633654,
+      "post_id" : 79651899,
+      "body" : "@barneypitt Yes, JNA comes with about 50,000 lines of hand-written code on top of the core JNA implementation for function calls and data structures. jextract and Windows API generator produces very similar code for functions and data structures. Don&#39;t expect any magic from any generator when applied to the Windows API as it is an old, not very user-friendly API.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 180181,
+        "reputation" : 79685,
+        "user_id" : 413337,
+        "user_type" : "registered",
+        "accept_rate" : 64,
+        "profile_image" : "https://www.gravatar.com/avatar/783783f968e84cf5047544e9a0f3ccf4?s=256&d=identicon&r=PG",
+        "display_name" : "Codo",
+        "link" : "https://stackoverflow.com/users/413337/codo"
+      },
+      "creation_date" : 1753987019,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140632923,
+      "post_id" : 79651899,
+      "body" : "@Codo But is the JNA utility class is hand-written? Either way, it seems odd to go this far towards auto-generating code then not doing the last step (i.e. generating a method that takes care of the boilerplate). Is jextract generated code similarly opaque?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1845234,
+        "reputation" : 1276,
+        "user_id" : 1673705,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/abe6098dc122d57b2c7b1aa8f074723a?s=256&d=identicon&r=PG",
+        "display_name" : "barneypitt",
+        "link" : "https://stackoverflow.com/users/1673705/barneypitt"
+      },
+      "creation_date" : 1753970288,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140631950,
+      "post_id" : 79651899,
+      "body" : "@barneypitt The Windows API generator produces code that is purposely similar to the code generated by jextract. And note that the code in the question is not JNA code. It&#39;s a call to a utility class that wraps JNA calls. The actual JNA code is about the same size as the Windows API generator code. Similar utility classes could also be written for the Windows API generator.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 180181,
+        "reputation" : 79685,
+        "user_id" : 413337,
+        "user_type" : "registered",
+        "accept_rate" : 64,
+        "profile_image" : "https://www.gravatar.com/avatar/783783f968e84cf5047544e9a0f3ccf4?s=256&d=identicon&r=PG",
+        "display_name" : "Codo",
+        "link" : "https://stackoverflow.com/users/413337/codo"
+      },
+      "creation_date" : 1753946156,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140627910,
+      "post_id" : 79651899,
+      "body" : "That&#39;s a hell of a lot of boilerplate compared to the JNA version! Why isn&#39;t Windows API Generator creating a plain old function to do all this in a single call?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1845234,
+        "reputation" : 1276,
+        "user_id" : 1673705,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/abe6098dc122d57b2c7b1aa8f074723a?s=256&d=identicon&r=PG",
+        "display_name" : "barneypitt",
+        "link" : "https://stackoverflow.com/users/1673705/barneypitt"
+      },
+      "creation_date" : 1753816788,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140490842,
+      "post_id" : 79651899,
+      "body" : "FWIW, <code>CoTaskMemFree</code> looks like a good candidate to use as a cleanup action when reinterpreting the segment: <code>var str = out.get(ADDRESS, 0).reinterpret(1000, arena, Apis::CoTaskMemFree);</code>. This will automatically free the memory when the arena is closed, and makes sure the segment can not be accessed after the free.",
+      "score" : 3,
+      "owner" : {
+        "account_id" : 4555218,
+        "reputation" : 34325,
+        "user_id" : 3699139,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/4a510c6ed90917ec02dd4d572cf9e78c?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Jorn Vernee",
+        "link" : "https://stackoverflow.com/users/3699139/jorn-vernee"
+      },
+      "creation_date" : 1749138378,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79650082" : [ {
+      "comment_id" : 140484500,
+      "post_id" : 79650082,
+      "body" : "If you&#39;re worried about padding, your struct definition has none. Padding has to be added manually by adding padding layouts to the layout definition. The API takes a deliberate &#39;what you see is what you get&#39; approach (not everybody wants C&#39;s alignment, and there is no one true C alignment on every platform either. PPC in particular has multiple ways of laying out structs).",
+      "score" : 3,
+      "owner" : {
+        "account_id" : 4555218,
+        "reputation" : 34325,
+        "user_id" : 3699139,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/4a510c6ed90917ec02dd4d572cf9e78c?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Jorn Vernee",
+        "link" : "https://stackoverflow.com/users/3699139/jorn-vernee"
+      },
+      "creation_date" : 1748976009,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140484310,
+      "post_id" : 79650082,
+      "body" : "@Holger Every MemoryLayout has a “natural alignment” by default, as described in the MemoryLayout javadoc.  This usually conforms to native struct member alignment.  As for the sequenceLayout, I was just mimicking <a href=\"https://github.com/tpn/winsdk-10/blob/master/Include/10.0.10240.0/shared/guiddef.h\" rel=\"nofollow noreferrer\">guiddef.h</a>.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2053598,
+        "reputation" : 44936,
+        "user_id" : 1831987,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/38b1c37530189ec4471a43a618e33f67?s=256&d=identicon&r=PG",
+        "display_name" : "VGR",
+        "link" : "https://stackoverflow.com/users/1831987/vgr"
+      },
+      "creation_date" : 1748971628,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140484231,
+      "post_id" : 79650082,
+      "body" : "Well, the <code>structLayout</code> in this code clearly has no additional alignment constraints and the <code>JAVA_INT</code> and <code>JAVA_SHORT</code> have well defined sizes and alignments (and the <code>sequenceLayout(8, ValueLayout.JAVA_BYTE)</code> even ignores the fact that it is a <code>long</code>). You may also compare with <a href=\"https://github.com/tpn/winsdk-10/blob/9b69fd26ac0c7d0b83d378dba01080e93349c2ed/Include/10.0.10240.0/shared/guiddef.h#L166\" rel=\"nofollow noreferrer\">this macro</a>  which just treats GUIDs as densely packed <code>unsigned long[4]</code> array…",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 3211603,
+        "reputation" : 300981,
+        "user_id" : 2711488,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+        "display_name" : "Holger",
+        "link" : "https://stackoverflow.com/users/2711488/holger"
+      },
+      "creation_date" : 1748969971,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140484085,
+      "post_id" : 79650082,
+      "body" : "@Holger That ignores the possibility of struct member alignment.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2053598,
+        "reputation" : 44936,
+        "user_id" : 1831987,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/38b1c37530189ec4471a43a618e33f67?s=256&d=identicon&r=PG",
+        "display_name" : "VGR",
+        "link" : "https://stackoverflow.com/users/1831987/vgr"
+      },
+      "creation_date" : 1748966758,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140484069,
+      "post_id" : 79650082,
+      "body" : "Maybe the GUID part is a bit overengineered. You could simply use <code>MemorySegment knownFolderID = arena.allocate(16);  knownFolderID.asByteBuffer().order(ByteOrder.LITTLE_ENDIAN) .putInt((int)(high &gt;&gt;&gt; 32)) .putShort((short)(high &gt;&gt; 16)) .putShort((short)high) .order(ByteOrder.BIG_ENDIAN) .putLong(low);</code>",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 3211603,
+        "reputation" : 300981,
+        "user_id" : 2711488,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+        "display_name" : "Holger",
+        "link" : "https://stackoverflow.com/users/2711488/holger"
+      },
+      "creation_date" : 1748966394,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140481161,
+      "post_id" : 79650082,
+      "body" : "@RobSpoor Good point.  It is allocated by Windows, not by Java, so the Arena is probably irrelevant.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2053598,
+        "reputation" : 44936,
+        "user_id" : 1831987,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/38b1c37530189ec4471a43a618e33f67?s=256&d=identicon&r=PG",
+        "display_name" : "VGR",
+        "link" : "https://stackoverflow.com/users/1831987/vgr"
+      },
+      "creation_date" : 1748887839,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140481119,
+      "post_id" : 79650082,
+      "body" : "Since you&#39;re freeing the memory from <code>pathBuffer</code> yourself, I don&#39;t think you need to associate it with the arena when you reinterpret it. <code>pathBuffer.reinterpret(8192)</code> should suffice.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 1211967,
+        "reputation" : 9964,
+        "user_id" : 1180351,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/pKB8y.png?s=256",
+        "display_name" : "Rob Spoor",
+        "link" : "https://stackoverflow.com/users/1180351/rob-spoor"
+      },
+      "creation_date" : 1748887104,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

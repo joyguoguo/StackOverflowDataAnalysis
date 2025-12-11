@@ -1,0 +1,115 @@
+{
+  "question" : {
+    "question_id" : 79661284,
+    "title" : "What is the correct way to safely stop a Thread in Java without using stop()?",
+    "body" : "<p>I’m learning about multithreading in Java, and I have a specific question regarding how to safely stop a thread.</p>\n<p>I know that the stop() method is deprecated and unsafe because it can leave objects in an inconsistent state or cause security issues, so I want to avoid using it.</p>\n<p>My goal is to stop a running thread when a certain condition is met (for example, when a button is pressed or a time limit is reached), but I want to do it cleanly and without causing runtime errors or unexpected behavior.</p>\n<p>I’ve seen some examples where a boolean flag is used to control whether the thread should keep running, but I still have some questions:</p>\n<p>Is using a flag the recommended approach?</p>\n<p>How do I properly implement this pattern?</p>\n<p>What happens if the thread is sleeping or waiting when I try to stop it?</p>\n<p>Are there better or more modern alternatives, such as using ExecutorService?</p>\n<p>I appreciate any clear explanation, simple examples, or best practices to follow. I'm just trying to learn how to do this the right way, in a safe and clean manner.</p>\n<p>Thanks in advance!</p>\n",
+    "tags" : [ "java", "jvm", "java-threads" ],
+    "owner" : {
+      "account_id" : 42478118,
+      "reputation" : 31,
+      "user_id" : 30772246,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/ab0ec3508669a7746cfee6b0ae690c09?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "ENNER OSVALDO GODOY RAMIREZ",
+      "link" : "https://stackoverflow.com/users/30772246/enner-osvaldo-godoy-ramirez"
+    },
+    "is_answered" : true,
+    "view_count" : 167,
+    "answer_count" : 3,
+    "score" : -1,
+    "last_activity_date" : 1749805850,
+    "creation_date" : 1749605831,
+    "link" : "https://stackoverflow.com/questions/79661284/what-is-the-correct-way-to-safely-stop-a-thread-in-java-without-using-stop",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79661307,
+    "question_id" : 79661284,
+    "body" : "<p><code>interrupt()</code> is the mechanism. You call <code>.interrupt()</code> on a thread object.</p>\n<p>This will... <em>raise the thread's interrupt flag</em>. And absolutely nothing else, that's all that happens.</p>\n<p>So what does <em>that</em> do? Well, if you call <code>Thread.interrupted()</code>, [A] the flag is cleared (this is <em>not</em> a getter), and [B] the method returns <code>true</code>. So far, not very exciting, but it does give a basic format for threads that are just &quot;repeatedly do the same task over and over&quot;:</p>\n<pre class=\"lang-java prettyprint-override\"><code>while (!Thread.interrupted()) {\n  doTheThing();\n}\n</code></pre>\n<p>But, the JVM code itself also checks that flag. Any method that <em>can</em> be safely stopped, <em>will</em> react to it.</p>\n<p>Certain methods are <strong>guaranteed</strong> to react to it. These can be identified easily: They are specced to <code>throws InterruptedException</code>. These all have the property that they will 'return' (by throwing that exception) almost instantly when you interrupt that thread. Because of the way it works ('interrupt just means <em>raise the flag</em> and then <em>that</em> causes things to happen'), if the flag happens to be raised and you invoke one of these methods that is guaranteed to react to interruption, that method will <em>instantly</em> throw that exception. All these methods will lower the flag as part of the job.</p>\n<p>A ton of advice says you should 'reraise the flag'. This is incorrect, because of yet another maxim:</p>\n<p>Nothing interrupts threads, <strong>other than yourself</strong> - the only way is to call <code>someThread.interrupt()</code> and no code in the JVM does that, nor does any OS level system, other than methods that spell out that they do this. For example, if a user uses the <code>kill</code> command or presses CTRL+C or otherwise asks the OS to tell your app to kindly exit, <strong>no interrupts occur</strong>. Instead the JVM just dies. If you really want to respond to this, you register shutdown hooks (these are bad ideas; any app that has to do cleanup in these will therefore end up in an invalid state that requires finicky manual fixing if somebody ever trips over a power cable or the JVM coredumps, which is rare, but it happens).</p>\n<p>Therefore, then, if you decide to catch InterruptedException, what should you do? Well, you tell me. You caused it to happen. What did you want it to do?</p>\n<p>This all leads to a relatively simple and elegant 'loop' construction for threads:</p>\n<pre><code>try {\n  while (!Thread.interrupted()) {\n    doThing();\n    Thread.sleep(1000);\n  }\n} catch (InterruptedException e) {\n  // Intentional: Just end\n}\n</code></pre>\n<p>Is all you need. If you want interrupt to mean something else, put that in the catch block (for example, perhaps you have a system that waits an hour, checks for some condition and does a job, and repeats. Perhaps you want a system to force a check right now. You'd.. also use interrupt for that, and now your catch block should continue the loop. If you want to do multiple different things via interruption, set a property indicating what it should do first, then interrupt. And keep in mind any time you read/write the same field from different threads, you wrote untestably broken code unless you kept the Java Memory Model Happens-Before rules in mind. Threads are complicated.</p>\n<h2>So this guarantees thread death, right?</h2>\n<p>Alas. A thread is free to catch InterruptedException and just keep going. It is free to write, say, <code>while (true) {}</code> which runs forever, causes one CPU core to be fully occupied busily doing nothing, and wouldn't respond to interrupts in any way.</p>\n<p>There is no way to guarantee thread death other than force-killing the entire JVM at the OS level. The solution is simple: Don't run malicious code. If you must, run it in an OS-level sandbox; it is <em>not possible</em> to safely run malicious code inside your own JVM. No, the SecurityManager will not help you.</p>\n<h2>This stops network reads, right?</h2>\n<p>Usually, yes. socketInputStream.read() is not actually specced to guarantee this - it does not throw <code>InterruptedException</code>. JVMs run on <em>many</em> architecture+OS combinations and the OpenJDK team did not think it was appropriate to guarantee it. Because that would mean any OS that couldn't guarantee it is incapable of having a JVM written for it and that's a tad harsh. But on every JVM I'm aware of, you get an IOException that wraps the InterruptedException and whose message is something like 'interrupted' or similar.</p>\n<h2>A word of caution</h2>\n<p>Interrupt, Thread.sleep, and co - these are low level tools. More generally if you want to e.g. create a job queue system (one thread creates jobs and adds them to a queue, a bunch of threads just grab jobs off the queue in some somewhat arbitrary order and process them) - a <em>very</em> common way you end up at concurrent code setups, you don't use this stuff, you use something from the <code>java.util.concurrent</code> package. Such as an ExecutorPool.</p>\n<p>None of those have ways to forcibly stop threads either. Nothing does. Instead, you write the code that runs inside threads to respond sensibly. This is usually trivial; it is very hard to write a thread that e.g. would accidentally fail to respond to interrupts. You almost always end up calling something that responds to interrupts by throwing InterruptedException or something similar in less than a second, and well written code does not ignore exceptions (instead, well written code tends to just abort the entire callstack. This is the appropriate thing to do if the code cannot solve the cause of the exception on its own, and you rarely can. There's a reason exceptions 'bubble up' - that's the correct default behaviour).</p>\n<h2>I really just want to stop any thread</h2>\n<p>... you really really can't do that. If it was possible to write something that acts, quacks, talks, and swims like <code>Thread.stop</code>, the OpenJDK team would have just replaced <code>stop()</code> with that instead of deprecating it (and, in modern JVM releases, Thread.stop no longer works at all, in fact). The very <em>concept</em> of &quot;I would like to forcibly stop any thread, ASAP, regardless of what it is doing&quot; is <strong>fundmentally</strong> a broken idea. The only safe way to do it is either with process management (you can use that; it means you have to spawn a new JVM and then use OS level controls to manage it. Java has no APIs that allow you to do this in an OS independent fashion, so, you'd have to write some fairly complicated code targetted as a specific OS to do this), or by having the code you want to 'stop' be written with it in mind. <code>interrupt()</code> is one particularly useful tool to write such things.</p>\n",
+    "score" : 4,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 401843,
+      "reputation" : 107186,
+      "user_id" : 768644,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+      "display_name" : "rzwitserloot",
+      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+    },
+    "creation_date" : 1749608703,
+    "last_activity_date" : 1749608703,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79661340,
+    "question_id" : 79661284,
+    "body" : "<blockquote>\n<p>What is the correct way to safely stop a Thread in Java without using <code>stop()</code>?</p>\n</blockquote>\n<p>TL;DR - There is no single correct way.  (Indeed for Java 21 and later, <code>stop()</code> is no longer an option.)</p>\n<p>Depending on the circumstances, the main alternatives are:</p>\n<ul>\n<li>Using <code>Thread.interrupt()</code> (directly or indirectly).  See @rzwitserloot's <a href=\"https://stackoverflow.com/a/79661307/139985\">answer</a> for more information on this approach.</li>\n<li>Checking a flag variable</li>\n<li>Running the task in a child process rather than a thread.</li>\n</ul>\n<hr />\n<p>Here are some short answers to your specific questions:</p>\n<blockquote>\n<p>Is using a flag the recommended approach?</p>\n</blockquote>\n<p>Generally speaking, no.</p>\n<p><code>Thread.interrupt()</code> is better, but it still requires the thread being stopped to cooperate; e.g. check frequently (enough) for interrupts and handle <code>InterruptedException</code> properly.</p>\n<blockquote>\n<p>How do I properly implement this pattern?</p>\n</blockquote>\n<p>Assuming that you are talking about the flag approach, EITHER declare the variable as <code>volatile</code> OR make sure that all accesses and updates to the flag are properly synchronized; e.g. using <code>synchronized</code>.</p>\n<blockquote>\n<p>What happens if the thread is sleeping or waiting when I try to stop it?</p>\n</blockquote>\n<p>The flag variable approach doesn't handle this properly.  The thread won't stop until the sleep or wait or blocking I/O operation completes.</p>\n<p>Note that the <code>Thread.interrupt()</code> approach <em>does</em> handle these cases with some caveats.</p>\n<blockquote>\n<p>Are there better or more modern alternatives, such as using ExecutorService?</p>\n</blockquote>\n<p>Not really, no.  <code>ExecutorService</code> relies on the <code>Thread.interrupt()</code> mechanism, and suffers from the same problems; see above.  But it is generally recommended that you <code>ExecutorService</code> rather than bare threads anyway ... for its other advantages and features.</p>\n<blockquote>\n<p>I appreciate any clear explanation, simple examples, or best practices to follow.</p>\n</blockquote>\n<p>See these Q&amp;As for more detailed examples and explanations:</p>\n<ul>\n<li><a href=\"https://stackoverflow.com/questions/10961714\">How to properly stop the Thread in Java?</a></li>\n<li><a href=\"https://stackoverflow.com/questions/671049\">How do you kill a Thread in Java?</a></li>\n<li><a href=\"https://stackoverflow.com/questions/58642987\">Is there really no way to forcefully kill a Thread in Java?</a></li>\n<li>and so on.</li>\n</ul>\n<p>As you can see questions like this have been asked and answered before.</p>\n<p>Best practices?  Please read <a href=\"https://www.satisfice.com/blog/archives/5164\" rel=\"nofollow noreferrer\">&quot;No best practices&quot;</a>.</p>\n<blockquote>\n<p>I'm just trying to learn how to do this the right way, in a safe and clean manner.</p>\n</blockquote>\n<p>There isn't a universal solution to this; i.e. one that doesn't rely on the cooperation of the thread you are trying to stop.  And there isn't a single &quot;right&quot; way.</p>\n<p>If you can't be sure that your threads are going to cooperate (see above), you need to run them as child processes that can be stopped using <code>Process.destroyForcibly()</code> ... or something platform specific.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 47283,
+      "reputation" : 723428,
+      "user_id" : 139985,
+      "user_type" : "registered",
+      "accept_rate" : 69,
+      "profile_image" : "https://www.gravatar.com/avatar/147c5a9cc1feec049c50da791ac7d144?s=256&d=identicon&r=PG",
+      "display_name" : "Stephen C",
+      "link" : "https://stackoverflow.com/users/139985/stephen-c"
+    },
+    "creation_date" : 1749611752,
+    "last_activity_date" : 1749805850,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79661670,
+    "question_id" : 79661284,
+    "body" : "<p>You solve this by not looking at specific thread control commands but simply writing your task that runs inside the thread to stop when you want.</p>\n<p>Say this is what you want to run in your thread</p>\n<pre><code>while(true) {\n  i = i++;\n  int x= i*25;\n  System.out.println(&quot;25 x &quot;+i+&quot; = &quot;+ x);\n}\n</code></pre>\n<p>then the thread would print out all the multiples of 25. But now you decide the first one hundred are enough so you want it to stop after the first 100.</p>\n<pre><code>while(i&lt;100) {\n  i = i++;\n  int x= i*25;\n  System.out.println(&quot;25 x &quot;+i+&quot; = &quot;+ x);\n}\n</code></pre>\n<p>If you submit that task to a thread as runnable it will stop after printing the first 100 multiples of 25.</p>\n<p>The same principle you can always apply. Just return from the task you are doing when a certain condition is met. That condition could be a dedicated flag &quot;keepRunning&quot; or checking for whether the Thread got interrupted, but typically there is a way more natural way to represent it, e.g. if a given number of tasks are done and the worker queue is empty, if a server flag for shutdown is set or if a player in a game died, if a button is pushed etc. Ideally you don't need explicit thread control mechanisms via Thread.xxx methods, because your tasks naturally end when they are supposed to. Such code is typically more readable since you don't need to switch between the domain level understanding of the task and how long it should run and the infrastructure level thread control.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 20484963,
+      "reputation" : 112,
+      "user_id" : 15032355,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/3b98714d7b870236026d52f163a2dae2?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "FredWoozley",
+      "link" : "https://stackoverflow.com/users/15032355/fredwoozley"
+    },
+    "creation_date" : 1749632291,
+    "last_activity_date" : 1749632599,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140504890,
+    "post_id" : 79661284,
+    "body" : "short answer: return from, that is, terminate the <code>run</code> method the thread is running (<a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/Thread.html\" rel=\"nofollow noreferrer\">documentation</a>: &quot;<i>A thread</i> terminates <i>if either its run method completes normally, or if its run method completes abruptly ...</i>&quot;)",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 31180,
+      "reputation" : 29752,
+      "user_id" : 85421,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/kKvXH.gif?s=256",
+      "display_name" : "user85421",
+      "link" : "https://stackoverflow.com/users/85421/user85421"
+    },
+    "creation_date" : 1749634235,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140504147,
+    "post_id" : 79661284,
+    "body" : "just <code>.interrupt()</code> your thread. <a href=\"https://stackoverflow.com/a/10962613/16034206\">stackoverflow.com/a/10962613/16034206</a>",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 21724606,
+      "reputation" : 1431,
+      "user_id" : 16034206,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/MRBdT.jpg?s=256",
+      "display_name" : "pebble unit",
+      "link" : "https://stackoverflow.com/users/16034206/pebble-unit"
+    },
+    "creation_date" : 1749606025,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

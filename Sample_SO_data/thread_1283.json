@@ -1,0 +1,94 @@
+{
+  "question" : {
+    "question_id" : 79723164,
+    "title" : "Public swagger endpoints giving UNAUTHORIZED error in Spring Security",
+    "body" : "<p>I have a Spring Boot project and am using Firebase Auth with Spring Security.</p>\n<p>I am also configuring Swagger for API documentation. My code is:</p>\n<pre class=\"lang-java prettyprint-override\"><code>package com.ayushsingh.doc_helper.commons.config.security;\n\nimport java.time.Instant;\n\nimport com.ayushsingh.doc_helper.commons.constants.AuthConstants;\nimport org.springframework.context.annotation.Bean;\nimport org.springframework.context.annotation.Configuration;\nimport org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;\nimport org.springframework.security.config.annotation.web.builders.HttpSecurity;\nimport org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;\nimport org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;\nimport org.springframework.security.config.http.SessionCreationPolicy;\nimport org.springframework.security.web.AuthenticationEntryPoint;\nimport org.springframework.security.web.SecurityFilterChain;\nimport org.springframework.security.web.access.AccessDeniedHandler;\nimport org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;\n\nimport jakarta.servlet.http.HttpServletResponse;\n\n@Configuration\n@EnableWebSecurity\n@EnableMethodSecurity(prePostEnabled = true)\npublic class SecurityConfig {\n\n    private final FirebaseAuthFilter firebaseAuthFilter;\n    private final FirebaseAuthenticationProvider firebaseAuthenticationProvider;\n\n    public SecurityConfig(FirebaseAuthFilter firebaseAuthFilter,\n                          FirebaseAuthenticationProvider firebaseAuthenticationProvider) {\n        this.firebaseAuthFilter = firebaseAuthFilter;\n        this.firebaseAuthenticationProvider = firebaseAuthenticationProvider;\n    }\n\n    @Bean\n    public SecurityFilterChain apiFilterChain(HttpSecurity http) throws Exception {\n        http\n                .csrf(AbstractHttpConfigurer::disable)\n                .sessionManagement(session -&gt; session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))\n                .authorizeHttpRequests(auth -&gt; auth\n                        .requestMatchers(AuthConstants.AUTH_API_PATTERN,\n                                &quot;/swagger-ui/**&quot;,\n                                &quot;/swagger-ui.html&quot;,\n                                &quot;/webjars/**&quot;,\n                                &quot;/configuration/security&quot;,\n                                &quot;/swagger-resources/**&quot;,\n                                &quot;/swagger-resources&quot;,\n                                &quot;/v3/api-docs/**&quot;,\n                                &quot;/v3/api-docs&quot;\n                                )\n                        .permitAll()\n                        .anyRequest().authenticated())\n                .authenticationProvider(firebaseAuthenticationProvider)\n                .addFilterBefore(firebaseAuthFilter, UsernamePasswordAuthenticationFilter.class)\n                .exceptionHandling(ex -&gt; ex\n                        .authenticationEntryPoint(firebaseAuthenticationEntryPoint())\n                        .accessDeniedHandler(accessDeniedHandler()));\n\n        return http.build();\n    }\n\n    @Bean\n    public AuthenticationEntryPoint firebaseAuthenticationEntryPoint() {\n        return (request, response, authException) -&gt; {\n            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);\n            response.setContentType(&quot;application/json&quot;);\n            response.setCharacterEncoding(&quot;UTF-8&quot;);\n\n            String jsonResponse = &quot;&quot;&quot;\n                    {\n                        &quot;success&quot;: false,\n                        &quot;error&quot;: {\n                            &quot;code&quot;: &quot;UNAUTHORIZED&quot;,\n                            &quot;message&quot;: &quot;Authentication required. Please provide a valid Firebase token.&quot;,\n                            &quot;timestamp&quot;: &quot;%s&quot;\n                        }\n                    }\n                    &quot;&quot;&quot;.formatted(Instant.now());\n\n            response.getWriter().write(jsonResponse);\n        };\n    }\n\n    @Bean\n    public AccessDeniedHandler accessDeniedHandler() {\n        return (request, response, accessDeniedException) -&gt; {\n            response.setStatus(HttpServletResponse.SC_FORBIDDEN);\n            response.setContentType(&quot;application/json&quot;);\n            response.setCharacterEncoding(&quot;UTF-8&quot;);\n\n            String jsonResponse = &quot;&quot;&quot;\n                    {\n                        &quot;success&quot;: false,\n                        &quot;error&quot;: {\n                            &quot;code&quot;: &quot;FORBIDDEN&quot;,\n                            &quot;message&quot;: &quot;Insufficient privileges to access this resource.&quot;,\n                            &quot;timestamp&quot;: &quot;%s&quot;\n                        }\n                    }\n                    &quot;&quot;&quot;.formatted(Instant.now());\n\n            response.getWriter().write(jsonResponse);\n        };\n    }\n}\n</code></pre>\n<p>I have also created a AuthFilter for Firebase-</p>\n<pre class=\"lang-java prettyprint-override\"><code>package com.ayushsingh.doc_helper.commons.config.security;\n\nimport java.io.IOException;\n\nimport com.ayushsingh.doc_helper.commons.constants.AuthConstants;\nimport org.springframework.security.core.context.SecurityContextHolder;\nimport org.springframework.stereotype.Component;\nimport org.springframework.web.filter.OncePerRequestFilter;\n\nimport com.ayushsingh.doc_helper.features.auth.domain.AuthUser;\nimport com.ayushsingh.doc_helper.features.user.domain.User;\nimport com.ayushsingh.doc_helper.features.user.service.UserService;\nimport com.google.firebase.auth.FirebaseAuth;\nimport com.google.firebase.auth.FirebaseAuthException;\nimport com.google.firebase.auth.FirebaseToken;\n\nimport jakarta.servlet.FilterChain;\nimport jakarta.servlet.ServletException;\nimport jakarta.servlet.http.HttpServletRequest;\nimport jakarta.servlet.http.HttpServletResponse;\nimport lombok.extern.slf4j.Slf4j;\n\n@Component\n@Slf4j\npublic class FirebaseAuthFilter extends OncePerRequestFilter {\n\n    private final FirebaseAuth firebaseAuth;\n    private final UserService userService;\n\n    public FirebaseAuthFilter(FirebaseAuth firebaseAuth, UserService userService) {\n        this.firebaseAuth = firebaseAuth;\n        this.userService = userService;\n    }\n\n    @Override\n    protected void doFilterInternal(HttpServletRequest request,\n            HttpServletResponse response,\n            FilterChain filterChain) throws ServletException, IOException {\n\n        String token = getTokenFromRequest(request);\n\n        if (token != null) {\n            try {\n                FirebaseToken decodedToken = firebaseAuth.verifyIdToken(token);\n                String firebaseUid = decodedToken.getUid();\n                User user = userService.findByFirebaseUid(firebaseUid);\n\n                if (user != null) {\n                    AuthUser authUser = new AuthUser(user);\n                    FirebaseAuthenticationToken authentication = new FirebaseAuthenticationToken(authUser,\n                            authUser.getAuthorities());\n                    SecurityContextHolder.getContext().setAuthentication(authentication);\n                } else {\n                    log.warn(&quot;User not found for Firebase UID: {}&quot;, firebaseUid);\n                    SecurityContextHolder.clearContext();\n                }\n            } catch (FirebaseAuthException e) {\n                log.error(&quot;Firebase token verification failed: {}&quot;, e.getMessage());\n                SecurityContextHolder.clearContext();\n            }\n        }\n\n        filterChain.doFilter(request, response);\n    }\n\n    private String getTokenFromRequest(HttpServletRequest request) {\n        String bearerToken = request.getHeader(AuthConstants.AUTHORIZATION_HEADER);\n        if (bearerToken != null &amp;&amp; bearerToken.startsWith(AuthConstants.BEARER)) {\n            return bearerToken.substring(7);\n        }\n        return null;\n    }\n\n    @Override\n    protected boolean shouldNotFilter(HttpServletRequest request) {\n        String path = request.getServletPath();\n        String method = request.getMethod();\n\n        // Skip filter for public endpoints\n        var skipFilter = (path.startsWith(AuthConstants.AUTH_API_PREFIX) &amp;&amp; &quot;POST&quot;.equals(method))\n                || path.startsWith(&quot;/api/auth/&quot;)\n                || path.startsWith(&quot;/swagger-ui&quot;)\n                || path.startsWith(&quot;/swagger-resources&quot;)\n                || path.startsWith(&quot;/v3/api-docs&quot;)\n                || path.startsWith(&quot;/webjars&quot;)\n                || path.equals(&quot;/swagger-ui.html&quot;)\n                || path.endsWith(&quot;.js&quot;)\n                || path.endsWith(&quot;.css&quot;)\n                || path.endsWith(&quot;.html&quot;)\n                || path.endsWith(&quot;.png&quot;)\n                || path.endsWith(&quot;.ico&quot;)\n                || path.endsWith(&quot;.map&quot;);\n\n        System.out.println(&quot;Skip filter: &quot; + skipFilter+&quot; request: &quot;+request.getRequestURI());\n        return skipFilter;\n    }\n}\n</code></pre>\n<p>When I hit any of the swagger endpoint, I get the response:</p>\n<pre class=\"lang-json prettyprint-override\"><code>{\n  &quot;success&quot;: false,\n  &quot;error&quot;: {\n    &quot;code&quot;: &quot;UNAUTHORIZED&quot;,\n    &quot;message&quot;: &quot;Authentication required. Please provide a valid Firebase token.&quot;,\n    &quot;timestamp&quot;: &quot;2025-08-02T06:12:36.329330400Z&quot;\n  }\n}\n</code></pre>\n<p>I checked my public endpoint config using a <code>/test</code> endpoint and it works fine, but I am unable to access the swagger endpoints.</p>\n",
+    "tags" : [ "java", "spring", "spring-boot", "spring-security", "swagger-ui" ],
+    "owner" : {
+      "account_id" : 25845637,
+      "reputation" : 696,
+      "user_id" : 19580540,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/bb14dbccbec99b2a0af1e2a369036d8a?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "ayush",
+      "link" : "https://stackoverflow.com/users/19580540/ayush"
+    },
+    "is_answered" : false,
+    "view_count" : 115,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1754376961,
+    "creation_date" : 1754115375,
+    "link" : "https://stackoverflow.com/questions/79723164/public-swagger-endpoints-giving-unauthorized-error-in-spring-security",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79723412,
+    "question_id" : 79723164,
+    "body" : "<p>I ran into the same issue recently and managed to fix it.</p>\n<p>The problem seems to be that Spring Security was still hitting the FirebaseAuthFilter for Swagger paths OR the paths in <code>.requestMatchers(...)</code> and <code>shouldNotFilter()</code> don’t exactly match the incoming request URI</p>\n<p>Here’s what worked for me:</p>\n<p>1. I updated <code>shouldNotFilter()</code> method in AuthFilter to match full Swagger paths correctly like this</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Override\nprotected boolean shouldNotFilter(HttpServletRequest request) {\n    String path = request.getServletPath();\n    return path.startsWith(&quot;/swagger-ui&quot;)\n            || path.startsWith(&quot;/swagger-resources&quot;)\n            || path.startsWith(&quot;/v3/api-docs&quot;)\n            || path.startsWith(&quot;/webjars/&quot;)\n            || path.equals(&quot;/swagger-ui.html&quot;)\n            || path.endsWith(&quot;.js&quot;)\n            || path.endsWith(&quot;.css&quot;)\n            || path.endsWith(&quot;.html&quot;)\n            || path.endsWith(&quot;.png&quot;)\n            || path.endsWith(&quot;.ico&quot;)\n            || path.endsWith(&quot;.map&quot;)\n            || path.startsWith(&quot;/api/auth/&quot;) // your auth prefix\n            || (path.startsWith(&quot;/api/public/&quot;));  \n</code></pre>\n<p>2. I also made sure that SecurityConfig has exact matches like this:</p>\n<pre class=\"lang-java prettyprint-override\"><code>.requestMatchers(   \n    &quot;/swagger-ui/\\*\\*&quot;,\n    &quot;/swagger-ui.html&quot;,\n    &quot;/webjars/\\*\\*&quot;,\n    &quot;/configuration/security&quot;,\n    &quot;/swagger-resources/\\*\\*&quot;,\n    &quot;/v3/api-docs/\\*\\*&quot;,\n    &quot;/v3/api-docs&quot;\n).permitAll()\n</code></pre>\n<p>3. After these fixes, rebuild the project</p>\n<p>4. Restart the server</p>\n<p>5. Open Swagger at: http://localhost:8080/swagger-ui/index.html</p>\n<p>Pro Tip: Use AntPathRequestMatcher for cleaner code instead of string matching.</p>\n<p>I hope this helps.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 20283848,
+      "reputation" : 21,
+      "user_id" : 14876952,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-ILBViw8PSkc/AAAAAAAAAAI/AAAAAAAAAAA/AMZuucl1IDNdcrrlwkD2DuaX4o5aOBxDFg/s96-c/s256-rj/photo.jpg",
+      "display_name" : "Pooja Gupta",
+      "link" : "https://stackoverflow.com/users/14876952/pooja-gupta"
+    },
+    "creation_date" : 1754143812,
+    "last_activity_date" : 1754368138,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140674926,
+    "post_id" : 79723164,
+    "body" : "With those cases, I find it easier to have multiple security filter chains. <a href=\"https://docs.spring.io/spring-security/reference/servlet/configuration/java.html#_multiple_httpsecurity_instances\" rel=\"nofollow noreferrer\">docs.spring.io/spring-security/reference/servlet/configurati&zwnj;&#8203;on/&hellip;</a>. In that case you may have a filter chain for the unauthenticated paths that will not use any of the those filters. In this case you can also stop copy-pasting paths to the should not filter method",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 43555583,
+      "reputation" : 16,
+      "user_id" : 31298961,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/e5b4b0ad5068bfb1a0fef32633d9b628?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Ramino",
+      "link" : "https://stackoverflow.com/users/31298961/ramino"
+    },
+    "creation_date" : 1755558308,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140637113,
+    "post_id" : 79723164,
+    "body" : "What is the URL you tried with your request? As an aside, I think those <code>endsWith</code> conditions will clash with your Spring Security filtering.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 213468,
+      "reputation" : 110282,
+      "user_id" : 466862,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/d873f397779db38cd510d9ee5416fd43?s=256&d=identicon&r=PG",
+      "display_name" : "Mark Rotteveel",
+      "link" : "https://stackoverflow.com/users/466862/mark-rotteveel"
+    },
+    "creation_date" : 1754125163,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140637104,
+    "post_id" : 79723164,
+    "body" : "Please don&#39;t post screenshots of textual output, post it at code-formatted text (marked as json for syntax highlighting).",
+    "score" : 3,
+    "owner" : {
+      "account_id" : 213468,
+      "reputation" : 110282,
+      "user_id" : 466862,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/d873f397779db38cd510d9ee5416fd43?s=256&d=identicon&r=PG",
+      "display_name" : "Mark Rotteveel",
+      "link" : "https://stackoverflow.com/users/466862/mark-rotteveel"
+    },
+    "creation_date" : 1754124841,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

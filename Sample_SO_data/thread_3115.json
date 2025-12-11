@@ -1,0 +1,80 @@
+{
+  "question" : {
+    "question_id" : 79571164,
+    "title" : "Spring Security - JWT and Basic Auth for different patterns",
+    "body" : "<p>I do struggle in adding Basic Auth side by side with JWT securing separate endpoints. I've tried multiple ways, also this from earlier posts <a href=\"https://stackoverflow.com/questions/58081110/configure-multiple-authentication-types-wit-spring-security-for-basic-auth-jwt\">Configure multiple authentication types wit spring security for Basic Auth &amp; JWT</a>.</p>\n<p>Only speciality is that I do retrieve the user not directly from a Database, but rather via OpenFeign from my other Microservice (Employee Service - EMP-S). This is my SecurityConfiguration</p>\n<pre class=\"lang-java prettyprint-override\"><code>@SuppressWarnings(value = &quot;unused&quot;)\n@Profile(value = &quot;!test&quot;)\n@Configuration\n@EnableWebSecurity\n@RequiredArgsConstructor(onConstructor_ = @__(@Autowired))\npublic class SecurityConfiguration {\n\n    // Final Constructors\n    private final BasicAuthEntryPoint basicAuthEntryPoint;\n    private final JwtAuthEntryPoint jwtAuthEntryPoint;\n    private final JwtFilter jwtFilter;\n\n    // Retrieving username &amp; password from environment variables\n    @Value(&quot;${EMP_CONFIG_USERNAME}&quot;)\n    private String envUsername;\n\n    @Value(&quot;${EMP_CONFIG_PASSWORD}&quot;)\n    private String envPassword;\n\n    @Value(&quot;${EMP_ENCRYPT_KEY}&quot;)\n    private String envEncryptKey;\n\n    // PasswordEncoder\n    @Bean\n    public PasswordEncoder passwordEncoder() {\n        return new BCryptPasswordEncoder();\n    }\n\n    // RequestInterceptor (Authentication with external Microservices - OpenFeign)\n    @Bean\n    public RequestInterceptor basicAuthRequestInterceptor() {\n        return requestTemplate -&gt; {\n            String authHeader = &quot;Basic &quot; + Base64.getEncoder()\n                    .encodeToString((envUsername + &quot;:&quot; + envEncryptKey).getBytes());\n            requestTemplate.header(&quot;Authorization&quot;, authHeader);\n        };\n    }\n\n    // Setting SecurityFilterChain - Basic Auth\n    @Bean\n    @Order(1)\n    public SecurityFilterChain securityFilterChainBasicAuth(HttpSecurity http) throws Exception {\n        return http\n                .securityMatcher(&quot;/actuator/**&quot;)\n                .authorizeHttpRequests(req -&gt; req\n                        .anyRequest().hasRole(&quot;ADMIN&quot;))\n                .httpBasic(withDefaults())\n                .sessionManagement(session -&gt; session\n                        .sessionCreationPolicy(SessionCreationPolicy.STATELESS))\n                .exceptionHandling(ex -&gt; ex.authenticationEntryPoint(basicAuthEntryPoint))\n                .csrf(AbstractHttpConfigurer::disable)\n                .build();\n    }\n\n    // Setting SecurityFilterChain - JWT Auth\n    @Bean\n    @Order(2)\n    public SecurityFilterChain securityFilterChainJwt(HttpSecurity http) throws Exception {\n        return http\n                .csrf(AbstractHttpConfigurer::disable)\n                .authorizeHttpRequests(request -&gt; request\n                        .requestMatchers(HttpMethod.POST, &quot;/v1/auth/**&quot;).permitAll()\n                        .anyRequest().authenticated())\n                .sessionManagement(session -&gt; session\n                        .sessionCreationPolicy(SessionCreationPolicy.STATELESS))\n                //.exceptionHandling(ex -&gt; ex.authenticationEntryPoint(jwtAuthEntryPoint))\n                .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class)\n                .build();\n    }\n\n\n    // AuthenticationManager (JWT)\n    @Bean\n    public AuthenticationManager authenticationManager(AuthenticationConfiguration configuration) throws Exception {\n        return configuration.getAuthenticationManager();\n    }\n\n    // InMemory User - Admins Only (Basic Auth)\n    @Bean\n    public UserDetailsService adminUser() {\n\n        // Admin\n        return new InMemoryUserDetailsManager(\n                User.withUsername(envUsername)\n                        .password(envPassword)\n                        .roles(&quot;ADMIN&quot;)\n                        .build()\n        );\n    }\n}\n</code></pre>\n<p>Here my <strong>JwtFilter.java:</strong></p>\n<pre class=\"lang-java prettyprint-override\"><code>@Component\n@RequiredArgsConstructor(onConstructor_ = @__(@Autowired))\npublic class JwtFilter extends OncePerRequestFilter {\n\n    // Final Constructors\n    private final JwtUtils jwtUtils;\n    private final AuthServiceProxy authServiceProxy;\n    private final Logger logger = LoggerFactory.getLogger(JwtFilter.class);\n\n    @Override\n    protected void doFilterInternal(\n            @NonNull HttpServletRequest request,\n            @NonNull HttpServletResponse response,\n            @NonNull FilterChain filterChain\n    ) throws ServletException, IOException {\n\n        // Extracting 'Authorization' from request Headers\n        String authHeader = getAuthHeader(request);\n        String requestPath = request.getRequestURI();\n\n        // 1. Skipping JWT if Authorization Header is 'Basic'\n        if (authHeader != null &amp;&amp; authHeader.startsWith(&quot;Basic &quot;)) {\n            logger.debug(&quot;Skipping JWT filter for Basic Auth request [{}]&quot;, requestPath);\n            filterChain.doFilter(request, response);\n            return;\n        }\n\n        // 2. Validating\n        if (authHeader == null || !authHeader.startsWith(&quot;Bearer &quot;)) {\n            logger.debug(&quot;No Bearer token found in request [{}], skipping JWT filter&quot;, requestPath);\n            filterChain.doFilter(request, response);\n            return;\n        }\n\n        String token = authHeader.substring(7);\n        String username = jwtUtils.getUsername(token);\n        logger.debug(&quot;JWT token parsed. Username extracted: [{}]&quot;, username);\n\n        if (username != null &amp;&amp; SecurityContextHolder.getContext().getAuthentication() == null) {\n            CredentialDTO credentialDTOByUsername = authServiceProxy.getCredentialByUsername(\n                    username,\n                    &quot;GET&quot;,\n                    &quot;/v1/creds/ids?user=&quot; + username\n            );\n\n            if (jwtUtils.isTokenValid(token, credentialDTOByUsername)) {\n                UsernamePasswordAuthenticationToken authToken = new UsernamePasswordAuthenticationToken(\n                        credentialDTOByUsername,\n                        null,\n                        credentialDTOByUsername.getAuthorities()\n                );\n                authToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));\n                SecurityContextHolder.getContext().setAuthentication(authToken);\n                logger.info(&quot;JWT authentication successful for user [{}] on [{}]&quot;, username, requestPath);\n            }\n        }\n        filterChain.doFilter(request, response);\n    }\n\n    // Extracting 'Authorization' from request Headers\n    private String getAuthHeader(HttpServletRequest request) {\n        return request.getHeader(HttpHeaders.AUTHORIZATION);\n    }\n}\n</code></pre>\n<p><strong>JwtAuthEntryPoint:</strong></p>\n<pre class=\"lang-java prettyprint-override\"><code>@Component\n@RequiredArgsConstructor(onConstructor_ = @__(@Autowired))\npublic class JwtAuthEntryPoint implements AuthenticationEntryPoint {\n\n    // Final Constructor\n    private final HandlerExceptionResolver handlerExceptionResolver;\n    private final Logger logger = LoggerFactory.getLogger(JwtAuthEntryPoint.class);\n\n    @Override\n    public void commence(\n            @NonNull HttpServletRequest request,\n            @NonNull HttpServletResponse response,\n            @NonNull AuthenticationException authException\n    ) {\n        logger.error(&quot;Error occurred during JWT Auth: {}&quot;, authException.getMessage());\n        handlerExceptionResolver.resolveException(\n                request,\n                response,\n                null,\n                new UnauthorizedAccessAttempt(authException.getMessage())\n        );\n    }\n}\n</code></pre>\n<p>Last but not least my <strong>CredentialAuthenticationProvider.java:</strong></p>\n<pre class=\"lang-java prettyprint-override\"><code>@Component\n@RequiredArgsConstructor(onConstructor_ = @__(@Autowired))\npublic class CredentialAuthenticationProvider implements AuthenticationProvider {\n\n    // Final Constructors\n    private final AuthServiceProxy authServiceProxy;\n    private final PasswordEncoder passwordEncoder;\n    private final Logger logger = LoggerFactory.getLogger(CredentialAuthenticationProvider.class);\n\n    @Value(&quot;${EMP_CONFIG_USERNAME}&quot;)\n    private String adminUsername;\n\n    @Override\n    public Authentication authenticate(Authentication authentication) throws AuthenticationException {\n\n        // Username &amp; Password (Plaintext)\n        String username = authentication.getName();\n\n        // Skip in-memory admin\n        if (username.equals(adminUsername)) {\n            logger.debug(&quot;Skipping CredentialAuthenticationProvider for in-memory user [{}]&quot;, username);\n            return null;\n        }\n\n        String password = authentication.getCredentials().toString();\n\n        CredentialDTO credentialDTOByUsername = authServiceProxy.getCredentialByUsername(\n                username,\n                &quot;GET&quot;,\n                &quot;/v1/cred/ids?user=&quot; + username\n        );\n        if(credentialDTOByUsername == null || !passwordEncoder.matches(password, credentialDTOByUsername.password())){\n            logger.error(&quot;Username or Password aren't valid - Please check again for JWT generation&quot;);\n            throw new InvalidCredentialException(username);\n        }\n        logger.info(&quot;Username &amp; Password valid!&quot;);\n        return new UsernamePasswordAuthenticationToken(credentialDTOByUsername, null, credentialDTOByUsername.getAuthorities());\n    }\n\n    @Override\n    public boolean supports(Class&lt;?&gt; authentication) {\n        return UsernamePasswordAuthenticationToken.class.isAssignableFrom(authentication);\n    }\n}\n</code></pre>\n<p>Thanks in advance for any help.</p>\n",
+    "tags" : [ "java", "spring-boot", "spring-security", "jwt", "basic-authentication" ],
+    "owner" : {
+      "account_id" : 21601553,
+      "reputation" : 81,
+      "user_id" : 15929619,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f81b56ee6e549e1ebd875e3dc29b36c9?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "AbdoCherry",
+      "link" : "https://stackoverflow.com/users/15929619/abdocherry"
+    },
+    "is_answered" : true,
+    "view_count" : 112,
+    "closed_date" : 1744564531,
+    "answer_count" : 1,
+    "score" : -2,
+    "last_activity_date" : 1744552806,
+    "creation_date" : 1744513395,
+    "link" : "https://stackoverflow.com/questions/79571164/spring-security-jwt-and-basic-auth-for-different-patterns",
+    "closed_reason" : "Not suitable for this site"
+  },
+  "answers" : [ {
+    "answer_id" : 79571628,
+    "question_id" : 79571164,
+    "body" : "<p>I've simply added this here in my AuthenticationProvider class:</p>\n<pre><code>if (adminUsername.equals(username)) {\n    throw new UsernameNotFoundException(&quot;Handled by DaoAuthenticationProvider&quot;);\n    }\n\n</code></pre>\n<p>This is the complete class which skips the JWT Auth and proceeds with the Basic Auth:</p>\n<pre><code>@Component\n@RequiredArgsConstructor(onConstructor_ = @__(@Autowired))\npublic class CredentialAuthenticationProvider implements AuthenticationProvider {\n\n    // Final Constructors\n    private final AuthServiceProxy authServiceProxy;\n    private final PasswordEncoder passwordEncoder;\n    private final Logger logger = LoggerFactory.getLogger(CredentialAuthenticationProvider.class);\n\n    // Admin Username\n    @Value(&quot;${EMP_CONFIG_USERNAME&quot;)\n    private String adminUsername;\n\n    @Override\n    public Authentication authenticate(Authentication authentication) throws AuthenticationException {\n        String username = authentication.getName();\n        String rawPassword = authentication.getCredentials().toString();\n\n        if (adminUsername.equals(username)) {\n            throw new UsernameNotFoundException(&quot;Handled by DaoAuthenticationProvider&quot;);\n        }\n        CredentialDTO credentialDTO = authServiceProxy.getCredentialByUsername(\n                username,\n                &quot;GET&quot;,\n                &quot;/v1/cred/ids?user=&quot; + username\n        );\n\n        if (credentialDTO == null || !passwordEncoder.matches(rawPassword, credentialDTO.password())) {\n            logger.error(&quot;Invalid Credential for user: {}&quot;, username);\n            throw new InvalidCredentialException(username);\n        }\n\n        return new UsernamePasswordAuthenticationToken(\n                credentialDTO, null, credentialDTO.getAuthorities()\n        );\n    }\n\n    @Override\n    public boolean supports(Class&lt;?&gt; authentication) {\n        return UsernamePasswordAuthenticationToken.class.isAssignableFrom(authentication);\n    }\n}\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 21601553,
+      "reputation" : 81,
+      "user_id" : 15929619,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f81b56ee6e549e1ebd875e3dc29b36c9?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "AbdoCherry",
+      "link" : "https://stackoverflow.com/users/15929619/abdocherry"
+    },
+    "creation_date" : 1744552596,
+    "last_activity_date" : 1744552596,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140330032,
+    "post_id" : 79571164,
+    "body" : "Thank you very much for the comment @Toerktumlare. My initial problem was that the Basic Auth was overwritten by the JWT Auth. Nonetheless, I could solve the problem. Answer is added below!",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 21601553,
+      "reputation" : 81,
+      "user_id" : 15929619,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f81b56ee6e549e1ebd875e3dc29b36c9?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "AbdoCherry",
+      "link" : "https://stackoverflow.com/users/15929619/abdocherry"
+    },
+    "creation_date" : 1744552411,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140329455,
+    "post_id" : 79571164,
+    "body" : "Please update your question with your actual problem with steps to reproduce, as you have not explained your problem. Also enable and update your question with debug logs showing your problem.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 2064278,
+      "reputation" : 15073,
+      "user_id" : 1840146,
+      "user_type" : "registered",
+      "accept_rate" : 86,
+      "profile_image" : "https://i.sstatic.net/JXdxm.png?s=256",
+      "display_name" : "Toerktumlare",
+      "link" : "https://stackoverflow.com/users/1840146/toerktumlare"
+    },
+    "creation_date" : 1744532867,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

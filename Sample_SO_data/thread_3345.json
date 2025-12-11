@@ -1,0 +1,94 @@
+{
+  "question" : {
+    "question_id" : 79554882,
+    "title" : "Spring Boot JDBC Distributed Locking Not Working",
+    "body" : "<p>I am using <code>Spring Boot Version - 3.2.4</code>. I have an API service that runs on 2 instances, that API creates an order in the system. I am using <code>Spring Boot Integration</code> for JDBC locking. But in some scenarios I noticed that when 2 requests hit 2 instances even with a gap of 1 second, the locking doesn't work. I am using Postgres, below is the code.</p>\n<pre><code>@Log4j2\n@Service\n@RequiredArgsConstructor\npublic class JdbcLockService&lt;T&gt; {\n\n    @Value(&quot;${transaction.lock.time-to-live}&quot;)\n    public int lockTimeToLive;\n\n    private final LockRegistry lockRegistry;\n\n    @Override\n    public T lockAndExecute(String key, Callable&lt;T&gt; runnable) throws Exception {\n        log.info(&quot;Trying to obtain lock for key: {}&quot;, key);\n        Lock lock = null;\n        try {\n            lock = lockRegistry.obtain(key);\n            if (lock.tryLock(lockTimeToLive, TimeUnit.SECONDS)) {\n                log.info(&quot;Obtained lock for key: {}&quot;, key);\n                return runnable.call();\n            }\n        } catch (Exception e) {\n            log.error(&quot;Exception occurred while trying to get lock and execute&quot;, e);\n            throw e;\n        } finally {\n            if (lock != null) {\n                log.info(&quot;Unlocking lock for key: {}&quot;, key);\n                lock.unlock();\n            }\n        }\n        return null;\n    }\n}\n</code></pre>\n<p><code>lockTimeToLive is 5 seconds</code> and <code>runnable.call()</code> is actually saving the order in the database with a status of <code>RECEIVED</code>.</p>\n<p>I am calling the code in service class as below.</p>\n<pre><code>@Log4j2\n@Service\n@XRayEnabled\n@RequiredArgsConstructor\npublic class RiskScoreService {\n\n    private final ObjectFactory&lt;Order&gt; orderObjectFactory;\n\n    private final JdbcLockService&lt;OrderCreate&gt; lockService;\n\n    @Override\n    public OrderResponse order(OrderRequest request) throws Exception {\n        log.info(&quot;Creating order&quot;);\n        \n        log.trace(() -&gt; &quot;Request received to create order for order ID %s&quot;.formatted(request.getOrderId()));\n\n        Order order = orderObjectFactory.getObject();\n\n        OrderCreate orderCreate = lockService.lockAndExecute(getKey(request), () -&gt; order.create(request));\n\n        return new OrderResponse(orderCreate.getNumber(), orderCreate.getOrderId());\n    }\n\n    private static String getKey(AbstractOrderRequest request) {\n        return &quot;ORDER_NO_%s&quot;.formatted(req.getNumber());\n    }\n</code></pre>\n<p>I can confirm that the request only runs for less than 2 seconds. What am I doing wrong?</p>\n",
+    "tags" : [ "java", "spring-boot", "spring-integration", "spring-integration-distributed-lock" ],
+    "owner" : {
+      "account_id" : 10116620,
+      "reputation" : 83,
+      "user_id" : 7475104,
+      "user_type" : "registered",
+      "profile_image" : "https://lh5.googleusercontent.com/-YmjsUusP_LI/AAAAAAAAAAI/AAAAAAAAADQ/v6uFEd7x58U/s256-rj/photo.jpg",
+      "display_name" : "Chitransh Agarwal",
+      "link" : "https://stackoverflow.com/users/7475104/chitransh-agarwal"
+    },
+    "is_answered" : false,
+    "view_count" : 73,
+    "answer_count" : 0,
+    "score" : 0,
+    "last_activity_date" : 1743756827,
+    "creation_date" : 1743756827,
+    "link" : "https://stackoverflow.com/questions/79554882/spring-boot-jdbc-distributed-locking-not-working",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140317248,
+    "post_id" : 79554882,
+    "body" : "Sure! It is really hard to make a distributed solution to work as we wish. Maybe you can share with us a simple project where we can reproduce and play with?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3273937,
+      "reputation" : 122596,
+      "user_id" : 2756547,
+      "user_type" : "registered",
+      "accept_rate" : 75,
+      "profile_image" : "https://www.gravatar.com/avatar/2158ce6e7c048277890eb64458864c1c?s=256&d=identicon&r=PG",
+      "display_name" : "Artem Bilan",
+      "link" : "https://stackoverflow.com/users/2756547/artem-bilan"
+    },
+    "creation_date" : 1744219068,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140314656,
+    "post_id" : 79554882,
+    "body" : "@ArtemBilan @PeterAdrian - Thanks for your replies. I may be making a mistake here, inside the <code>order.create(request)</code> method we save the data in the database and call an external API, and there is also a check inside the <code>create(OrderRequest request)</code> method that verifies whether a previous order exists with the same number, if it does then an exception is thrown. What is puzzling for me is even if another thread acquires the lock after 5 seconds, it should have failed as the transaction was committed",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10116620,
+      "reputation" : 83,
+      "user_id" : 7475104,
+      "user_type" : "registered",
+      "profile_image" : "https://lh5.googleusercontent.com/-YmjsUusP_LI/AAAAAAAAAAI/AAAAAAAAADQ/v6uFEd7x58U/s256-rj/photo.jpg",
+      "display_name" : "Chitransh Agarwal",
+      "link" : "https://stackoverflow.com/users/7475104/chitransh-agarwal"
+    },
+    "creation_date" : 1744180507,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140300869,
+    "post_id" : 79554882,
+    "body" : "If time to live is 5 seconds and each order create last 2 seconds, then it&#39;s guaranteed for 2 requests to receive both the lock, however they will receive it sequentially. I&#39;m not sure what you are trying to do. Maybe if you provide more info, i can help",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1601399,
+      "reputation" : 638,
+      "user_id" : 1482356,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/d6160b6e40d230fa92c6da8072b2f7e5?s=256&d=identicon&r=PG",
+      "display_name" : "Peter Adrian",
+      "link" : "https://stackoverflow.com/users/1482356/peter-adrian"
+    },
+    "creation_date" : 1743795102,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140299926,
+    "post_id" : 79554882,
+    "body" : "Doesn&#39;t look like you have some logic related to exclusive access. Both of your instances are able to obtain the lock eventually and call that <code>order.create(request)</code>. How you want to be sure that only one instance does that?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3273937,
+      "reputation" : 122596,
+      "user_id" : 2756547,
+      "user_type" : "registered",
+      "accept_rate" : 75,
+      "profile_image" : "https://www.gravatar.com/avatar/2158ce6e7c048277890eb64458864c1c?s=256&d=identicon&r=PG",
+      "display_name" : "Artem Bilan",
+      "link" : "https://stackoverflow.com/users/2756547/artem-bilan"
+    },
+    "creation_date" : 1743779490,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

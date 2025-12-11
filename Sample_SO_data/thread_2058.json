@@ -1,0 +1,63 @@
+{
+  "question" : {
+    "question_id" : 79652458,
+    "title" : "How to efficiently search inherited entities with JOINED strategy in JPA (Person or Organization as Partner)",
+    "body" : "<p>I'm working on a Spring Boot app using JPA and I'm facing a performance concern with a search query over an inheritance hierarchy.</p>\n<p>\uD83D\uDCD8 What I'm building</p>\n<p>I have a <code>Partner</code> entity which is the parent class of two subclasses:</p>\n<ul>\n<li><code>Person</code>: has <code>firstName</code>, <code>lastName</code></li>\n<li><code>Organization</code>: has <code>companyName</code>, <code>registrationNumber</code>, <code>taxNumber</code></li>\n</ul>\n<p>I'm using the JOINED inheritance strategy in JPA, so each entity has its own table.\nThe <code>Partner</code> class also contains shared fields like:</p>\n<ul>\n<li><code>id</code>, <code>email</code>, <code>partnerType</code> (enum: CLIENT or SUPPLIER), <code>entityType</code> (enum: PERSON or ORGANIZATION), etc.</li>\n</ul>\n<p>This setup allows a partner (client or supplier) to be either a person or an organization.</p>\n<p>✅ What I want to do</p>\n<p>I need to build a paginated search that fetches all partners of a certain <code>partnerType</code>, and optionally filters by a <code>searchTerm</code>:</p>\n<ul>\n<li>If it's a <code>Person</code>, search <code>firstName + lastName</code></li>\n<li>If it's an <code>Organization</code>, search <code>companyName</code></li>\n</ul>\n<p>The result is mapped into a DTO that combines data from <code>Partner</code>, <code>Person</code>, and <code>Organization</code>.</p>\n<p>\uD83D\uDCAC What I’ve done</p>\n<p>Here’s the JPQL query I’m using:</p>\n<pre><code>@Query(&quot;&quot;&quot;\nSELECT new com.example.api.PartnerResponseDto(\n    p.id,\n    p.partnerType,\n    p.entityType,\n    p.email,\n    p.createdAt,\n    p.updatedAt,\n    pe.firstName,\n    pe.lastName,\n    o.companyName,\n    o.registrationNumber,\n    o.taxNumber\n)\nFROM Partner p\nLEFT JOIN Person pe ON p.id = pe.id\nLEFT JOIN Organization o ON p.id = o.id\nWHERE p.partnerType = :partnerType\nAND (\n    :searchTerm IS NULL OR :searchTerm = ''\n    OR (\n        (p.entityType = 'PERSON' AND CONCAT(pe.firstName, ' ', pe.lastName) LIKE CONCAT('%', :searchTerm, '%'))\n        OR (p.entityType = 'ORGANIZATION' AND o.companyName LIKE CONCAT('%', :searchTerm, '%'))\n    )\n)\n&quot;&quot;&quot;)\nPage&lt;PartnerResponseDto&gt; findPartners(\n    @Param(&quot;partnerType&quot;) PartnerType partnerType,\n    @Param(&quot;searchTerm&quot;) String searchTerm,\n    Pageable pageable\n);\n</code></pre>\n<p>It works fine and returns the expected results.\nBut I'm starting to worry about the performance as the data grows.</p>\n<p>⚠️ The Problem</p>\n<p>This query includes:</p>\n<ul>\n<li>Two <code>LEFT JOIN</code>s (to both <code>Person</code> and <code>Organization</code>)</li>\n<li>An <code>OR</code> condition in the WHERE clause</li>\n<li><code>CONCAT</code> and <code>LIKE</code> usage for searching</li>\n</ul>\n<p>This makes the query a bit heavy and not so clean — especially considering it always joins both tables even when the <code>entityType</code> is only one of them.</p>\n<p>I’d love to hear any suggestions or feedback, especially from folks who’ve dealt with similar inheritance + filtering cases in JPA. Thanks in advance!</p>\n",
+    "tags" : [ "java", "spring", "spring-boot", "hibernate", "inheritance" ],
+    "owner" : {
+      "account_id" : 29579391,
+      "reputation" : 1,
+      "user_id" : 22669524,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/ACg8ocKAvs8GmED1rPxIjdPPWlCQZdGvAwXA7griEe6DC-f-=k-s256",
+      "display_name" : "Ala Haj Saad",
+      "link" : "https://stackoverflow.com/users/22669524/ala-haj-saad"
+    },
+    "is_answered" : true,
+    "view_count" : 53,
+    "answer_count" : 1,
+    "score" : -2,
+    "last_activity_date" : 1749051722,
+    "creation_date" : 1749028355,
+    "link" : "https://stackoverflow.com/questions/79652458/how-to-efficiently-search-inherited-entities-with-joined-strategy-in-jpa-person",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79652885,
+    "question_id" : 79652458,
+    "body" : "<p>Here’s what I’d do next to make this faster and more scalable:</p>\n<p>Convert it to a native SQL query – It gives you way more control and helps avoid JPA-generated queries that look good on paper but perform poorly in practice.</p>\n<p>Make sure you check your indexes for the key joining and querying columns:</p>\n<ul>\n<li><p>Index on <code>partner_type</code> and <code>entity_type</code> in the partner table</p>\n</li>\n<li><p>Functional index on <code>CONCAT(first_name, ' ', last_name)</code> for people</p>\n</li>\n<li><p>Regular index on company_name for <code>organizations</code></p>\n</li>\n</ul>\n<p>When you rewrite it in native SQL, use your DBMS tools (like EXPLAIN ANALYZE) to show the execution plan.</p>\n<p>Look out for:</p>\n<ol>\n<li><p>Try to avoid hash joins if possible</p>\n</li>\n<li><p>Be careful with OR + wildcard LIKEs (LIKE '%search%')</p>\n</li>\n<li><p>Consider using UNION ALL instead of OR when searching across types</p>\n</li>\n</ol>\n",
+    "score" : 0,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 1164213,
+      "reputation" : 474,
+      "user_id" : 1143156,
+      "user_type" : "registered",
+      "accept_rate" : 58,
+      "profile_image" : "https://www.gravatar.com/avatar/5983111b5c83243a616617b1181740c2?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Rickky13",
+      "link" : "https://stackoverflow.com/users/1143156/rickky13"
+    },
+    "creation_date" : 1749043801,
+    "last_activity_date" : 1749043801,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140486676,
+    "post_id" : 79652458,
+    "body" : "Is this used by a UI?  Similar to the <code>partnerType</code> filter, add an optional filter for a specific person so the large query will have a specific <code>pe.id</code> for the WHERE clause.  Same for <code>o.id</code>.  (That will eliminate the need for <code>LIKE</code> in the large query.)  The person and company name filters can use <code>LIKE</code>, but default to beginning of the string (instead of anywhere in the string).  For the person filter, LIKE on each field, but sort by lastName then firstName.  And require at least a few characters before executing the organization and person filters, and only fetch the top 10 results or so.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 8909811,
+      "reputation" : 2861,
+      "user_id" : 6650475,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/fe85994d05ad7aaaa1c47d638b37bc45?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Andrew S",
+      "link" : "https://stackoverflow.com/users/6650475/andrew-s"
+    },
+    "creation_date" : 1749042236,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

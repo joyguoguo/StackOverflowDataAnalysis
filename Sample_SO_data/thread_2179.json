@@ -1,0 +1,98 @@
+{
+  "question" : {
+    "question_id" : 79640661,
+    "title" : "MapStruct one-to-many relationship failing to map",
+    "body" : "<p>In the process of making a spring application in which I'm using a mapstruct mapper to map between an Entity object and a DTO object. I'm also using Lombok to reduce boilerplate, though I'm not entirely sure if this is relevant but I wanted to include it in case it is.</p>\n<p>Building this application incrementally and I had my entity classes working and mapping properly. I went to add the relationship between objects, and now my mapper isn't working properly, or stops the application from starting.</p>\n<pre class=\"lang-xml prettyprint-override\"><code>&lt;!-- https://mvnrepository.com/artifact/org.mapstruct/mapstruct --&gt;\n&lt;dependency&gt;\n   &lt;groupId&gt;org.mapstruct&lt;/groupId&gt;\n   &lt;artifactId&gt;mapstruct&lt;/artifactId&gt;\n   &lt;version&gt;1.6.3&lt;/version&gt;\n&lt;/dependency&gt;\n&lt;!-- https://mvnrepository.com/artifact/org.mapstruct/mapstruct-processor --&gt;\n&lt;dependency&gt;\n   &lt;groupId&gt;org.mapstruct&lt;/groupId&gt;\n   &lt;artifactId&gt;mapstruct-processor&lt;/artifactId&gt;\n   &lt;version&gt;1.6.3&lt;/version&gt;\n&lt;/dependency&gt;\n</code></pre>\n<p><strong>Working Code:</strong></p>\n<pre class=\"lang-java prettyprint-override\"><code>@AllArgsConstructor\n@NoArgsConstructor\n@Data\n@Builder\n@Entity\npublic class Program {\n    @Id\n    @GeneratedValue(strategy = GenerationType.AUTO)\n    private Long id;\n    private String name;\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>@AllArgsConstructor\n@NoArgsConstructor\n@Data\n@Builder\npublic class ProgramDTO {\n    private Long id;\n    @NotNull\n    private String name;\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>@NoArgsConstructor\n@AllArgsConstructor\n@Data\n@Builder\n@Entity\npublic class Student {\n    @Id\n    @GeneratedValue(strategy = GenerationType.AUTO)\n    private Long id;\n    private String name;\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>@AllArgsConstructor\n@NoArgsConstructor\n@Data\n@Builder\npublic class StudentDTO {\n    private Long id;\n    @NotNull\n    private String name;\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>@Mapper(\n    componentModel = MappingConstants.ComponentModel.SPRING,\n    injectionStrategy = InjectionStrategy.CONSTRUCTOR,\n    uses = {StudentMapper.class}\n)\npublic interface ProgramMapper {\n    Program toProgram(ProgramDTO programDTO);\n    ProgramDTO toProgramDTO(Program program);\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>@Mapper(\n    componentModel = MappingConstants.ComponentModel.SPRING,\n    injectionStrategy = InjectionStrategy.CONSTRUCTOR,\n    uses = {ProgramMapper.class}\n)\npublic interface StudentMapper {\n    Student toStudent(StudentDTO studentDTO);\n    StudentDTO toStudentDTO(Student student);\n}\n</code></pre>\n<p>Now I wanted to add a One-to-Many relationship between these two entities, which created a cycle in the mappers. Looking up solutions online I tried a few, the most widely accepted version was using <code>CycleAvoidingMapingContext</code> to prevent the application from recursing forever.</p>\n<p><strong>One-to-Many Updates</strong></p>\n<pre class=\"lang-java prettyprint-override\"><code>@AllArgsConstructor\n@NoArgsConstructor\n@Data\n@Builder\n@Entity\npublic class Program {\n    @Id\n    @GeneratedValue(strategy = GenerationType.AUTO)\n    private Long id;\n    private String name;\n    @OneToMany(mappedBy = &quot;enrolledProgram&quot;, cascade = CascadeType.ALL, orphanRemoval = true)\n    private Set&lt;Student&gt; enrolledStudents;\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>@AllArgsConstructor\n@NoArgsConstructor\n@Data\n@Builder\npublic class ProgramDTO {\n    private Long id;\n    @NotNull\n    private String name;\n    @NotNull\n    private Set&lt;StudentDTO&gt; enrolledStudents;\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>@NoArgsConstructor\n@AllArgsConstructor\n@Data\n@Builder\n@Entity\npublic class Student {\n    @Id\n    @GeneratedValue(strategy = GenerationType.AUTO)\n    private Long id;\n    private String name;\n    @ManyToOne\n    @JoinColumn(name = &quot;program_id&quot;)\n    private Program enrolledProgram;\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>@AllArgsConstructor\n@NoArgsConstructor\n@Data\n@Builder\npublic class StudentDTO {\n    private Long id;\n    @NotNull\n    private String name;\n    @NotNull\n    private ProgramDTO enrolledProgram;\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>public class CycleAvoidingMappingContext {\n    private Map&lt;Object, Object&gt; knownInstances = new IdentityHashMap&lt;&gt;();\n    @BeforeMapping\n    public &lt;T&gt; T getMappedInstance(Object source, @TargetType Class&lt;T&gt; targetType) {\n        return (T) knownInstances.get(source);\n    }\n    @BeforeMapping\n    public void storeMappedInstance(Object source, @MappingTarget Object target) {\n        knownInstances.put(source, target);\n    }\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>@Mapper(\n        componentModel = MappingConstants.ComponentModel.SPRING,\n        injectionStrategy = InjectionStrategy.CONSTRUCTOR,\n        uses = {StudentMapper.class}\n)\npublic interface ProgramMapper {\n    Program toProgram(ProgramDTO programDTO, @Context CycleAvoidingMappingContext context);\n    @InheritInverseConfiguration\n    ProgramDTO toProgramDTO(Program program, @Context CycleAvoidingMappingContext context);\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>@Mapper(\n        componentModel = MappingConstants.ComponentModel.SPRING,\n        injectionStrategy = InjectionStrategy.CONSTRUCTOR,\n        uses = {ProgramMapper.class}\n)\npublic interface StudentMapper {\n    Student toStudent(StudentDTO studentDTO, @Context CycleAvoidingMappingContext context);\n    @InheritInverseConfiguration\n    StudentDTO toStudentDTO(Student student, @Context CycleAvoidingMappingContext context);\n}\n</code></pre>\n<p>However, despite adding the context the application will fail to start saying I have a cyclic reference between <code>StudentMapper</code> and <code>ProgramMapper</code>. I researched this issue and came to the conclusion it was likely the <code>@Builder</code> annotation from Lombok causing this problem.</p>\n<p>Solutions to this include adding the <code>builder = @Builder(disableBuilder = true)</code> to the <code>@Mapper</code> annotation, and adding a <code>@BeanMapping(builder = @Builder(disableBuilder = true))</code> annotation to the methods. However, the cycle error is still present and wont allow the application to start.</p>\n<p>The other solution, is to not use the builders at all. So I comment out the builder annotations on all the entities, DTOs, and mappers. This now allows the application to start, however the mappers do not map any fields at all. All fields are null after going through either direction of the mapping process. Looking at the generated mapper implementation, I notice that its creating new objects with the empty constructor but never assigning any values to the fields.</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Generated(\n    value = &quot;org.mapstruct.ap.MappingProcessor&quot;,\n    date = &quot;2025-05-27T08:09:19-0600&quot;,\n    comments = &quot;version: 1.6.3, compiler: javac, environment: Java 24 (Oracle Corporation)&quot;\n)\n@Component\npublic class ProgramMapperImpl implements ProgramMapper {\n\n    @Override\n    public Program toProgram(ProgramDTO programDTO, CycleAvoidingMappingContext context) {\n        Program target = context.getMappedInstance( programDTO, Program.class );\n        if ( target != null ) {\n            return target;\n        }\n        if ( programDTO == null ) {\n            return null;\n        }\n        Program program = new Program();\n        context.storeMappedInstance( programDTO, program );\n        return program;\n    }\n\n    @Override\n    public ProgramDTO toProgramDTO(Program program, CycleAvoidingMappingContext context) {\n        ProgramDTO target = context.getMappedInstance( program, ProgramDTO.class );\n        if ( target != null ) {\n            return target;\n        }\n        if ( program == null ) {\n            return null;\n        }\n        ProgramDTO programDTO = new ProgramDTO();\n        context.storeMappedInstance( program, programDTO );\n        return programDTO;\n    }\n}\n</code></pre>\n<p>I've been trying to find solutions to this online, but I keep finding resources that repeat the above steps. I also tried implementing a few other methods I found through my research, but all of them shared the same results (most still throwing cyclic errors upon startup).</p>\n<p>Any help to this would be greatly appreciated.</p>\n",
+    "tags" : [ "java", "spring", "mapstruct" ],
+    "owner" : {
+      "account_id" : 17656333,
+      "reputation" : 21,
+      "user_id" : 12815848,
+      "user_type" : "registered",
+      "profile_image" : "https://lh5.googleusercontent.com/-JLPCe_D4POw/AAAAAAAAAAI/AAAAAAAAAAA/ACHi3rc64MlblXRV19u01N1jyZXPG8afLg/s256-rj/photo.jpg",
+      "display_name" : "Michael Millar",
+      "link" : "https://stackoverflow.com/users/12815848/michael-millar"
+    },
+    "is_answered" : true,
+    "view_count" : 82,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1748359823,
+    "creation_date" : 1748355457,
+    "link" : "https://stackoverflow.com/questions/79640661/mapstruct-one-to-many-relationship-failing-to-map",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79640784,
+    "question_id" : 79640661,
+    "body" : "<p>When you declare:</p>\n<pre><code>@Mapper(\n        uses = {StudentMapper.class}\n)\npublic interface ProgramMapper {\n</code></pre>\n<pre><code>@Mapper(\n        uses = {ProgramMapper.class}\n)\npublic interface StudentMapper {\n</code></pre>\n<p>You're causing the cyclic reference because Spring gets stuck in a loop trying to resolve both beans  at creation time. Spring can't resolve this for interfaces because it creates proxy implementations at runtime and has no way to inject one mapper into another after creation.</p>\n<p>You can remove it and try to make it an abstract class i.e.</p>\n<pre><code>@Mapper(componentModel = &quot;spring&quot;, uses = {})\npublic abstract class ProgramMapper {\n\n    @Autowired @Lazy\n    protected StudentMapper studentMapper;\n\n    public abstract Program toProgram(ProgramDTO dto, @Context CycleAvoidingMappingContext context);\n\n    public abstract ProgramDTO toProgramDTO(Program entity, @Context CycleAvoidingMappingContext context);\n}\n</code></pre>\n<p>Alternatively Use interfaces + a mapping service class to handle dependencies explicitly.</p>\n<p><em>side note: removing the @builder when using mapstruct is cleaner — just use either one</em></p>\n",
+    "score" : 2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 1164213,
+      "reputation" : 474,
+      "user_id" : 1143156,
+      "user_type" : "registered",
+      "accept_rate" : 58,
+      "profile_image" : "https://www.gravatar.com/avatar/5983111b5c83243a616617b1181740c2?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Rickky13",
+      "link" : "https://stackoverflow.com/users/1143156/rickky13"
+    },
+    "creation_date" : 1748359823,
+    "last_activity_date" : 1748359823,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79640784" : [ {
+      "comment_id" : 140466407,
+      "post_id" : 79640784,
+      "body" : "if everything is generated by mapstruct, it is highly unlikely that mapstruct causes this,  best guess would be due to the cyclic relationship of  Program → enrolledStudents (Set&lt;Student&gt;) → each Student → enrolledProgram → Program again  i would advise to break the relationship for example toStudentDTO to ignore enrolledProgram   however if you need all to be present you can try @qualifiedbyname and setup a custom mapping all together",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1164213,
+        "reputation" : 474,
+        "user_id" : 1143156,
+        "user_type" : "registered",
+        "accept_rate" : 58,
+        "profile_image" : "https://www.gravatar.com/avatar/5983111b5c83243a616617b1181740c2?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Rickky13",
+        "link" : "https://stackoverflow.com/users/1143156/rickky13"
+      },
+      "creation_date" : 1748442491,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140463891,
+      "post_id" : 79640784,
+      "body" : "Actually, it wasn&#39;t caused by recursive mapping, its being caused when it tries to set the size of the new set <code>Set&lt;StudentDTO&gt; set1 = new LinkedHashSet&lt;&gt;(set.size())</code>, somehow, getting the size of the original set is a concurrent modification.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 17656333,
+        "reputation" : 21,
+        "user_id" : 12815848,
+        "user_type" : "registered",
+        "profile_image" : "https://lh5.googleusercontent.com/-JLPCe_D4POw/AAAAAAAAAAI/AAAAAAAAAAA/ACHi3rc64MlblXRV19u01N1jyZXPG8afLg/s256-rj/photo.jpg",
+        "display_name" : "Michael Millar",
+        "link" : "https://stackoverflow.com/users/12815848/michael-millar"
+      },
+      "creation_date" : 1748376505,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140463749,
+      "post_id" : 79640784,
+      "body" : "This did seem to solve the problem, it maps the fields properly. However, it&#39;s introduced another issue where when it goes to map the Set&lt;Student&gt; to Set&lt;StudentDTO&gt;, when its mapping the students, it then tries to map the program the students reference and causes a concurrent modification exception.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 17656333,
+        "reputation" : 21,
+        "user_id" : 12815848,
+        "user_type" : "registered",
+        "profile_image" : "https://lh5.googleusercontent.com/-JLPCe_D4POw/AAAAAAAAAAI/AAAAAAAAAAA/ACHi3rc64MlblXRV19u01N1jyZXPG8afLg/s256-rj/photo.jpg",
+        "display_name" : "Michael Millar",
+        "link" : "https://stackoverflow.com/users/12815848/michael-millar"
+      },
+      "creation_date" : 1748373198,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

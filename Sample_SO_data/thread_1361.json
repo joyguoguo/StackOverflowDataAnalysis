@@ -1,0 +1,279 @@
+{
+  "question" : {
+    "question_id" : 79714859,
+    "title" : "How can I schedule and monitor virtual threads with timeouts in Spring Boot?",
+    "body" : "<p>I'm writing an application that requires me to dynamically spawn tasks based on user input. There can be hundreds of such tasks, and they will have different combinations of individual task timeouts, being one-off tasks, running at specific intervals, etc. As I'm using Java 21, virtual threads seem to be the best tool for spawning these individual tasks.</p>\n<p>For each task, I need to be able to store some handle to it (so the submission needs to be non-blocking) and track its state (running, completed, failed), as well as be able to cancel it on demand.</p>\n<p>To that end, I found <a href=\"https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/scheduling/concurrent/SimpleAsyncTaskScheduler.html\" rel=\"nofollow noreferrer\"><code>SimpleAsyncTaskScheduler</code></a>, which seems to support most of what I need:</p>\n<blockquote>\n<p>A simple implementation of Spring's TaskScheduler interface, using a single scheduler thread and executing every scheduled task in an individual separate thread. This is an attractive choice with virtual threads on JDK 21, expecting common usage with <code>setVirtualThreads(true)</code>.</p>\n</blockquote>\n<p>There are various schedule/submit methods on the class, which either return a <code>ScheduledFuture</code>/<code>Future</code> respectively. These can be cancelled and tracked on demand if stored in a map, presumably. However, I do not see a way to timeout individual tasks. There is the <a href=\"https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/core/task/SimpleAsyncTaskExecutor.html#setTaskTerminationTimeout(long)\" rel=\"nofollow noreferrer\"><code>setTaskTerminationTimeout</code></a> method, but that does not seem to support individual tasks.</p>\n<p>For the problem I'm trying to solve, is this the right class to use, and if so, how can I adapt it for individual task termination timeouts, along with the other requirements mentioned above? What would be the idiomatic solution for Spring Boot applications?</p>\n",
+    "tags" : [ "java", "spring-boot", "multithreading", "scheduled-tasks", "virtual-threads" ],
+    "owner" : {
+      "account_id" : 8722630,
+      "reputation" : 11847,
+      "user_id" : 6525260,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://lh6.googleusercontent.com/-DdsW6uGdpjg/AAAAAAAAAAI/AAAAAAAAAAw/srXxxqCzyW0/s256-rj/photo.jpg",
+      "display_name" : "Arnav Borborah",
+      "link" : "https://stackoverflow.com/users/6525260/arnav-borborah"
+    },
+    "is_answered" : true,
+    "view_count" : 421,
+    "answer_count" : 1,
+    "score" : 4,
+    "last_activity_date" : 1754147572,
+    "creation_date" : 1753452214,
+    "link" : "https://stackoverflow.com/questions/79714859/how-can-i-schedule-and-monitor-virtual-threads-with-timeouts-in-spring-boot",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79715041,
+    "question_id" : 79714859,
+    "body" : "<p>The only way to timeout an individual task, represented by <code>ScheduledFuture</code>/<code>Future</code> returned by a <code>TaskScheduler</code> implementation is to call <code>Future.get(long, TimeUnit)</code> and catch <code>TimeoutException</code>. Upon the exception you may want to <code>cancel</code> the task, but be aware that this, depending on the nature of the task, may or may not lead to its immediate termination. That's all you can do in respect of timing out an individual <code>Future</code> task. For example,</p>\n<pre class=\"lang-java prettyprint-override\"><code>Future&lt;?&gt; future = simpleAsyncTaskScheduler.schedule( () -&gt; {\n    // ... \n}, Instant.now());\ntry {\n    future.get(TIMEOUT, TimeUnit.SECONDS);\n} catch (InterruptedException | ExecutionException e) {\n    // ... handle IE or EE\n} catch (TimeoutException e) {\n    future.cancel(true);\n    // ... mark task as timed out \n} catch (CancellationException e) {\n        // ... successfully cancelled \n}\n</code></pre>\n<p>In that sense, @banitm's answer goes along the right lines.</p>\n<p>The waiting on <code>Future.get</code> can be arranged in dedicated virtual threads. If task completes normally, by timeout or somehow else, then the thread makes a correspondent mark in a task-related structure and terminates. If the task should be cancelled immediately, for example upon user request, another thread that handles such request should call <code>Future.cancel(true)</code> , in this case, if cancellation is successful, the thread, waiting on <code>Future.get,</code> receives <code>CancellationException</code> and also terminates.</p>\n<p>With such design, there would be two threads associated with a single task: the one that is  managed by the scheduler, which actually executes the task, and other one that waits for completion of <code>Future.get</code>. While such multiplication could hardly be acceptable for platform threads, virtual threads give us this freedom, moreover simple waiting on <code>Future.get</code> is a best fit for them. Please check out <a href=\"https://github.com/eager-zh/future-flock\" rel=\"nofollow noreferrer\">a simple implementation</a> of this  design.</p>\n<p><code>setTaskTerminationTimeout</code> method of <code>SimpleAsyncTaskExecutor</code> does not only set a timeout for an individual task, it does not set a timeout for <em>any</em> task in a sense you expect it to set. Instead, it sets a timeout after expiration of which the <code>SimpleAsyncTaskExecutor</code> can be closed. On <code>close</code> method it just interrupts all tasks (essentially the same what <code>Future.cancel</code> is doing) and then waits for this timeout for the tasks' completion. So, if you are not going to close your <code>SimpleAsyncTaskExecutor</code>, <code>taskTerminationTimeout</code> is totally irrelevant.</p>\n<p>Also, <code>SimpleAsyncTaskScheduler</code> is not suitable for timeout-based waiting on <code>Future</code> because, according to its <a href=\"https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/scheduling/concurrent/SimpleAsyncTaskScheduler.html\" rel=\"nofollow noreferrer\">documentation</a>,</p>\n<blockquote>\n<p>This scheduler variant does not track the actual completion of tasks, but rather just the hand-off to an execution thread. As a consequence, <code>ScheduledFuture</code> ... represents that and-off rather than the actual completion of the provided task (or series of repeated tasks)</p>\n</blockquote>\n<p>It means, in particular, that <code>Future</code>, returned by the methods of this class, returns <em>immediately</em> on <code>Future.get</code>, even though the actual task is not yet completed. As an alternative, <code>ConcurrentTaskScheduler</code> implementation of <code>TaskScheduler</code> interface can be used as it returns a &quot;wait-able&quot; <code>Future</code>. There are, however, some issue with configuring it with virtual threads, discussed in the details in SO thread <a href=\"https://stackoverflow.com/questions/76587253/how-to-use-virtual-threads-with-scheduledexecutorservice\">How to use virtual threads with Scheduled Executor Service</a>.  <a href=\"https://github.com/eager-zh/future-flock/blob/main/src/main/java/com/github/concurrent/ThreadPerTaskScheduledExecutorService.java\" rel=\"nofollow noreferrer\">A custom, virtual thread-compatible implementation of this interface</a> is provided in the demo app.</p>\n",
+    "score" : 4,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 2745991,
+      "reputation" : 2794,
+      "user_id" : 2366397,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/24ee2b89e9791e936235b16af77ebda4?s=256&d=identicon&r=PG",
+      "display_name" : "igor.zh",
+      "link" : "https://stackoverflow.com/users/2366397/igor-zh"
+    },
+    "creation_date" : 1753461569,
+    "last_activity_date" : 1754147572,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79715041" : [ {
+      "comment_id" : 140641302,
+      "post_id" : 79715041,
+      "body" : "I don&#39;t foresee any issue with waiting on <code>Future</code>, that&#39;s what it is basically for, but there are few things I don&#39;t quite understand: 1) how do you configure <code>ThreadPoolTaskScheduler</code> with <code>SimpleAsyncTaskExecutor </code>? The latter one is not <code>ScheduledExecutorService</code>. 2) You said you spawn 2 threads in the body: one is for monitoring, OK, but the one for task itself shouldn&#39;t be spawned by you, but by your Executor/Scheduler.  It would be good if you somehow could publish the milestones of your implementation, an MRE: on your personal repo, or as a PR to mine or somehow else.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2745991,
+        "reputation" : 2794,
+        "user_id" : 2366397,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/24ee2b89e9791e936235b16af77ebda4?s=256&d=identicon&r=PG",
+        "display_name" : "igor.zh",
+        "link" : "https://stackoverflow.com/users/2366397/igor-zh"
+      },
+      "creation_date" : 1754324920,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140640789,
+      "post_id" : 79715041,
+      "body" : "Just the entire concept of waiting - I currently call <code>schedule</code>/<code>scheduleAtFixedRate</code> on <code>ThreadPoolTaskScheduler</code> and in the body, spawn two virtual threads, one for the task itself, one for monitoring it as you have in your repository. That way the individual methods return right away, but I can keep track of the inner futures for cancellation of an invocation, and the outer futures for cancellation of the scheduled tasks.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 8722630,
+        "reputation" : 11847,
+        "user_id" : 6525260,
+        "user_type" : "registered",
+        "accept_rate" : 100,
+        "profile_image" : "https://lh6.googleusercontent.com/-DdsW6uGdpjg/AAAAAAAAAAI/AAAAAAAAAAw/srXxxqCzyW0/s256-rj/photo.jpg",
+        "display_name" : "Arnav Borborah",
+        "link" : "https://stackoverflow.com/users/6525260/arnav-borborah"
+      },
+      "creation_date" : 1754313666,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140639655,
+      "post_id" : 79715041,
+      "body" : "Thank you for the bounty! I never was awarded with one. Bounty, I believe, is something we should thank for. As for repository - yes, you use it exactly as I mean to: as a concept.  Your combination of  <code>ThreadPoolTaskScheduler</code> and <code>SimpleAsyncTaskExecutor</code> is very interesting, I overlooked this possibility; let me look closely at it.  <code>State</code> is quite recent addition to <code>Future</code>, in v. 19, I think. In your question about foreseeable issues what exactly did you mean: the entire concept of waiting on <code>Future</code>, getting <code>ExecutionException</code>s, cancelling, timing out or something else?",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 2745991,
+        "reputation" : 2794,
+        "user_id" : 2366397,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/24ee2b89e9791e936235b16af77ebda4?s=256&d=identicon&r=PG",
+        "display_name" : "igor.zh",
+        "link" : "https://stackoverflow.com/users/2366397/igor-zh"
+      },
+      "creation_date" : 1754276252,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140639549,
+      "post_id" : 79715041,
+      "body" : "Regardless, I still used the second virtual thread to track the state of the (inner) future in this case, and that works well for both one-off and repeated tasks. Using the get exceptions for the state tracking is something I didn&#39;t consider, and I was completely unaware of Future.State. All in all, immensely useful. At a high level, do you foresee any issues with this? In my testing, I have been able to cancel / timeout / track the state of both types of tasks, as I mentioned",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 8722630,
+        "reputation" : 11847,
+        "user_id" : 6525260,
+        "user_type" : "registered",
+        "accept_rate" : 100,
+        "profile_image" : "https://lh6.googleusercontent.com/-DdsW6uGdpjg/AAAAAAAAAAI/AAAAAAAAAAw/srXxxqCzyW0/s256-rj/photo.jpg",
+        "display_name" : "Arnav Borborah",
+        "link" : "https://stackoverflow.com/users/6525260/arnav-borborah"
+      },
+      "creation_date" : 1754264884,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140639542,
+      "post_id" : 79715041,
+      "body" : "This is a useful repository of information. However, I went with a simpler implementation based on the answer you linked, a <a href=\"https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/scheduling/concurrent/ThreadPoolTaskScheduler.html\" rel=\"nofollow noreferrer\"><code>ThreadPoolTaskScheduler</code></a>, which internally delegates to <a href=\"https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/core/task/SimpleAsyncTaskExecutor.html\" rel=\"nofollow noreferrer\"><code>SimpleAsyncTaskExecutor</code></a> (not scheduler) for tasks. Unlike the scheduler, this one does not have the hand-off stipulation and can track each task.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 8722630,
+        "reputation" : 11847,
+        "user_id" : 6525260,
+        "user_type" : "registered",
+        "accept_rate" : 100,
+        "profile_image" : "https://lh6.googleusercontent.com/-DdsW6uGdpjg/AAAAAAAAAAI/AAAAAAAAAAw/srXxxqCzyW0/s256-rj/photo.jpg",
+        "display_name" : "Arnav Borborah",
+        "link" : "https://stackoverflow.com/users/6525260/arnav-borborah"
+      },
+      "creation_date" : 1754264263,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140637526,
+      "post_id" : 79715041,
+      "body" : "@ArnavBorborah, I updated <a href=\"https://github.com/eager-zh/future-flock\" rel=\"nofollow noreferrer\">a repository</a>, associated with my answer and added a demo Spring Boot app, JUnit tests, and custom implementation of <code>ScheduledExecutorService</code>.  Periodic scheduled tasks are intentionally not supported. Please let me know what issues you have with this solution as it is sometimes difficult to understand from rather short text of question what the OP wants to achieve.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 2745991,
+        "reputation" : 2794,
+        "user_id" : 2366397,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/24ee2b89e9791e936235b16af77ebda4?s=256&d=identicon&r=PG",
+        "display_name" : "igor.zh",
+        "link" : "https://stackoverflow.com/users/2366397/igor-zh"
+      },
+      "creation_date" : 1754147082,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140620395,
+      "post_id" : 79715041,
+      "body" : "Working on a short demo, I realized that <code>SimpleAsyncTaskScheduler</code> is not suitable for the purpose of timeouted waiting, please see the updated answer. The demo, however, is to follow soon, hopefully.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2745991,
+        "reputation" : 2794,
+        "user_id" : 2366397,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/24ee2b89e9791e936235b16af77ebda4?s=256&d=identicon&r=PG",
+        "display_name" : "igor.zh",
+        "link" : "https://stackoverflow.com/users/2366397/igor-zh"
+      },
+      "creation_date" : 1753543288,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140619063,
+      "post_id" : 79715041,
+      "body" : "@ArnavBorborah No, for a timeout virtual thread you just start it via <code>Thread.OfVirtual().start(...)</code> or similar, no need to <code>join</code> it. I think I&#39;ll better explain it in a small demo at github; will take some time. As for waiting for repeated task, this question is outside of discussion, in a sense - if scheduler returns single <code>Future</code> for a series of executions, then that&#39;s what it is. If returned <code>Future</code> does not provide fine-grained enough control, then use something else. Maybe don&#39;t use repeated tasks, but instead submit individually.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2745991,
+        "reputation" : 2794,
+        "user_id" : 2366397,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/24ee2b89e9791e936235b16af77ebda4?s=256&d=identicon&r=PG",
+        "display_name" : "igor.zh",
+        "link" : "https://stackoverflow.com/users/2366397/igor-zh"
+      },
+      "creation_date" : 1753472218,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140619038,
+      "post_id" : 79715041,
+      "body" : "Thanks for the update. I like the approach of having a separate timeout virtual thread. Would I submit that as a task to the async task scheduler as well? Additionally, I&#39;m still unsure how that would work with tasks that repeat in particular intervals, e.g when calling the schedule method. Could you show a small snippet of repeated tasks and them being timed out as needed? Also, I&#39;d be interested in seeing those other approaches as well, though of course you don&#39;t need to share full demos of each.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 8722630,
+        "reputation" : 11847,
+        "user_id" : 6525260,
+        "user_type" : "registered",
+        "accept_rate" : 100,
+        "profile_image" : "https://lh6.googleusercontent.com/-DdsW6uGdpjg/AAAAAAAAAAI/AAAAAAAAAAw/srXxxqCzyW0/s256-rj/photo.jpg",
+        "display_name" : "Arnav Borborah",
+        "link" : "https://stackoverflow.com/users/6525260/arnav-borborah"
+      },
+      "creation_date" : 1753471230,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140618978,
+      "post_id" : 79715041,
+      "body" : "@ArnavBorborah Great. I updated my answer correspondingly, preserving the advantages of the scheduler and accommodating immediate reaction of successful completion. I do understand that at this point of time it is all more like hearsay, so, please let me know if you need small demo app. At least two other alternative approaches circulated in my mind, but it might be too much for SO answer.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 2745991,
+        "reputation" : 2794,
+        "user_id" : 2366397,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/24ee2b89e9791e936235b16af77ebda4?s=256&d=identicon&r=PG",
+        "display_name" : "igor.zh",
+        "link" : "https://stackoverflow.com/users/2366397/igor-zh"
+      },
+      "creation_date" : 1753469365,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140618928,
+      "post_id" : 79715041,
+      "body" : "Some tasks would just be one-off tasks, some would be repeated on a fixed interval, either could have a timeout (for repeated tasks, those would have a timeout on each invocation). I don&#39;t think I need a delay. And yes, in this scenario, the <code>SimpleAsyncTaskScheduler</code> would be the one organizing these tasks, while the tasks themselves would be running on virtual threads. For now, other than being able to track the state of tasks, whether they timed out, completed, etc, I don&#39;t need to trigger anything, though that could be nice to have in the future.",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 8722630,
+        "reputation" : 11847,
+        "user_id" : 6525260,
+        "user_type" : "registered",
+        "accept_rate" : 100,
+        "profile_image" : "https://lh6.googleusercontent.com/-DdsW6uGdpjg/AAAAAAAAAAI/AAAAAAAAAAw/srXxxqCzyW0/s256-rj/photo.jpg",
+        "display_name" : "Arnav Borborah",
+        "link" : "https://stackoverflow.com/users/6525260/arnav-borborah"
+      },
+      "creation_date" : 1753468262,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140618841,
+      "post_id" : 79715041,
+      "body" : "@ArnavBorborah And yet another question: should the (successful) completion of the task be immediately noticed by the system (reported to a user, trigger some immediate action) or it is enough to register/react on this completion at the time of checking the timeout?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2745991,
+        "reputation" : 2794,
+        "user_id" : 2366397,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/24ee2b89e9791e936235b16af77ebda4?s=256&d=identicon&r=PG",
+        "display_name" : "igor.zh",
+        "link" : "https://stackoverflow.com/users/2366397/igor-zh"
+      },
+      "creation_date" : 1753465518,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140618801,
+      "post_id" : 79715041,
+      "body" : "@ArnavBorborah OK. I think I initially misunderstood these system requirement or they were not clear to me. Let me ask you one thing: do you really need <i>scheduling</i> features, for example, would you schedule your individual tasks with a delay, at certain point of time, at fixed intervals etc or <code>SimpleAsyncTaskScheduler</code> is mere an organizer of multiple tasks executed on virtual threads?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2745991,
+        "reputation" : 2794,
+        "user_id" : 2366397,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/24ee2b89e9791e936235b16af77ebda4?s=256&d=identicon&r=PG",
+        "display_name" : "igor.zh",
+        "link" : "https://stackoverflow.com/users/2366397/igor-zh"
+      },
+      "creation_date" : 1753464116,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140618754,
+      "post_id" : 79715041,
+      "body" : "Could you clarify further how this would work and where I would place such a <code>get</code> call? I presumed the <code>get</code> method would block the same thread that also schedules each task. I&#39;m looking for a way to submit tasks without blocking, and have them be able to either: 1. run to completion within a timeout 2. be cancelled by the user 3. timeout if neither of these happen.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 8722630,
+        "reputation" : 11847,
+        "user_id" : 6525260,
+        "user_type" : "registered",
+        "accept_rate" : 100,
+        "profile_image" : "https://lh6.googleusercontent.com/-DdsW6uGdpjg/AAAAAAAAAAI/AAAAAAAAAAw/srXxxqCzyW0/s256-rj/photo.jpg",
+        "display_name" : "Arnav Borborah",
+        "link" : "https://stackoverflow.com/users/6525260/arnav-borborah"
+      },
+      "creation_date" : 1753462428,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

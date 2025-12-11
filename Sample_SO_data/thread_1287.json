@@ -1,0 +1,44 @@
+{
+  "question" : {
+    "question_id" : 79722917,
+    "title" : "Apache Flink: kafkaSource with idle works bad when connecting a broadcastStream",
+    "body" : "<p>When kafkaSource connected a broadcastStream is set with idleness, the watermark of downStream is abnormal.</p>\n<p>My question is how to make the watermark normal to use in window.</p>\n<p>Here's a case.</p>\n<p>KafkaSource is set with idleness, it's necessary in my system for some empty topics are subscribed</p>\n<p>zkWatcherSource is set with watermarkStrategy that always send Watermark.MAX_WATERMARK, to advance the downStream watermark.</p>\n<pre class=\"lang-java prettyprint-override\"><code>    public static class MaxWatermarkGenerator&lt;T&gt; implements WatermarkGenerator&lt;T&gt; {\n\n        @Override\n        public void onEvent(T event, long eventTimestamp, WatermarkOutput output) {\n        }\n\n        @Override\n        public void onPeriodicEmit(WatermarkOutput output) {\n            output.emitWatermark(Watermark.MAX_WATERMARK);\n        }\n    }\n</code></pre>\n<p>As follow, watermark of <code>operator1</code> is <code>Long.MIN_VALUE</code> at first, but after some time, it becomes to <code>Long.MAX_VALUE</code></p>\n<p>Watermark of <code>window operator2</code> is <code>Long.MAX_VALUE</code> forever, window cannot work normally</p>\n<p>Watermark is get by  <code>ctx.currentWatermark()</code></p>\n<pre><code>kafkaSource →→ operator1 →→ window operator2 →→ operator3 \n             connect ↑ \nzkWatcherSource(broadcast)\n</code></pre>\n<p><strong>How should i do to make watermark of downStream only follow kafkaSource?</strong></p>\n<p>Use <code>assignTimestampsAndWatermarks</code> instead of set watermarkStrategy in <code>fromSource</code> function can avoid it, but i want to set watermark in <code>fromSouce</code> for its feature</p>\n<p>Here's code for checking if you need</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class KafkaSourceWithBroadcastConnectDemo {\n    public static void main(String[] args) throws Exception {\n\n        StreamExecutionEnvironment env = StreamExecutionEnvironment.createLocalEnvironmentWithWebUI(new Configuration());\n        env.setParallelism(2);\n        Configuration conf = FlinkUtils.loadConfig(args);\n\n        // kafka source\n        DataStreamSource&lt;PerformanceMessage&gt; kafkaSourceStream = env.fromSource(\n                        Sources.&lt;PerformanceMessage&gt;kafkaSourceBuilder()\n                                .setBootstrapServers(conf.get(JobOptions.MAIN_KAFKA_BOOTSTRAP_SERVERS))\n                                .setTopicPattern(Pattern.compile(conf.get(JobOptions.KAFKA_PERFORMANCE_TOPIC_PATTERN)))\n                                .setGroupId(conf.get(JobOptions.KAFKA_CONSUMER_GROUP_ID))\n                                .setValueOnlyDeserializer(new JacksonDeserializationSchema&lt;&gt;(PerformanceMessage.class))\n                                .build(),\n                        WatermarkStrategy\n                                .&lt;PerformanceMessage&gt;forBoundedOutOfOrderness(Duration.ofSeconds(conf.get(JobOptions.WATERMARK_MAX_OUT_OF_ORDERNESS)))\n                                .withIdleness(Duration.ofSeconds(conf.get(JobOptions.KAFKA_SOURCE_IDLE_TIMEOUT)))\n                                .withTimestampAssigner((msg, timestamp) -&gt; NumberUtils.parseLong(msg.getTime())),\n                        &quot;kafka-source&quot;)\n                .setParallelism(1);\n\n        // broadcast source\n        BroadcastStream&lt;String&gt; broadcastStream = env.fromSource(\n                new DataGeneratorSource&lt;&gt;((GeneratorFunction) value -&gt; &quot;number:&quot; + value, Long.MAX_VALUE, RateLimiterStrategy.perSecond(1), Types.STRING),\n                WatermarkStrategy\n                        .forGenerator(ctx -&gt; new MaxWatermarkGenerator&lt;&gt;()),\n                &quot;max-set&quot;).broadcast(CONTROL_SIGNAL_BROADCAST);\n\n        // connect and process\n        kafkaSourceStream\n                .connect(broadcastStream)\n                .process(new BroadcastProcessFunction&lt;PerformanceMessage, String, PerformanceMessage&gt;() {\n                    @Override\n                    public void processElement(PerformanceMessage value, BroadcastProcessFunction&lt;PerformanceMessage, String, PerformanceMessage&gt;.ReadOnlyContext ctx, Collector&lt;PerformanceMessage&gt; out) throws Exception {\n                        System.err.println(ctx.currentWatermark() + &quot;---&gt;&quot; + value);\n                        out.collect(value);\n                    }\n                    @Override\n                    public void processBroadcastElement(String value, BroadcastProcessFunction&lt;PerformanceMessage, String, PerformanceMessage&gt;.Context ctx, Collector&lt;PerformanceMessage&gt; out) throws Exception {\n                        // do nothing\n                    }\n                }).setParallelism(2)\n                .keyBy(msg -&gt; msg.getDevice().getId())\n                .window(TumblingEventTimeWindows.of(Duration.ofMinutes(1L)))\n                .process(new ProcessWindowFunction&lt;PerformanceMessage, String, String, TimeWindow&gt;() {\n                    @Override\n                    public void process(String deviceNo, ProcessWindowFunction&lt;PerformanceMessage, String, String, TimeWindow&gt;.Context context, Iterable&lt;PerformanceMessage&gt; elements, Collector&lt;String&gt; out) throws Exception {\n                        System.out.println(context.currentWatermark());\n                        for (PerformanceMessage message : elements) {\n                            out.collect(message.getDevice().getId() + &quot;:&quot; + message.getTime());\n                        }\n                    }\n                }).print().setParallelism(4);\n\n        env.execute();\n    }\n\n    public static final MapStateDescriptor&lt;String, Void&gt; CONTROL_SIGNAL_BROADCAST =\n            new MapStateDescriptor&lt;&gt;(\n                    &quot;control-signal-broadcast&quot;,\n                    BasicTypeInfo.STRING_TYPE_INFO,\n                    BasicTypeInfo.VOID_TYPE_INFO\n            );\n\n    public static class MaxWatermarkGenerator&lt;T&gt; implements WatermarkGenerator&lt;T&gt; {\n\n        @Override\n        public void onEvent(T event, long eventTimestamp, WatermarkOutput output) {\n        }\n\n        @Override\n        public void onPeriodicEmit(WatermarkOutput output) {\n            output.emitWatermark(Watermark.MAX_WATERMARK);\n        }\n    }\n}\n</code></pre>\n",
+    "tags" : [ "java", "apache-flink", "watermark" ],
+    "owner" : {
+      "account_id" : 27418819,
+      "reputation" : 1,
+      "user_id" : 20917598,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/7e4bc6506e1dab136c15e263259c583f?s=256&d=identicon&r=PG",
+      "display_name" : "pre5T",
+      "link" : "https://stackoverflow.com/users/20917598/pre5t"
+    },
+    "is_answered" : false,
+    "view_count" : 22,
+    "answer_count" : 0,
+    "score" : 0,
+    "last_activity_date" : 1754078630,
+    "creation_date" : 1754078630,
+    "link" : "https://stackoverflow.com/questions/79722917/apache-flink-kafkasource-with-idle-works-bad-when-connecting-a-broadcaststream",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140643903,
+    "post_id" : 79722917,
+    "body" : "From what I remember, broadcast streams don&#39;t participate in watermarking. What happens if you use <code>WatermarkStrategy.noWatermarks()</code> for your broadcast stream?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 82425,
+      "reputation" : 9560,
+      "user_id" : 231762,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b5d195db362831baf779f0e4b491c68a?s=256&d=identicon&r=PG",
+      "display_name" : "kkrugler",
+      "link" : "https://stackoverflow.com/users/231762/kkrugler"
+    },
+    "creation_date" : 1754407427,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

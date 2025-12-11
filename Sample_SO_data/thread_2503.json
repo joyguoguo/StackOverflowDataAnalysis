@@ -1,0 +1,96 @@
+{
+  "question" : {
+    "question_id" : 79616216,
+    "title" : "Problem regarding getting old UI in credential manager API in android",
+    "body" : "<p>I am trying to make login flow using google sign-in in android using credential manager but I always end up getting old traditional google sign-in UI. Here is my code for reference.</p>\n<pre><code>import android.content.Intent;\nimport android.os.Bundle;\nimport android.os.CancellationSignal;\nimport android.util.Log;\nimport android.view.View;\nimport android.widget.Button;\nimport android.widget.ImageView;\nimport android.widget.TextView;\nimport android.widget.Toast;\n\nimport androidx.annotation.NonNull;\nimport androidx.annotation.Nullable;\nimport androidx.appcompat.app.AppCompatActivity;\nimport androidx.credentials.Credential;\nimport androidx.credentials.CredentialManager;\nimport androidx.credentials.CredentialManagerCallback;\nimport androidx.credentials.CustomCredential;\nimport androidx.credentials.GetCredentialRequest;\nimport androidx.credentials.GetCredentialResponse;\nimport androidx.credentials.exceptions.GetCredentialException;\nimport androidx.credentials.exceptions.NoCredentialException;\n\nimport com.bumptech.glide.Glide;\nimport com.google.android.gms.auth.api.signin.GoogleSignIn;\nimport com.google.android.gms.auth.api.signin.GoogleSignInAccount;\nimport com.google.android.gms.auth.api.signin.GoogleSignInClient;\nimport com.google.android.gms.auth.api.signin.GoogleSignInOptions;\nimport com.google.android.gms.tasks.Task;\nimport com.google.android.libraries.identity.googleid.GetGoogleIdOption;\nimport com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption;\nimport com.google.android.libraries.identity.googleid.GoogleIdTokenCredential;\nimport com.google.firebase.auth.AuthCredential;\nimport com.google.firebase.auth.FirebaseAuth;\nimport com.google.firebase.auth.FirebaseUser;\nimport com.google.firebase.auth.GoogleAuthProvider;\n\nimport java.security.MessageDigest;\nimport java.security.NoSuchAlgorithmException;\nimport java.util.UUID;\nimport java.util.concurrent.Executors;\n\npublic class CredentialManagerLogin extends AppCompatActivity {\n\n    private static final String TAG = &quot;CredentialManagerLogin&quot;;\n    private static final int RC_GOOGLE_SIGN_IN = 1001;\n    private FirebaseAuth mAuth;\n\n    private Button btnGoogleSignIn, btnGoogleSignOut;\n    private TextView userName, userEmail;\n    private ImageView userImage;\n    private CredentialManager credentialManager;\n\n    @Override\n    protected void onCreate(@Nullable Bundle savedInstanceState) {\n        super.onCreate(savedInstanceState);\n        setContentView(R.layout.activity_credential_manager_login);\n        credentialManager = CredentialManager.create(this);\n        mAuth = FirebaseAuth.getInstance();\n        initWidgets();\n\n        btnGoogleSignIn.setOnClickListener(v -&gt; doGoogleSignInUsingCredentialManager());\n\n        FirebaseUser currentUser = mAuth.getCurrentUser();\n        if (currentUser != null) {\n            startActivity(new Intent(this, MainActivity.class));\n            finish();\n        } else {\n            updateUI(null);\n        }\n    }\n\n    private void initWidgets() {\n        btnGoogleSignIn = findViewById(R.id.btnGoogleSignIn);\n        btnGoogleSignOut = findViewById(R.id.btnGoogleSignOut);\n        userName = findViewById(R.id.userName);\n        userEmail = findViewById(R.id.userEmail);\n        userImage = findViewById(R.id.userImage);\n    }\n\n    private void doGoogleSignInUsingCredentialManager() {\n        GetSignInWithGoogleOption gso = new GetSignInWithGoogleOption\n                .Builder(getString(R.string.default_web_client_id))\n                .setNonce(generateNonce())\n                .build();\n\n        GetCredentialRequest request = new GetCredentialRequest.Builder()\n                .addCredentialOption(gso)\n                .build();\n\n        credentialManager.getCredentialAsync(\n                this,\n                request,\n                new CancellationSignal(),\n                Executors.newSingleThreadExecutor(),\n                new CredentialManagerCallback&lt;GetCredentialResponse, GetCredentialException&gt;() {\n                    @Override\n                    public void onResult(@NonNull GetCredentialResponse response) {\n                        Credential credential = response.getCredential();\n                        if (credential instanceof CustomCredential) {\n                            CustomCredential customCredential = (CustomCredential) credential;\n                            if (GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL.equals(customCredential.getType())) {\n                                GoogleIdTokenCredential googleIdTokenCredential =\n                                        GoogleIdTokenCredential.createFrom(customCredential.getData());\n\n                                String googleIdToken = googleIdTokenCredential.getIdToken();\n                                firebaseAuthWithGoogle(googleIdToken);\n                            }\n                        }\n                    }\n\n                    @Override\n                    public void onError(@NonNull GetCredentialException e) {\n                        if (e instanceof NoCredentialException) {\n                            runOnUiThread(() -&gt; {\n                                Toast.makeText(getApplicationContext(), &quot;No credentials found. Falling back to Google Sign-In.&quot;, Toast.LENGTH_SHORT).show();\n                                launchGoogleSignInFallback();\n                            });\n                        } else {\n                            runOnUiThread(() -&gt; {\n                                Toast.makeText(getApplicationContext(), e.getMessage(), Toast.LENGTH_SHORT).show();\n                            });\n                        }\n                    }\n                });\n    }\n\n    private GetGoogleIdOption getCredentialOptions() {\n        return new GetGoogleIdOption.Builder()\n                .setServerClientId(getString(R.string.default_web_client_id))\n                .setAutoSelectEnabled(false)\n                .setFilterByAuthorizedAccounts(false)\n                .build();\n    }\n\n    private String generateNonce() {\n        try {\n            String ranNonce = UUID.randomUUID().toString();\n            byte[] bytes = ranNonce.getBytes();\n            MessageDigest md = MessageDigest.getInstance(&quot;SHA-256&quot;);\n            byte[] digest = md.digest(bytes);\n            StringBuilder hashedNonce = new StringBuilder();\n            for (byte b : digest) {\n                hashedNonce.append(String.format(&quot;%02x&quot;, b));\n            }\n            return hashedNonce.toString();\n        } catch (NoSuchAlgorithmException e) {\n            return null;\n        }\n    }\n\n    private void launchGoogleSignInFallback() {\n        GoogleSignInOptions gso = new GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)\n                .requestIdToken(getString(R.string.default_web_client_id))\n                .requestEmail()\n                .build();\n\n        GoogleSignInClient signInClient = GoogleSignIn.getClient(this, gso);\n        Intent signInIntent = signInClient.getSignInIntent();\n        startActivityForResult(signInIntent, RC_GOOGLE_SIGN_IN);\n    }\n\n    @Override\n    protected void onActivityResult(int requestCode, int resultCode, @Nullable Intent data) {\n        super.onActivityResult(requestCode, resultCode, data);\n\n        if (requestCode == RC_GOOGLE_SIGN_IN) {\n            Task&lt;GoogleSignInAccount&gt; task = GoogleSignIn.getSignedInAccountFromIntent(data);\n            if (task.isSuccessful()) {\n                GoogleSignInAccount account = task.getResult();\n                Log.d(TAG, &quot;Signed in with: &quot; + account.getEmail());\n                Toast.makeText(this, &quot;Signed in as: &quot; + account.getDisplayName(), Toast.LENGTH_SHORT).show();\n               \n                firebaseAuthWithGoogle(account.getIdToken());\n            } else {\n                Log.e(TAG, &quot;Google Sign-In failed&quot;, task.getException());\n                Toast.makeText(this, &quot;Google Sign-In failed&quot;, Toast.LENGTH_SHORT).show();\n            }\n        }\n    }\n\n    private void firebaseAuthWithGoogle(String idToken) {\n        AuthCredential credential = GoogleAuthProvider.getCredential(idToken, null);\n        mAuth.signInWithCredential(credential)\n                .addOnCompleteListener(this, task -&gt; {\n                    if (task.isSuccessful()) {\n                        FirebaseUser user = mAuth.getCurrentUser();\n                        updateUI(user);\n                        Toast.makeText(this, &quot;Firebase Authentication Successful.&quot;, Toast.LENGTH_SHORT).show();\n                        startActivity(new Intent(this, MainActivity.class));\n                        finish();\n                    } else {\n                        \n                        Log.w(TAG, &quot;signInWithCredential:failure&quot;, task.getException());\n                        Toast.makeText(this, &quot;Firebase Authentication Failed.&quot;, Toast.LENGTH_SHORT).show();\n                        updateUI(null);\n                    }\n                });\n    }\n\n    private void updateUI(FirebaseUser user) {\n        runOnUiThread(() -&gt; {\n            if (user != null) {\n                userName.setText(user.getDisplayName());\n                userEmail.setText(user.getEmail());\n                if (user.getPhotoUrl() != null) {\n                    Glide.with(this).load(user.getPhotoUrl()).into(userImage);\n                }\n                btnGoogleSignIn.setVisibility(View.GONE);\n                btnGoogleSignOut.setVisibility(View.VISIBLE);\n            } else {\n                userName.setText(&quot;Username&quot;);\n                userEmail.setText(&quot;Email&quot;);\n                userImage.setImageResource(R.drawable.profile_user_svgrepo_com);\n                btnGoogleSignIn.setVisibility(View.VISIBLE);\n                btnGoogleSignOut.setVisibility(View.GONE);\n            }\n        });\n    }\n}\n</code></pre>\n<p>As you guys can see i have setup google sign-in using credential manager in code but i have also implemented traditional google sign-in as fallback in case of error in credential manager. And yes my control flow was going in CredentialManagerCallback's onResult method only which i confirmed using logs from logcat</p>\n<p>I am currently getting sign-in popup shown in image i uploaded here on this url <a href=\"https://i.sstatic.net/xVJt7qli.jpg\" rel=\"nofollow noreferrer\">https://i.sstatic.net/xVJt7qli.jpg</a> but i want login UI popup like one shown in this <a href=\"https://miro.medium.com/v2/resize:fit:640/format:webp/1*Zx1THyiyVyIMDalIOiWfEg.png\" rel=\"nofollow noreferrer\">Image</a></p>\n",
+    "tags" : [ "java", "android", "firebase", "kotlin", "android-credential-manager" ],
+    "owner" : {
+      "account_id" : 29050954,
+      "reputation" : 20,
+      "user_id" : 22253796,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/1a6d9bb1e3657894c134cb8d9499e98d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Dhyeeey",
+      "link" : "https://stackoverflow.com/users/22253796/dhyeeey"
+    },
+    "is_answered" : true,
+    "view_count" : 191,
+    "answer_count" : 1,
+    "score" : 2,
+    "last_activity_date" : 1746986221,
+    "creation_date" : 1746943439,
+    "link" : "https://stackoverflow.com/questions/79616216/problem-regarding-getting-old-ui-in-credential-manager-api-in-android",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79616769,
+    "question_id" : 79616216,
+    "body" : "<p>A few comments regarding your approach.</p>\n<p>First, it seems like you want to see the &quot;bottomsheet&quot; UI (a.k.a OneTap). In order to get that, you'd need to use the <code>GetGoogleIdOption</code> (see this <a href=\"https://developer.android.com/identity/sign-in/credential-manager-siwg#instantiate-google\" rel=\"nofollow noreferrer\">link</a>) and not <code>GetSignInWithGoogleOption</code>. Secondly, it seems, based on your code, that you want to launch this flow when a user taps a button like &quot;Sign-in with Google&quot;. Although it is possible to launch the OneTap flow using a button, that is not the recommended approach: it is recommended that you programmatically call the OneTap API when user opens your app (i.e. without user tapping on a button). We also recommend that users put a &quot;Sign-in with Google&quot; button on their login screen, however, it is recommended that you launch the so-called button-flow which is what you are doing right now (i.e. the dialog that you currently see). There are a few reasons that we make that recommendation, for example:</p>\n<ul>\n<li><p>If there are no Google Accounts on the device, or if the user doesn't see the Google account that he/she is interested in, the button-flow allows the user to sign into a new Google account; the OneTap flow doesn't provide that.</p>\n</li>\n<li><p>If a Google account on the device needs a reauthentication (e.g. user has has changed her password for her Google account on a different device), the button-flow walks the user through that flow first.</p>\n</li>\n</ul>\n<p>Hope this helps.</p>\n",
+    "score" : 2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 3286414,
+      "reputation" : 19577,
+      "user_id" : 2765813,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/E2HmP.jpg?s=256",
+      "display_name" : "Ali Naddaf",
+      "link" : "https://stackoverflow.com/users/2765813/ali-naddaf"
+    },
+    "creation_date" : 1746986221,
+    "last_activity_date" : 1746986221,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79616769" : [ {
+      "comment_id" : 140829507,
+      "post_id" : 79616769,
+      "body" : "Nah buddy it&#39;s problem of google&#39;s shitty android api&#39;s. I tried running my app on 1 day old brand new android smartphone and there also it showed old UI and guess what when I checked settings it was by default turned off.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 29050954,
+        "reputation" : 20,
+        "user_id" : 22253796,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/1a6d9bb1e3657894c134cb8d9499e98d?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Dhyeeey",
+        "link" : "https://stackoverflow.com/users/22253796/dhyeeey"
+      },
+      "creation_date" : 1761922256,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140415906,
+      "post_id" : 79616769,
+      "body" : "That setting option is on by default, so if it is &quot;disabled&quot;, it means that the user has gone into the settings and disabled that manually, so honoring that makes sense, right?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 3286414,
+        "reputation" : 19577,
+        "user_id" : 2765813,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/E2HmP.jpg?s=256",
+        "display_name" : "Ali Naddaf",
+        "link" : "https://stackoverflow.com/users/2765813/ali-naddaf"
+      },
+      "creation_date" : 1746990508,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140415833,
+      "post_id" : 79616769,
+      "body" : "as you can see i have already implemented method in class named getCredentialOptions which return me object of type GetGoogleIdOption. I used that method like this  GetCredentialRequest request = new GetCredentialRequest.Builder().addCredentialOption(getCreden&zwnj;&#8203;tialOptions()).build&zwnj;&#8203;();  but still end up getting old UI problem. and regarding implementing onetap api, i also tried that but i keep getting error of user disabled this feature which does not bring up account popup. App users won&#39;t go in settings and enable sign in prompt option manually, they will simply uninstall app by frustration",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 29050954,
+        "reputation" : 20,
+        "user_id" : 22253796,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/1a6d9bb1e3657894c134cb8d9499e98d?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Dhyeeey",
+        "link" : "https://stackoverflow.com/users/22253796/dhyeeey"
+      },
+      "creation_date" : 1746988015,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

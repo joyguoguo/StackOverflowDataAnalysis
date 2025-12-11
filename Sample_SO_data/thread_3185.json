@@ -1,0 +1,243 @@
+{
+  "question" : {
+    "question_id" : 79566689,
+    "title" : "RabbitMQ SSL connection using spring-boot-starter-amqp",
+    "body" : "<p>I'm trying to connect to rabbit cluster using ssl and set spring.rabbitmq.ssl properties.\nWhen the app tries to send message to exchange, it shows the error\n&quot;ACCESS_REFUSED - Login was refused using authentication mechanism PLAIN&quot;. How can I properly set authentication mechanism to EXTERNAL instead of PLAIN? Automatically it always sets it to PLAIN which means user and password authentication I guess.</p>\n<p>BTW, if I set in cachingConnectionFactory.rabbitConnectionFactory.saslConfig = DefaultSaslConfig.EXTERNAL it works properly.</p>\n<p>Updates:</p>\n<p>properties:</p>\n<pre><code>rabbitmq:\n  addresses: host1:5671,host2:5671\n  ssl:\n    enabled: true\n    key-store: classpath:certs/rabbit-client-keystore.p12\n    key-store-type: PKCS12\n    key-store-password: ${RABBIT_KEYSTORE_PASSWORD}\n    trust-store: classpath:certs/rabbit-client-truststore.p12\n    trust-store-type: PKCS12\n    trust-store-password: ${RABBIT_TRUSTSTORE_PASSWORD}\n    algorithm: TLSv1.2\n  username: &quot;&quot;\n  password: &quot;&quot;\n</code></pre>\n<p>If I use algorithm: EXTERNAL, then it throws &quot;NoSuchAlgorithmException: EXTERNAL SSLContext not available&quot;.</p>\n",
+    "tags" : [ "java", "spring-boot", "kotlin", "rabbitmq" ],
+    "owner" : {
+      "account_id" : 35417428,
+      "reputation" : 33,
+      "user_id" : 27190977,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2cddfab268fcd38be53fce903fc1d4d9?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Semyon Volokh",
+      "link" : "https://stackoverflow.com/users/27190977/semyon-volokh"
+    },
+    "is_answered" : true,
+    "view_count" : 453,
+    "answer_count" : 2,
+    "score" : 1,
+    "last_activity_date" : 1744370241,
+    "creation_date" : 1744289005,
+    "link" : "https://stackoverflow.com/questions/79566689/rabbitmq-ssl-connection-using-spring-boot-starter-amqp",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79568476,
+    "question_id" : 79566689,
+    "body" : "<p>Finally, I decided to use Configuration class with ConnectionFactoryCustomizer bean depending on <code>spring.rabbitmq.ssl.enabled</code> property:</p>\n<pre><code>@Configuration\nclass RabbitConfig {\n    @Bean\n    @ConditionalOnProperty(name = [&quot;spring.rabbitmq.ssl.enabled&quot;], havingValue = &quot;true&quot;, matchIfMissing = false)\n    fun connectionFactoryCustomizer(): ConnectionFactoryCustomizer {\n        return ConnectionFactoryCustomizer { \n            it.saslConfig = DefaultSaslConfig.EXTERNAL\n        }\n    }\n}\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 35417428,
+      "reputation" : 33,
+      "user_id" : 27190977,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2cddfab268fcd38be53fce903fc1d4d9?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Semyon Volokh",
+      "link" : "https://stackoverflow.com/users/27190977/semyon-volokh"
+    },
+    "creation_date" : 1744363209,
+    "last_activity_date" : 1744363209,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79568681,
+    "question_id" : 79566689,
+    "body" : "<p>Unfortunately, there is not a direct Spring-Boot property to set the SASL mechanism to EXTERNAL. The spring.rabbitmq.ssl properties primarily focus on configuring the SSL context Service.<br />\nYou need custom Spring configuration to achieve the desired result. Create a <code>@Configuration</code> class to customize the ConnectionFactory.</p>\n<p><strong>Java Configuration Class:</strong></p>\n<pre><code>\n\nimport org.springframework.amqp.rabbit.connection.CachingConnectionFactory;\nimport org.springframework.amqp.rabbit.connection.ConnectionFactory;\nimport org.springframework.amqp.rabbit.connection.DefaultSaslConfig;\nimport org.springframework.beans.factory.annotation.Value;\nimport org.springframework.context.annotation.Bean;\nimport org.springframework.context.annotation.Configuration;\n\n@Configuration\npublic class RabbitMQConfig {\n\n    @Value(&quot;${spring.rabbitmq.host}&quot;)\n    private String host;\n\n    @Value(&quot;${spring.rabbitmq.port}&quot;)\n    private int port;\n\n    // SSL properties (assuming you have these defined)\n    @Value(&quot;${spring.rabbitmq.ssl.enabled}&quot;)\n    private boolean sslEnabled;\n\n    @Value(&quot;${spring.rabbitmq.ssl.key-store}&quot;)\n    private String keyStore;\n\n    @Value(&quot;${spring.rabbitmq.ssl.key-store-password}&quot;)\n    private String keyStorePassword;\n\n    @Value(&quot;${spring.rabbitmq.ssl.trust-store}&quot;)\n    private String trustStore;\n\n    @Value(&quot;${spring.rabbitmq.ssl.trust-store-password}&quot;)\n    private String trustStorePassword;\n\n\n    @Bean\n    public ConnectionFactory connectionFactory() {\n        CachingConnectionFactory cachingConnectionFactory = new CachingConnectionFactory(host, port);\n\n        // Configure SSL if enabled\n        if (sslEnabled) {\n            cachingConnectionFactory.setUseSSL(true);\n            cachingConnectionFactory.setKeyStore(keyStore);\n            cachingConnectionFactory.setKeyStorePassphrase(keyStorePassword);\n            cachingConnectionFactory.setTrustStore(trustStore);\n            cachingConnectionFactory.setTrustStorePassphrase(trustStorePassword);\n        }\n\n        // Set the SASL mechanism to EXTERNAL\n        cachingConnectionFactory.getRabbitConnectionFactory().setSaslConfig(DefaultSaslConfig.EXTERNAL);\n\n        return cachingConnectionFactory;\n    }\n}\n</code></pre>\n<p><strong>application.properties:</strong></p>\n<pre><code>\n\nspring.rabbitmq.host=your.rabbitmq.host\nspring.rabbitmq.port=5671  \nspring.rabbitmq.ssl.enabled=true\nspring.rabbitmq.ssl.key-store=classpath:keystore.jks\nspring.rabbitmq.ssl.key-store-password=your_keystore_password\nspring.rabbitmq.ssl.trust-store=classpath:truststore.jks\nspring.rabbitmq.ssl.trust-store-password=your_truststore_password\n\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 10927511,
+      "reputation" : 3218,
+      "user_id" : 8031784,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/ikcJL.png?s=256",
+      "display_name" : "Aniruddh Parihar",
+      "link" : "https://stackoverflow.com/users/8031784/aniruddh-parihar"
+    },
+    "creation_date" : 1744369579,
+    "last_activity_date" : 1744369579,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140324182,
+    "post_id" : 79566689,
+    "body" : "@AniruddhParihar, I removed actual host. The right way to set multiple brokers in addresses property is: broker1-host:port,broker2-host:port. I’ve already answered the question with only one little config, thanks",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 35417428,
+      "reputation" : 33,
+      "user_id" : 27190977,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2cddfab268fcd38be53fce903fc1d4d9?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Semyon Volokh",
+      "link" : "https://stackoverflow.com/users/27190977/semyon-volokh"
+    },
+    "creation_date" : 1744369567,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140324147,
+    "post_id" : 79566689,
+    "body" : "@SemyonVolokh : I think 5671 is not a host its a port. I am posting the answer with properties and Configuration class using the CachingConnectionFactory. Please review the code and properties and correct them at your end.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10927511,
+      "reputation" : 3218,
+      "user_id" : 8031784,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/ikcJL.png?s=256",
+      "display_name" : "Aniruddh Parihar",
+      "link" : "https://stackoverflow.com/users/8031784/aniruddh-parihar"
+    },
+    "creation_date" : 1744368896,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140323839,
+    "post_id" : 79566689,
+    "body" : "@aran, thanks for the answer, I will use some config to set it",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 35417428,
+      "reputation" : 33,
+      "user_id" : 27190977,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2cddfab268fcd38be53fce903fc1d4d9?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Semyon Volokh",
+      "link" : "https://stackoverflow.com/users/27190977/semyon-volokh"
+    },
+    "creation_date" : 1744362939,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140323681,
+    "post_id" : 79566689,
+    "body" : "@SemyonVolokh The only current reliable way to set SASL to EXTERNAL is programmatically via setSaslConfig, there&#39;s no properties support yet for this. As you already saw, algorithm refers to Protocol, not Auth Mechanism.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2465829,
+      "reputation" : 13577,
+      "user_id" : 2148953,
+      "user_type" : "registered",
+      "accept_rate" : 96,
+      "profile_image" : "https://i.sstatic.net/DVHoP84E.jpg?s=256",
+      "display_name" : "aran",
+      "link" : "https://stackoverflow.com/users/2148953/aran"
+    },
+    "creation_date" : 1744360551,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140323537,
+    "post_id" : 79566689,
+    "body" : "@Vijay, EXTERNAL to algorithm field is not working. If I programmatically set EXTERNAL, it works, but I want to find a way to make it work through properties only",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 35417428,
+      "reputation" : 33,
+      "user_id" : 27190977,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2cddfab268fcd38be53fce903fc1d4d9?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Semyon Volokh",
+      "link" : "https://stackoverflow.com/users/27190977/semyon-volokh"
+    },
+    "creation_date" : 1744357906,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140323531,
+    "post_id" : 79566689,
+    "body" : "@AniruddhParihar, I&#39;ve added my properties from application.yaml file.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 35417428,
+      "reputation" : 33,
+      "user_id" : 27190977,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2cddfab268fcd38be53fce903fc1d4d9?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Semyon Volokh",
+      "link" : "https://stackoverflow.com/users/27190977/semyon-volokh"
+    },
+    "creation_date" : 1744357825,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140321663,
+    "post_id" : 79566689,
+    "body" : "You can explicitly set the authentication mechanism to EXTERNAL by configuring spring.rabbitmq.ssl.enabled=true and adding spring.rabbitmq.ssl.algorithm=EXTERNAL to your application.properties. Alternatively, programmatically set connectionFactory.getRabbitConnectionFactory().setSaslConfig&zwnj;&#8203;(DefaultSaslConfig.E&zwnj;&#8203;XTERNAL) to enforce external SSL authentication explicitly.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7645025,
+      "reputation" : 440,
+      "user_id" : 5795975,
+      "user_type" : "registered",
+      "profile_image" : "https://lh6.googleusercontent.com/-6KwPUS4RnyA/AAAAAAAAAAI/AAAAAAAAC8w/auZqreI45x0/s256-rj/photo.jpg",
+      "display_name" : "Vijay",
+      "link" : "https://stackoverflow.com/users/5795975/vijay"
+    },
+    "creation_date" : 1744307063,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140321120,
+    "post_id" : 79566689,
+    "body" : "Please share you setSaslConfig code, Then we can observe the issue. Normally this happens when we misconfigure the SSL context itself (key store, trust store, etc.).",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10927511,
+      "reputation" : 3218,
+      "user_id" : 8031784,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/ikcJL.png?s=256",
+      "display_name" : "Aniruddh Parihar",
+      "link" : "https://stackoverflow.com/users/8031784/aniruddh-parihar"
+    },
+    "creation_date" : 1744298209,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79568681" : [ {
+      "comment_id" : 140324250,
+      "post_id" : 79568681,
+      "body" : "My main goal was to add minimal custom logic and use auto configuration from the starter. Anyway, thanks",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 35417428,
+        "reputation" : 33,
+        "user_id" : 27190977,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/2cddfab268fcd38be53fce903fc1d4d9?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Semyon Volokh",
+        "link" : "https://stackoverflow.com/users/27190977/semyon-volokh"
+      },
+      "creation_date" : 1744370797,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140324227,
+      "post_id" : 79568681,
+      "body" : "@SemyonVolokh :  you can modify according to your Need. its Just a basic Example to use SASL config.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10927511,
+        "reputation" : 3218,
+        "user_id" : 8031784,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/ikcJL.png?s=256",
+        "display_name" : "Aniruddh Parihar",
+        "link" : "https://stackoverflow.com/users/8031784/aniruddh-parihar"
+      },
+      "creation_date" : 1744370501,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140324197,
+      "post_id" : 79568681,
+      "body" : "Thanks for the answer, but I need two or more brokers with failover, so addresses property is useful here. And I’ve already solved the problem with only one ConnectionFactoryCustomizer bean and it works perfectly",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 35417428,
+        "reputation" : 33,
+        "user_id" : 27190977,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/2cddfab268fcd38be53fce903fc1d4d9?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Semyon Volokh",
+        "link" : "https://stackoverflow.com/users/27190977/semyon-volokh"
+      },
+      "creation_date" : 1744369880,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

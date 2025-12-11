@@ -1,0 +1,126 @@
+{
+  "question" : {
+    "question_id" : 79536143,
+    "title" : "How to maximize date according to the provided date format?",
+    "body" : "<p>I need to maximize provided date according to the full ISO format using.</p>\n<p>Suppose we have the predefined some input data as <code>String inputDate</code> and <code>String inputDateFormat</code> which maximizes to the <code>maximizedDate</code> as:</p>\n<div class=\"s-table-container\"><table class=\"s-table\">\n<thead>\n<tr>\n<th>inputDate</th>\n<th>inputDateFormat</th>\n<th>maximizedDate</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td><code>2025</code></td>\n<td><code>yyyy</code></td>\n<td><code>2025-12-31T23:59:59</code></td>\n</tr>\n<tr>\n<td><code>2025-01</code></td>\n<td><code>yyyy-MM</code></td>\n<td><code>2025-01-31T23:59:59</code></td>\n</tr>\n<tr>\n<td><code>2025-01-15</code></td>\n<td><code>yyyy-MM-dd</code></td>\n<td><code>2025-01-15T23:59:59</code></td>\n</tr>\n<tr>\n<td><code>2025-01-15T09</code></td>\n<td><code>yyyy-MM-dd'T'HH</code></td>\n<td><code>2025-01-15T09:59:59</code></td>\n</tr>\n<tr>\n<td><code>2025-01-15T09:15</code></td>\n<td><code>yyyy-MM-dd'T'HH-mm</code></td>\n<td><code>2025-01-15T09:15:59</code></td>\n</tr>\n<tr>\n<td><code>2025-02</code></td>\n<td><code>yyyy-MM</code></td>\n<td><code>2025-02-28T23:59:59</code></td>\n</tr>\n</tbody>\n</table></div>\n<p>In the last example date was maximized to <code>2025-02-28T23:59:59</code> because there are no 31 February. The same logic applies to any months with 30/31 days.</p>\n<p>I know that for example <code>2025-01-15</code> formatted by the <code>DateTimeFormatter.ISO_LOCAL_DATE_TIME</code> is equals to <code>2025-01-15T00:00:00</code>. But this won't help me because I can't be sure if the input data was <code>2025-01-15</code> or <code>2025-01-15T00</code> without the input format.</p>\n<p>I think solution is to use the <code>TemporalAdjuster</code>, but I need to know what should be adjusted like: <code>DateFormat.of(inputDateFormat).isYearPresented()</code> or <code>DateFormat.of(inputDateFormat).isMinutesPresented()</code>.</p>\n<p>Any ideas how can I achieve this?</p>\n",
+    "tags" : [ "java", "date", "datetime" ],
+    "owner" : {
+      "account_id" : 22094693,
+      "reputation" : 359,
+      "user_id" : 16352184,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/e26104738c1ba7c5026ea81e53dcccbf?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Michael Linker",
+      "link" : "https://stackoverflow.com/users/16352184/michael-linker"
+    },
+    "is_answered" : true,
+    "view_count" : 123,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1743018169,
+    "creation_date" : 1742985244,
+    "link" : "https://stackoverflow.com/questions/79536143/how-to-maximize-date-according-to-the-provided-date-format",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79536639,
+    "question_id" : 79536143,
+    "body" : "<h2>DateTimeFormatterBuilder.parseDefaulting()</h2>\n<p>Perhaps surprising this formatter works for your task:</p>\n<pre><code>    private static final DateTimeFormatter formatter\n            = new DateTimeFormatterBuilder()\n                    .appendPattern(&quot;uuuu[-MM[-dd['T'HH[:mm[:ss]]]]]&quot;)\n                    .parseDefaulting(ChronoField.MONTH_OF_YEAR, 12)\n                    .parseDefaulting(ChronoField.DAY_OF_MONTH, 31)\n                    .parseDefaulting(ChronoField.HOUR_OF_DAY, 23)\n                    .parseDefaulting(ChronoField.MINUTE_OF_HOUR, 59)\n                    .parseDefaulting(ChronoField.SECOND_OF_MINUTE, 59)\n                    .parseDefaulting(ChronoField.NANO_OF_SECOND, 999_999_999)\n                    .toFormatter(Locale.ROOT);\n</code></pre>\n<p>I have specified 31 as the day of month to pick when no day of month is in the string. For February 2025, which has 28 days, this gives — 2025-02-28T23:59:59.999999999, so the last day of February. It seems that java.time is smart enough to just pick the last day of the month.</p>\n<p>In my format pattern string I have used square brackets <code>[]</code> to enclose optional parts, and I have nested those. If the input format string is given to you, you may alternatively pass it to <code>appendPattern()</code> instead of mine; but it will require you to build a new formatter for each input format whereas my formatter handles all of your possible input formats.</p>\n<p>Full demonstration:</p>\n<pre><code>    String[] inputs = { &quot;2025&quot;, &quot;2025-01&quot;, &quot;2025-02&quot;, &quot;2025-01-15&quot;, &quot;2025-01-15T09&quot;, &quot;2025-01-15T09:15&quot; };\n    for (String input : inputs) {\n        LocalDateTime localDateTime = LocalDateTime.parse(input, formatter);\n        System.out.format(Locale.ENGLISH, &quot;%-16s -&gt; %s%n&quot;, input, localDateTime);\n    }\n</code></pre>\n<p>Output:</p>\n<pre class=\"lang-none prettyprint-override\"><code>2025             -&gt; 2025-12-31T23:59:59.999999999\n2025-01          -&gt; 2025-01-31T23:59:59.999999999\n2025-02          -&gt; 2025-02-28T23:59:59.999999999\n2025-01-15       -&gt; 2025-01-15T23:59:59.999999999\n2025-01-15T09    -&gt; 2025-01-15T09:59:59.999999999\n2025-01-15T09:15 -&gt; 2025-01-15T09:15:59.999999999\n</code></pre>\n<p>You said in a comment:</p>\n<blockquote>\n<p>Yeah, but for simplification of the question lets truncate this Dates to the ChronoUnit.SECONDS and without zones :)</p>\n</blockquote>\n<p>So just leave out <code>.parseDefaulting(ChronoField.NANO_OF_SECOND, 999_999_999)</code>.</p>\n<pre class=\"lang-none prettyprint-override\"><code>2025             -&gt; 2025-12-31T23:59:59\n2025-01          -&gt; 2025-01-31T23:59:59\n2025-02          -&gt; 2025-02-28T23:59:59\n2025-01-15       -&gt; 2025-01-15T23:59:59\n2025-01-15T09    -&gt; 2025-01-15T09:59:59\n2025-01-15T09:15 -&gt; 2025-01-15T09:15:59\n</code></pre>\n",
+    "score" : 4,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 41001079,
+      "reputation" : 81,
+      "user_id" : 30069977,
+      "user_type" : "unregistered",
+      "profile_image" : "https://www.gravatar.com/avatar/969c045eb8d5fffca5e47782863d7ee0?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Lily Devi",
+      "link" : "https://stackoverflow.com/users/30069977/lily-devi"
+    },
+    "creation_date" : 1742997186,
+    "last_activity_date" : 1743018169,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140265810,
+    "post_id" : 79536143,
+    "body" : "@Anonymous Yeah, but for simplification of the question lets truncate this Dates to the <code>ChronoUnit.SECONDS</code> and without zones :)",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 22094693,
+      "reputation" : 359,
+      "user_id" : 16352184,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/e26104738c1ba7c5026ea81e53dcccbf?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Michael Linker",
+      "link" : "https://stackoverflow.com/users/16352184/michael-linker"
+    },
+    "creation_date" : 1742996656,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140265772,
+    "post_id" : 79536143,
+    "body" : "In Java the max date-time for input <code>2025</code> is not <code>2025-12-31T23:59:59</code> but <code>2025-12-31T23:59:59.999999999</code>. And in the real world it’s the same with infinitely many 9s.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7612423,
+      "reputation" : 87400,
+      "user_id" : 5772882,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Anonymous",
+      "link" : "https://stackoverflow.com/users/5772882/anonymous"
+    },
+    "creation_date" : 1742996258,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140265643,
+    "post_id" : 79536143,
+    "body" : "@Abra Thanks! I updated the answer by your suggestion. Yes, sometimes dates cannot be merged like strings due to the different ends of the months.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 22094693,
+      "reputation" : 359,
+      "user_id" : 16352184,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/e26104738c1ba7c5026ea81e53dcccbf?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Michael Linker",
+      "link" : "https://stackoverflow.com/users/16352184/michael-linker"
+    },
+    "creation_date" : 1742994313,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140265049,
+    "post_id" : 79536143,
+    "body" : "@Abra Or, can I? Suppose I have the <code>inputDate</code> in the <code>inputDateFormat</code>, so I can format <code>mergeDate</code> to the same <code>inputDateFormat</code> format and then concat strings as you suggested. Do I understand correctly?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 22094693,
+      "reputation" : 359,
+      "user_id" : 16352184,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/e26104738c1ba7c5026ea81e53dcccbf?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Michael Linker",
+      "link" : "https://stackoverflow.com/users/16352184/michael-linker"
+    },
+    "creation_date" : 1742987404,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140265033,
+    "post_id" : 79536143,
+    "body" : "@Abra Unfortunately, this won&#39;t work because any input format can be applied. I  need to make sure that the format contains certain octets. For example, something like: <code>DateFormat.of(inputDateFormat).isYearPresented()</code> or <code>DateFormat.of(inputDateFormat).isMinutesPresented()</code>.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 22094693,
+      "reputation" : 359,
+      "user_id" : 16352184,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/e26104738c1ba7c5026ea81e53dcccbf?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Michael Linker",
+      "link" : "https://stackoverflow.com/users/16352184/michael-linker"
+    },
+    "creation_date" : 1742987169,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

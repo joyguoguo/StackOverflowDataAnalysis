@@ -1,0 +1,228 @@
+{
+  "question" : {
+    "question_id" : 79686678,
+    "title" : "Dispatching static methods on generic types",
+    "body" : "<p>I want to achieve something like this:</p>\n<pre class=\"lang-java prettyprint-override\"><code>interface Parent {\n     static int hi() { return 1; }\n}\n\nclass Child implements Parent {\n     static int hi() { return 0; }\n}\n\nclass Child2 implements Parent {\n    static int hi() { return 3; }\n}\n\nclass Connector&lt;T extends Parent&gt; {\n    int getHi() { return T.hi(); }\n}\n\nclass Main {\n    public static void main(String[] args) {\n        Connector&lt;Child&gt; c = new Connector();\n        System.out.println(c.getHi()); // want it to print 0, but prints 1\n        \n        Connector&lt;Child2&gt; c2 = new Connector();\n        System.out.println(c2.getHi()); // want it to print 3, but prints 1\n    }\n}\n</code></pre>\n<p>where the type could be inferred by Java's type system and as a result call the correct <code>getHi()</code> method.</p>\n<p>Currently, the way I work around this is by handling it in the runtime by doing:</p>\n<pre class=\"lang-java prettyprint-override\"><code>interface Parent {}\n\nclass Child implements Parent {\n     static int hi() { return 0; }\n}\n\nclass Child2 implements Parent {\n    static int hi() { return 3; }\n}\n\nclass Connector {\n    static &lt;T extends Parent&gt; int getHi(Class&lt;T&gt; classType) {\n        try {\n            return (int) MethodHandles.lookup().findStatic(classType, &quot;hi&quot;, MethodType.methodType(int.class)).invokeExact();\n        } catch (Throwable e) {\n            throw new RuntimeException(e);\n        }\n    }\n}\n\nclass Main {\n    public static void main(String[] args) {\n        System.out.println(Connector.getHi(Child.class)); // prints 0\n        System.out.println(Connector.getHi(Child2.class)); // prints 3\n    }\n}\n</code></pre>\n<p>Ideally, I would like to move this to something like the first option, where I handle static method calling in compile time (since <code>MethodHandles.lookup().findStatic()</code> has quite a bit of runtime overhead). Is there any way to do something like the first option?</p>\n",
+    "tags" : [ "java", "static-methods" ],
+    "owner" : {
+      "account_id" : 42828128,
+      "reputation" : 23,
+      "user_id" : 30942952,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/4675bf4902922f32b8909c4f0cd6157a?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Jeremy Yoo",
+      "link" : "https://stackoverflow.com/users/30942952/jeremy-yoo"
+    },
+    "is_answered" : true,
+    "view_count" : 109,
+    "answer_count" : 1,
+    "score" : 2,
+    "last_activity_date" : 1751416035,
+    "creation_date" : 1751411907,
+    "link" : "https://stackoverflow.com/questions/79686678/dispatching-static-methods-on-generic-types",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79686697,
+    "question_id" : 79686678,
+    "body" : "<p>You want <strong>factories</strong>.</p>\n<p>They have an (undeserved) negative public opinion, and their name is unfortunate; it suggests their primary (or even only) purpose is to make objects when that's not at all required.</p>\n<p>What you're doing here is to add the concept of a type hierarchy to things that do not require an instance as a context.</p>\n<p>Java doesn't allow this. <code>static</code> elements <strong>are fully opted out of the type system</strong>. You should consider all <code>static</code> stuff as if it lived entirely outside of all types. The one and only reason that the java compiler forces you into putting static stuff inside types, is because of <em>namespacing</em> - in java, types also serve as the primary/only namespace vehicle. To refer to a thing in java you <em>must</em> start with that things type; the lang spec does not have any way to refer to anything else. Hence, static things have to be in types so that you can refer to them. <em>And that is the one and only relation they have to the type they are in</em>.</p>\n<p>Hence why your code as above does not work and cannot work without reflection, which is ugly code (in the objective sense that reflective code has no type checking at all; any errors you make or any inconsistencies introduced due to code changes later won't show up as errors unless you run into a bug or have a unit test that happens to trigger that bug). Also, you indicated you didn't want it, so we can move away from that as a feasible solution here.</p>\n<p>Factories are the solution:</p>\n<ol>\n<li>If only non-static things can partake in type hierarchies, because <code>static</code> things effectively don't participate in the type they are declared in, and type hierarchies, obviously only apply to types,</li>\n<li>But non-static things necessarily require an instance in order to use them, then...</li>\n<li>Therefore one <strong>must</strong> create an instance that represents the class as a whole.</li>\n<li>... and an instance of <code>java.lang.Class</code> is no good, as you can't actually write any code in that; it's a <code>final</code> class in <code>java.lang</code>, you cannot modify it.</li>\n</ol>\n<p>Therefore 5. <strong>Factories</strong>.</p>\n<p>A factory is simply the type itself one abstraction level higher: Imagine:</p>\n<pre><code>abstract class Animal {}\nclass Dog extends Animal { ... }\nclass Cat extends Animal { ... }\n\nDog fido = new Dog();\nCat gizmo = new Cat();\n</code></pre>\n<p>Here we specific animals fido, and gizmo. They are animals. You can hug them and feed them. Then we have a type hierarchy that describes the class they belong to.</p>\n<p>If that 'thing that describes the class they belong to' needs to become an instance in order to solve our issues, then we'd create:</p>\n<pre><code>abstract class AnimalDescriptor&lt;A extends Animal&gt; {}\nclass DogDescriptor extends AnimalDescriptor&lt;Dog&gt; {}\nclass CatDescriptor extends AnimalDescriptor&lt;Cat&gt; {}\n\nDogDescriptor DOG_DESCRIPTOR = new DogDescriptor();\n</code></pre>\n<p>Where an AnimalDescriptor is the type, and instances of it are equivalent to 'the concept of a dog'. DOG_DESCRIPTOR isn't an animal you can feed and hug; it's the concept 'dogs' as an instance.</p>\n<p>One extremely obvious thing one might want to ask 'the concept 'dogs' as an instance' is 'make me a new dog'. Because constructors are essentially static methods (you call them without needing an instance of the class, and they cannot be inherited at all - just like <code>static</code> methods), and often one runs into the problem of needing to abstractize the act of making new instances, then the above is required, and the obvious name for it all is <code>Factory</code>.</p>\n<p>But the concept is more generic than that. For example, you often see this is a trivial code example:</p>\n<pre><code>public class Animal {\n  public abstract String noise();\n}\n\npublic class Dog extends Animal {\n  @Override public String noise() {\n    return &quot;Woof!&quot;;\n  }\n}\n</code></pre>\n<p>But this is ridiculous code. Totally weird. Why is <code>Dog.noise()</code> an instance method here? It has nothing to do with fido. There is no need to have an actual dog to know what noises dogs make. The code says: <em>All dogs</em> bark. There is no <code>.setNoise()</code> or any other way to modify the response. The actual dog instance you invoke <code>noise()</code> on is irrelevant.</p>\n<p>Hence, the better way to do this is to use the double hierarchy and stick <code>noise()</code> in <code>DogDescriptor</code>.</p>\n<p>The nature of these type descriptors is that they tend to be singletons: The concept 'DogDescriptor' as a class does lend itself to an instance, but only one of them. However, even that depends on the situation; sometimes you can have multiple different 'takes' on the concept.</p>\n<p>Going back to your example, you'd end up at something like:</p>\n<pre><code>interface Parent {\n  // hi has no business here.\n}\n\nclass Child implements Parent {\n  // hi has no business here.\n}\n\nclass Child2 implements Parent {\n  // hi has no business here either\n}\n\nabstract class Connector&lt;T extends Parent&gt; {\n    int getHi() {\n      // default impl\n      return 1;\n    }\n}\n\nclass Child1Connector extends Connector&lt;Child1&gt; {\n  public static final Child1Connector INSTANCE = new Child1Connector();\n  private Child1Connector() {}\n  int getHi() {\n    return 0;\n  }\n}\n\nclass Child2Connector extends Connector&lt;Child2&gt; {\n  public static final Child2Connector INSTANCE = new Child2Connector();\n  private Child2Connector() {}\n  int getHi() {\n    return 3;\n  }\n}\n\nclass Main {\n    public static void main(String[] args) {\n        var c = Child1Connector.INSTANCE;\n        System.out.println(c.getHi()); // prints 0 as desired.\n        \n        var c2 = Child2Connector.INSTANCE;\n        System.out.println(c.getHi()); // prints 3 as desired.\n    }\n}\n</code></pre>\n<p>And of course you could write:</p>\n<pre><code>class IntentionallyLeaveItUnbound {\n  void example1(Connector&lt;?&gt; c) {\n     System.out.println(c.getHi());\n  }\n\n  &lt;T extends Parent&gt; T example2(Connector&lt;T&gt; c) {\n    return c.create();\n  }\n}\n</code></pre>\n<p>Where <code>create()</code> is specced as <code>public T create()</code>.</p>\n<p>All type checked, no need to involve reflection.</p>\n",
+    "score" : 4,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 401843,
+      "reputation" : 107186,
+      "user_id" : 768644,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+      "display_name" : "rzwitserloot",
+      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+    },
+    "creation_date" : 1751415073,
+    "last_activity_date" : 1751415073,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140561409,
+    "post_id" : 79686678,
+    "body" : "In either approach, the caller must know at compile-time whether <code>T</code> is <code>Child</code> or <code>Child2</code>, so it’s not clear why it can’t just invoke <code>Child.hi()</code> or <code>Child2.hi()</code>. Why do you want to route this call through some code that does not have this knowledge?",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 3211603,
+      "reputation" : 300981,
+      "user_id" : 2711488,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+      "display_name" : "Holger",
+      "link" : "https://stackoverflow.com/users/2711488/holger"
+    },
+    "creation_date" : 1751534996,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140557659,
+    "post_id" : 79686678,
+    "body" : "I did. You could pass a lambda instead of the class literal.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1691630,
+      "reputation" : 51067,
+      "user_id" : 1553851,
+      "user_type" : "registered",
+      "accept_rate" : 73,
+      "profile_image" : "https://www.gravatar.com/avatar/ad333c218c8f2fb917cf506919fc95f4?s=256&d=identicon&r=PG",
+      "display_name" : "shmosel",
+      "link" : "https://stackoverflow.com/users/1553851/shmosel"
+    },
+    "creation_date" : 1751441621,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140557393,
+    "post_id" : 79686678,
+    "body" : "&quot;you could do much better than the reflection &#39;workaround.&#39;&quot; could you elaborate on what the better alternative would be?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 42828128,
+      "reputation" : 23,
+      "user_id" : 30942952,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/4675bf4902922f32b8909c4f0cd6157a?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Jeremy Yoo",
+      "link" : "https://stackoverflow.com/users/30942952/jeremy-yoo"
+    },
+    "creation_date" : 1751435538,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140557047,
+    "post_id" : 79686678,
+    "body" : "What you&#39;re trying to do is impossible and unnecessary, at least in your example. You could just call <code>Child.hi()</code>. And assuming you do need some imitation of dynamic dispatch, you could do much better than the reflection &quot;workaround.&quot; Besides for being brittle and inefficient, it requires an extra Class parameter. If you&#39;re going to do that, might as well accept an <code>IntSupplier</code> and pass in <code>Child::hi</code>.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1691630,
+      "reputation" : 51067,
+      "user_id" : 1553851,
+      "user_type" : "registered",
+      "accept_rate" : 73,
+      "profile_image" : "https://www.gravatar.com/avatar/ad333c218c8f2fb917cf506919fc95f4?s=256&d=identicon&r=PG",
+      "display_name" : "shmosel",
+      "link" : "https://stackoverflow.com/users/1553851/shmosel"
+    },
+    "creation_date" : 1751414888,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140557024,
+    "post_id" : 79686678,
+    "body" : "the requirement is to handle this method dispatching in compile time. i would think that doing <code>Connector&lt;Child&gt; c = new Connector(); c.getHi();</code> would replace the method body with <code>return Child.hi();</code> and hence there is no runtime overhead. but it seems like Java&#39;s compiler does not do that",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 42828128,
+      "reputation" : 23,
+      "user_id" : 30942952,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/4675bf4902922f32b8909c4f0cd6157a?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Jeremy Yoo",
+      "link" : "https://stackoverflow.com/users/30942952/jeremy-yoo"
+    },
+    "creation_date" : 1751413406,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140557004,
+    "post_id" : 79686678,
+    "body" : "You can&#39;t override static methods in Java. There are probably a dozen alternatives to what you&#39;re trying to do, but it&#39;s hard to offer a specific suggestion without a clear understanding of your <a href=\"https://xyproblem.info/\" rel=\"nofollow noreferrer\">actual requirements</a>.",
+    "score" : 8,
+    "owner" : {
+      "account_id" : 1691630,
+      "reputation" : 51067,
+      "user_id" : 1553851,
+      "user_type" : "registered",
+      "accept_rate" : 73,
+      "profile_image" : "https://www.gravatar.com/avatar/ad333c218c8f2fb917cf506919fc95f4?s=256&d=identicon&r=PG",
+      "display_name" : "shmosel",
+      "link" : "https://stackoverflow.com/users/1553851/shmosel"
+    },
+    "creation_date" : 1751412427,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79686697" : [ {
+      "comment_id" : 140561586,
+      "post_id" : 79686697,
+      "body" : "@rzwitserloot There are a lot of options. The connector could be written as <code>record Connector&lt;T extends Parent&gt;(int hi) {      static final Connector&lt;Child&gt; CHILD_CONNECTOR = new Connector&lt;&gt;(0);      static final Connector&lt;Child2&gt; CHILD2_CONNECTOR = new Connector&lt;&gt;(3);    }</code> , then the method <code>hi()</code> does return instance state and you don’t need another class for each constant value.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 3211603,
+        "reputation" : 300981,
+        "user_id" : 2711488,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+        "display_name" : "Holger",
+        "link" : "https://stackoverflow.com/users/2711488/holger"
+      },
+      "creation_date" : 1751538468,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140561558,
+      "post_id" : 79686697,
+      "body" : "@Holger Here it &#39;works&#39; because connectors are singletons. Deciding not to add the hullabaloo of a companion architecture because it&#39;s a lot of boilerplate is a choice one can make, but one should be aware that you&#39;re shortcutting. If you do it with 2 eyes wide open, by all means. It&#39;s like making a field just public instead of writing getters and setters - if you know you&#39;re shortcutting proper design, and it&#39;s worth it, then do it.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 401843,
+        "reputation" : 107186,
+        "user_id" : 768644,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+        "display_name" : "rzwitserloot",
+        "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+      },
+      "creation_date" : 1751538015,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140561390,
+      "post_id" : 79686697,
+      "body" : "It’s a bit strange to criticize the <code>noise()</code> method for not depending on the actual instance, to end up at <code>getHi()</code> methods in <code>Connector</code> subtypes not depending on their actual instance as well. The class of an object does already serve as a descriptor (and also a factory) and there’s nothing wrong with having overridable methods to encode behavior rather than depending on per-instance data. Moving such operations into a companion class can be useful in some scenarios but is not always needed. In the specific example, I would not create such additional class just for the <code>noise()</code> method.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 3211603,
+        "reputation" : 300981,
+        "user_id" : 2711488,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+        "display_name" : "Holger",
+        "link" : "https://stackoverflow.com/users/2711488/holger"
+      },
+      "creation_date" : 1751534648,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140558682,
+      "post_id" : 79686697,
+      "body" : "@JohnBollinger That&#39;s the point though - it&#39;s not a different take. The name &#39;factories&#39; implies a &#39;create&#39; method, but the mechanics are identical.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 401843,
+        "reputation" : 107186,
+        "user_id" : 768644,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+        "display_name" : "rzwitserloot",
+        "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+      },
+      "creation_date" : 1751463421,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140557120,
+      "post_id" : 79686697,
+      "body" : "This is a different take on factories than I&#39;ve seen before.  I think you&#39;ve generalized the concept into something different, especially since you seem to allow that a &quot;class descriptor&quot; doesn&#39;t necessarily have to provide an instance creation method.  And I guess some other languages have something like this as a formal concept, such as Python&#39;s metaclasses.  Not that any of that constitutes a problem with this answer.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2792262,
+        "reputation" : 190832,
+        "user_id" : 2402272,
+        "user_type" : "registered",
+        "accept_rate" : 85,
+        "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+        "display_name" : "John Bollinger",
+        "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+      },
+      "creation_date" : 1751420310,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

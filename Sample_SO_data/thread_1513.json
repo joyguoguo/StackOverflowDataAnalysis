@@ -1,0 +1,79 @@
+{
+  "question" : {
+    "question_id" : 79699965,
+    "title" : "Why is my MongoDB aggregation pipeline significantly slower in PRD compared to DEV with similar data?",
+    "body" : "<p>We're using a fairly complex MongoDB aggregation pipeline in a Java Spring Boot application with the MongoTemplate.aggregate API. The pipeline includes match, project, multiple lookups, unwind, group, addFields, and a final project.</p>\n<pre><code>Aggregation aggregation = Aggregation.newAggregation(\n    match(Criteria.where(&quot;isFeatureEnabled&quot;).is(true)),\n    \n    project(&quot;entityId&quot;),\n    \n    lookup(&quot;relatedEvents&quot;, &quot;entityId&quot;, &quot;foreignEntityId&quot;, &quot;events&quot;),\n    \n    unwind(&quot;events&quot;),\n    \n    project().and(&quot;events.referenceId&quot;).as(&quot;referenceId&quot;),\n    \n    lookup(&quot;referenceCatalog&quot;, &quot;referenceId&quot;, &quot;catalogId&quot;, &quot;referenceDetails&quot;),\n    \n    unwind(&quot;referenceDetails&quot;),\n    \n    group(&quot;referenceDetails.severityLevel&quot;, &quot;referenceDetails.category&quot;)\n        .count().as(&quot;eventCount&quot;),\n    \n    addFields()\n        .addFieldWithValue(&quot;severity&quot;,\n            ConditionalOperators.switchCases(\n                ConditionalOperators.Switch.CaseOperator.when(ComparisonOperators.Eq.valueOf(&quot;severityLevel&quot;).equalToValue(1)).then(&quot;LOW&quot;),\n                ConditionalOperators.Switch.CaseOperator.when(ComparisonOperators.Eq.valueOf(&quot;severityLevel&quot;).equalToValue(2)).then(&quot;MEDIUM&quot;),\n                ConditionalOperators.Switch.CaseOperator.when(ComparisonOperators.Eq.valueOf(&quot;severityLevel&quot;).equalToValue(3)).then(&quot;HIGH&quot;),\n                ConditionalOperators.Switch.CaseOperator.when(ComparisonOperators.Eq.valueOf(&quot;severityLevel&quot;).equalToValue(4)).then(&quot;CRITICAL&quot;)\n            ).defaultTo(&quot;UNKNOWN&quot;)\n        )\n        .addFieldWithValue(&quot;category&quot;,\n            ConditionalOperators.switchCases(\n                ConditionalOperators.Switch.CaseOperator.when(ComparisonOperators.Eq.valueOf(&quot;category&quot;).equalToValue(&quot;TypeA&quot;)).then(&quot;TYPE_A&quot;),\n                ConditionalOperators.Switch.CaseOperator.when(ComparisonOperators.Eq.valueOf(&quot;category&quot;).equalToValue(&quot;TypeB&quot;)).then(&quot;TYPE_B&quot;),\n                ConditionalOperators.Switch.CaseOperator.when(ComparisonOperators.Eq.valueOf(&quot;category&quot;).equalToValue(&quot;TypeC&quot;)).then(&quot;TYPE_C&quot;),\n                ConditionalOperators.Switch.CaseOperator.when(ComparisonOperators.Eq.valueOf(&quot;category&quot;).equalToValue(&quot;TypeD&quot;)).then(&quot;TYPE_D&quot;)\n            ).defaultTo(&quot;UNKNOWN&quot;)\n        )\n        .build(),\n    \n    project(&quot;severity&quot;, &quot;category&quot;, &quot;eventCount&quot;)\n);\n\nList&lt;AggregatedResult&gt; results = mongoTemplate\n    .aggregate(aggregation, &quot;mainEntities&quot;, AggregatedResult.class)\n    .getMappedResults();\n</code></pre>\n<p>We are running this pipeline on both DEV and PRD environments, using the same code and nearly identical datasets (indexes exist on both sides). However, the runtime is significantly different:</p>\n<p>DEV takes about 2 minutes</p>\n<p>PRD takes about 4 minutes</p>\n<p>What could be the reasons for such performance differences between DEV and PRD, despite having:</p>\n<p>Similar data volume and indexes (on entityId)</p>\n<p>Same MongoDB version</p>\n<p>Same aggregation pipeline</p>\n<p>Similar hardware (as far as we can tell)</p>\n<p>Are there specific profiling tools or MongoDB configurations (e.g., memory, disk, index cache, query planner differences) that we should be looking into? Any guidance or past experience would be appreciated.</p>\n<p>Also, can we improve performance by optimize the code?</p>\n",
+    "tags" : [ "java", "mongodb" ],
+    "owner" : {
+      "account_id" : 43008398,
+      "reputation" : 9,
+      "user_id" : 31029302,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/3a81a6fa65c4890c272a32438cbada79?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Sapir Zafrani",
+      "link" : "https://stackoverflow.com/users/31029302/sapir-zafrani"
+    },
+    "is_answered" : false,
+    "view_count" : 74,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1752679744,
+    "creation_date" : 1752410508,
+    "link" : "https://stackoverflow.com/questions/79699965/why-is-my-mongodb-aggregation-pipeline-significantly-slower-in-prd-compared-to-d",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79701631,
+    "question_id" : 79699965,
+    "body" : "<p>There can be many reasons for being two times slower in dev vs. prod. Maybe you have other workloads in prod, so fewer documents remain in cache for this query.</p>\n<p>Running with explain(&quot;executionStats&quot;) can help compare the work done and the time.</p>\n<p>Note that if you can group before lookup (usually possible with many-to-one relationships, as you can group on the key, it will be faster in both cases</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 12072590,
+      "reputation" : 983,
+      "user_id" : 8827408,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2b60c925f64f0d73bf3f1c99ed8b4b84?s=256&d=identicon&r=PG",
+      "display_name" : "FranckPachot",
+      "link" : "https://stackoverflow.com/users/8827408/franckpachot"
+    },
+    "creation_date" : 1752559629,
+    "last_activity_date" : 1752679744,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140588176,
+    "post_id" : 79699965,
+    "body" : "Also:  Is this <i>all</i> cloud based?   Verify your storage is running at the same iOPs.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2919557,
+      "reputation" : 7643,
+      "user_id" : 2502126,
+      "user_type" : "registered",
+      "accept_rate" : 20,
+      "profile_image" : "https://www.gravatar.com/avatar/fae66f557902359d7cc278076d1a9ef7?s=256&d=identicon&r=PG",
+      "display_name" : "Buzz Moschetti",
+      "link" : "https://stackoverflow.com/users/2502126/buzz-moschetti"
+    },
+    "creation_date" : 1752498898,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140586220,
+    "post_id" : 79699965,
+    "body" : "This is where I would start: 1. Turn on Mongo command debugging so you can see what is the command is  2. Execute in a regular Mongo shell and then use the <code>explain()</code> to show the <a href=\"https://www.mongodb.com/docs/manual/core/query-plans/\" rel=\"nofollow noreferrer\">Query Plan</a>  3. Compare plans. My guess is that the chosen plan is different...",
+    "score" : 3,
+    "owner" : {
+      "account_id" : 2073393,
+      "reputation" : 3675,
+      "user_id" : 1847378,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/e8990d3c34829910b2318ed16b09544d?s=256&d=identicon&r=PG",
+      "display_name" : "AndrewL",
+      "link" : "https://stackoverflow.com/users/1847378/andrewl"
+    },
+    "creation_date" : 1752416634,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

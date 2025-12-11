@@ -1,0 +1,81 @@
+{
+  "question" : {
+    "question_id" : 79579751,
+    "title" : "Spring @Transactional – Commit not visible after method return?",
+    "body" : "<p>I’m working on a modular Java application using <strong>Spring</strong> <code>5.1.20.RELEASE</code>, where a <strong>core module</strong> is used by several client-specific instances. Each instance has its own configuration and business rules.</p>\n<p>In one particular flow, I’m encountering a strange issue with the <code>@Transactional</code> behavior.</p>\n<p><strong>✅ The setup :</strong></p>\n<p>I have a class that saves an <strong>Order</strong> entity and then immediately triggers further processing:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Service\npublic class OrderRetryFacade {\n\n    private final OrderService orderService;\n    private final OrderProcessingStrategy orderProcessingStrategy;\n\n    public OrderRetryFacade(OrderService orderService, OrderProcessingStrategy orderProcessingStrategy) {\n        this.orderService = orderService;\n        this.orderProcessingStrategy = orderProcessingStrategy;\n    }\n\n    public void handleRetry(Order order) {\n        orderService.saveRetryOrder(order);\n        orderProcessingStrategy.process(order);\n    }\n}\n</code></pre>\n<p>The <strong>OrderService</strong> saves the order like this:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Service\npublic class OrderServiceImpl implements OrderService {\n\n    private final OrderRepository orderRepository;\n\n    public OrderServiceImpl(OrderRepository orderRepository) {\n        this.orderRepository = orderRepository;\n    }\n\n    @Override\n    @Transactional\n    public void saveRetryOrder(Order order) {\n        orderRepository.save(order);\n    }\n}\n</code></pre>\n<p>Later, another component (triggered asynchronously via Apache Camel) tries to retrieve the order by ID from the database.</p>\n<p><strong>❗ The issue:</strong></p>\n<p>Although the <code>saveRetryOrder()</code> method runs successfully and the entity is assigned an ID, the <code>OrderProcessingStrategy.process(order)</code> call results in a failure — because <strong>another component can't find the order in the database</strong>.</p>\n<p>We get a <code>NullPointerException</code> because the order can't be retrieved by ID at that point.</p>\n<p><strong>❓ The question:</strong></p>\n<p>My understanding was that as soon as a method annotated with <code>@Transactional</code> completes, the changes are persisted and committed to the database.</p>\n<p>But based on this behavior, it seems the transaction is still open when process(order) is called, meaning the insert is not visible to other components (like Camel) yet.</p>\n<p>Is this expected in Spring?</p>\n<blockquote>\n<p>Does the actual database commit only happen after the outermost method\nin the call stack completes (i.e., the end of the full transaction\nscope), not immediately after the <code>@Transactional</code> method returns?</p>\n</blockquote>\n<p>Any insights or recommended best practices?</p>\n",
+    "tags" : [ "java", "spring", "spring-transactions" ],
+    "owner" : {
+      "account_id" : 10788038,
+      "reputation" : 291,
+      "user_id" : 7936458,
+      "user_type" : "registered",
+      "accept_rate" : 73,
+      "profile_image" : "https://www.gravatar.com/avatar/74fc375c71a8986319197198ba7b0ed5?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Rodik",
+      "link" : "https://stackoverflow.com/users/7936458/rodik"
+    },
+    "is_answered" : false,
+    "view_count" : 121,
+    "answer_count" : 2,
+    "score" : 2,
+    "last_activity_date" : 1745677021,
+    "creation_date" : 1744909663,
+    "link" : "https://stackoverflow.com/questions/79579751/spring-transactional-commit-not-visible-after-method-return",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79580020,
+    "question_id" : 79579751,
+    "body" : "<p>Your understanding of <code>@Transactional</code> is correct. The changes should be flushed and committed when the transaction ends, BUT something that needs to be considered is the transaction propagation (see  <a href=\"https://docs.spring.io/spring-framework/reference/data-access/transaction/declarative/tx-propagation.html\" rel=\"nofollow noreferrer\"><code>transaction propagation</code></a>). In this case you are using the default one, which is <code>REQUIRED</code>, quoting the docs:</p>\n<blockquote>\n<p>PROPAGATION_REQUIRED enforces a physical transaction, either locally for the current scope if no transaction exists yet or participating in an existing 'outer' transaction defined for a larger scope. This is a fine default in common call stack arrangements within the same thread (for example, a service facade that delegates to several repository methods where all the underlying resources have to participate in the service-level transaction).</p>\n</blockquote>\n<p>I think in your case, some logic annotated with <code>@Transaction</code>(or using a manual transaction like <code>TransactionTemplate</code>) is calling <code>handleRetry()</code>, meaning that an existing transaction already exists and gets propagated to <code>saveRetryOrder()</code>. This would cause that a commit is not performed right after <code>saveRetryOrder()</code>ends, but later on. The transaction isolation will prevent other threads/processes  (like apache camel) to see the changes in the database as they are not yet committed.</p>\n<p>To understand better the situation, my recommendation would be to enable hibernate logs (assuming you use Hibernate behind Spring Data JPA) by doing:</p>\n<pre><code># Hibernate logging\nspring.jpa.show-sql=true\nspring.jpa.properties.hibernate.format_sql=true\nspring.jpa.properties.hibernate.generate_statistics=true\n# See param binding\nlogging.level.org.hibernate.orm.jdbc.bind=TRACE\n# See transaction information\nlogging.level.org.springframework.orm.jpa=DEBUG\nlogging.level.org.springframework.transaction=DEBUG\nlogging.level.org.hibernate.engine.transaction.internal.TransactionImpl=DEBUG\n</code></pre>\n<p>By doing this you can see in the logs the sql statements and when the transaction starts and when it gets committed or rollbacked.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 344662,
+      "reputation" : 1440,
+      "user_id" : 677096,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b412708269f29e1adae2a07bbf602fc8?s=256&d=identicon&r=PG",
+      "display_name" : "silver_mx",
+      "link" : "https://stackoverflow.com/users/677096/silver-mx"
+    },
+    "creation_date" : 1744920915,
+    "last_activity_date" : 1744969456,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79594019,
+    "question_id" : 79579751,
+    "body" : "<p>Instead of making</p>\n<pre><code>saveRetryOrder \n</code></pre>\n<p>a @Transactional try shifting the annotation to the caller</p>\n<pre><code>handleRetry\n</code></pre>\n<p>This would ideally make difference. Hope this helps</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 18923221,
+      "reputation" : 51,
+      "user_id" : 13806879,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/8d79b47f9a3a6ba8c01f1134e787ff41?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Prem",
+      "link" : "https://stackoverflow.com/users/13806879/prem"
+    },
+    "creation_date" : 1745677021,
+    "last_activity_date" : 1745677021,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140346709,
+    "post_id" : 79579751,
+    "body" : "<code>as a method annotated with @Transactional completes, the changes are persisted and committed to the database</code> - that&#39;s true. Are you sure your <code>handleRetry(Order order)</code> method is NOT called in a transaction itself? If that&#39;s the case the behavior you&#39;re describing is expected, since commit will be issued once that outer transaction method exits.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 15452950,
+      "reputation" : 4829,
+      "user_id" : 11147851,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/28674d9366e96aaf1030dc2112efd3c8?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Pavel Smirnov",
+      "link" : "https://stackoverflow.com/users/11147851/pavel-smirnov"
+    },
+    "creation_date" : 1744937764,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

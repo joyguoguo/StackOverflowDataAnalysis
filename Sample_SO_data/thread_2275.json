@@ -1,0 +1,195 @@
+{
+  "question" : {
+    "question_id" : 79633869,
+    "title" : "Why are are Java generics different in invariance between classes and methods?",
+    "body" : "<p>Let's assume we have following 2 classes:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class Handler&lt;S extends Something&gt; {\n    \n    void registerHandler(Class&lt;S&gt; someClass) {\n        // do something    \n    }\n}\n\n--And--\n\npublic class Shoe implements Something {\n}\n</code></pre>\n<p>Those are later used as follows:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class Main {\n    \n    Handler&lt;? extends Something&gt; handler = new Handler&lt;&gt;();\n\n    void doStuff() {\n        handler.registerHandler(Shoe.class); //Compile error: Required type and provided type mismatch\n    }\n    \n}\n</code></pre>\n<p>This will result in an error saying that the required type (<em>Class&lt;capture of ? extends Something&gt;</em>)for the method <em>registerHandler()</em> doesn't match with the type that's provided (<em>Class&lt;Shoe</em>&gt;).</p>\n<p>The only way to make it work is to remove the typed class and instead make the method typed:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class Handler {\n    \n    &lt;S extends Something&gt; void registerHandler(Class&lt;S&gt; someClass) {\n        // do something    \n    }\n}\n</code></pre>\n<p>Along with:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class Main {\n   \n   Handler handler = new Handler();\n\n   void doStuff() {\n       handler.registerHandler(Shoe.class); //Compile error: Required type and provided type mismatch\n   }\n   \n}\n</code></pre>\n<p>I want to understand why Java compiles this way, they shouldn't be different in my eyes but apparently they are. The method should know that the generic <em>S</em> is extended from <em>Something</em>, no matter if it's specified in the method or the class.</p>\n",
+    "tags" : [ "java", "generics", "inheritance", "types", "invariance" ],
+    "owner" : {
+      "account_id" : 31226066,
+      "reputation" : 21,
+      "user_id" : 24030568,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/06c1c815c0b17e18d82c8345791c33cb?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "user24030568",
+      "link" : "https://stackoverflow.com/users/24030568/user24030568"
+    },
+    "is_answered" : true,
+    "view_count" : 102,
+    "closed_date" : 1747943814,
+    "answer_count" : 2,
+    "score" : 2,
+    "last_activity_date" : 1747926797,
+    "creation_date" : 1747920819,
+    "link" : "https://stackoverflow.com/questions/79633869/why-are-are-java-generics-different-in-invariance-between-classes-and-methods",
+    "closed_reason" : "Duplicate"
+  },
+  "answers" : [ {
+    "answer_id" : 79634053,
+    "question_id" : 79633869,
+    "body" : "<p>The general conclusion is that using <code>java.lang.Class</code> in this way is a code smell; you should be using a factory instead. <code>Class</code> is a very bad class (heh) to attempt to understand generics with. So let's explain all this by using a different example. It is important to keep in mind that the compiler does not know what a List is. It's just.. a class. With a type variable. So is <code>java.lang.Class</code>. Hence, the compiler treats them the same way. It is not going to reason differently about the generics based on knowledge that <code>Class</code> is a bit bizarre ^1.</p>\n<p>For our example, we'll use <code>java.util.List</code>, and for the things this list stores, we need a dimensional axis of types, so we'll use <code>java.lang.Object</code>, which is the supertype of <code>java.lang.Number</code>, which is the supertype of <code>java.lang.Integer</code> and <code>java.lang.Double</code>. For the purposes of this example we'll state that no other numbers exist in the core libraries at this point. Note that <code>Number</code> is not <code>final</code>.</p>\n<h2>Why are generics invariant by default?</h2>\n<p>Let's start simple:</p>\n<pre><code>List&lt;? extends Number&gt;\n</code></pre>\n<p>How do you read that out loud?</p>\n<p>I often hear those newer to java, or even experts, read that out loud as &quot;A List of things that extend Number&quot; <strong>and that is wrong</strong>. That is not what that says. After all, java is covariant (at least, outside of generics it is), so when I write <code>Number n;</code> in java, that means 'n' is a reference that references Number <em>or anything that is an instance of a subtype of Number</em>. In fact, <code>Number</code> is abstract. If the explanation about the difference between the 2 kinds of 'list of numbers' is:</p>\n<pre><code>// Note, this is wrong! Used as an illustration!\nList&lt;? extends Number&gt; - a List of instances of Number or subtypes of Number.\nList&lt;Number&gt; - a List of instances of specifically Number, not subtypes\n</code></pre>\n<p>Then that'd be ridiculous. The second list cannot possibly have any members; <code>class Number</code> is abstract! <code>new Number()</code> is a compiler error. By definition, <em>every</em> instance of <code>Number</code> is actually an instance of a subtype of it.</p>\n<p>So, that's the wrong interpretation. What's right? Well, the question mark gives it away. The correct interpretation is <strong>I do not know</strong>. That's how you read that. You read that as: &quot;A List of... <strong>I do not know!</strong> - all I know is, whatever this list's elements are, they are constrained to be instances of some unknown type (meaning: They are all an instance of that type or a subtype of that type), <em>and</em> I know that, whatever the type is that forms this upper bound, it's either <code>Number</code>, or some subtype of it&quot;.</p>\n<p>That's a lot of words. An easier way to think about it is this:</p>\n<p>It is any of these 3 things; any of these are fine and are all of type <code>List&lt;? extends Number&gt;</code>:</p>\n<ul>\n<li><code>new ArrayList&lt;Number&gt;();</code></li>\n<li><code>new ArrayList&lt;Integer&gt;();</code></li>\n<li><code>new ArrayList&lt;Double&gt;();</code></li>\n</ul>\n<p>So, which one is it? <strong>You do not know!</strong> - and the compiler knows you don't know. The compiler will force you into interacting with this expression only in ways that are guaranteed to be make sense <em>regardless of which of those 3 it is</em>.</p>\n<p>Take, for example, <code>add</code>. What can you add to a list where you don't know which of the above 3 constructors made that list?</p>\n<p>How about <code>Number n = 5 /* an integer */; list.add(n);</code>?</p>\n<p>No, the compiler will not allow this. After all, that is invalid if the list is a <code>List&lt;Double&gt;</code>. After all, that would shove an integer into a list that says it cannot contain integers. A violation.</p>\n<p>In fact, <strong>nothing</strong> is the answer. There's nothing you can add to a <code>List&lt;? extends Number&gt;</code>. Except the <code>null</code> literal which happens to be every type at once, but <code>list.add(null);</code> is generally quite the useless statement.</p>\n<p><strong>This is why generics are invariant</strong>. Because the basic rules of logic dictate it. It's a law of the universe, essentially.</p>\n<h2>PECS</h2>\n<p><code>j.l.Class</code> is a bit of an oddball. If we look at the methods available to <code>List</code>, we see loads of places where the type parameter is used as type of a method parameter. <code>add(T elem)</code>, obviously. There's also <code>addAll(Collection&lt;? extends T&gt; elems)</code>, and also <code>.sort(Comparator&lt;? super T&gt; comparator)</code>. And many more.</p>\n<p>But <code>j.l.Class</code> isn't like that. None of the methods available on <code>j.l.Class</code> take the type param as parameter. A few employ the type param as return type, though.</p>\n<p>This is where 'PECS' comes in: Producing Extends, Consuming Super.</p>\n<p>To explain <em>that</em>, we go back to lists's <code>addAll</code>. Why is its argument <code>Collection&lt;? extends T&gt;</code> and not just <code>Collection&lt;T&gt;</code>? Because, well, think about it. a <code>Collection&lt;? extends Number&gt;</code> can be <code>Collection&lt;Number&gt;</code>, <code>Collection&lt;Integer&gt;</code>, or <code>Collection&lt;Double&gt;</code>. However, copying all elements of any of those 3 into a <code>List&lt;Number&gt;</code> is totally fine. Nothing is broken. Hence why it is written that way: If it wasn't, you couldn't call <code>list.addAll(someListOfIntegers)</code> if <code>list</code> is <code>List&lt;Number&gt;</code> and that's incorrect/inconvenient; That call should work. And indeed it does. The key clue here is that the <code>addAll</code> method only requires that the incoming parameter 'produces' (returns) the typeparameter (for example, <code>list.get(0)</code> would 'produce'). It does not at any time have to 'consume' it (for example, <code>list.add(elem)</code> 'consumes' a type parameter). Hence PECS: Only producing? Then use <code>extends</code>.</p>\n<p>To explain CS, we look at <code>sort</code>. Sort only consumes! We ask that <code>comparator</code> only to consume our type param. The only method we are going to call on it is <code>int whichOneIsHigher(T elem1, T elem2)</code> - we are not asking this comparator to produce values of type T, it'll only tell us 'higher / lower / the same'. Hence, if we have a comparator that can compare any 2 objects, we can use it to sort a list of numbers. However, if we have a comparator that can only compare Integer instances, and we have a <code>List&lt;Number&gt;</code>, we can't sort our list. After all, what if our list contains a few Double instances? Our comparator has no idea how to handle them, so, that's a type error. Hence, a <code>Comparator&lt;Number&gt;</code> can work, a <code>Comparator&lt;Object&gt;</code> can also work. We only ask the object we call to 'consume', so, CS: Only consume? Use <code>super</code>.</p>\n<p><code>java.lang.Class</code> is an oddball in that its entire API consists solely of production. None of its methods consume. Hence, it is hard to explain in obvious terms what the difference is between the type <code>Class&lt;? extends Something&gt;</code> and <code>Class&lt;Something&gt;</code>. Nevertheless, the compiler does not know that and will not treat these types as equal.</p>\n<h2>Why your code does not work</h2>\n<pre class=\"lang-java prettyprint-override\"><code>Handler&lt;? extends Something&gt; handler = new Handler&lt;&gt;();\n\nhandler = new Handler&lt;Something&gt;(); // will not compile\n</code></pre>\n<p>Read these things out loud correctly and it should be obvious. You've claimed that your field <code>handler</code> has the type of: &quot;A Handler instance that handles.. I do not know. All I know is, it is a handler of either Something, or some subtype of Something.&quot;.</p>\n<p>Given that you do not know, <code>handler = new Handler&lt;Something&gt;()</code> is not valid. After all, what if other code thinks it's a handler of Shoes? It might ask the handler to produce a Shoe. And given that you've made a handler of <code>Something</code>, it could produce a <code>Shawl</code> and the code that thought this handler could only ever produce shoes is now broken. That's a type violation and the compiler therefore will not let you.</p>\n<p>How do you fix it? Depends; you haven't provided enough information to know what's right. Possibly it's this:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class Handler&lt;S extends Something&gt; {\n    \n    void registerHandler(Class&lt;? extends S&gt; someClass) {\n        // do something    \n    }\n}\n\n--And--\n\nHandler&lt;Something&gt; handler = new Handler&lt;&gt;();\n\n    void doStuff() {\n        handler.registerHandler(Shoe.class);\n    }\n</code></pre>\n<h1>NB: <code>Class</code> considered harmful</h1>\n<p>It's extremely rare you want a <code>Class&lt;T&gt;</code> as a field at all. Almost always the intent is to call <code>newInstance</code>. This doesn't work, because it is not possible to capture the notion of 'has a no-args, public constructor' in the type system. I am free to make a class that doesn't have one of those constructors and you won't know the code is broken until you run it. The point of the type system is to tell you your code is broken <em>before</em> you run it. i.e. as you write it.</p>\n<p>The solution is factories. This is the general solution to the concept of 'A type <em>itself</em> has various properties I would ordinarily capture in an interface'. One common property is 'You can make instances of this type by passing these parameters to it'. It's so common, these things that capture 'things the type itself can do' are called 'factories'. But the principle is more abstract than that.</p>\n<p>This is an example of broken design that's somewhat common:</p>\n<pre><code>class Animal {\n  abstract String noise();\n}\n\nclass Dog {\n  @Override String noise() {\n    return &quot;BARK!&quot;;\n  }\n}\n</code></pre>\n<p>This is broken because the notion 'dogs bark' is inherent <em>to the type</em> and not <em>to any particular dog</em>. In other words, this method has no business being an instance method. Why can I only call 'noise' on an actual dog? If I ask you 'what noise does a dog make?', you tell me 'a bark'. You don't tell me: &quot;Well, I do not know. Which specific dg are you talking about? Fido, or rover?&quot;.</p>\n<p>Whereas if I ask you: &quot;What is the name of a dog?&quot;, you <strong>cannot</strong> answer this question. That is only answerable if I bring you or otherwise point at a specific dog. What is the name of <em>that</em> dog?&quot;, then you can answer.</p>\n<p>The better design is this:</p>\n<pre><code>abstract class PetAnimal {\n  private final String name;\n\n  public PetAnimal(String name) {\n    this.name = name;\n  }\n\n  public String getName() {\n    return this.name;\n  }\n}\n\nabstract class AnimalFactory&lt;A extends Animal&gt; {\n  abstract A create(String name);\n  abstract String noise();\n}\n\nclass Dog extends PetAnimal {\n  public Dog(String name) {\n    super(name);\n  }\n}\n\nclass DogFactory extends AnimalFactory&lt;Dog&gt; {\n  public static final INSTANCE = new DogFactory();\n  private DogFactory() { /* prevent instantiation */ }\n\n  @Override public Dog create(String name) {\n    return new Dog(name);\n  }\n\n  @Override public String noise() {\n    return &quot;BARK!&quot;;\n  }\n}\n</code></pre>\n<p>We now have the type safety we wanted: There is no way this code can fail <em>without</em> the compiler being aware of it (i.e. knowing at write time) due to a constructor with the wrong parameters. And I can ask the question &quot;What noise do dogs make?&quot; without needing a dog. (I <em>would</em> need the factory though, but that's trivial; <code>DogFactory.INSTANCE</code>).</p>\n<hr />\n<p>[1] To make 'bizarre' a bit more specific: That <code>Class</code> essentially only ever 'produces' and thus, as per PECS, there is no meaningful difference <em>to you and me with full knowledge of this</em> between <code>Class&lt;Something&gt;</code> and <code>Class&lt;? extends Something&gt;</code>.</p>\n",
+    "score" : 4,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 401843,
+      "reputation" : 107186,
+      "user_id" : 768644,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+      "display_name" : "rzwitserloot",
+      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+    },
+    "creation_date" : 1747926797,
+    "last_activity_date" : 1747926797,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79634049,
+    "question_id" : 79633869,
+    "body" : "<p>You can create a <code>BaseHandler</code> class that <code>extends Something</code> and use that for your generic. You may have instances of subclasses of it, such as a <code>Shoe</code> for example.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 194308,
+      "reputation" : 80465,
+      "user_id" : 436560,
+      "user_type" : "registered",
+      "accept_rate" : 87,
+      "profile_image" : "https://i.sstatic.net/2GESV.jpg?s=256",
+      "display_name" : "Lajos Arpad",
+      "link" : "https://stackoverflow.com/users/436560/lajos-arpad"
+    },
+    "creation_date" : 1747926744,
+    "last_activity_date" : 1747926744,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140451508,
+    "post_id" : 79633869,
+    "body" : "It’s not first and foremost about a generic method vs. a generic class. It’s about whether you use your type parameter in a different place from where it’s declared. And about how far Java’s type inference goes. In the first example you are using the type parameter from the class in your method declaration, away from where you declared it. In the second example you are only using your type parameter in the method declaration that also declares it. This allows Java to infer the type when you call the method, unlike the first example.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7612423,
+      "reputation" : 87400,
+      "user_id" : 5772882,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Anonymous",
+      "link" : "https://stackoverflow.com/users/5772882/anonymous"
+    },
+    "creation_date" : 1747977719,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140451435,
+    "post_id" : 79633869,
+    "body" : "<i>doesn&#39;t that apply to the method as well?</i> Didn’t I answer that in my next comment?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7612423,
+      "reputation" : 87400,
+      "user_id" : 5772882,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Anonymous",
+      "link" : "https://stackoverflow.com/users/5772882/anonymous"
+    },
+    "creation_date" : 1747973824,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140449914,
+    "post_id" : 79633869,
+    "body" : "A generic method like <code>&lt;S extends Something&gt; void registerHandler(Class&lt;S&gt; someClass)</code> allows the caller to decide what arguments to use for the type parameters. So if you want <code>S</code> to be <code>Shoe</code>, no problem with that. A method of a generic type like <code>void registerHandler(Class&lt;S&gt; someClass)</code> within <code>Handler&lt;S extends Something&gt;</code> is <i>not</i> a generic method. It’s a method using a type parameter but the caller can not decide but rather must provide arguments compatible to the receiver, which is <code>Handler&lt;? extends Something&gt; handler</code> here. But since the receiver’s type is unknown, it’s impossible.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 3211603,
+      "reputation" : 300981,
+      "user_id" : 2711488,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+      "display_name" : "Holger",
+      "link" : "https://stackoverflow.com/users/2711488/holger"
+    },
+    "creation_date" : 1747927756,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140449642,
+    "post_id" : 79633869,
+    "body" : "@Anonymous doesn&#39;t that apply to the method as well? i&#39;m just declaring the method as <code>&lt;S extends Something&gt; void registerHandler(Class&lt;S&gt; someClass)</code>. Same logic goes there, it cannot confirm that it&#39;s <code>Shoe.class</code> that i&#39;m trying to handle.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 31226066,
+      "reputation" : 21,
+      "user_id" : 24030568,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/06c1c815c0b17e18d82c8345791c33cb?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "user24030568",
+      "link" : "https://stackoverflow.com/users/24030568/user24030568"
+    },
+    "creation_date" : 1747923750,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140449595,
+    "post_id" : 79633869,
+    "body" : "What are you trying to obtain with your code? There may or may not be a way to obtain your goal. If you tell us what it is, there is even a chance that we can show you the good way there.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7612423,
+      "reputation" : 87400,
+      "user_id" : 5772882,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Anonymous",
+      "link" : "https://stackoverflow.com/users/5772882/anonymous"
+    },
+    "creation_date" : 1747922936,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140449587,
+    "post_id" : 79633869,
+    "body" : "In the second example you are telling Java <i>in the method call</i> the <code>S</code> is <code>Shoe</code>.  Java has no reason to object to that.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7612423,
+      "reputation" : 87400,
+      "user_id" : 5772882,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Anonymous",
+      "link" : "https://stackoverflow.com/users/5772882/anonymous"
+    },
+    "creation_date" : 1747922729,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140449577,
+    "post_id" : 79633869,
+    "body" : "When you declare <code>handler</code> to be a <code>Handler&lt;? extends Something&gt;</code>, Java assumes that it’s a handler of some type that is a subtype of <code>Something</code> and that it does not know which one. Therefore it also cannot confirm that it’s a <code>Handler&lt;Shoe&gt;</code>, which would have been required for it to accept <code>handler.registerHandler(Shoe.class);</code>.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 7612423,
+      "reputation" : 87400,
+      "user_id" : 5772882,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Anonymous",
+      "link" : "https://stackoverflow.com/users/5772882/anonymous"
+    },
+    "creation_date" : 1747922534,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140449524,
+    "post_id" : 79633869,
+    "body" : "<code>class Handler&lt;S extends Something&gt;</code> means there is a class that handles shoes, a class that handles fish tanks, a class that handles flower pots, a class that handles rocket launchers... All these classes are separate and unrelated to each other. Now, when you say <code>new Handler&lt;&gt;()</code>, which one of those do you want to create?",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 406349,
+      "reputation" : 122085,
+      "user_id" : 775806,
+      "user_type" : "registered",
+      "accept_rate" : 96,
+      "profile_image" : "https://i.sstatic.net/JeTnSU2C.jpg?s=256",
+      "display_name" : "n. m. could be an AI",
+      "link" : "https://stackoverflow.com/users/775806/n-m-could-be-an-ai"
+    },
+    "creation_date" : 1747921674,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

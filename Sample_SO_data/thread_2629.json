@@ -1,0 +1,195 @@
+{
+  "question" : {
+    "question_id" : 79607853,
+    "title" : "SQL Trigger cancelling batch insert",
+    "body" : "<p>In my database I've 2 tables:</p>\n<ol>\n<li><code>j_cars</code> that stores a replica of car lists from JSON sessions dumps of Assetto Corsa (game) servers</li>\n<li><code>drivers</code> that takes all unique username / Steam GUID pairs from the <code>j_cars</code> table to make a lighter table to query on (<code>j_cars</code> is pretty big and redundant)</li>\n</ol>\n<p>Using Java, I extract the cars from the JSON files and then insert them into my database in the <code>j_cars</code> table, in batches, like so:</p>\n<pre class=\"lang-java prettyprint-override\"><code>String sql = &quot;INSERT INTO j_cars (driver_guid, driver_name, ...) VALUES (?, ?, ...)&quot;;\n\ntry (PreparedStatement p = conn.prepareStatement(sql)) {\n    for (Car car : cars) {\n        p.setLong(1, car.Driver.Guid);\n        p.setString(2, car.Driver.Name);\n\n        ...\n\n        p.addBatch();\n    }\n\n    p.executeBatch();\n}\n</code></pre>\n<p>While this works perfectly, if I try to add the trigger here below, the inserts on <code>j_cars</code> only work if the username / GUID pair doesn't already exist in the <code>drivers</code> table. If it does, the bulk insert in <code>j_cars</code> is dropped and it seems like only one row is added to <code>j_cars</code> (?).</p>\n<pre class=\"lang-sql prettyprint-override\"><code>CREATE DEFINER=`root`@`localhost` TRIGGER `trg__j_cars__before_insert`\nAFTER INSERT ON `j_cars`\nFOR EACH ROW\nBEGIN\n    INSERT IGNORE INTO `drivers` (`guid`, `username`)\n    VALUES (NEW.`driver_guid`, NEW.`driver_name`);\nEND\n</code></pre>\n<p>Shouldn't my INSERT IGNORE prevent this cancellation by ignoring the PK constraint?</p>\n<p><strong>UPDATE - Important note:</strong> using a <em>raw</em> SQL query in my console with an INSERT INTO that has several entries in the VALUES section does not produce the issue. Entries are added to <code>j_cars</code> and trigger works like a charm. This only creates the issue when I use Java and that batch system.</p>\n<p><em>I'm using MariaDB 10.4.32</em></p>\n",
+    "tags" : [ "java", "sql", "triggers", "mariadb" ],
+    "owner" : {
+      "account_id" : 17720229,
+      "reputation" : 36,
+      "user_id" : 12865454,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/6b4eeffeeccecff89125bf8f34454ca4?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Skzz",
+      "link" : "https://stackoverflow.com/users/12865454/skzz"
+    },
+    "is_answered" : false,
+    "view_count" : 99,
+    "answer_count" : 2,
+    "score" : 0,
+    "last_activity_date" : 1746577610,
+    "creation_date" : 1746496142,
+    "link" : "https://stackoverflow.com/questions/79607853/sql-trigger-cancelling-batch-insert",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79608858,
+    "question_id" : 79607853,
+    "body" : "<p>A sample:</p>\n<pre><code>CREATE TABLE drivers (\n  guid INT AUTO_INCREMENT PRIMARY KEY, \n  username INT UNIQUE\n  );\nCREATE TABLE j_cars (\n  idSession INT,\n  car_id INT,\n  driver_guid INT,\n  driver_name INT,\n  FOREIGN KEY (driver_guid) REFERENCES drivers (guid),\n  FOREIGN KEY (driver_name) REFERENCES drivers (username)\n  );\nCREATE TRIGGER add_driver\nBEFORE INSERT ON j_cars\nFOR EACH ROW\nBEGIN\n-- try to insert the driver info into drivers table\n  INSERT IGNORE INTO drivers VALUES (NEW.driver_guid, NEW.driver_name);\n-- adjust GUID value according the username\n  SET NEW.driver_guid = (\n    SELECT guid \n    FROM drivers\n    WHERE username = NEW.driver_name\n    );\nEND;\n</code></pre>\n<pre><code>INSERT INTO j_cars VALUES\n(1, 11, 111, 1111),\n(2, 22, 222, 2222);\n</code></pre>\n<pre><code>-- try to insert existing user with new GUID\nINSERT INTO j_cars VALUES\n(3, 33, 333, 1111);   \n-- existing GUID will be used instead\n</code></pre>\n<pre><code>-- try to insert another username for existing GUID\nINSERT INTO j_cars VALUES\n(4, 44, 222, 4444);   \n-- error will be generated\n</code></pre>\n<blockquote>\n<pre class=\"lang-none prettyprint-override\"><code>Cannot add or update a child row: a foreign key constraint fails (`fiddle`.`j_cars`, CONSTRAINT `j_cars_ibfk_2` FOREIGN KEY (`driver_name`) REFERENCES `drivers` (`username`))\n</code></pre>\n</blockquote>\n<pre><code>SELECT * FROM drivers;\nSELECT * FROM j_cars;\n</code></pre>\n<div class=\"s-table-container\"><table class=\"s-table\">\n<thead>\n<tr>\n<th style=\"text-align: right;\">guid</th>\n<th style=\"text-align: right;\">username</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td style=\"text-align: right;\">111</td>\n<td style=\"text-align: right;\">1111</td>\n</tr>\n<tr>\n<td style=\"text-align: right;\">222</td>\n<td style=\"text-align: right;\">2222</td>\n</tr>\n</tbody>\n</table></div>\n<div class=\"s-table-container\"><table class=\"s-table\">\n<thead>\n<tr>\n<th style=\"text-align: right;\">idSession</th>\n<th style=\"text-align: right;\">car_id</th>\n<th style=\"text-align: right;\">driver_guid</th>\n<th style=\"text-align: right;\">driver_name</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td style=\"text-align: right;\">1</td>\n<td style=\"text-align: right;\">11</td>\n<td style=\"text-align: right;\">111</td>\n<td style=\"text-align: right;\">1111</td>\n</tr>\n<tr>\n<td style=\"text-align: right;\">2</td>\n<td style=\"text-align: right;\">22</td>\n<td style=\"text-align: right;\">222</td>\n<td style=\"text-align: right;\">2222</td>\n</tr>\n<tr>\n<td style=\"text-align: right;\">3</td>\n<td style=\"text-align: right;\">33</td>\n<td style=\"text-align: right;\">111</td>\n<td style=\"text-align: right;\">1111</td>\n</tr>\n</tbody>\n</table></div>\n<p><a href=\"https://dbfiddle.uk/WBUp1c_w\" rel=\"nofollow noreferrer\">fiddle</a></p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 9744358,
+      "reputation" : 43176,
+      "user_id" : 10138734,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/sf6Zj.jpg?s=256",
+      "display_name" : "Akina",
+      "link" : "https://stackoverflow.com/users/10138734/akina"
+    },
+    "creation_date" : 1746539385,
+    "last_activity_date" : 1746539385,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79609577,
+    "question_id" : 79607853,
+    "body" : "<p>Use <code>INSERT ... ON DUPLICATE KEY UPDATE ...</code> and use <code>LAST_INSERT_ID</code> to retrive the id.  See the documentation for details.</p>\n<p>(You can probably avoid needing the TRIGGER.)</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 529143,
+      "reputation" : 143636,
+      "user_id" : 1766831,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/1ee974306d2def46eb69534fbcf95cc5?s=256&d=identicon&r=PG",
+      "display_name" : "Rick James",
+      "link" : "https://stackoverflow.com/users/1766831/rick-james"
+    },
+    "creation_date" : 1746570524,
+    "last_activity_date" : 1746570524,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140402254,
+    "post_id" : 79607853,
+    "body" : "It only inserts one row in <code>j_cars</code>*, and constraint over <code>username</code> and <code>guid</code> in <code>drivers</code> table is a grouped PK",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 17720229,
+      "reputation" : 36,
+      "user_id" : 12865454,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/6b4eeffeeccecff89125bf8f34454ca4?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Skzz",
+      "link" : "https://stackoverflow.com/users/12865454/skzz"
+    },
+    "creation_date" : 1746577722,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140400584,
+    "post_id" : 79607853,
+    "body" : "@Akina I tried both BEFORE and AFTER, and they have the same result. It only inserts one row in <code>drivers</code> and then stops, it looks like. And yes, the <code>drivers</code> table has a unique constraint over <code>username</code> and <code>guid</code>.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 17720229,
+      "reputation" : 36,
+      "user_id" : 12865454,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/6b4eeffeeccecff89125bf8f34454ca4?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Skzz",
+      "link" : "https://stackoverflow.com/users/12865454/skzz"
+    },
+    "creation_date" : 1746538191,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140398858,
+    "post_id" : 79607853,
+    "body" : "1) You show AFTER trigger whereas you need in BEFORE one, it seems... 2) <i>Shouldn&#39;t my INSERT IGNORE prevent this cancellation?</i> The table structure must contain according unique index (or indices) which will detect the duplication and hence will cancel the insertion.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 9744358,
+      "reputation" : 43176,
+      "user_id" : 10138734,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/sf6Zj.jpg?s=256",
+      "display_name" : "Akina",
+      "link" : "https://stackoverflow.com/users/10138734/akina"
+    },
+    "creation_date" : 1746506387,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79608858" : [ {
+      "comment_id" : 140408106,
+      "post_id" : 79608858,
+      "body" : "@Skzz Edit the fiddle, provide adequate src structures and data and show desired output with detailed explanations in your question.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 9744358,
+        "reputation" : 43176,
+        "user_id" : 10138734,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/sf6Zj.jpg?s=256",
+        "display_name" : "Akina",
+        "link" : "https://stackoverflow.com/users/10138734/akina"
+      },
+      "creation_date" : 1746716236,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140405999,
+      "post_id" : 79608858,
+      "body" : "Tested and still same issue. Working when executing a multi row insert, but doesn&#39;t work when using Java with p.addBatch() and p.executeBatch()... Very annoying! Thanks for trying to provide help.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 17720229,
+        "reputation" : 36,
+        "user_id" : 12865454,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/6b4eeffeeccecff89125bf8f34454ca4?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Skzz",
+        "link" : "https://stackoverflow.com/users/12865454/skzz"
+      },
+      "creation_date" : 1746662383,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140402536,
+      "post_id" : 79608858,
+      "body" : "@Skzz <i>drivers can have several usernames per GUID</i> And backwardly, several GUIDs per name? See <a href=\"https://dbfiddle.uk/44_RqPqb\" rel=\"nofollow noreferrer\">fiddle</a>.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 9744358,
+        "reputation" : 43176,
+        "user_id" : 10138734,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/sf6Zj.jpg?s=256",
+        "display_name" : "Akina",
+        "link" : "https://stackoverflow.com/users/10138734/akina"
+      },
+      "creation_date" : 1746592238,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140402224,
+      "post_id" : 79608858,
+      "body" : "What if the only restriction I need is the GUID/username pair to be unique, because drivers can have several usernames per GUID (updating it + need for history) ? I made my PK on these two columns, and removed the foreign keys because of that. Now, with that minimal setup, I still get the issue.  But important note: It seems that I do not have this issue when using &quot;raw&quot; SQL with multiple entries in VALUES. It only happens when I use Java and that batch system.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 17720229,
+        "reputation" : 36,
+        "user_id" : 12865454,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/6b4eeffeeccecff89125bf8f34454ca4?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Skzz",
+        "link" : "https://stackoverflow.com/users/12865454/skzz"
+      },
+      "creation_date" : 1746576894,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79609577" : [ {
+      "comment_id" : 140402233,
+      "post_id" : 79609577,
+      "body" : "I don&#39;t really need to update anything. The final process should act like it ignored that insert into <code>drivers</code>. Tho, do you mean that I could use <code>ON DUPLICATE KEY UPDATE</code> to update the <code>username</code> with the same value it had so it skips the warning?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 17720229,
+        "reputation" : 36,
+        "user_id" : 12865454,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/6b4eeffeeccecff89125bf8f34454ca4?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Skzz",
+        "link" : "https://stackoverflow.com/users/12865454/skzz"
+      },
+      "creation_date" : 1746577184,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

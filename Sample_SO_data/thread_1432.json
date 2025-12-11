@@ -1,0 +1,416 @@
+{
+  "question" : {
+    "question_id" : 79706302,
+    "title" : "In a synchronized block, can I synchronize on a Collection of monitor objects?",
+    "body" : "<p>I have a class that I want to make thread-safe. In it are these 2 functions :</p>\n<pre class=\"lang-java prettyprint-override\"><code>public void add(String param1, String param2) {\n    // do something\n}\n\npublic void clear() {\n    // do something else\n}\n</code></pre>\n<p>I want the <code>add()</code> function to be synchronized <em>only</em> when both parameters are similar (can only run at the same time if any parameter is different)</p>\n<p>I want the <code>clear()</code> function to be synchronized on every lock (can only run when <code>add()</code> is not running)</p>\n<p>For my first requirement, I have found this solution which works :</p>\n<pre class=\"lang-java prettyprint-override\"><code>private ConcurrentMap&lt;String, Object&gt; locks = new ConcurrentHashMap&lt;&gt;();\n\npublic void add(String param1, String param2) {\n    Object lock = locks.computeIfAbsent(param1+ &quot;:&quot; + param2, k -&gt; new Object());\n    synchronized (lock) {\n        // do something\n    }\n}\n</code></pre>\n<p>However, I cannot find a way to only allow <code>clear()</code> when all locks are released. Naturally, I tried putting directly <code>locks</code> or <code>locks.values()</code> in synchronized, as a Monitor Object, but did not work.\nIs this possible? Or are there alternatives?</p>\n<hr />\n<p>For details, the action of <code>add()</code> is to put (if absent) key/value pairs to two concurrentMaps, and the action of <code>clear()</code> is to empty both maps. I want to avoid the case where <code>clear()</code> empties both map while <code>add()</code> just finished one put and starts the next.\nI have tried using the atomic computeIfAbsent, but could not find a way to modify both maps atomically.</p>\n",
+    "tags" : [ "java", "concurrency", "synchronization", "thread-safety", "synchronized" ],
+    "owner" : {
+      "account_id" : 17896313,
+      "reputation" : 1,
+      "user_id" : 13038741,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/28dcf44ce43cee324c0053008ed4fc66?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Absolute_Arthur",
+      "link" : "https://stackoverflow.com/users/13038741/absolute-arthur"
+    },
+    "is_answered" : true,
+    "view_count" : 156,
+    "answer_count" : 4,
+    "score" : 0,
+    "last_activity_date" : 1752871471,
+    "creation_date" : 1752848154,
+    "link" : "https://stackoverflow.com/questions/79706302/in-a-synchronized-block-can-i-synchronize-on-a-collection-of-monitor-objects",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79706558,
+    "question_id" : 79706302,
+    "body" : "<blockquote>\n<p>I cannot find a way to only allow <code>clear()</code> when all locks are released.</p>\n</blockquote>\n<p>You are looking for a <a href=\"https://docs.oracle.com/en/java/javase/23/docs/api/java.base/java/util/concurrent/locks/ReadWriteLock.html\" rel=\"nofollow noreferrer\">ReadWriteLock</a>.  Do not be confused by the name -- it provides for (a big part of) the kind of asymmetric locking you need, even though &quot;reading&quot; isn't a good description of either side of that. Your <code>add()</code> method would protect its sensitive behavior by locking the read lock, and your <code>clear()</code> method would protect its behavior by locking the write lock.  This would allow many concurrent <code>add()</code>s, but prevent any <code>add()</code>s proceeding concurrently with a <code>clear()</code>.</p>\n<p>If you also want to prevent concurrent <code>add()</code>s of the same parameter pairs but otherwise allow concurrent <code>add()</code>s then you would do that with another level of locking in <code>add()</code> alone, maybe as demonstrated in the question.  Probably you would be better off locking these data-specific locks first, then, while holding that lock, additionally lock the read lock already discussed.  That would be a little less likely to stall acquisition of the write lock when activity is high.</p>\n<p>Note well that as I understand your scenario, the reason for that additional level of locking would be to prevent inconsistencies between the <em>two</em> underlying maps that <code>add()</code> modifies.  There may well be a better way to do that than maintaining a bunch of additional lock objects, as you propose to do, but details would depend on information you have not provided, and it probably would not be trivial.</p>\n",
+    "score" : 2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 2792262,
+      "reputation" : 190832,
+      "user_id" : 2402272,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+      "display_name" : "John Bollinger",
+      "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+    },
+    "creation_date" : 1752861315,
+    "last_activity_date" : 1752871353,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79706585,
+    "question_id" : 79706302,
+    "body" : "<p>As pointed out, there are other problems with your approach and likely better solutions for what you're trying to do. But if you insist on using multiple intrinsic locks, the only way to acquire them all at once is by recursion:</p>\n<pre><code>public void clear() {\n    doLocked(locks.values().iterator(), myMap::clear);\n}\n\nprivate void doLocked(Iterator&lt;?&gt; iter, Runnable action) {\n    if (iter.hasNext()) {\n        synchronized (iter.next()) {\n            doLocked(iter, action);\n        }\n    } else {\n        action.run();\n    }\n}\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 1691630,
+      "reputation" : 51067,
+      "user_id" : 1553851,
+      "user_type" : "registered",
+      "accept_rate" : 73,
+      "profile_image" : "https://www.gravatar.com/avatar/ad333c218c8f2fb917cf506919fc95f4?s=256&d=identicon&r=PG",
+      "display_name" : "shmosel",
+      "link" : "https://stackoverflow.com/users/1553851/shmosel"
+    },
+    "creation_date" : 1752862510,
+    "last_activity_date" : 1752863705,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79706620,
+    "question_id" : 79706302,
+    "body" : "<p>The other answers have adequately addressed your issue, however I would like to share a novel approach towards the goal of &quot;cleanly acquiring a collection of mutexes&quot;. Due to the nature of the <code>synchronized</code> block in Java, it's not feasible to acquire several mutexes in turn (the loop would essentially need to be unrolled).</p>\n<pre class=\"lang-java prettyprint-override\"><code>Object[] mutexes = new Object[4];\nfor (int i=0; i &lt; 4; i++) mutexes[i] = new Object();\nsynchronized (mutexes[0]) {\n    synchronized (mutexes[1]) {\n        synchronized (mutexes[2]) {\n            synchronized (mutexes[3]) {\n                // all acquired\n            }\n        }\n    }\n}\n</code></pre>\n<p>However, if you look at the resultant bytecode, you'll see that each <code>synchronized</code> block is opened with a <code>MONITORENTER</code> instruction and explicitly closed with a <code>MONITOREXIT</code> instruction. If we had direct access to these operations, we could iterate once to enter each monitor and then iterate again to exit each monitor. Is it possible to compile valid Java code that does this? Sort of.</p>\n<p>JNI exposes these methods in the form of <a href=\"https://docs.oracle.com/javase/8/docs/technotes/guides/jni/spec/functions.html#MonitorEnter\" rel=\"nofollow noreferrer\">JNIEnv::MonitorEnter</a> and <a href=\"https://docs.oracle.com/javase/8/docs/technotes/guides/jni/spec/functions.html#MonitorExit\" rel=\"nofollow noreferrer\">JNIEnv::MonitorExit</a>. With this in mind, we can do the following:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public final class MultiLock {\n\n    public static void run(Object[] mutexes, Runnable task) {\n        monitorEnter(mutexes);\n        try {\n            task.run();\n        } finally {\n            monitorExit(mutexes);\n        }\n    }\n\n    private static native void monitorEnter(Object[] arr);\n\n    private static native void monitorExit(Object[] arr);\n\n}\n</code></pre>\n<pre class=\"lang-c prettyprint-override\"><code>#include &quot;MultiLock.h&quot; // Header generated by javac\n#include &lt;stdlib.h&gt;\n#include &lt;stdbool.h&gt;\n\nstatic inline bool is_valid_monitor(JNIEnv *env, jobject object) {\n    return object != NULL;\n}\n\nJNIEXPORT void JNICALL Java_MultiLock_monitorEnter(JNIEnv *env, jclass ignored, jobjectArray arr) {\n    jsize len = (*env)-&gt;GetArrayLength(env, arr);\n    jobject next;\n\n    for (jsize i = 0; i &lt; len; i++) {\n        next = (*env)-&gt;GetObjectArrayElement(env, arr, i);\n        if (!is_valid_monitor(env, next)) continue;\n        (*env)-&gt;MonitorEnter(env, next);\n    }\n}\n\nJNIEXPORT void JNICALL Java_MultiLock_monitorExit(JNIEnv *env, jclass ignored, jobjectArray arr) {\n    jsize len = (*env)-&gt;GetArrayLength(env, arr);\n    jobject next;\n    if (len == 0) return;\n\n    for (jsize i = len - 1; i &gt;= 0; i--) {\n        next = (*env)-&gt;GetObjectArrayElement(env, arr, i);\n        if (!is_valid_monitor(env, next)) continue;\n        (*env)-&gt;MonitorExit(env, next);\n    }\n}\n</code></pre>\n<p>And use it like so:</p>\n<pre class=\"lang-java prettyprint-override\"><code>// Load the natives somehow\nObject[] mutexes = new Object[4];\nfor (int i=0; i &lt; 4; i++) mutexes[i] = new Object();\nMultiLock.run(mutexes, () -&gt; {\n    // all acquired\n});\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 14914414,
+      "reputation" : 1185,
+      "user_id" : 10808904,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Ts8fIsJj.png?s=256",
+      "display_name" : "Xavier Pedraza",
+      "link" : "https://stackoverflow.com/users/10808904/xavier-pedraza"
+    },
+    "creation_date" : 1752865401,
+    "last_activity_date" : 1752865401,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79706666,
+    "question_id" : 79706302,
+    "body" : "<blockquote>\n<p>I cannot find a way to only allow <code>clear()</code> when all locks are released.</p>\n</blockquote>\n<p>Have you considered that <strong>maybe you shouldn't</strong>?  One of the issues with any approach along those lines, including the <code>ReadWriteLock</code> approach that I presented in another answer, is that an attempt to <code>clear()</code> could be delayed arbitrarily long.  If you're going to maintain a map of per-item locks anyway, then think about using it to iteratively clear the other maps. That can be done without locking out new additions.  That gets you removal of all the items corresponding to locks that were present in the <code>locks</code> map at some particular point in time between <code>clear()</code> being invoked and it returning.  The resulting <code>clear()</code> might look like this:</p>\n<pre><code>public void clear() {\n    Iterator&lt;Map.Entry&lt;String, Object&gt;&gt; lockIterator = locks.entrySet().iterator();\n\n    while (lockIterator.hasNext()) {\n        Map.Entry&lt;String, Object&gt; lockEntry = lockIterator.next();\n\n        synchronized (lockEntry.getValue()) {\n\n            // ... remove lockentry.getKey() from the other maps ...\n\n            // I suppose you want this, but see below:\n            lockIterator.remove();\n        }\n    }\n}\n</code></pre>\n<p>At this point, however, I have to observe that your proposed <code>add()</code> implementation ...</p>\n<blockquote>\n<pre><code>private ConcurrentMap&lt;String, Object&gt; locks = new ConcurrentHashMap&lt;&gt;();\n\npublic void add(String param1, String param2) {\n    Object lock = locks.computeIfAbsent(param1+ &quot;:&quot; + param2, k -&gt; new Object());\n    synchronized (lock) {\n        // do something\n    }\n}\n</code></pre>\n</blockquote>\n<p>... has an issue.  If you don't want to maintain entries in <code>locks</code> for items that have been removed then you need some way to ensure that the lock object for a given parameter pair does not get removed from <code>locks</code> between the time you compute / retrieve it and the time you synchronize on it, or while <code>add()</code> holds its monitor.  The above implementation of <code>clear()</code> addresses the &quot;while <code>add()</code> holds its monitor&quot; part, but what about before <code>add()</code> locks the monitor?</p>\n<p>The simplest way to address that might be to verify after locking the monitor that the same object is still in the map.  This variation would do so, for example:</p>\n<pre><code>public void add(String param1, String param2) {\n    String key = param1 + &quot;:&quot; + param2;\n\n    while (true) {\n        Object lock = locks.computeIfAbsent(key, k -&gt; new Object());\n\n        synchronized (lock) {\n            if (lock != locks.get(key)) {\n                continue;\n            }\n\n            // do something\n        }\n        break;\n    }\n}\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 2792262,
+      "reputation" : 190832,
+      "user_id" : 2402272,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+      "display_name" : "John Bollinger",
+      "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+    },
+    "creation_date" : 1752867750,
+    "last_activity_date" : 1752871471,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140605486,
+    "post_id" : 79706302,
+    "body" : "@shmosel iteration does not work in the sense that it is not atomic, but my comment already suggested to drop the atomicity requirement, as the result may still have enough consistency.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 3211603,
+      "reputation" : 300981,
+      "user_id" : 2711488,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+      "display_name" : "Holger",
+      "link" : "https://stackoverflow.com/users/2711488/holger"
+    },
+    "creation_date" : 1753089267,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140600816,
+    "post_id" : 79706302,
+    "body" : "Iteration won&#39;t work because you&#39;ll have to release each lock to get to the next one. If you must use intrinsic locks, it&#39;s only possible with recursion.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1691630,
+      "reputation" : 51067,
+      "user_id" : 1553851,
+      "user_type" : "registered",
+      "accept_rate" : 73,
+      "profile_image" : "https://www.gravatar.com/avatar/ad333c218c8f2fb917cf506919fc95f4?s=256&d=identicon&r=PG",
+      "display_name" : "shmosel",
+      "link" : "https://stackoverflow.com/users/1553851/shmosel"
+    },
+    "creation_date" : 1752861855,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140600494,
+    "post_id" : 79706302,
+    "body" : "I don&#39;t know why I didn&#39;t think of iterating the locks before... I&#39;ll see if I can make it work. Thank you very much !",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 17896313,
+      "reputation" : 1,
+      "user_id" : 13038741,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/28dcf44ce43cee324c0053008ed4fc66?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Absolute_Arthur",
+      "link" : "https://stackoverflow.com/users/13038741/absolute-arthur"
+    },
+    "creation_date" : 1752853288,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140600368,
+    "post_id" : 79706302,
+    "body" : "…you may have to replace <code>param1+ &quot;:&quot; + param2</code> with a dedicated key type holding both strings then but that’s more efficient than string concatenation anyway.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 3211603,
+      "reputation" : 300981,
+      "user_id" : 2711488,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+      "display_name" : "Holger",
+      "link" : "https://stackoverflow.com/users/2711488/holger"
+    },
+    "creation_date" : 1752850530,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140600364,
+    "post_id" : 79706302,
+    "body" : "Well, if robustness is the most important thing, then making both method <code>synchronized</code> as described <a href=\"https://stackoverflow.com/questions/79706302/#comment140600327_79706302\">in this comment</a> is still the best option even when computation happens. Otherwise, drop the idea of a cheap atomic <code>clear()</code> operation; just iterate over the <code>locks</code> and for each entry, synchronize and remove from both maps. This will miss new entries added while clearing but that’s not different to having new entries after clearing.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 3211603,
+      "reputation" : 300981,
+      "user_id" : 2711488,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+      "display_name" : "Holger",
+      "link" : "https://stackoverflow.com/users/2711488/holger"
+    },
+    "creation_date" : 1752850482,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140600346,
+    "post_id" : 79706302,
+    "body" : "@Holger Oh sorry, there <i>is</i> expensive computation when putting on the second map (the reason there are 2 maps in the first place). That is why I used these custom locks, instead of just making it <code>synchronized</code>. And the environnement requires this application to be somewhat robust, so I&#39;d rather have the whole functions synchronized than have the possibility to break.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 17896313,
+      "reputation" : 1,
+      "user_id" : 13038741,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/28dcf44ce43cee324c0053008ed4fc66?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Absolute_Arthur",
+      "link" : "https://stackoverflow.com/users/13038741/absolute-arthur"
+    },
+    "creation_date" : 1752850135,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140600331,
+    "post_id" : 79706302,
+    "body" : "Making multiple data structures mutate like this concurrently tends to be much harder than it looks and risks deadlocks if you are not very, very careful.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 465573,
+      "reputation" : 200423,
+      "user_id" : 869736,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/ae7bb06b9a23a4dd7eea69e853d47d12?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Louis Wasserman",
+      "link" : "https://stackoverflow.com/users/869736/louis-wasserman"
+    },
+    "creation_date" : 1752849902,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140600327,
+    "post_id" : 79706302,
+    "body" : "So there’s no actual expensive computation going on, just two <code>putIfAbsent</code> operations? Sounds like you’re better off just making both methods <code>synchronized</code>, getting rid of <code>locks</code> and change the other two map to non-concurrent maps. Then, the <code>add</code> operation becomes so cheap that it doesn’t matter that it can’t be done concurrently.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 3211603,
+      "reputation" : 300981,
+      "user_id" : 2711488,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+      "display_name" : "Holger",
+      "link" : "https://stackoverflow.com/users/2711488/holger"
+    },
+    "creation_date" : 1752849798,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140600303,
+    "post_id" : 79706302,
+    "body" : "@Holger I have appended a few details at the end on the content of &quot;do something&quot; and &quot;do something else&quot;. I use concurrent maps, but I did not find a way to use computeIfAbsent to modify both maps atomically.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 17896313,
+      "reputation" : 1,
+      "user_id" : 13038741,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/28dcf44ce43cee324c0053008ed4fc66?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Absolute_Arthur",
+      "link" : "https://stackoverflow.com/users/13038741/absolute-arthur"
+    },
+    "creation_date" : 1752849440,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140600286,
+    "post_id" : 79706302,
+    "body" : "Consider adding more details about the things, “do something” and “do something else” actually do. The approach is very suspicious; either these actions access the same mutable data and will break because this synchronization over <code>param1+ &quot;:&quot; + param2</code> is insufficient or they do not in which case the synchronization is obsolete. The intrinsic monitor does not support what you want to do. But generally, allowing concurrent <code>add</code> operations but having an all-mutual exclusive <code>clear</code> would bear the risk that <code>clear</code> will never succeed in getting all locks at a time.",
+    "score" : 5,
+    "owner" : {
+      "account_id" : 3211603,
+      "reputation" : 300981,
+      "user_id" : 2711488,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+      "display_name" : "Holger",
+      "link" : "https://stackoverflow.com/users/2711488/holger"
+    },
+    "creation_date" : 1752848972,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79706585" : [ {
+      "comment_id" : 140609537,
+      "post_id" : 79706585,
+      "body" : "@shmosel A recursion depth scaling with the collection’s size, plus the fact that <code>synchronized</code> requires extra stack space, in each recursion level.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 3211603,
+        "reputation" : 300981,
+        "user_id" : 2711488,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+        "display_name" : "Holger",
+        "link" : "https://stackoverflow.com/users/2711488/holger"
+      },
+      "creation_date" : 1753198751,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140606494,
+      "post_id" : 79706585,
+      "body" : "@Holger Did I make a mistake or is that a comment on recursion in general?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1691630,
+        "reputation" : 51067,
+        "user_id" : 1553851,
+        "user_type" : "registered",
+        "accept_rate" : 73,
+        "profile_image" : "https://www.gravatar.com/avatar/ad333c218c8f2fb917cf506919fc95f4?s=256&d=identicon&r=PG",
+        "display_name" : "shmosel",
+        "link" : "https://stackoverflow.com/users/1553851/shmosel"
+      },
+      "creation_date" : 1753113210,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140605471,
+      "post_id" : 79706585,
+      "body" : "A  <code>StackOverflowError</code> waiting to happen…",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 3211603,
+        "reputation" : 300981,
+        "user_id" : 2711488,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+        "display_name" : "Holger",
+        "link" : "https://stackoverflow.com/users/2711488/holger"
+      },
+      "creation_date" : 1753088946,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140600906,
+      "post_id" : 79706585,
+      "body" : "@JohnBollinger That&#39;s one of the problems I was alluding to, raised in the first comment on the question.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1691630,
+        "reputation" : 51067,
+        "user_id" : 1553851,
+        "user_type" : "registered",
+        "accept_rate" : 73,
+        "profile_image" : "https://www.gravatar.com/avatar/ad333c218c8f2fb917cf506919fc95f4?s=256&d=identicon&r=PG",
+        "display_name" : "shmosel",
+        "link" : "https://stackoverflow.com/users/1553851/shmosel"
+      },
+      "creation_date" : 1752864322,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140600903,
+      "post_id" : 79706585,
+      "body" : "I don&#39;t think this is safe in the face of concurrent modification of the <code>locks</code> map.  At least not for the <code>ConcurrentMap</code> implementations in the standard library, and certainly not for the non-concurrent maps.  With a <code>ConcurrentMap</code> you can be confident that concurrent additions and removals do not prevent iteration from completing successfully, but you cannot be sure that an iteration will cover items that are added while the iteration is underway.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2792262,
+        "reputation" : 190832,
+        "user_id" : 2402272,
+        "user_type" : "registered",
+        "accept_rate" : 85,
+        "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+        "display_name" : "John Bollinger",
+        "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+      },
+      "creation_date" : 1752864168,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79706620" : [ {
+      "comment_id" : 140605467,
+      "post_id" : 79706620,
+      "body" : "The easy way to deadlocks… and to <code>StackOverflowError</code> if you use this with larger arrays…",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 3211603,
+        "reputation" : 300981,
+        "user_id" : 2711488,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+        "display_name" : "Holger",
+        "link" : "https://stackoverflow.com/users/2711488/holger"
+      },
+      "creation_date" : 1753088874,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140600980,
+      "post_id" : 79706620,
+      "body" : "@SolomonSlow Like I said at the beginning, other answers have addressed OP&#39;s concerns adequately (see <a href=\"https://stackoverflow.com/questions/79706302/in-a-synchronized-block-can-i-synchronize-on-a-collection-of-monitor-objects/79706620#comment140600861_79706558\">this</a> comment I made). I would also say that knowledge of the Java standard concurrency model is almost a prerequisite to using JNI. Clearly this solution only makes sense if you are, for some reason, absolutely tied to using plain mutexes.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 14914414,
+        "reputation" : 1185,
+        "user_id" : 10808904,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/Ts8fIsJj.png?s=256",
+        "display_name" : "Xavier Pedraza",
+        "link" : "https://stackoverflow.com/users/10808904/xavier-pedraza"
+      },
+      "creation_date" : 1752866525,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140600968,
+      "post_id" : 79706620,
+      "body" : "Yes, writing platform-specific code to solve a problem that can also be solved with pure Java code certainly <i>would</i> be a &quot;novel idea.&quot; Perhaps you are unaware of the JRE&#39;s <a href=\"https://docs.oracle.com/en/java/javase/18//docs/api/java.base/java/util/concurrent/locks/ReentrantLock.html\" rel=\"nofollow noreferrer\"><code>ReentrantLock</code> class</a>?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 422870,
+        "reputation" : 27582,
+        "user_id" : 801894,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/67f2ccd17aa6fd622152ad88fc2ae784?s=256&d=identicon&r=PG",
+        "display_name" : "Solomon Slow",
+        "link" : "https://stackoverflow.com/users/801894/solomon-slow"
+      },
+      "creation_date" : 1752866106,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79706558" : [ {
+      "comment_id" : 140600861,
+      "post_id" : 79706558,
+      "body" : "Agreed, the OP could do well with a higher-level <code>Lock</code> instead of a simple mutex. To optimize collections, a combined shared &amp; exclusive lock like <code>ReadWriteLock</code> fits the bill quite nicely.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 14914414,
+        "reputation" : 1185,
+        "user_id" : 10808904,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/Ts8fIsJj.png?s=256",
+        "display_name" : "Xavier Pedraza",
+        "link" : "https://stackoverflow.com/users/10808904/xavier-pedraza"
+      },
+      "creation_date" : 1752863236,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

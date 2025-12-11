@@ -1,0 +1,60 @@
+{
+  "question" : {
+    "question_id" : 79620112,
+    "title" : "How to sign an e-mail with PGP/MIME in Java?",
+    "body" : "<p>In my Java program, I want to send e-mails signed with an OpenPGP key in PGP/MIME format as defined in <a href=\"https://www.ietf.org/rfc/rfc3156.txt#:%7E:text=5.%20openpgp%20signed%20data\" rel=\"nofollow noreferrer\">RFC 3156</a>. For this, I use PGPainless’ SOP and Angus Mail.</p>\n<p>Technically, signing plain text works already, and sending unsigned e-mails works too. However, signing the content of an e-mail does not work yet, because Thunderbird always tells me that “there is a signature, but it's invalid”. I suspect that the e-mail's content is not yet formatted as required by RFC 3156, but I have no clue what the specific problem is.</p>\n<p>I tried several combinations of</p>\n<ul>\n<li>removing leading newlines</li>\n<li>removing trailing newlines</li>\n<li>removing trailing whitespace</li>\n<li>replacing line endings with CRLF</li>\n<li>the specified hashing algorithm: <code>pgp-sha256</code> vs. <code>pgp-sha512</code> (I have no clue which PGPainless uses),</li>\n</ul>\n<p>but Thunderbird (and Evolution) always rejected the signature.</p>\n<p>Here's a minimal, reproducible example:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Test\npublic void testSendSignedMessage() throws MessagingException, IOException {\n        String SECRET_KEY = &quot;...&quot;;\n        String PASSWORD = &quot;...&quot;;\n\n        Properties properties = new Properties();\n        properties.put(&quot;mail.smtp.auth&quot;, true);\n        properties.put(&quot;mail.smtp.ssl.enable&quot;, &quot;true&quot;);\n        properties.put(&quot;mail.smtp.host&quot;, &quot;smtp.cia.gov&quot;);\n        properties.put(&quot;mail.smtp.port&quot;, &quot;465&quot;);\n\n        properties.put(&quot;mail.store.protocol&quot;, &quot;imaps&quot;);\n        properties.put(&quot;mail.imap.host&quot;, &quot;imap.cia.gov&quot;);\n        properties.put(&quot;mail.imap.port&quot;, &quot;993&quot;);\n        properties.put(&quot;mail.imap.ssl.enable&quot;, &quot;true&quot;);\n\n        Session session = Session.getInstance(properties, new Authenticator() {\n            @Override\n            protected PasswordAuthentication getPasswordAuthentication() {\n                return new PasswordAuthentication(&quot;jason.bourne@cia.gov&quot;, &quot;treadstone&quot;);\n            }\n        });\n\n        MimeMessage email = new MimeMessage(session);\n\n        email.setFrom(&quot;jason.bourne@cia.gov&quot;);\n        email.setRecipient(Message.RecipientType.TO, new InternetAddress(&quot;pamela.landy@cia.gov&quot;));\n        email.setSubject(&quot;Get some rest&quot;);\n\n        MimeBodyPart textPart = new MimeBodyPart();\n        textPart.setText(&quot;You look tired.&quot;);\n\n        MimeMultipart multipart = new MimeMultipart();\n        multipart.addBodyPart(textPart);\n\n        email.setContent(multipart);\n        this.signMessage(email, SECRET_KEY, PASSWORD.getBytes(), session);\n        Transport.send(email);\n    }\n\n    private void signMessage(MimeMessage email, byte[] secretKey, byte[] password, Session session)\n        throws MessagingException, IOException \n{\n        Multipart signedMultipart = new MimeMultipart();\n        MimeBodyPart contentBody = new MimeBodyPart();\n        MimeBodyPart signatureBody = new MimeBodyPart();\n\n        Multipart contentMultipart = (Multipart) email.getContent();\n        contentBody.setContent(contentMultipart);\n        signedMultipart.addBodyPart(contentBody);\n\n        Part temporaryEmail = new MimeMessage(session);\n        temporaryEmail.setContent(contentMultipart);\n\n        OutputStream outputStream = new ByteArrayOutputStream();\n        temporaryEmail.writeTo(outputStream);\n        String boundary = this.parseBoundary(String.valueOf(outputStream)).orElse(&quot;&quot;);\n\n        signatureBody.attachFile(this.createSignatureAttachment(contentMultipart, secretKey, password, boundary));\n        signatureBody.setHeader(&quot;Content-Type&quot;, &quot;application/pgp-signature; name=\\&quot;signature.asc\\&quot;&quot;);\n        signatureBody.setHeader(&quot;Content-Description&quot;, &quot;OpenPGP signature&quot;);\n        signatureBody.setHeader(&quot;Content-Disposition&quot;, &quot;attachment; filename=\\&quot;signature.asc\\&quot;&quot;);\n\n        signedMultipart.addBodyPart(signatureBody);\n        email.setContent(signedMultipart);\n\n        outputStream = new ByteArrayOutputStream();\n        email.writeTo(outputStream);\n        boundary = parseBoundary(String.valueOf(outputStream)).orElse(&quot;&quot;);\n\n        email.setHeader(\n            &quot;Content-Type&quot;,\n            &quot;multipart/signed; micalg=\\&quot;pgp-sha256\\&quot;; protocol=\\&quot;application/pgp-signature\\&quot;%s&quot;.formatted(\n                boundary.isEmpty() ? &quot;&quot; : &quot;; boundary=\\&quot;%s\\&quot;&quot;.formatted(boundary)\n            )\n        );\n    }\n\n    private File createSignatureAttachment(\n        Multipart message,\n        byte[] secretKey,\n        byte[] password,\n        String boundary\n    ) throws IOException, MessagingException {\n        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();\n        message.writeTo(outputStream);\n\n        String messageContent =\n            outputStream\n                .toString(StandardCharsets.UTF_8)\n                .replaceFirst(&quot;^-*%s-*&quot;.formatted(boundary), &quot;&quot;) // Remove the leading boundary\n                .replaceFirst(&quot;-*%s-*$&quot;.formatted(boundary), &quot;&quot;) // Remove the trailing boundary\n                .replaceFirst(&quot;^[\\n\\r]+&quot;, &quot;&quot;) // Remove leading newlines\n                .replaceFirst(&quot;[\\n\\r\\\\s]+$&quot;, &quot;&quot;) // Remove trailing newlines and whitespace\n                .replaceAll(&quot;(?&lt;!\\r)\\n&quot;, &quot;\\r\\n&quot;); // Convert line endings to CRLF\n\n        SOP sop = new SOPImpl();\n        DetachedSign signature = sop.sign().key(secretKey).withKeyPassword(password);\n\n        InputStream inputStream =\n            signature.data(\n                new ByteArrayInputStream(messageContent.getBytes())\n            ).toByteArrayAndResult().getInputStream();\n\n        Path tempDirectory = Path.of(System.getProperty(&quot;java.io.tmpdir&quot;));\n\n        File signatureDirectory =\n            tempDirectory\n                .resolve(&quot;signature-&quot; + UUID.randomUUID())\n                .toFile();\n\n        signatureDirectory.mkdirs();\n        File encryptedFile = new File(signatureDirectory, &quot;signature.asc&quot;);\n\n        try (FileOutputStream fileOutputStream = new FileOutputStream(encryptedFile)) {\n            fileOutputStream.write(inputStream.readAllBytes());\n        }\n\n        return encryptedFile;\n    }\n\n    private Optional&lt;String&gt; parseBoundary(final String contentTypeHeader) {\n        Matcher matcher =\n            Pattern\n                .compile(&quot;boundary=\\&quot;(?&lt;boundary&gt;.+)\\&quot;&quot;, Pattern.CASE_INSENSITIVE)\n                .matcher(contentTypeHeader);\n\n        if (matcher.find())\n            return Optional.of(matcher.group(&quot;boundary&quot;));\n\n        return Optional.empty();\n    }\n</code></pre>\n<p>The relevant dependencies:</p>\n<pre class=\"lang-xml prettyprint-override\"><code>&lt;dependency&gt;\n    &lt;groupId&gt;jakarta.mail&lt;/groupId&gt;\n    &lt;artifactId&gt;jakarta.mail-api&lt;/artifactId&gt;\n    &lt;version&gt;${jakarta-mail.version}&lt;/version&gt;\n&lt;/dependency&gt;\n&lt;dependency&gt;\n    &lt;groupId&gt;org.eclipse.angus&lt;/groupId&gt;\n    &lt;artifactId&gt;angus-mail&lt;/artifactId&gt;\n    &lt;version&gt;${angus-mail.version}&lt;/version&gt;\n&lt;/dependency&gt;\n&lt;dependency&gt;\n    &lt;groupId&gt;org.pgpainless&lt;/groupId&gt;\n    &lt;artifactId&gt;pgpainless-sop&lt;/artifactId&gt;\n    &lt;version&gt;${pgpainless.version}&lt;/version&gt;\n&lt;/dependency&gt;\n</code></pre>\n<p>The body of the resulting e-mail looks like this:</p>\n<pre><code>------=_Part_1_166454155.1747153500629\nContent-Type: multipart/mixed; \n    boundary=&quot;----=_Part_0_1604052588.1747153500624&quot;\n\n------=_Part_0_1604052588.1747153500624\nContent-Type: text/plain; charset=us-ascii\nContent-Transfer-Encoding: 7bit\n\nYou look tired.\n------=_Part_0_1604052588.1747153500624--\n\n------=_Part_1_166454155.1747153500629\nContent-Type: application/pgp-signature; name=&quot;signature.asc&quot;\nContent-Transfer-Encoding: 7bit\nContent-Disposition: attachment; filename=&quot;signature.asc&quot;\nContent-Description: OpenPGP signature\n\n-----BEGIN PGP SIGNATURE-----\n\niHUEABYKACcFg...\n-----END PGP SIGNATURE-----\n\n------=_Part_1_166454155.1747153500629--\n</code></pre>\n<p>What did I do wrong?</p>\n<p>Feel free to suggest different libraries if they're easier to work with.</p>\n",
+    "tags" : [ "java", "email", "jakarta-mail", "mime", "openpgp" ],
+    "owner" : {
+      "account_id" : 14267796,
+      "reputation" : 440,
+      "user_id" : 10306323,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/7vHNh.png?s=256",
+      "display_name" : "Pixelcode",
+      "link" : "https://stackoverflow.com/users/10306323/pixelcode"
+    },
+    "is_answered" : false,
+    "view_count" : 66,
+    "answer_count" : 0,
+    "score" : 0,
+    "last_activity_date" : 1747155776,
+    "creation_date" : 1747155776,
+    "link" : "https://stackoverflow.com/questions/79620112/how-to-sign-an-e-mail-with-pgp-mime-in-java",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140422907,
+    "post_id" : 79620112,
+    "body" : "Why though? And how to do that using Jakarta Mail?Wrapping the <code>text&#47;plain</code> part in a <code>multipart&#47;mixed</code> is what Thunderbird does.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 14267796,
+      "reputation" : 440,
+      "user_id" : 10306323,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/7vHNh.png?s=256",
+      "display_name" : "Pixelcode",
+      "link" : "https://stackoverflow.com/users/10306323/pixelcode"
+    },
+    "creation_date" : 1747168195,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140422455,
+    "post_id" : 79620112,
+    "body" : "Attach the <code>text&#47;plain</code> part directly under <code>multipart&#47;signed</code> alongside the detached signature.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7645025,
+      "reputation" : 440,
+      "user_id" : 5795975,
+      "user_type" : "registered",
+      "profile_image" : "https://lh6.googleusercontent.com/-6KwPUS4RnyA/AAAAAAAAAAI/AAAAAAAAC8w/auZqreI45x0/s256-rj/photo.jpg",
+      "display_name" : "Vijay",
+      "link" : "https://stackoverflow.com/users/5795975/vijay"
+    },
+    "creation_date" : 1747158197,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

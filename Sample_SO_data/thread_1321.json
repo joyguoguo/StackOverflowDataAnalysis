@@ -1,0 +1,113 @@
+{
+  "question" : {
+    "question_id" : 79718953,
+    "title" : "Debezium + Flink Oracle CDC - &quot;db history topic or its content is fully or partially missing&quot; for some tables",
+    "body" : "<p>I am using Flink with Debezium to consume CDC changes from Oracle DB tables via LogMiner.</p>\n<p>For some tables, everything works fine. For example, the following table works without issues:</p>\n<pre><code>CREATE TABLE CDC_PRODUCTS (\n    ID NUMBER,\n    NAME VARCHAR2(100),\n    DESCRIPTION VARCHAR2(200),\n    WEIGHT NUMBER(10, 3)\n);\n</code></pre>\n<p>However, for other tables, I get the following error:</p>\n<pre><code>io.debezium.DebeziumException: The db history topic or its content is fully or partially missing. Please check database history topic configuration and re-execute the snapshot.\n</code></pre>\n<p>Full stack trace:</p>\n<pre><code>io.debezium.DebeziumException: The db history topic or its content is fully or partially missing. Please check database history topic configuration and re-execute the snapshot.\n    at io.debezium.relational.HistorizedRelationalDatabaseSchema.recover(HistorizedRelationalDatabaseSchema.java:59)\n    at org.apache.flink.cdc.connectors.oracle.source.reader.fetch.OracleSourceFetchTaskContext.validateAndLoadDatabaseHistory(OracleSourceFetchTaskContext.java:275)\n    at org.apache.flink.cdc.connectors.oracle.source.reader.fetch.OracleSourceFetchTaskContext.configure(OracleSourceFetchTaskContext.java:118)\n    at org.apache.flink.cdc.connectors.base.source.reader.external.IncrementalSourceStreamFetcher.submitTask(IncrementalSourceStreamFetcher.java:84)\n    at org.apache.flink.cdc.connectors.base.source.reader.IncrementalSourceSplitReader.submitStreamSplit(IncrementalSourceSplitReader.java:261)\n    at org.apache.flink.cdc.connectors.base.source.reader.IncrementalSourceSplitReader.pollSplitRecords(IncrementalSourceSplitReader.java:153)\n    at org.apache.flink.cdc.connectors.base.source.reader.IncrementalSourceSplitReader.fetch(IncrementalSourceSplitReader.java:98)\n    at org.apache.flink.connector.base.source.reader.fetcher.FetchTask.run(FetchTask.java:58)\n    at org.apache.flink.connector.base.source.reader.fetcher.SplitFetcher.runOnce(SplitFetcher.java:162)\n    at org.apache.flink.connector.base.source.reader.fetcher.SplitFetcher.run(SplitFetcher.java:114)\n    at java.base/java.util.concurrent.Executors$RunnableAdapter.call(Executors.java:539)\n    at java.base/java.util.concurrent.FutureTask.run(FutureTask.java:264)\n    at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1136)\n    at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:635)\n    at java.base/java.lang.Thread.run(Thread.java:840)\n\n20:13:49.779 [Source Data Fetcher for Source: OracleParallelSource (1/1)#92] ERROR org.apache.flink.connector.base.source.reader.fetcher.SplitFetcherManager - Received uncaught exception.\njava.lang.RuntimeException: SplitFetcher thread 0 received unexpected exception while polling the records\n    at org.apache.flink.connector.base.source.reader.fetcher.SplitFetcher.runOnce(SplitFetcher.java:165)\n    at org.apache.flink.connector.base.source.reader.fetcher.SplitFetcher.run(SplitFetcher.java:114)\n    at java.base/java.util.concurrent.Executors$RunnableAdapter.call(Executors.java:539)\n    at java.base/java.util.concurrent.FutureTask.run(FutureTask.java:264)\n    at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1136)\n    at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:635)\n    at java.base/java.lang.Thread.run(Thread.java:840)\n\nCaused by: java.io.IOException: io.debezium.DebeziumException: The db history topic or its content is fully or partially missing. Please check database history topic configuration and re-execute the snapshot.\n    at org.apache.flink.cdc.connectors.base.source.reader.IncrementalSourceSplitReader.fetch(IncrementalSourceSplitReader.java:101)\n    at org.apache.flink.connector.base.source.reader.fetcher.FetchTask.run(FetchTask.java:58)\n    at org.apache.flink.connector.base.source.reader.fetcher.SplitFetcher.runOnce(SplitFetcher.java:162)\n    ... 7 more\n</code></pre>\n<p>The problematic table has:</p>\n<ul>\n<li><p>11 columns;</p>\n</li>\n<li><p>A primary key constraint;</p>\n</li>\n<li><p>6 <code>NOT NULL</code> constraints.</p>\n</li>\n</ul>\n<p>Questions:</p>\n<ol>\n<li><p>Could this be caused by missing snapshots or metadata for that specific table?</p>\n</li>\n<li><p>Does Debezium LogMiner behave differently when constraints like <code>PRIMARY KEY</code> or <code>NOT NULL</code> are present?</p>\n</li>\n<li><p>Any suggestions for recovering or reinitializing the DB history for such cases?</p>\n</li>\n</ol>\n<p>Any guidance would be appreciated.</p>\n<p>Edit: this is the DDL for the problematic table:</p>\n<pre><code>CREATE TABLE &quot;SI_HCMP_REPLICA1&quot;.&quot;*****_HISTORY&quot; \n   (    &quot;****_ID&quot; NUMBER DEFAULT TO_NUMBER(TO_CHAR(SYSDATE@!,'YYYYMMDDHH24MI')||TO_CHAR(****.****.NEXTVAL)), \n    &quot;CUSTOMER_ID&quot; NUMBER NOT NULL ENABLE, \n    &quot;ASSET_ID&quot; NUMBER NOT NULL ENABLE, \n    &quot;ASSET_LAST_MODIFIED_ON&quot; DATE NOT NULL ENABLE, \n    &quot;CREATED_ON&quot; DATE DEFAULT SYSDATE NOT NULL ENABLE, \n    &quot;CREATED_BY_ID&quot; VARCHAR2(100), \n    &quot;UPDATED_ON&quot; DATE, \n    &quot;UPDATED_BY_ID&quot; VARCHAR2(100), \n    &quot;PROCESS_STATUS&quot; VARCHAR2(1) DEFAULT 'N' NOT NULL ENABLE, \n    &quot;ASSET_TECH_ID&quot; NUMBER, \n    &quot;WORKFLOW_FLAG&quot; VARCHAR2(1) DEFAULT 'N' NOT NULL ENABLE, \n     CONSTRAINT &quot;RM_ASSET_HISTORY_PK&quot; PRIMARY KEY (&quot;****_ID&quot;)\n  USING INDEX PCTFREE 10 INITRANS 2 MAXTRANS 255 COMPUTE STATISTICS \n  STORAGE(INITIAL 65536 NEXT 1048576 MINEXTENTS 1 MAXEXTENTS 2147483645\n  PCTINCREASE 0 FREELISTS 1 FREELIST GROUPS 1\n  BUFFER_POOL DEFAULT FLASH_CACHE DEFAULT CELL_FLASH_CACHE DEFAULT)\n  TABLESPACE &quot;HCMP_DATA&quot;  ENABLE, \n     SUPPLEMENTAL LOG DATA (ALL) COLUMNS, \n     SUPPLEMENTAL LOG GROUP &quot;*****_HISTORY&quot; (&quot;ASSET_ID&quot;, &quot;CUSTOMER_ID&quot;, &quot;CREATED_ON&quot;) ALWAYS\n   ) PCTFREE 10 PCTUSED 40 INITRANS 1 MAXTRANS 255 \n  STORAGE(\n  BUFFER_POOL DEFAULT FLASH_CACHE DEFAULT CELL_FLASH_CACHE DEFAULT)\n  TABLESPACE &quot;HCMP_DATA&quot; \n  PARTITION BY RANGE (&quot;CREATED_ON&quot;) INTERVAL (NUMTODSINTERVAL (1,'DAY')) \n  SUBPARTITION BY LIST (&quot;PROCESS_STATUS&quot;) \n  SUBPARTITION TEMPLATE ( \n    SUBPARTITION &quot;PROCESSED&quot; VALUES ( 'Y' ), \n    SUBPARTITION &quot;UNPROCESSED&quot; VALUES ( 'N' ) ) \n (PARTITION &quot;SYS_P164554&quot;  VALUES LESS THAN (TO_DATE(' 2023-12-22 00:00:00', 'SYYYY-MM-DD HH24:MI:SS', 'NLS_CALENDAR=GREGORIAN')) \nPCTFREE 10 PCTUSED 40 INITRANS 1 MAXTRANS 255 \n  STORAGE(\n  BUFFER_POOL DEFAULT FLASH_CACHE DEFAULT CELL_FLASH_CACHE DEFAULT)\n  TABLESPACE &quot;HCMP_DATA&quot; \n ( SUBPARTITION &quot;SYS_SUBP164553&quot;  VALUES ('N') SEGMENT CREATION IMMEDIATE \n  STORAGE(\n  BUFFER_POOL DEFAULT FLASH_CACHE DEFAULT CELL_FLASH_CACHE DEFAULT)\n  TABLESPACE &quot;HCMP_DATA&quot; \n NOCOMPRESS , \n  SUBPARTITION &quot;PROCESSED_ASSET_SYS_P164554&quot;  VALUES ('Y') SEGMENT CREATION DEFERRED \n  STORAGE(\n  BUFFER_POOL DEFAULT FLASH_CACHE DEFAULT CELL_FLASH_CACHE DEFAULT)\n  TABLESPACE &quot;****_DATA&quot; \n NOCOMPRESS ) )  ENABLE ROW MOVEMENT \n</code></pre>\n<p>Upon further researching this might have been due to partitions on the table.</p>\n",
+    "tags" : [ "java", "oracle-database", "apache-flink", "debezium", "cdc" ],
+    "owner" : {
+      "account_id" : 29947652,
+      "reputation" : 23,
+      "user_id" : 22950548,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/ACg8ocIq76vWRTJKY6h5-X3BOl0A0CdSMDf_SIYsXuJcJr4F=k-s256",
+      "display_name" : "Parth Vyas",
+      "link" : "https://stackoverflow.com/users/22950548/parth-vyas"
+    },
+    "is_answered" : true,
+    "view_count" : 145,
+    "answer_count" : 1,
+    "score" : 2,
+    "last_activity_date" : 1754186408,
+    "creation_date" : 1753806696,
+    "link" : "https://stackoverflow.com/questions/79718953/debezium-flink-oracle-cdc-db-history-topic-or-its-content-is-fully-or-parti",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79723119,
+    "question_id" : 79718953,
+    "body" : "<p>You may be able to work around this error by creating a custom view of ALL_TABLES for the relevant user. That view can return a non-null value for TABLESPACE when the table is partitioned, which might avoid fink-cdc issue 1737.</p>\n<pre><code>CREATE OR REPLACE VIEW your_user.all_tables AS\nSELECT owner,table_name,\n    tablespace_name,\n    CASE WHEN partitioned = 'YES' THEN 'flink-cdc 1737 fake tbspcname' ELSE tablespace_name END tablespace_name,\n    cluster_name,iot_name,status,pct_free,pct_used,ini_trans,max_trans,initial_extent,next_extent,min_extents,max_extents,pct_increase,freelists,freelist_groups,logging,backed_up,num_rows,blocks,empty_blocks,avg_space,chain_cnt,avg_row_len,avg_space_freelist_blocks,num_freelist_blocks,degree,instances,cache,table_lock,sample_size,last_analyzed,partitioned,iot_type,temporary,secondary,nested,buffer_pool,flash_cache,cell_flash_cache,row_movement,global_stats,user_stats,duration,skip_corrupt,monitoring,cluster_owner,dependencies,compression,compress_for,dropped,read_only,segment_created,result_cache,clustering,activity_tracking,dml_timestamp,has_identity,container_data,inmemory,inmemory_priority,inmemory_distribute,inmemory_compression,inmemory_duplicate,default_collation,duplicated,sharded,external,hybrid,cellmemory,containers_default,container_map,extended_data_link,extended_data_link_map,inmemory_service,inmemory_service_name,container_map_object,memoptimize_read,memoptimize_write,has_sensitive_column,admit_null,data_link_dml_enabled,logical_replication\nFROM sys.all_tables;\n</code></pre>\n<h2>Be careful</h2>\n<p>Obviously, messing with the data dictionary like this is dangerous and should be documented and tested thoroughly. Only consider this solution as a last resort, if you're not able to patch the application. Returning the wrong value for TABLESPACE_NAME for that user could cause problems with another application.</p>\n<p>Or maybe returning the wrong TABLESPACE_NAME causes additional issues with fink-cdc. The PR makes it sound like only that one query needs to be bypassed, but why would the query return the TABLESPACE_NAME if it's not using it? If the application makes an assumption that a table only has one tablespace, you could make your tables match that assumption. And then you could modify the ALL_TABLES view to return the first tablespace found for the relevant partitions or subpartitions.</p>\n<pre><code>CREATE OR REPLACE VIEW your_user.all_tables AS\nSELECT owner,table_name,\n    CASE\n        WHEN partitioned = 'YES' THEN\n            (\n                COALESCE\n                (\n                    (\n                        SELECT MAX(tablespace_name)\n                        FROM all_tab_partitions\n                        WHERE all_tab_partitions.table_owner = all_tables.owner\n                            AND all_tab_partitions.table_name = all_tables.table_name\n                    ),\n                    (\n                        SELECT MAX(tablespace_name)\n                        FROM all_tab_subpartitions\n                        WHERE all_tab_subpartitions.table_owner = all_tables.owner\n                            AND all_tab_subpartitions.table_name = all_tables.table_name\n                    ),\n                    all_tables.tablespace_name\n                )\n            )\n        ELSE\n            tablespace_name\n    END tablespace_name,\n cluster_name,iot_name,status,pct_free,pct_used,ini_trans,max_trans,initial_extent,next_extent,min_extents,max_extents,pct_increase,freelists,freelist_groups,logging,backed_up,num_rows,blocks,empty_blocks,avg_space,chain_cnt,avg_row_len,avg_space_freelist_blocks,num_freelist_blocks,degree,instances,cache,table_lock,sample_size,last_analyzed,partitioned,iot_type,temporary,secondary,nested,buffer_pool,flash_cache,cell_flash_cache,row_movement,global_stats,user_stats,duration,skip_corrupt,monitoring,cluster_owner,dependencies,compression,compress_for,dropped,read_only,segment_created,result_cache,clustering,activity_tracking,dml_timestamp,has_identity,container_data,inmemory,inmemory_priority,inmemory_distribute,inmemory_compression,inmemory_duplicate,default_collation,duplicated,sharded,external,hybrid,cellmemory,containers_default,container_map,extended_data_link,extended_data_link_map,inmemory_service,inmemory_service_name,container_map_object,memoptimize_read,memoptimize_write,has_sensitive_column,admit_null,data_link_dml_enabled,logical_replication\nFROM sys.all_tables;\n</code></pre>\n<p>And the above column list is only accurate for one version of Oracle. You'll want to generate your own list with a query like the one below. And don't forget to update the view if you upgrade the database.</p>\n<pre><code>-- Generate the list of columns for your version of Oracle:\nSELECT LISTAGG(column_name, ',') WITHIN GROUP (ORDER BY column_id) column_list\nFROM dba_tab_columns\nWHERE table_name = 'ALL_TABLES' AND owner = 'SYS';\n</code></pre>\n<p>Despite all the pitfalls, there are times when it's necessary to override the data dictionary like this. I've done this before in production for an unsupported application.</p>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 177686,
+      "reputation" : 37069,
+      "user_id" : 409172,
+      "user_type" : "registered",
+      "accept_rate" : 50,
+      "profile_image" : "https://i.sstatic.net/a2zRR.png?s=256",
+      "display_name" : "Jon Heller",
+      "link" : "https://stackoverflow.com/users/409172/jon-heller"
+    },
+    "creation_date" : 1754109024,
+    "last_activity_date" : 1754186408,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140631760,
+    "post_id" : 79718953,
+    "body" : "@JonHeller, this might be an issue with the oracle cdc connector, where there is a problem getting records from partitioned tables. There is a github issue for it: [<a href=\"https://github.com/apache/flink-cdc/issues/1737]\" rel=\"nofollow noreferrer\">github.com/apache/flink-cdc/issues/1737]</a>. People have given solutions for it, but it has not been merged in the main project yet.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 29947652,
+      "reputation" : 23,
+      "user_id" : 22950548,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/ACg8ocIq76vWRTJKY6h5-X3BOl0A0CdSMDf_SIYsXuJcJr4F=k-s256",
+      "display_name" : "Parth Vyas",
+      "link" : "https://stackoverflow.com/users/22950548/parth-vyas"
+    },
+    "creation_date" : 1753939525,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140631617,
+    "post_id" : 79718953,
+    "body" : "From a database side, I don&#39;t see any obvious issues in that DDL. The <code>SUPPLEMENTAL LOG DATA (ALL) COLUMNS</code> part looks like it should be good enough. (Although you may want to post the full DDL of a working table, so we can compare them.)",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 177686,
+      "reputation" : 37069,
+      "user_id" : 409172,
+      "user_type" : "registered",
+      "accept_rate" : 50,
+      "profile_image" : "https://i.sstatic.net/a2zRR.png?s=256",
+      "display_name" : "Jon Heller",
+      "link" : "https://stackoverflow.com/users/409172/jon-heller"
+    },
+    "creation_date" : 1753931430,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140628874,
+    "post_id" : 79718953,
+    "body" : "Hi @JonHeller, thanks for replying, I have put the ddl in the description.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 29947652,
+      "reputation" : 23,
+      "user_id" : 22950548,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/ACg8ocIq76vWRTJKY6h5-X3BOl0A0CdSMDf_SIYsXuJcJr4F=k-s256",
+      "display_name" : "Parth Vyas",
+      "link" : "https://stackoverflow.com/users/22950548/parth-vyas"
+    },
+    "creation_date" : 1753858351,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140627707,
+    "post_id" : 79718953,
+    "body" : "Can you add the complete DDL for the table that has a problem? Use SQL like this to generate the DDL, since this is one of those rare cases where we may need to look at all the weird metadata: <code>select dbms_metadata.get_ddl(&#39;TABLE&#39;, &#39;YOUR_TABLE_NAME&#39;) from dual;</code>",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 177686,
+      "reputation" : 37069,
+      "user_id" : 409172,
+      "user_type" : "registered",
+      "accept_rate" : 50,
+      "profile_image" : "https://i.sstatic.net/a2zRR.png?s=256",
+      "display_name" : "Jon Heller",
+      "link" : "https://stackoverflow.com/users/409172/jon-heller"
+    },
+    "creation_date" : 1753811334,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

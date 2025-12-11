@@ -1,0 +1,65 @@
+{
+  "question" : {
+    "question_id" : 79661738,
+    "title" : "Call to Ceph object gateway returns 400",
+    "body" : "<p>I am attempting to create an object on our Ceph instance and the only piece of information returned is that the request failed with a 400. I don't have direct access to Ceph logs as its managed by the other team, but they were only able to pull a small set of Ceph RGW logs that do not indicate the reason but only state the request completed with a 400.</p>\n<p>The client setup is fairly simple:</p>\n<pre><code>  public S3Client s3Client(S3Properties s3Properties) {\nreturn S3Client.builder()\n    .endpointOverride(URI.create(s3Properties.baseUrl()))\n    .region(Region.of(Region.EU_CENTRAL_1.id())) // Not used by Ceph but required by AWS SDK\n    .credentialsProvider(\n        StaticCredentialsProvider.create(\n            AwsBasicCredentials.create(s3Properties.accessKey(), s3Properties.secretKey())))\n    .forcePathStyle(true)\n    .build();\n</code></pre>\n<p>The put request is also very straight forward:</p>\n<pre><code>  var putRequest =\n      PutObjectRequest.builder()\n          .key(key)\n          .bucket(s3Properties.bucket())\n          .contentType(contentType)\n          .build();\n\n  PutObjectResponse putObjectResponse =\n      s3Client.putObject(putRequest, RequestBody.fromBytes(fileContent));\n</code></pre>\n<p>I've validated that the credentials are fine by listing the buckets on application startup. This works. The contentType is generated from the Apache Tika library.</p>\n<p>They key is &quot;/attachments/uuid/fileName.ext&quot;.</p>\n<p>I've played around with removing the forcePathStyle, did not work. The ops team stated they have too much traffic on RGW and cannot enable debug mode. Another interesting hint is that a team that is using the minio library for the client - has no issues without any additional configuration. Not sure how to debug this further.</p>\n<p>Locally I have a minio container setup for mocking the s3 storage - everything works as intended.</p>\n<p>EDIT: I was able to dig up that the cause is XAmzContentSHA256Mismatch. I'm not sure what is the cause though.</p>\n",
+    "tags" : [ "java", "spring-boot", "amazon-s3", "aws-sdk", "ceph" ],
+    "owner" : {
+      "account_id" : 11947607,
+      "reputation" : 73,
+      "user_id" : 8742279,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/00b6843a97cbb3db6237834be63ba625?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Benjamin Bajic",
+      "link" : "https://stackoverflow.com/users/8742279/benjamin-bajic"
+    },
+    "is_answered" : true,
+    "view_count" : 306,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1749648576,
+    "creation_date" : 1749634637,
+    "link" : "https://stackoverflow.com/questions/79661738/call-to-ceph-object-gateway-returns-400",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79662075,
+    "question_id" : 79661738,
+    "body" : "<p>The problem was in the Ceph version vs AWS SDK Version. The Ceph version uses MD5 to generate the checksums, while the AWS SDK uses CRC32 resulting in a checksum mismatch.</p>\n<p>The AWS SDK lets you work around this by setting the requestChecksumCalculation field to RequestChecksumCalculation.WHEN_REQUIRED, like so:</p>\n<pre><code>    return S3Client.builder()\n        .endpointOverride(URI.create(s3Properties.baseUrl()))\n        .region(Region.of(Region.EU_CENTRAL_1.id())) // Not used by Ceph but required by AWS SDK\n        .credentialsProvider(\n            StaticCredentialsProvider.create(\n                AwsBasicCredentials.create(s3Properties.accessKey(), s3Properties.secretKey())))\n        .forcePathStyle(true)\n        .requestChecksumCalculation(RequestChecksumCalculation.WHEN_REQUIRED)\n        .build();\n</code></pre>\n",
+    "score" : 2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 11947607,
+      "reputation" : 73,
+      "user_id" : 8742279,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/00b6843a97cbb3db6237834be63ba625?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Benjamin Bajic",
+      "link" : "https://stackoverflow.com/users/8742279/benjamin-bajic"
+    },
+    "creation_date" : 1749648576,
+    "last_activity_date" : 1749648576,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79662075" : [ {
+      "comment_id" : 140717149,
+      "post_id" : 79662075,
+      "body" : "Thank you, this fixed my problem! I was also using AWS SDK v2 and Ceph. Enabling debug logging was helpful in seeing the raw HTTP request and response: <a href=\"https://docs.aws.amazon.com/sdk-for-java/latest/developer-guide/logging-slf4j.html\" rel=\"nofollow noreferrer\">docs.aws.amazon.com/sdk-for-java/latest/developer-guide/&hellip;</a>",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 8794,
+        "reputation" : 53142,
+        "user_id" : 15985,
+        "user_type" : "registered",
+        "accept_rate" : 65,
+        "profile_image" : "https://www.gravatar.com/avatar/fb915f0b3a0a397891f4fd6dab6c2ac8?s=256&d=identicon&r=PG",
+        "display_name" : "Thomas Bratt",
+        "link" : "https://stackoverflow.com/users/15985/thomas-bratt"
+      },
+      "creation_date" : 1757076310,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

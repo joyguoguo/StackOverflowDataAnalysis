@@ -1,0 +1,99 @@
+{
+  "question" : {
+    "question_id" : 79535278,
+    "title" : "Overriding Jackson&#39;s serialization/deserialization config for immutables compability",
+    "body" : "<p>I have a number of <a href=\"https://immutables.github.io/\" rel=\"nofollow noreferrer\">Immutables</a> classes, like:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Value.Immutable\ninterface Foo {\n    String bar();\n}\n</code></pre>\n<p>To make these compatible with Jackson, I need to label these with <code>@JsonDeserialize</code> and <code>@JsonSerialize</code>, per the Immutables manual:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Value.Immutable\n@JsonDeserialize(as = ImmutableFoo.class)\n@JsonSerialize(as = ImmutableFoo.class)\ninterface Foo {\n    String bar();\n}\n</code></pre>\n<p>This is a bit cumbersome at development time and noisy in the code. I'd like to configure Jackson such that any time it encounters a class annotated with <code>@Value.Immutable</code> that the serializer it chooses is <code>ImmutableX</code> for class name <code>X</code> and similarly for deserialization.</p>\n<p>How do I go about configuring Jackson to do this?</p>\n",
+    "tags" : [ "java", "jackson", "immutables-library" ],
+    "owner" : {
+      "account_id" : 11188,
+      "reputation" : 77354,
+      "user_id" : 21441,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/0144ebb7ad7a3fd6cbfe54c95c48ddc9?s=256&d=identicon&r=PG",
+      "display_name" : "Mark Elliot",
+      "link" : "https://stackoverflow.com/users/21441/mark-elliot"
+    },
+    "is_answered" : false,
+    "view_count" : 47,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1742964819,
+    "creation_date" : 1742956393,
+    "link" : "https://stackoverflow.com/questions/79535278/overriding-jacksons-serialization-deserialization-config-for-immutables-compabi",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79535432,
+    "question_id" : 79535278,
+    "body" : "<p>You can do as <a href=\"https://immutables.github.io/json.html#reducing-annotation-clutter\" rel=\"nofollow noreferrer\">this section</a> says - add <code>@JsonSerialize</code> to a your own <code>@Value.Style</code> annotation.</p>\n<pre><code>@Target({ElementType.PACKAGE})\n@Retention(RetentionPolicy.RUNTIME)\n@JsonSerialize\n@Value.Style(/* add more styling here if you need... */)\n@interface JacksonImmutable {}\n\n// package-info.java:\n@JacksonImmutable\npackage com.example;\n</code></pre>\n<p>Then all the <code>@Value.Immutable</code> interfaces can be serialised. This also works for deserialisation if you are always using the concrete <code>ImmutableXXX</code> types, but if you want to work with the interfaces, it is a lot more difficult.</p>\n<p>One way would be to find all the interface-implementation pairings using <a href=\"https://github.com/ronmamo/reflections/\" rel=\"nofollow noreferrer\">Reflections</a> and add it to a custom <code>SimpleModule</code>.</p>\n<pre><code>var mapper = new ObjectMapper();\nSimpleModule module = new SimpleModule(&quot;My Module&quot;, Version.unknownVersion());\nvar reflections = new Reflections(\n        new ConfigurationBuilder()\n                .forPackages(&quot;&quot;) // specify a package prefix here if you know where all your immutable classes are\n                .addScanners(Scanners.TypesAnnotated, Scanners.SubTypes)\n);\nfor (var type : reflections.getTypesAnnotatedWith(Value.Immutable.class)) {\n    if (!type.isInterface()) { continue; }\n    if (!type.getPackage().isAnnotationPresent(JacksonImmutable.class)) { continue; }\n    helper(type, module, reflections);\n}\nmapper.registerModule(module);\n\n// where the &quot;helper&quot; method (used for capturing the wildcards) is:\nprivate static &lt;T&gt; void helper(Class&lt;T&gt; type, SimpleModule module, Reflections reflections) {\n    var implClass = reflections.getSubTypesOf(type).stream()\n            .filter(x -&gt; x.getSimpleName().equals(&quot;Immutable&quot; + type.getSimpleName())).findFirst();\n    implClass.ifPresent(aClass -&gt; module.addAbstractTypeMapping(type, aClass));\n}\n</code></pre>\n<p>Though I'm not sure if doing all this is worth it just to avoid a few lines of annotations.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 6651855,
+      "reputation" : 292025,
+      "user_id" : 5133585,
+      "user_type" : "registered",
+      "accept_rate" : 96,
+      "profile_image" : "https://i.sstatic.net/dfqcw.png?s=256",
+      "display_name" : "Sweeper",
+      "link" : "https://stackoverflow.com/users/5133585/sweeper"
+    },
+    "creation_date" : 1742964819,
+    "last_activity_date" : 1742964819,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140263597,
+    "post_id" : 79535278,
+    "body" : "You can probably bundle the two into a simplified <a href=\"https://stackoverflow.com/a/13408807/1553851\">custom annotation</a>, e.g. <code>@JsonImmutable</code>, but I don&#39;t think there&#39;s any way for Jackson to see the existing <code>Immutable</code> annotation without resorting to hackery like replacing or shadowing the class to alter the retention policy.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1691630,
+      "reputation" : 51067,
+      "user_id" : 1553851,
+      "user_type" : "registered",
+      "accept_rate" : 73,
+      "profile_image" : "https://www.gravatar.com/avatar/ad333c218c8f2fb917cf506919fc95f4?s=256&d=identicon&r=PG",
+      "display_name" : "shmosel",
+      "link" : "https://stackoverflow.com/users/1553851/shmosel"
+    },
+    "creation_date" : 1742957808,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140263575,
+    "post_id" : 79535278,
+    "body" : "<a href=\"https://immutables.github.io/json.html#reducing-annotation-clutter\" rel=\"nofollow noreferrer\">This section</a> seems to be about reducing annotation clutter. Is this what you are looking for?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 6651855,
+      "reputation" : 292025,
+      "user_id" : 5133585,
+      "user_type" : "registered",
+      "accept_rate" : 96,
+      "profile_image" : "https://i.sstatic.net/dfqcw.png?s=256",
+      "display_name" : "Sweeper",
+      "link" : "https://stackoverflow.com/users/5133585/sweeper"
+    },
+    "creation_date" : 1742956808,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140263568,
+    "post_id" : 79535278,
+    "body" : "If it was possible, why wouldn&#39;t Jackson already do it?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 465573,
+      "reputation" : 200423,
+      "user_id" : 869736,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/ae7bb06b9a23a4dd7eea69e853d47d12?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Louis Wasserman",
+      "link" : "https://stackoverflow.com/users/869736/louis-wasserman"
+    },
+    "creation_date" : 1742956640,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

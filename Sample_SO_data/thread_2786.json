@@ -1,0 +1,78 @@
+{
+  "question" : {
+    "question_id" : 79595761,
+    "title" : "DSU with Union Find for graph puzzle - JUnit test failing when trying to cover overlapping index in grid",
+    "body" : "<p>I am using Disjoint Set Union (DSU) and Union Find to solve a graph problem.</p>\n<p>The entry point function takes an input string with coordinates defined by <code>(line number, char number)</code>, starting at the top and left. So the first character on the first line will have the coordinates <code>(1,1)</code> and the fifth character on line 3 will have the coordinates <code>(3,5)</code>.</p>\n<p>The program should find an island (or islands) in the input with the following properties:</p>\n<ul>\n<li><p>The island must be defined by two pairs of coordinates corresponding to its top left and bottom right corners.</p>\n</li>\n<li><p>It must be the minimum neighboring island for some contiguous group of &quot;X&quot;, with each &quot;X&quot;.</p>\n</li>\n<li><p>in the group being horizontally or vertically (but not diagonally) adjacent to each other.</p>\n</li>\n<li><p>A single, detached X is considered to be a valid island.</p>\n</li>\n</ul>\n<p>The grid should not <em>strictly</em> bound the group, so the coordinates for the grid in the following input should be <code>(2,2)(3,3)</code> not <code>(1,1)(4,4)</code></p>\n<pre><code>OOOO\nOXXO\nOXXO\nOOOO\n</code></pre>\n<ul>\n<li><p>It should not overlap (i.e. share any characters with) any other minimum neighboring islands.</p>\n</li>\n<li><p>Of all the non-overlapping, minimum neighboring islands in the input, <em>return the largest by area</em>.</p>\n</li>\n</ul>\n<p>If any grids satisfying the conditions can be found in the input, the program should return an exit code of 0 and, for each island, print a line to stdout with the two pairs of coordinates.</p>\n<p>So, given the input string:</p>\n<pre><code>XXOOOOOOOXXX\nOXOOXXOOXXXO\nOOOOOXXXOOXX\nOOOOOOOXXXOO\n</code></pre>\n<p>Output should be:</p>\n<pre><code>(1,1)(2,2)\n</code></pre>\n<p>This is because the larger set of islands on the right of the input have overlapping neighboring islands, so the returned coordinates bound the smaller group on the top left.</p>\n<p><code>NeighboringIsland</code>:</p>\n<pre><code>public class NeighboringIsland\n{\n    record Point(int x, int y)\n    {\n        @Override\n        public String toString()\n        {\n            return &quot;(&quot; + x + &quot;,&quot; + y + &quot;)&quot;;\n        }\n    }\n\n    record Neighbor(Point topL, Point bottomR)\n    {\n        long area()\n        {\n            return (long)(bottomR.x() - topL.x() + 1) *\n                    (bottomR.y() - topL.y() + 1);\n        }\n\n        @Override\n        public String toString()\n        {\n            return topL.toString() + bottomR.toString();\n        }\n    }\n\n    static class DisjointSet\n    {\n        Map&lt;Integer, Integer&gt; root = new HashMap&lt;&gt;();\n        Map&lt;Integer, Point&gt; maximum = new HashMap&lt;&gt;();\n        Map&lt;Integer, Point&gt; minimum = new HashMap&lt;&gt;();\n\n        int find(int p)\n        {\n            if (!root.containsKey(p))\n            {\n                root.put(p, p);\n                return p;\n            }\n            if (root.get(p) != p)\n            {\n                root.put(p, find(root.get(p)));\n            }\n            return root.get(p);\n        }\n\n        void union(int p1, int p2)\n        {\n            int r1 = find(p1), r2 = find(p2);\n            if (r1 != r2)\n            {\n                root.put(r2, r1);\n            }\n        }\n\n        void updateNeighbors(int root, int x, int y)\n        {\n            minimum.compute(root, (k, v) -&gt; v == null ? new Point(x, y)\n                    : new Point(Math.min(v.x(), x),\n                    Math.min(v.y(), y)));\n            maximum.compute(root, (k, v) -&gt; v == null ? new Point(x, y)\n                    : new Point(Math.max(v.x(), x),\n                    Math.max(v.y(), y)));\n        }\n    }\n\n    record Action(int x, int type, Neighbor neighbor) implements Comparable&lt;Action&gt;\n    {\n        @Override\n        public int compareTo(Action other)\n        {\n            return x != other.x ? Integer.compare(x, other.x)\n                    : Integer.compare(type, other.type);\n        }\n    }\n\n    public String findLargestOverlappingIslands(List&lt;String&gt; lines)\n    {\n        if (lines == null || lines.isEmpty() || lines.get(0).isEmpty())\n        {\n            return &quot;&quot;;\n        }\n\n        int rows = lines.size(), cols = lines.get(0).length();\n        if (!lines.stream().allMatch(line -&gt; line.length() == cols))\n        {\n            return &quot;&quot;;\n        }\n\n        DisjointSet ds = new DisjointSet();\n\n        // Step 1: Perform union operations for contiguous X's\n        IntStream.range(0, rows * cols)\n                .filter(p -&gt; lines.get(p / cols).charAt(p % cols) == 'X')\n                .forEach(p -&gt; unionCell(p, rows, cols, lines, ds));\n\n        // Step 2: Compute neighbors for each segment\n        IntStream.range(0, rows * cols)\n                .filter(p -&gt; lines.get(p / cols).charAt(p % cols) == 'X')\n                .forEach(p -&gt; {\n                    int i = p / cols, j = p % cols;\n                    ds.updateNeighbors(ds.find(p), i + 1, j + 1);\n                });\n\n        // Step 3: Create minimum bounding neighbors\n        var neighbors = ds.minimum.keySet().stream()\n                .map(root -&gt; new Neighbor(ds.minimum.get(root), ds.maximum.get(root)))\n                .toList();\n\n        if (neighbors.isEmpty()) { return &quot;&quot;; }\n\n        // Step 4: Find non-overlapping neighbors \n        var actions = neighbors.stream()\n                .flatMap(neighbor -&gt; Stream.of(\n                        new Action(neighbor.topL().x(), 1, neighbor),\n                        new Action(neighbor.bottomR().x() + 1, -1, neighbor)\n                ))\n                .sorted()\n                .toList();\n\n        var nonOverlapping = new ArrayList&lt;Neighbor&gt;();\n        processActions(actions, 0, new TreeSet&lt;&gt;(Comparator.comparing((Neighbor b) -&gt; b.topL().y())\n                .thenComparing(b -&gt; b.topL().x())), nonOverlapping);\n\n        // Step 5: Select the neighbor with smallest top-left coordinates\n        return nonOverlapping.stream()\n                .min(Comparator.comparing((Neighbor b) -&gt; b.topL().x())\n                        .thenComparing(b -&gt; b.topL().y())\n                        .thenComparingLong(Neighbor::area))\n                .map(Neighbor::toString)\n                .orElse(&quot;&quot;);\n    }\n\n    private void unionCell(int p,\n                           int rows,\n                           int cols,\n                           List&lt;String&gt; lines,\n                           DisjointSet ds)\n    {\n        int i = p / cols, j = p % cols;\n\n        // Connect to nearby X cells\n        if (i &gt; 0 &amp;&amp; lines.get(i - 1).charAt(j) == 'X')\n        {\n            // Above\n            ds.union(p, (i - 1) * cols + j);\n        }\n        if (i &lt; rows - 1 &amp;&amp; lines.get(i + 1).charAt(j) == 'X')\n        {\n            // Below\n            ds.union(p, (i + 1) * cols + j);\n        }\n        if (j &gt; 0 &amp;&amp; lines.get(i).charAt(j - 1) == 'X')\n        {\n            // Left\n            ds.union(p, i * cols + (j - 1));\n        }\n        if (j &lt; cols - 1 &amp;&amp; lines.get(i).charAt(j + 1) == 'X')\n        {\n            // Right\n            ds.union(p, i * cols + (j + 1));\n        }\n    }\n\n    private void processActions(List&lt;Action&gt; actions, int index,\n                                TreeSet&lt;Neighbor&gt; active,\n                                List&lt;Neighbor&gt; nonOverlapping)\n    {\n        if (index &gt;= actions.size())\n        {\n            nonOverlapping.addAll(active);\n            return;\n        }\n        var e = actions.get(index);\n        if (e.type() == 1)\n        {\n            // Add neighbor to active set without overlap check to collect all potential neighbors\n            active.add(e.neighbor());\n        } else\n        {\n            active.remove(e.neighbor());\n            // Check if the removed neighbor is non-overlapping with remaining active neighbors\n            boolean overlaps = active.stream().anyMatch(activeNeighbor -&gt;\n                    !(e.neighbor().bottomR().x() &lt; activeNeighbor.topL().x() ||\n                            e.neighbor().topL().x() &gt; activeNeighbor.bottomR().x() ||\n                            e.neighbor().bottomR().y() &lt; activeNeighbor.topL().y() ||\n                            e.neighbor().topL().y() &gt; activeNeighbor.bottomR().y()));\n            if (!overlaps)\n            {\n                nonOverlapping.add(e.neighbor());\n            }\n        }\n        processActions(actions, index + 1, active, nonOverlapping);\n    }\n}\n</code></pre>\n<p><code>NeighboringIslandTest</code>:</p>\n<pre><code>public class NeighboringIslandTest {\n    private final NeighboringIsland neighboringIsland = new NeighboringIsland();\n\n    @Test\n    void testExampleInput() {\n        List&lt;String&gt; input = List.of(\n                &quot;XXOOOOOOOXXX&quot;,\n                &quot;OXOOXXOOXXXO&quot;,\n                &quot;OOOOOXXXOOXX&quot;,\n                &quot;OOOOOOOXXXOO&quot;\n        );\n        assertEquals(&quot;(1,1)(2,2)&quot;, neighboringIsland.findLargestOverlappingIslands(input));\n    }\n\n    @Test\n    void testLargestOverlappingIslands() {\n        List&lt;String&gt; input = List.of(\n                &quot;XXXO&quot;,\n                &quot;XXXO&quot;,\n                &quot;OXXO&quot;,\n                &quot;OXXO&quot;\n        );\n        assertEquals(&quot;(1,1)(2,3)&quot;, neighboringIsland.findLargestOverlappingIslands(input));\n    }\n  \n    // Rest of passing test coverage omitted for brevity\n}\n</code></pre>\n<p>It fails the <code>testLargestOverlappingIslands()</code> test case:</p>\n<pre><code>Expected :(1,1)(2,3)\nActual   :(1,1)(4,3)\n</code></pre>\n",
+    "tags" : [ "java", "graph-theory", "disjoint-sets", "union-find", "java-23" ],
+    "owner" : {
+      "account_id" : 49142,
+      "reputation" : 5494,
+      "user_id" : 146234,
+      "user_type" : "registered",
+      "accept_rate" : 40,
+      "profile_image" : "https://www.gravatar.com/avatar/903ccadd292c66cf8d231d664f753f50?s=256&d=identicon&r=PG",
+      "display_name" : "PacificNW_Lover",
+      "link" : "https://stackoverflow.com/users/146234/pacificnw-lover"
+    },
+    "is_answered" : false,
+    "view_count" : 51,
+    "answer_count" : 0,
+    "score" : 1,
+    "last_activity_date" : 1745909446,
+    "creation_date" : 1745811355,
+    "link" : "https://stackoverflow.com/questions/79595761/dsu-with-union-find-for-graph-puzzle-junit-test-failing-when-trying-to-cover-o",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140379055,
+    "post_id" : 79595761,
+    "body" : "I must be missing something. That second test case is the one that is failing, right? It has X in all of the 3rd column, so all rows have an X that is connected to the single island.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 7142980,
+      "reputation" : 357178,
+      "user_id" : 5459839,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/lUUgh.png?s=256",
+      "display_name" : "trincot",
+      "link" : "https://stackoverflow.com/users/5459839/trincot"
+    },
+    "creation_date" : 1745911797,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140378275,
+    "post_id" : 79595761,
+    "body" : "X is an Island - the O is water. Do mean since <code>(3,2)</code> is diagonal to <code>(4,3)</code> that its supposed to return a <code>&quot;&quot;</code>?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 49142,
+      "reputation" : 5494,
+      "user_id" : 146234,
+      "user_type" : "registered",
+      "accept_rate" : 40,
+      "profile_image" : "https://www.gravatar.com/avatar/903ccadd292c66cf8d231d664f753f50?s=256&d=identicon&r=PG",
+      "display_name" : "PacificNW_Lover",
+      "link" : "https://stackoverflow.com/users/146234/pacificnw-lover"
+    },
+    "creation_date" : 1745883529,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140376571,
+    "post_id" : 79595761,
+    "body" : "I don&#39;t understand the expected <code>&quot;(1,1)(2,3)&quot;</code>. Why is that considered an island, when there are adjacent X to it?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7142980,
+      "reputation" : 357178,
+      "user_id" : 5459839,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/lUUgh.png?s=256",
+      "display_name" : "trincot",
+      "link" : "https://stackoverflow.com/users/5459839/trincot"
+    },
+    "creation_date" : 1745846729,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

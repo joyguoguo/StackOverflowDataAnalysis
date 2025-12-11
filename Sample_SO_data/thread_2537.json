@@ -1,0 +1,277 @@
+{
+  "question" : {
+    "question_id" : 79613920,
+    "title" : "Date without Time to ZonedDateTime",
+    "body" : "<p>I have an object Date - without a timestamp - thats because of reasons.</p>\n<p>I use the epoch to get it into a ZonedDateTime - so the epoch is the start of the day at 00:00.</p>\n<pre><code>java.util.Date d = rs.getDate (&quot;mytime&quot;);   // 2025-04-22 - no time!\nlong epoch = d.getTime() / 1000;\nInstant inst = Instant.ofEpochSecond (epoch);  // 2025-04-22 at 00:00:00\nZonedDateTime zdt = ZonedDateTime.ofInstant (inst , ZoneOffset.systemDefault ());\n                    \n</code></pre>\n<p>Is the way over the epoch best practice or is there a better way??</p>\n",
+    "tags" : [ "java", "zoneddatetime" ],
+    "owner" : {
+      "account_id" : 117317,
+      "reputation" : 12715,
+      "user_id" : 307297,
+      "user_type" : "registered",
+      "accept_rate" : 62,
+      "profile_image" : "https://i.sstatic.net/e28FD.png?s=256",
+      "display_name" : "chris01",
+      "link" : "https://stackoverflow.com/users/307297/chris01"
+    },
+    "is_answered" : true,
+    "view_count" : 127,
+    "closed_date" : 1746803617,
+    "answer_count" : 1,
+    "score" : -2,
+    "last_activity_date" : 1746803471,
+    "creation_date" : 1746786212,
+    "link" : "https://stackoverflow.com/questions/79613920/date-without-time-to-zoneddatetime",
+    "closed_reason" : "Needs details or clarity"
+  },
+  "answers" : [ {
+    "answer_id" : 79614085,
+    "question_id" : 79613920,
+    "body" : "<p>There are only two options.</p>\n<p>First you have to rewire your brain. <code>java.util.Date</code> <strong>is a lie. It lies to you</strong>. Because it isn't a date. It has nothing to do with date. It is <strong>an instant</strong>, in the <code>java.time.Instant</code> sense, and a really bad implementation at that.</p>\n<p>It has <strong>no date</strong> therefore. That is not possible. When I clap my hands right now it's May 9th in some parts of the world, and May 10th in others. So what 'date' is the date when I clapped my hands? <em>Not an answerable question!</em></p>\n<h2>1. Your DB is really storing a date without time and without timezone</h2>\n<p>Then <code>rs.getDate</code>, <em>despite literally reading in english as 'get the date'</em>, is <strong>incorrect</strong> because that does not get you a date.</p>\n<p>The right code is simply this:</p>\n<pre><code>LocalDate d = rs.getObject(2, LocalDate.class);\n</code></pre>\n<p>This works. It is guaranteed to, by the JDBC spec. The JDBC spec has ceased writing an ever growing cavalcade of <code>getX()</code> methods. That's why <code>getLocalDate</code> does not exist. In all other words, <code>.getObject(idxOrColName, LocalDate.class)</code> is as well or better supported than <code>.getDate</code> is. And unlike <code>j.u.Date</code> (and therefore <code>j.sql.Date</code> which inherits from it), <code>LocalDate</code> isn't lying to you.</p>\n<h2>2. Your DB is really storing an instant</h2>\n<p>Then you can't just ask it for 'the date' because <em>instants do not have one</em>. The thing to avoid is silent conversions. If conversions are happening you want to be clear where the conversion happens and how.</p>\n<p>Calling e.g. <code>rs.getDate(2).getYear()</code> is thus <em>always wrong</em> - you should <em>never</em> write that, ever. It is doing lots of weird conversions and hiding how and when they are happening. Instead, use <code>rs.getObject(2, Instant.class)</code> to obtain an Instant. Or possibly <code>rs.getObject(2, OffsetDateTime.class)</code> - it depends on what your DB is actually storing. Get exactly what your DB stores; JDBC guarantees all of these 3 forms will work. (ZonedDateTime, unfortunately, isn't).</p>\n<p>Now that you have an instant, apply conversions, and reason about what you have.</p>\n<p>For example:</p>\n<ul>\n<li>When somebody clapped their hands at the time represented by my <code>j.t.Instant</code>, I want to know the date in Amsterdam:</li>\n</ul>\n<p><code>instant.toZonedDateTime(ZoneId.of(&quot;Europe/Amsterdam&quot;)).toLocalDate();</code></p>\n<ul>\n<li>When somebody clapped their hands at the time represented by my <code>j.t.Instant</code>, I want to know the date in UTC:</li>\n</ul>\n<p><code>instant.toZonedDateTime(ZoneOffset.UTC).toLocalDate();</code></p>\n<ul>\n<li>When somebody clapped their hands at the time represented by my <code>j.t.Instant</code>, I want to know the date in the location the person who clapped their hands was standing in when they clapped.</li>\n</ul>\n<p><strong>Not possible</strong> - that information (specifically: The timezone when the instant was 'recorded') wasn't stored. You cannot retrieve from a database any information that you never stored in it, of course.</p>\n<p>Store something else instead. For example, an <code>OffsetDateTime</code> which virtually all DBs can store and which JDBC guarantees (<code>rs.setObject(questionMarkIdx, someInstanceOfOffsetDateTime</code> is guaranteed to work per the JDBC spec).</p>\n",
+    "score" : 6,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 401843,
+      "reputation" : 107186,
+      "user_id" : 768644,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+      "display_name" : "rzwitserloot",
+      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+    },
+    "creation_date" : 1746792848,
+    "last_activity_date" : 1746792848,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140417039,
+    "post_id" : 79613920,
+    "body" : "Why do you need to convert to <code>ZonedDateTime</code> - is <code>LocalDate</code> not suitable already? If not, why not? How is this date going to be used? If you do need it to be <code>ZonedDateTime</code> then why does it have to be at 00:00 midnight? Why not, for example, 12 noon, which some car insurance policies start at?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 19118721,
+      "reputation" : 12469,
+      "user_id" : 13963086,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/9df2c3c4c87d8050b8fd6a59c88c7133?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "k314159",
+      "link" : "https://stackoverflow.com/users/13963086/k314159"
+    },
+    "creation_date" : 1747037016,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140413784,
+    "post_id" : 79613920,
+    "body" : "If you edit for clarity and detail, your Question may be reopened.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 322981,
+      "reputation" : 346951,
+      "user_id" : 642706,
+      "user_type" : "registered",
+      "accept_rate" : 58,
+      "profile_image" : "https://i.sstatic.net/ZWEI3.jpg?s=256",
+      "display_name" : "Basil Bourque",
+      "link" : "https://stackoverflow.com/users/642706/basil-bourque"
+    },
+    "creation_date" : 1746890854,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140413041,
+    "post_id" : 79613920,
+    "body" : "@Sweeper Given the <code>rs.getDate</code>, it seems the OP is actually using <code>java.sql.Date</code>, a subclass of <code>java.util.Date</code> intended to be a date-only value.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 213468,
+      "reputation" : 110282,
+      "user_id" : 466862,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/d873f397779db38cd510d9ee5416fd43?s=256&d=identicon&r=PG",
+      "display_name" : "Mark Rotteveel",
+      "link" : "https://stackoverflow.com/users/466862/mark-rotteveel"
+    },
+    "creation_date" : 1746860119,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140412264,
+    "post_id" : 79613920,
+    "body" : "<i>thats because of reasons.</i> Tell us the reasons, please. They may be pretty crucial to helping you find the best you can do. Also tell us your brand of database engine and your database datatype, even though you have already said that what you’ve got is a date without time of day.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 7612423,
+      "reputation" : 87400,
+      "user_id" : 5772882,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Anonymous",
+      "link" : "https://stackoverflow.com/users/5772882/anonymous"
+    },
+    "creation_date" : 1746820130,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140412252,
+    "post_id" : 79613920,
+    "body" : "No, what you are doing is not the best practice. If your database datatype is <code>date</code> and you trust the JVM’s default time zone to be the time zone that you need -- which is fragile to put it mildly -- then what @g00se said is exactly the best way.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7612423,
+      "reputation" : 87400,
+      "user_id" : 5772882,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Anonymous",
+      "link" : "https://stackoverflow.com/users/5772882/anonymous"
+    },
+    "creation_date" : 1746819756,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140411721,
+    "post_id" : 79613920,
+    "body" : "Starting from JDBC column type of DATE: <code>LocalDate ld = rs.getObject(1, LocalDate.class); ZonedDateTime zdt = ld.atStartOfDay(ZoneId.systemDefault());</code>",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 22124137,
+      "reputation" : 4243,
+      "user_id" : 16376827,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/1ImPw.png?s=256",
+      "display_name" : "g00se",
+      "link" : "https://stackoverflow.com/users/16376827/g00se"
+    },
+    "creation_date" : 1746808012,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140411534,
+    "post_id" : 79613920,
+    "body" : "Also, I should have said, if you want <code>ZonedDateTime</code>, it <i>must</i> have a time part.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 22124137,
+      "reputation" : 4243,
+      "user_id" : 16376827,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/1ImPw.png?s=256",
+      "display_name" : "g00se",
+      "link" : "https://stackoverflow.com/users/16376827/g00se"
+    },
+    "creation_date" : 1746804493,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140411508,
+    "post_id" : 79613920,
+    "body" : "<code>ZonedDateTime zdt = ZonedDateTime.of(rs.getObject(1, LocalDateTime.class), ZoneId.systemDefault()).with(LocalTime.MIN);</code> is the sort of thing you need. Why? Firstly it&#39;s likely that the db <i>does</i> have a time part. If you&#39;re expecting it not to (start of day), then you should adjust it. Secondly, the JDBC standard does not support various <code>java.time</code> types. That one <i>is</i> supported, but not <code>Instant</code>, nor <code>ZonedDateTime</code>. Drivers are another matter and will vary",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 22124137,
+      "reputation" : 4243,
+      "user_id" : 16376827,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/1ImPw.png?s=256",
+      "display_name" : "g00se",
+      "link" : "https://stackoverflow.com/users/16376827/g00se"
+    },
+    "creation_date" : 1746804098,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140410661,
+    "post_id" : 79613920,
+    "body" : "As Sweeper said, a java.util.Date <i>does</i> have a time of day.  If your database column is of type <code>date</code>, you should avoid using java.util.Date entirely.  (It’s only called “Date” for historical reasons.)  Instead, use <code>LocalDate d = rs.getObject(&quot;mytime&quot;, LocalDate.class)</code>.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 2053598,
+      "reputation" : 44936,
+      "user_id" : 1831987,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/38b1c37530189ec4471a43a618e33f67?s=256&d=identicon&r=PG",
+      "display_name" : "VGR",
+      "link" : "https://stackoverflow.com/users/1831987/vgr"
+    },
+    "creation_date" : 1746788572,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140410574,
+    "post_id" : 79613920,
+    "body" : "If you do have a year-month-day tuple (which a <code>java.util.Date</code> is not), you need to be very clear about what zone and what local time the <code>ZonedDateTime</code> should be in. It seems like you want to use the system time zone and start of day as the time. Is that right? You should also be clear about what is a &quot;better&quot; way.",
+    "score" : 3,
+    "owner" : {
+      "account_id" : 6651855,
+      "reputation" : 292025,
+      "user_id" : 5133585,
+      "user_type" : "registered",
+      "accept_rate" : 96,
+      "profile_image" : "https://i.sstatic.net/dfqcw.png?s=256",
+      "display_name" : "Sweeper",
+      "link" : "https://stackoverflow.com/users/5133585/sweeper"
+    },
+    "creation_date" : 1746786553,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140410563,
+    "post_id" : 79613920,
+    "body" : "A <code>java.util.Date</code> represents a number of milliseconds since the epoch, not a year-month-day tuple. It doesn&#39;t make sense to say that a <code>java.util.Date</code> has &quot;no time&quot;.",
+    "score" : 7,
+    "owner" : {
+      "account_id" : 6651855,
+      "reputation" : 292025,
+      "user_id" : 5133585,
+      "user_type" : "registered",
+      "accept_rate" : 96,
+      "profile_image" : "https://i.sstatic.net/dfqcw.png?s=256",
+      "display_name" : "Sweeper",
+      "link" : "https://stackoverflow.com/users/5133585/sweeper"
+    },
+    "creation_date" : 1746786355,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79614085" : [ {
+      "comment_id" : 140410968,
+      "post_id" : 79614085,
+      "body" : "Indeed incredibly much can be told on date time.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 960307,
+        "reputation" : 110397,
+        "user_id" : 984823,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/Z2KYN.jpg?s=256",
+        "display_name" : "Joop Eggen",
+        "link" : "https://stackoverflow.com/users/984823/joop-eggen"
+      },
+      "creation_date" : 1746795097,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140410943,
+      "post_id" : 79614085,
+      "body" : "It already felt too long for the gist which is &#39;Date broken, use <code>getObject</code>/<code>setObject</code> instead&#39;. If I delve into &#39;default&#39; I need to explain that defaults can change and then your dates will be off by 1 (or even 2 in exotic circumstances!) from time to time which is one of those killer bugs - hard to notice, hard to test for, impossible you realize you have it and need to test for it - thus, can lead to literally person <i>weeks</i> of effort to chase down). UTC is mentioned.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 401843,
+        "reputation" : 107186,
+        "user_id" : 768644,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+        "display_name" : "rzwitserloot",
+        "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+      },
+      "creation_date" : 1746794606,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140410899,
+      "post_id" : 79614085,
+      "body" : "Beautiful answer, especially <code>getObject</code> with <code>LocalDate.class</code>. A bit hard to digest though. If there is an other answer this answer needs more to convince. UTC stored or more likely default zoned date? then ...",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 960307,
+        "reputation" : 110397,
+        "user_id" : 984823,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/Z2KYN.jpg?s=256",
+        "display_name" : "Joop Eggen",
+        "link" : "https://stackoverflow.com/users/984823/joop-eggen"
+      },
+      "creation_date" : 1746793749,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

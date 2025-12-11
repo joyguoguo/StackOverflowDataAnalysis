@@ -1,0 +1,78 @@
+{
+  "question" : {
+    "question_id" : 79659470,
+    "title" : "“cannot write xcontent for unknown value of type java.time.LocalDate” appears randomly on one Tomcat node",
+    "body" : "<p>OpenSearch XContentBuilder – “cannot write xcontent for unknown value of type java.time.LocalDate” appears randomly on Tomcat.</p>\n<p><strong>Context</strong>:</p>\n<ol>\n<li>Spring-Boot 3.4.4, packaged as a WAR and deployed external Tomcat 10.1.20 servers (JDK 17.0.11 Temurin).</li>\n<li>OpenSearch Java client 2.19.0 (also tested 2.6 → same result).</li>\n<li>All dependencies live in WEB-INF/lib — no shading/uber-jar.</li>\n</ol>\n<p><strong>What I understood ?</strong></p>\n<ol>\n<li>Static initialisation of XContentBuilder</li>\n</ol>\n<pre class=\"lang-java prettyprint-override\"><code>public class XContentBuilder implements Closeable {\n    /** Map: Java type ➜ lambda that writes that value */\n    private static final Map&lt;Class&lt;?&gt;, Writer&gt; WRITERS = new HashMap&lt;&gt;();\n\n    static {\n        /* ── 1 a. built-in primitives ───────────────────────────── */\n        WRITERS.put(String.class, (b, v) -&gt; b.value((String) v));\n        WRITERS.put(Integer.class, (b, v) -&gt; b.value((Integer) v));\n        /* …​ Boolean, BigInteger, Date, byte[]  … */\n\n        /* ── 1 b. ask every SPI extension to extend the map ─────── */\n        /*\n         * This is the SPI hook.  It is executed ONCE, the first time\n         * XContentBuilder is referenced inside a given class-loader.\n         */\n        for (XContentBuilderExtension ext :\n                ServiceLoader.load(XContentBuilderExtension.class)) {\n            ext.accept(WRITERS);      // registers extra writers\n        }\n    }\n    …\n}\n\n</code></pre>\n<p>Everything happens once per class-loader, the result is cached in the static WRITERS map.</p>\n<p>Somehow, for an obscure reason, <code>ServiceLoader.load(XContentBuilderExtension.class)</code> does not find <code>XContentOpenSearchExtension.class</code></p>\n<p>and when calling this method with a <code>LocalDate</code> object</p>\n<pre><code>    private void unknownValue(Object value, boolean ensureNoSelfReferences) throws IOException {\n    if (value == null) {\n        nullValue();\n        return;\n    }\n    Writer writer = WRITERS.get(value.getClass());\n    if (writer != null) {\n        writer.write(this, value);\n    } else if (value instanceof Path) {\n        // Path implements Iterable&lt;Path&gt; and causes endless recursion and a StackOverFlow if treated as an Iterable here\n        value((Path) value);\n    } else if (value instanceof Map) {\n        @SuppressWarnings(&quot;unchecked&quot;)\n        final Map&lt;String, ?&gt; valueMap = (Map&lt;String, ?&gt;) value;\n        map(valueMap, ensureNoSelfReferences, true);\n    } else if (value instanceof Iterable) {\n        value((Iterable&lt;?&gt;) value, ensureNoSelfReferences);\n    } else if (value instanceof Object[]) {\n        values((Object[]) value, ensureNoSelfReferences);\n    } else if (value instanceof ToXContent) {\n        value((ToXContent) value);\n    } else if (value instanceof Enum&lt;?&gt;) {\n        // Write out the Enum toString\n        value(Objects.toString(value));\n    } else {\n        throw new IllegalArgumentException(&quot;cannot write xcontent for unknown value of type &quot; + value.getClass());\n    }\n}\n</code></pre>\n<p>The IllegalArgumentException is throw :</p>\n<pre><code>java.lang.IllegalArgumentException: cannot write xcontent for unknown value of type class java.time.LocalDate\n    at org.opensearch.core.xcontent.XContentBuilder.unknownValue(XContentBuilder.java:866)\n    at org.opensearch.core.xcontent.XContentBuilder.value(XContentBuilder.java:837)\n    at org.opensearch.core.xcontent.XContentBuilder.field(XContentBuilder.java:822)\n    at org.opensearch.index.query.RangeQueryBuilder.doXContent(RangeQueryBuilder.java:334)\n</code></pre>\n<p>What can lead <code>ServiceLoader.load(XContentBuilderExtension.class)</code> to not find <code>XContentOpenSearchExtension</code> class ?</p>\n",
+    "tags" : [ "java", "spring-boot", "tomcat", "opensearch" ],
+    "owner" : {
+      "account_id" : 12171422,
+      "reputation" : 301,
+      "user_id" : 8885960,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/c09b0842a8836bdb2aed03601df6fa5d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "kasualnetuser",
+      "link" : "https://stackoverflow.com/users/8885960/kasualnetuser"
+    },
+    "is_answered" : true,
+    "view_count" : 115,
+    "answer_count" : 1,
+    "score" : -1,
+    "last_activity_date" : 1749827088,
+    "creation_date" : 1749499722,
+    "link" : "https://stackoverflow.com/questions/79659470/cannot-write-xcontent-for-unknown-value-of-type-java-time-localdate-appears-ra",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79664090,
+    "question_id" : 79659470,
+    "body" : "<p>When using OpenSearch's <code>XContentBuilder</code> to serialize Java date/time objects (like <code>LocalDate</code>, <code>Date</code>, <code>LocalDateTime</code>), I encountered this error:</p>\n<p><code>java.lang.IllegalArgumentException: cannot write time value xcontent for unknown value of type class java.util.Date</code></p>\n<p>This happens because the internal <code>WRITERS</code> map in <code>XContentBuilder</code> is not correctly populated for date types. This map is initialized in a static block using:</p>\n<pre class=\"lang-java prettyprint-override\"><code>for (XContentBuilderExtension ext :ServiceLoader.load(XContentBuilderExtension.class)) {     ..... } \n</code></pre>\n<p>But in some cases, <strong><code>ServiceLoader.load(...)</code> silently fails to find any implementation</strong>, causing OpenSearch client to be unable to serialize common types like <code>LocalDate</code>.</p>\n<p>In my case, this issue occurred only under <strong>certain multithreaded conditions</strong>:</p>\n<ul>\n<li><p>I was calling a method that triggered the first use of <code>XContentBuilder</code> inside a <code>stream().parallel()</code> chain.</p>\n</li>\n<li><p>That method also used <code>CompletableFuture.supplyAsync(...)</code>.</p>\n</li>\n</ul>\n<p>Both of these approaches run code in threads from the <strong>ForkJoinPool</strong>, where the <strong>Thread Context ClassLoader (TCCL)</strong> is not necessarily the one that has access to application <code>.jar</code>s (like the one containing <code>XContentOpenSearchExtension</code>).</p>\n<p>As a result, <code>ServiceLoader.load(...)</code> was using the wrong class loader and failed to find any extensions.</p>\n<p>I resolved the issue using <strong>two combined changes</strong>:</p>\n<h4>1. Replace <code>stream().parallel()</code> and <code>CompletableFuture</code></h4>\n<p>I replaced:</p>\n<pre><code>list.stream().parallel().map(...).collect(...) \n</code></pre>\n<p>with:</p>\n<pre><code>list.stream().map(...).collect(...) \n</code></pre>\n<p>and:</p>\n<pre><code>CompletableFuture.supplyAsync(() -&gt; callOpenSearch()) \n</code></pre>\n<p>with a <strong>Spring-managed <code>ThreadPoolTaskExecutor</code></strong>, ensuring that threads used for async work inherit the correct class loader:</p>\n<pre><code>@Autowired \nprivate ThreadPoolTaskExecutor openSearchExecutor;  \n\n\npublic void callOpensearchAsync() {\n    openSearchExecutor.submit(() -&gt; { callOpenSearch(); }); \n}\n</code></pre>\n<p>This ensures the context classloader is consistent with the application and has access to <code>XContentBuilderExtension</code> implementations.</p>\n<p><strong>Note: This only happens on Tomcat, Works fine on Embedded Tomcat.</strong></p>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 12171422,
+      "reputation" : 301,
+      "user_id" : 8885960,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/c09b0842a8836bdb2aed03601df6fa5d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "kasualnetuser",
+      "link" : "https://stackoverflow.com/users/8885960/kasualnetuser"
+    },
+    "creation_date" : 1749760838,
+    "last_activity_date" : 1749760838,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140503930,
+    "post_id" : 79659470,
+    "body" : "Hi @MarcePuente, my question is in which case ServiceLoader.load(XContentBuilderExtension.class) can be empty ?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 12171422,
+      "reputation" : 301,
+      "user_id" : 8885960,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/c09b0842a8836bdb2aed03601df6fa5d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "kasualnetuser",
+      "link" : "https://stackoverflow.com/users/8885960/kasualnetuser"
+    },
+    "creation_date" : 1749593315,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140500769,
+    "post_id" : 79659470,
+    "body" : "Hello user, In your <i>Map</i> you have not loaded the <i>LocalDate</i> class, so <b>Writer writer = WRITERS.get( value.getClass() );</b> returns “null”, this causes it to enter the <i>else</i> which is the one that throws the exception you programmed :)",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 10843443,
+      "reputation" : 916,
+      "user_id" : 20882864,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+      "display_name" : "Marce Puente",
+      "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+    },
+    "creation_date" : 1749510913,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

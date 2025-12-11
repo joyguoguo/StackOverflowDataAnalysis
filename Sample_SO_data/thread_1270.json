@@ -1,0 +1,62 @@
+{
+  "question" : {
+    "question_id" : 79725040,
+    "title" : "Why can CrudRepository.findById() return a Hibernate proxy?",
+    "body" : "<p>It seems that <code>findById()</code> and manual queries in Spring repositories can return Hibernate proxies instead of real objects if these objects have been &quot;loaded&quot; earlier as lazy fields of other objects.</p>\n<p>Such a behaviour seems a bit surprising to me. Is it intended? Is there some clarification in the documentation?</p>\n<p>It works so with <code>org.springframework.boot:spring-boot-starter-parent</code> <code>3.3.13</code> (my) and <code>3.5.4</code> (the newest at the moment).</p>\n<p>I reproduced the behaviour using an entity class which contains an identifier and a lazy link to an entity of the same class and a corresponding repository.</p>\n<pre class=\"lang-java prettyprint-override\"><code>import jakarta.persistence.Entity;\nimport jakarta.persistence.FetchType;\nimport jakarta.persistence.Id;\nimport jakarta.persistence.ManyToOne;\n\n@Entity\npublic class ExampleEntity {\n\n    @Id\n    private Character id;\n\n    @ManyToOne(fetch = FetchType.LAZY)\n    private ExampleEntity parent;\n\n    public ExampleEntity setId(Character id) {\n        this.id = id;\n        return this;\n    }\n\n    public ExampleEntity setParent(ExampleEntity parent) {\n        this.parent = parent;\n        return this;\n    }\n\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>import org.springframework.data.jpa.repository.JpaRepository;\n\npublic interface ExampleEntityRepository extends JpaRepository&lt;ExampleEntity, Character&gt; {\n}\n</code></pre>\n<p>The behaviour is reproduced in the following tests. Both of the tests create two entities identified A and B. The latter links the former.</p>\n<div class=\"s-table-container\"><table class=\"s-table\">\n<thead>\n<tr>\n<th style=\"text-align: center;\">Test</th>\n<th style=\"text-align: left;\">Access the entity A</th>\n<th style=\"text-align: left;\">The class of <code>entityA</code></th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td style=\"text-align: center;\">object</td>\n<td style=\"text-align: left;\">The first time</td>\n<td style=\"text-align: left;\"><code>ExampleEntity</code> (a real object)</td>\n</tr>\n<tr>\n<td style=\"text-align: center;\">proxy</td>\n<td style=\"text-align: left;\">The entity A has been represented with a proxy for the field <code>parent</code> of the entity B</td>\n<td style=\"text-align: left;\"><code>HibernateProxy</code></td>\n</tr>\n</tbody>\n</table></div>\n<pre class=\"lang-java prettyprint-override\"><code>import org.assertj.core.api.Assertions;\nimport org.hibernate.proxy.HibernateProxy;\nimport org.junit.jupiter.api.Test;\nimport org.springframework.beans.factory.annotation.Autowired;\nimport org.springframework.boot.test.context.SpringBootTest;\nimport org.springframework.transaction.PlatformTransactionManager;\nimport org.springframework.transaction.support.TransactionTemplate;\n\n@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)\nclass ExampleEntityRepositoryTest {\n\n    private final TransactionTemplate transactionTemplate;\n\n    private final ExampleEntityRepository sut;\n\n    @Autowired\n    ExampleEntityRepositoryTest(PlatformTransactionManager platformTransactionManager,\n                                ExampleEntityRepository exampleEntityRepository) {\n        this.transactionTemplate = new TransactionTemplate(platformTransactionManager);\n        this.sut = exampleEntityRepository;\n    }\n\n    @Test\n    void proxy() {\n        try {\n            transactionTemplate.executeWithoutResult(status -&gt; {\n                sut.save(new ExampleEntity().setId('A'));\n                sut.save(new ExampleEntity().setId('B').setParent(new ExampleEntity().setId('A')));\n            });\n\n            ExampleEntity entityA = transactionTemplate.execute(status -&gt; {\n                sut.findById('B'); // Load an entity with a lazy link to the target entity.\n                return sut.findById('A').orElse(null);\n            });\n\n            Assertions\n                    .assertThat(entityA)\n                    .isNotNull()\n                    .isInstanceOf(HibernateProxy.class)\n                    .isInstanceOf(ExampleEntity.class);\n        } finally {\n            transactionTemplate.executeWithoutResult(status -&gt; sut.deleteAll());\n        }\n    }\n\n    @Test\n    void object() {\n        try {\n            transactionTemplate.executeWithoutResult(status -&gt; {\n                sut.save(new ExampleEntity().setId('A'));\n                sut.save(new ExampleEntity().setId('B').setParent(new ExampleEntity().setId('A')));\n            });\n\n            ExampleEntity entityA = transactionTemplate.execute(status -&gt; {\n                // Load the target entity.\n                return sut.findById('A').orElse(null);\n            });\n\n            Assertions\n                    .assertThat(entityA)\n                    .isNotNull()\n                    .isInstanceOf(ExampleEntity.class)\n                    .isNotInstanceOfAny(HibernateProxy.class);\n        } finally {\n            transactionTemplate.executeWithoutResult(status -&gt; sut.deleteAll());\n        }\n    }\n\n}\n</code></pre>\n",
+    "tags" : [ "java", "spring", "hibernate", "jpa", "spring-data-jpa" ],
+    "owner" : {
+      "account_id" : 16232337,
+      "reputation" : 51,
+      "user_id" : 11720740,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/159c605fd5e4beb4413ff268a6a93498?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Yury Shafran",
+      "link" : "https://stackoverflow.com/users/11720740/yury-shafran"
+    },
+    "is_answered" : false,
+    "view_count" : 77,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1754318423,
+    "creation_date" : 1754317464,
+    "link" : "https://stackoverflow.com/questions/79725040/why-can-crudrepository-findbyid-return-a-hibernate-proxy",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79725061,
+    "question_id" : 79725040,
+    "body" : "<p>This is behaviour that I actually would really expect (to get a proxied object) because how would the <code>EntityManager</code> fill in the lazy loaded object on access otherwise? And why should the algorithm be optimized for already cached object?</p>\n<p>This is not related to Spring or Spring Boot or Spring Boot Data, but just depending on the actually used O/R-Mapper (though I think they will all work similar).</p>\n<p>If you get an interface you really should rely on that interface and not on an implementation (and with interface I mean available methods and fields in a <code>class</code> or <code>interface</code> or <code>enum</code> except <code>private</code> members - this is not a formal definition, sorry).</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 3391382,
+      "reputation" : 5360,
+      "user_id" : 2846138,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/2sp68.png?s=256",
+      "display_name" : "cyberbrain",
+      "link" : "https://stackoverflow.com/users/2846138/cyberbrain"
+    },
+    "creation_date" : 1754318423,
+    "last_activity_date" : 1754318423,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140676911,
+    "post_id" : 79725040,
+    "body" : "This behavior is hibernate implementation specific, not JPA or Spring. Hibernate uses proxies to lazily fetch things, while others (and hibernate too) can use byte code enhancement - weaving/modifying your entities classes as needed to fetch things on demand",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 231721,
+      "reputation" : 21335,
+      "user_id" : 496099,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/efa7510cf47d7bd79e80486246e7e39e?s=256&d=identicon&r=PG",
+      "display_name" : "Chris",
+      "link" : "https://stackoverflow.com/users/496099/chris"
+    },
+    "creation_date" : 1755619686,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

@@ -1,0 +1,46 @@
+{
+  "question" : {
+    "question_id" : 79696205,
+    "title" : "Spring Boot / JPA: &quot;Unable to locate entity descriptor&quot; after setting @OneToOne relationship to null with QueryDSL",
+    "body" : "<p>I'm encountering a javax.persistence.PersistenceException: Unable to locate entity descriptor error in a Spring Boot application using JPA and QueryDSL.</p>\n<p>The issue arises when I try to remove and delete a @OneToOne related entity (EnvelopeSignerCertificateEntity) from another entity (EnvelopeSignerEntity). Here's a simplified version of my code:</p>\n<pre><code>@Transactional\npublic void deleteCertificatesFromEnvelope(Envelope envelope) {\n    if ((envelope.status == EnvelopeStatus.COMPLETED || envelope.status == EnvelopeStatus.CANCELED)\n        &amp;&amp; Objects.nonNull(envelope.envelopeSigner) &amp;&amp; !envelope.envelopeSigner.isEmpty()) {\n\n        Predicate&lt;EnvelopeSigner&gt; existsCertificate = \n            signer -&gt; Objects.nonNull(signer.envelopeSignerCertificate);\n\n        Supplier&lt;Stream&lt;EnvelopeSigner&gt;&gt; supplierSigners = () -&gt; \n            envelope.envelopeSigner.stream().filter(existsCertificate);\n\n        removeCertificateFromSigner(supplierSigners.get());\n        removeCertificates(supplierSigners.get());\n    }\n}\n\nprivate void removeCertificateFromSigner(Stream&lt;EnvelopeSigner&gt; existsCertificate) {\n    List&lt;UUID&gt; signers = existsCertificate\n        .map(signer -&gt; signer.id)\n        .collect(Collectors.toList());\n\n    signerCustomRepository.deleteAllSignerCertificate(signers);\n}\n\nprivate void removeCertificates(Stream&lt;EnvelopeSigner&gt; existsCertificate) {\n    List&lt;UUID&gt; certificates = existsCertificate\n        .map(signer -&gt; signer.envelopeSignerCertificate.id)\n        .collect(Collectors.toList());\n\n    for (UUID certificate : certificates){\n        certificateRepository.deleteById(certificate);\n    }\n}\n</code></pre>\n<p>The deleteAllSignerCertificate method uses QueryDSL to set the foreign key to null:</p>\n<pre><code>public void deleteAllSignerCertificate(List&lt;UUID&gt; signers) {\n  QEnvelopeSignerEntity entity = QEnvelopeSignerEntity.envelopeSignerEntity;\n  new JPAUpdateClause(entityManager, entity)\n    .setNull(entity.envelopeSignerCertificate)\n    .where(entity.id.in(signers))\n    .execute();\n}\n</code></pre>\n<p>And the relationship is defined as:</p>\n<pre><code>@OneToOne(fetch = FetchType.LAZY, cascade = CascadeType.ALL)\n@JoinColumn(name = &quot;envelope_signer_certificate&quot;)\nprivate EnvelopeSignerCertificateEntity envelopeSignerCertificate;\n</code></pre>\n<p>I believe the issue may be caused by using JPAUpdateClause (from QueryDSL) to set the foreign key field (envelope_signer_certificate) to null, which breaks the relationship in the database without updating the Hibernate persistence context.</p>\n<p>So when certificateRepository.deleteById(id) is called, Hibernate still thinks the relationship is intact or tries to resolve the entity metadata, which no longer matches the state in the database — hence the &quot;Unable to locate entity descriptor&quot; exception.</p>\n<p>What I tried:</p>\n<p>Verified that EnvelopeSignerCertificateEntity is correctly annotated with @Entity.</p>\n<p>Confirmed that it's included in the entity scan (@EntityScan).</p>\n<p>Tried entityManager.clear() after the JPAUpdateClause, which avoids the error, but this is not ideal since it detaches all managed entities.</p>\n",
+    "tags" : [ "java", "spring", "spring-boot", "hibernate", "jpa" ],
+    "owner" : {
+      "account_id" : 18576371,
+      "reputation" : 1856,
+      "user_id" : 13536950,
+      "user_type" : "registered",
+      "profile_image" : "https://lh6.googleusercontent.com/-5YCVyAyF6PY/AAAAAAAAAAI/AAAAAAAAAAA/AMZuuckwy_rfMydcp7CzDEqqj3bWmuoxJg/s256-rj/photo.jpg",
+      "display_name" : "rafaelpadu",
+      "link" : "https://stackoverflow.com/users/13536950/rafaelpadu"
+    },
+    "is_answered" : false,
+    "view_count" : 88,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1752138625,
+    "creation_date" : 1752091658,
+    "link" : "https://stackoverflow.com/questions/79696205/spring-boot-jpa-unable-to-locate-entity-descriptor-after-setting-onetoone",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79696802,
+    "question_id" : 79696205,
+    "body" : "<p>I'd recommend</p>\n<p>1. Bulk Delete with QueryDSL (Most Efficient)</p>\n<pre><code>@Transactional\npublic void deleteCertificatesFromEnvelope(Envelope envelope) {\n    if ((envelope.status == EnvelopeStatus.COMPLETED || envelope.status == EnvelopeStatus.CANCELED)\n        &amp;&amp; Objects.nonNull(envelope.envelopeSigner) &amp;&amp; !envelope.envelopeSigner.isEmpty()) {\n\n        List&lt;UUID&gt; signerIds = envelope.envelopeSigner.stream()\n            .filter(signer -&gt; Objects.nonNull(signer.envelopeSignerCertificate))\n            .map(signer -&gt; signer.id)\n            .collect(Collectors.toList());\n\n        List&lt;UUID&gt; certificateIds = envelope.envelopeSigner.stream()\n            .filter(signer -&gt; Objects.nonNull(signer.envelopeSignerCertificate))\n            .map(signer -&gt; signer.envelopeSignerCertificate.id)\n            .collect(Collectors.toList());\n\n        // Delete certificates first using QueryDSL\n        QEnvelopeSignerCertificateEntity certEntity = QEnvelopeSignerCertificateEntity.envelopeSignerCertificateEntity;\n        new JPADeleteClause(entityManager, certEntity)\n            .where(certEntity.id.in(certificateIds))\n            .execute();\n\n        // Then nullify the relationship\n        QEnvelopeSignerEntity signerEntity = QEnvelopeSignerEntity.envelopeSignerEntity;\n        new JPAUpdateClause(entityManager, signerEntity)\n            .setNull(signerEntity.envelopeSignerCertificate)\n            .where(signerEntity.id.in(signerIds))\n            .execute();\n    }\n}\n</code></pre>\n<p>2. Reorder Operations - Delete Certificates First</p>\n<pre><code>@Transactional\npublic void deleteCertificatesFromEnvelope(Envelope envelope) {\n    if ((envelope.status == EnvelopeStatus.COMPLETED || envelope.status == EnvelopeStatus.CANCELED)\n        &amp;&amp; Objects.nonNull(envelope.envelopeSigner) &amp;&amp; !envelope.envelopeSigner.isEmpty()) {\n\n        Predicate&lt;EnvelopeSigner&gt; existsCertificate = \n            signer -&gt; Objects.nonNull(signer.envelopeSignerCertificate);\n\n        Supplier&lt;Stream&lt;EnvelopeSigner&gt;&gt; supplierSigners = () -&gt; \n            envelope.envelopeSigner.stream().filter(existsCertificate);\n\n        // Delete certificates BEFORE nullifying the relationship\n        removeCertificates(supplierSigners.get());\n        removeCertificateFromSigner(supplierSigners.get());\n    }\n}\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 13772044,
+      "reputation" : 328,
+      "user_id" : 9939232,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-flWE81A6HFc/AAAAAAAAAAI/AAAAAAAAAAA/F8_qZEvFdbM/s256-rj/photo.jpg",
+      "display_name" : "Hoang Vinh",
+      "link" : "https://stackoverflow.com/users/9939232/hoang-vinh"
+    },
+    "creation_date" : 1752138625,
+    "last_activity_date" : 1752138625,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : { }
+}

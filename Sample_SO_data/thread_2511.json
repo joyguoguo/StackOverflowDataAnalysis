@@ -1,0 +1,64 @@
+{
+  "question" : {
+    "question_id" : 79615527,
+    "title" : "Can&#39;t verify that in anonymous inner class method throw exception",
+    "body" : "<p>Given:\nJava 8</p>\n<p>Mockito 4.3</p>\n<p>Junit 4.11</p>\n<p>Here my java code:</p>\n<pre><code>public interface ClientListener {\n\n    void addClientStatusListener(StatusListener statusListener);\n}\n\n\n@FunctionalInterface\npublic interface StatusListener {\n\n    void statusChange(ClientStatus clientStatus);\n}\n\n\n\npublic class MyIoClientBuilder {\n\n    public MyIoClientBuilder subscribeProcessed(MyInterface myInterface) {\n        // Some logic here\n        return this;\n    }\n\n    public MyIoClientBuilder build() {\n        // some logic\n        return this;\n    }\n\n}\n\n\npublic interface MyInterface {\n\n    public void myInnerMethod(String arg);\n}\n\n\nimport com.fasterxml.jackson.core.JsonProcessingException;\nimport com.fasterxml.jackson.databind.ObjectMapper;\n\npublic class MyIoClient {\n\n    public MyIoClient(ClientListener clientListener) {\n        clientListener.addClientStatusListener(new StatusListener() {\n            @Override\n            public void statusChange(ClientStatus clientStatus) {\n                if (clientStatus.equals(ClientStatus.AUTHORIZED)) {\n                    new MyIoClientBuilder()\n                            .subscribeProcessed(new MyInterface() {\n                                @Override\n                                public void myInnerMethod(String jsonString) {\n                                    try {\n                                        Person person = new ObjectMapper().readValue(jsonString, Person.class);\n                                        System.out.println(&quot;person = &quot; + person);\n                                    } catch (JsonProcessingException e) {\n                                        throw new RuntimeException(e);\n                                    }\n                                }\n                            }).build();\n                }\n            }\n        });\n    }\n}\n</code></pre>\n<p>I need to validate that if  <strong>jsonString</strong> is invalid json then throw RuntimeException.</p>\n<p>Here my unit test:</p>\n<pre><code>    import org.junit.Test;\n    \n    import static org.assertj.core.api.Assertions.assertThatThrownBy;\n    import static org.mockito.Mockito.*;\n\n    @Test\n    public void shouldThrowRuntimeExceptionWhenJsonInvalid() {\n        // Arrange\n        ClientListener clientListenerSpy = spy(ClientListener.class);\n        doAnswer(\n                invocation -&gt; {\n                    StatusListener clientStatusListener = invocation.getArgument(0);\n                    clientStatusListener.statusChange(ClientStatus.AUTHORIZED);\n                    return null; // Void methods must return null in doAnswer()\n                })\n                .when(clientListenerSpy)\n                .addClientStatusListener(any(StatusListener.class));\n\n        // Assert\n        assertThatThrownBy(() -&gt; {\n            new MyIoClient(clientListenerSpy);\n        }).isInstanceOf(RuntimeException.class);\n    }\n</code></pre>\n<p>As result in class <strong>MyIoClient</strong> successfully call method <code>statusChange</code>.\nOK.</p>\n<p>But the method <code>myInnerMethod</code> does not call in anonymous inner class <strong>MyEmiter</strong>.</p>\n<p>As result here error:</p>\n<pre><code>java.lang.AssertionError: \nExpecting code to raise a throwable.\n</code></pre>\n",
+    "tags" : [ "java", "mockito", "junit4" ],
+    "owner" : {
+      "account_id" : 9162277,
+      "reputation" : 15965,
+      "user_id" : 6813231,
+      "user_type" : "registered",
+      "accept_rate" : 56,
+      "profile_image" : "https://i.sstatic.net/gy8Sg.jpg?s=256",
+      "display_name" : "Alexei",
+      "link" : "https://stackoverflow.com/users/6813231/alexei"
+    },
+    "is_answered" : true,
+    "view_count" : 56,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1746978672,
+    "creation_date" : 1746884107,
+    "link" : "https://stackoverflow.com/questions/79615527/cant-verify-that-in-anonymous-inner-class-method-throw-exception",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79616661,
+    "question_id" : 79615527,
+    "body" : "<p>The code you showed in your question lack an important call: the call to <code>MyInterface.myInnerMethod</code>. You subscribe the listener with the interface <code>MyIoClientBuilder</code> but you never call that method.</p>\n<p>BTW I would simplify the test itself a bit for better readability by using an <code>ArgumentCaptor</code> to fetch the outer listener and then call the method of the outer listener explicitly there:</p>\n<pre class=\"lang-java prettyprint-override\"><code>import org.junit.jupiter.api.Test;\nimport org.mockito.ArgumentCaptor;\n\nimport static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;\nimport static org.mockito.Mockito.*;\n\nclass MyIoClientTest {\n\n  @Test\n  void throws_when_Json_invalid() {\n    ClientListener clientListenerMock = mock();\n\n    new MyIoClient(clientListenerMock);\n\n    ArgumentCaptor&lt;StatusListener&gt; captor = ArgumentCaptor.forClass(StatusListener.class);\n    verify(clientListenerMock).addClientStatusListener(captor.capture());\n\n    StatusListener capturedListener = captor.getValue();\n\n    assertThatThrownBy(() -&gt; {\n      capturedListener.statusChange(ClientStatus.AUTHORIZED);\n    }).isInstanceOf(RuntimeException.class);\n  }\n}\n</code></pre>\n<p>(Nevertheless this test will still fail as your implementation or the test lacks code to trigger the inner listener that should actually throw the exception.)</p>\n",
+    "score" : 2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 3391382,
+      "reputation" : 5360,
+      "user_id" : 2846138,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/2sp68.png?s=256",
+      "display_name" : "cyberbrain",
+      "link" : "https://stackoverflow.com/users/2846138/cyberbrain"
+    },
+    "creation_date" : 1746978672,
+    "last_activity_date" : 1746978672,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140415707,
+    "post_id" : 79615527,
+    "body" : "What happens to the argument passed to <code>subscribeProcessed</code>? When is its <code>myInnerMethod</code> called (by your production code)?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 39208,
+      "reputation" : 269387,
+      "user_id" : 112968,
+      "user_type" : "registered",
+      "accept_rate" : 68,
+      "profile_image" : "https://i.sstatic.net/zHTaT.png?s=256",
+      "display_name" : "knittl",
+      "link" : "https://stackoverflow.com/users/112968/knittl"
+    },
+    "creation_date" : 1746983357,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

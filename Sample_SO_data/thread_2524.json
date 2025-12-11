@@ -1,0 +1,195 @@
+{
+  "question" : {
+    "question_id" : 79614813,
+    "title" : "`Future#get` not responding to `Thread#interrupt()` in Java",
+    "body" : "<p>I am seeing a weird interaction between try-with-resources and thread interruption in Java.</p>\n<p>What is supposed to happen is that the &quot;interrupt thread&quot; in the code below waits and then interrupts the main thread, which should cause <code>taskFuture.get(...)</code> to throw <code>InterruptedException</code>, which is supposed to close the instance of <code>Task</code>, which stops the <code>Task</code> from running.</p>\n<p>However, if the <code>Task</code> is instantiated outside try-with-resources, <code>taskFuture.get(...)</code> cannot be interrupted. It can only be interrupted if the <code>Task</code> is instantiated in try-with-resources.</p>\n<p><strong>The code:</strong></p>\n<pre><code>import java.util.concurrent.Executors;\nimport java.util.concurrent.TimeUnit;\nimport java.util.concurrent.atomic.AtomicBoolean;\n\npublic class ThreadCancellationTest {\n    private static class Task implements AutoCloseable {\n        private final AtomicBoolean canceled = new AtomicBoolean(false);\n\n        public void run() {\n            for (var i = 0; !canceled.get(); i++) {\n                if (i % 100000 == 0) {\n                    System.out.println(i);\n                }\n                for (int j = 0; j &lt; 100000; j++) {\n                    Math.sqrt(j);\n                }\n            }\n            System.out.println(&quot;Task ended&quot;);\n        }\n\n        @Override\n        public void close() {\n            System.out.println(&quot;Canceling task&quot;);\n            canceled.set(true);\n        }\n    }\n\n    public static void main(String[] args) throws Exception {\n        var mainThread = Thread.currentThread();\n\n        // Start interrupt thread\n        var thread = new Thread(() -&gt; {\n            try {\n                Thread.sleep(2000);\n                System.out.println(&quot;Interrupting main thread&quot;);\n                mainThread.interrupt();\n            } catch (InterruptedException e) {\n                // Ignore\n            }\n        });\n        thread.setDaemon(true);\n        thread.start();\n\n        // ... OPTION 1 OR OPTION 2 ...\n        \n        System.out.println(&quot;Done&quot;);\n    }\n}\n</code></pre>\n<p><strong>Then for <code>... OPTION 1 OR OPTION 2 HERE ...</code>:</strong></p>\n<p><strong>Option 1: <code>Task</code> is allocated outside of try-with-resources:</strong></p>\n<pre><code>        var task = new Task();\n        try (var taskExecutor = Executors.newSingleThreadExecutor()) {\n            var taskFuture = taskExecutor.submit(() -&gt; {\n                task.run();\n                return true;\n            });\n            var result = taskFuture.get(30_000, TimeUnit.MILLISECONDS);\n            System.out.println(&quot;Got result: &quot; + result);\n        } catch (Exception e) {\n            System.out.println(&quot;Caught exception: &quot; + e);\n            throw new RuntimeException(e);\n        } finally {\n            task.close();\n        }\n</code></pre>\n<p>The output of Option 1 is:</p>\n<pre><code>0\nInterrupting main thread\n100000\n200000\n300000\n400000\n... (keeps running) ...\n</code></pre>\n<p>i.e. <code>taskFuture.get(...)</code> never gets interrupted.</p>\n<p><strong>Option 2: <code>Task</code> is allocated in try-with-resources:</strong></p>\n<pre><code>        try (var taskExecutor = Executors.newSingleThreadExecutor();\n                     var task = new Task()) {\n            var taskFuture = taskExecutor.submit(() -&gt; {\n                task.run();\n                return true;\n            });\n            var result = taskFuture.get(30_000, TimeUnit.MILLISECONDS);\n            System.out.println(&quot;Got result: &quot; + result);\n        } catch (Exception e) {\n            System.out.println(&quot;Caught exception: &quot; + e);\n            throw new RuntimeException(e);\n        }\n</code></pre>\n<p>The output of Option 2 is:</p>\n<pre><code>0\nInterrupting main thread\nCanceling task\nTask ended\nCaught exception: java.lang.InterruptedException\nException in thread &quot;main&quot; java.lang.RuntimeException: java.lang.InterruptedException\n        at ThreadCancellationTest.main(ThreadCancellationTest2.java:55)\nCaused by: java.lang.InterruptedException\n        at java.base/java.util.concurrent.FutureTask.awaitDone(FutureTask.java:471)\n        at java.base/java.util.concurrent.FutureTask.get(FutureTask.java:203)\n        at ThreadCancellationTest.main(ThreadCancellationTest2.java:51)\n</code></pre>\n<p>i.e. <code>taskFuture.get(...)</code> can now be interrupted.</p>\n<p><strong>Huh??</strong></p>\n<p>The ONLY difference between Option 1 and Option 2 is where <code>task</code> is instantiated.</p>\n<p>This is super weird -- anyone know what's going on here?</p>\n",
+    "tags" : [ "java", "multithreading", "concurrency" ],
+    "owner" : {
+      "account_id" : 3683805,
+      "reputation" : 9340,
+      "user_id" : 3950982,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/7491f45ae073ed6bfe01b1e63fb06bf0?s=256&d=identicon&r=PG",
+      "display_name" : "Luke Hutchison",
+      "link" : "https://stackoverflow.com/users/3950982/luke-hutchison"
+    },
+    "is_answered" : true,
+    "view_count" : 123,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1746860300,
+    "creation_date" : 1746821651,
+    "link" : "https://stackoverflow.com/questions/79614813/futureget-not-responding-to-threadinterrupt-in-java",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79615233,
+    "question_id" : 79614813,
+    "body" : "<p>As @Slaw already suspected in the question comments while I composed this answer, its fundamentally a sequencing problem, hidden by a bit of compiler syntactic sugar.</p>\n<p><a href=\"https://docs.oracle.com/javase/specs/jls/se21/html/jls-14.html#jls-14.20.3.2\" rel=\"nofollow noreferrer\">JLS 14.20.3.2</a> states that this:</p>\n<pre><code>   /* task creation if option 1 */\n   try (/* option 1 or 2 resource statement here */) {\n        var taskFuture = taskExecutor.submit(() -&gt; {\n            task.run();\n            return true;\n        });\n        var result = taskFuture.get(30_000, TimeUnit.MILLISECONDS);\n        System.out.println(&quot;Got result: &quot; + result);\n    } catch (Exception e) {\n        System.out.println(&quot;Caught exception: &quot; + e);\n        throw new RuntimeException(e);\n    } /* finally if option 1 */\n</code></pre>\n<p>is fundamentally treated as this:</p>\n<pre><code>   /* task creation if option 1 */\n   try{\n        try (/* option 1 or 2 resource statement here */){\n            var taskFuture = taskExecutor.submit(() -&gt; {\n                task.run();\n                return true;\n            });\n            var result = taskFuture.get(30_000, TimeUnit.MILLISECONDS);\n            System.out.println(&quot;Got result: &quot; + result);\n        }\n    } catch (Exception e) {\n        System.out.println(&quot;Caught exception: &quot; + e);\n        throw new RuntimeException(e);\n    }  /* finally if option 1 */\n</code></pre>\n<p>Which already hints at the problem.</p>\n<ul>\n<li>In Option 1, the compiler-generated invocation of <code>taskExecutor.close()</code> will happen (as part of exiting the inner try) before your own finally ever executes, leading to taskExecutor shutdown hanging forever* because the <code>AtomicBoolean</code> value is not yet true.</li>\n<li>In Option 2, <a href=\"https://docs.oracle.com/javase/specs/jls/se21/html/jls-14.html#jls-14.20.3\" rel=\"nofollow noreferrer\">JLS 14.20.3</a> dictates that &quot;Resources are closed in the reverse order from that in which they were initialized [...]&quot;. Hence, the task will be closed (setting the <code>AtomicBoolean</code> to <code>true</code>) before the call to <code>taskExecutor.close()</code>, which means that method returns as soon as the task has (quite soon, if not already) terminated.</li>\n</ul>\n* my JVM's implementation (in `java.util.concurrent.ExecutorService`) waits for 1 day for tasks to bail before giving up, however, that time isn't specced.\n",
+    "score" : 4,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 30223964,
+      "reputation" : 252,
+      "user_id" : 23162960,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2451acfac254a6fc75757ecf89d75f9a?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Jannik S.",
+      "link" : "https://stackoverflow.com/users/23162960/jannik-s"
+    },
+    "creation_date" : 1746860300,
+    "last_activity_date" : 1746860300,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140412992,
+    "post_id" : 79614813,
+    "body" : "In the second option, due to the order you declared the resources in the <i>try-with-resources</i> statement, the <code>Task::close()</code> method is invoked, which causes the task to terminate, before the <code>ExecutorService::close()</code> method.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 8532578,
+      "reputation" : 49884,
+      "user_id" : 6395627,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Slaw",
+      "link" : "https://stackoverflow.com/users/6395627/slaw"
+    },
+    "creation_date" : 1746857729,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140412990,
+    "post_id" : 79614813,
+    "body" : "For option one, most likely the problem is that <code>ExecutorService::close()</code> is being invoked implicitly by the <i>try-with-resources</i> statement <b>before</b> the <code>catch</code> or <code>finally</code> blocks are executed. The <code>ExecutorService::close()</code> method initiates an orderly shutdown as if you called <code>shutdown()</code>, which means no already-submitted tasks are cancelled, and then <i>waits to return until all submitted tasks have completed</i>. But your task never completes and so your program keeps running; the exception is never printed, and <code>task.close()</code> is never executed.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 8532578,
+      "reputation" : 49884,
+      "user_id" : 6395627,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Slaw",
+      "link" : "https://stackoverflow.com/users/6395627/slaw"
+    },
+    "creation_date" : 1746857555,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140412387,
+    "post_id" : 79614813,
+    "body" : "@JayC667 as Thomas said, <code>isInterrupted</code> does not clear the interrupt status of the thread, only <code>interrupted</code> does. And I wasn&#39;t trying to interrupt the thread started in the executor, which is why I grabbed a reference to <code>mainThread</code>. I also significantly expanded the amount of detail in the question.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3683805,
+      "reputation" : 9340,
+      "user_id" : 3950982,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/7491f45ae073ed6bfe01b1e63fb06bf0?s=256&d=identicon&r=PG",
+      "display_name" : "Luke Hutchison",
+      "link" : "https://stackoverflow.com/users/3950982/luke-hutchison"
+    },
+    "creation_date" : 1746823425,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140412361,
+    "post_id" : 79614813,
+    "body" : "@ThomasKl&#228;ger Oh yes, you&#39;re 100% right. <code>Thread.interrupted</code> (<a href=\"https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/lang/Thread.html#interrupted()\" rel=\"nofollow noreferrer\">docs.oracle.com/en/java/javase/21/docs/api/java.base/java/l&zwnj;&#8203;ang/&hellip;</a>) will clear the flag tho. I always thought that <code>Thread.interrupted()</code> is just a short of <code>Thread.currentThread().isInterrupted()</code>.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 2182934,
+      "reputation" : 2660,
+      "user_id" : 1932011,
+      "user_type" : "registered",
+      "accept_rate" : 71,
+      "profile_image" : "https://www.gravatar.com/avatar/612163480a1ccb4785fd647a003eefbb?s=256&d=identicon&r=PG",
+      "display_name" : "JayC667",
+      "link" : "https://stackoverflow.com/users/1932011/jayc667"
+    },
+    "creation_date" : 1746822776,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140412342,
+    "post_id" : 79614813,
+    "body" : "@JayC667 no, according to the <a href=\"https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/lang/Thread.html#isInterrupted()\" rel=\"nofollow noreferrer\">documentataion</a> <code>Thread.isInterrupted()</code> <b>does not</b> change the interrupted status: <i>The interrupted status of the thread is unaffected by this method.</i>",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 7423601,
+      "reputation" : 21950,
+      "user_id" : 5646962,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/950788cd150c2e596944181dfd8421af?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Thomas Kl&#228;ger",
+      "link" : "https://stackoverflow.com/users/5646962/thomas-kl%c3%a4ger"
+    },
+    "creation_date" : 1746822389,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140412332,
+    "post_id" : 79614813,
+    "body" : "And a <code>Thread</code>&#39;s <code>isInterrupted</code>/<code>interrupted</code> flag will be set to <code>false</code> as soon as anyone checks it ONCE.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 2182934,
+      "reputation" : 2660,
+      "user_id" : 1932011,
+      "user_type" : "registered",
+      "accept_rate" : 71,
+      "profile_image" : "https://www.gravatar.com/avatar/612163480a1ccb4785fd647a003eefbb?s=256&d=identicon&r=PG",
+      "display_name" : "JayC667",
+      "link" : "https://stackoverflow.com/users/1932011/jayc667"
+    },
+    "creation_date" : 1746822187,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140412330,
+    "post_id" : 79614813,
+    "body" : "<code>newSingleThreadExecutor</code> will create ONE new Thread. That Thread is NOT the main thread. So you can interrupt that main Thread all you want, it will never influence the <i>doWork</i> <code>Task</code>. Until after 30 seconds, the timeout of <code>taskFuture.get()</code> will occur, entering the <code>final</code> part, there calling <code>doWork.cancel();</code>, ending the task execution.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2182934,
+      "reputation" : 2660,
+      "user_id" : 1932011,
+      "user_type" : "registered",
+      "accept_rate" : 71,
+      "profile_image" : "https://www.gravatar.com/avatar/612163480a1ccb4785fd647a003eefbb?s=256&d=identicon&r=PG",
+      "display_name" : "JayC667",
+      "link" : "https://stackoverflow.com/users/1932011/jayc667"
+    },
+    "creation_date" : 1746822114,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79615233" : [ {
+      "comment_id" : 140856354,
+      "post_id" : 79615233,
+      "body" : "@Luke The design means at least two things: (1) The <code>catch</code> block is capable of catching exceptions thrown by <code>close()</code> itself; (2) The <code>finally</code> block is executed <i>after</i> the resources are closed. Both of those seem like the desired and safe thing to me.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 8532578,
+        "reputation" : 49884,
+        "user_id" : 6395627,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Slaw",
+        "link" : "https://stackoverflow.com/users/6395627/slaw"
+      },
+      "creation_date" : 1763264330,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140691645,
+      "post_id" : 79615233,
+      "body" : "Thank you for this answer! That JLS section really contradicts what I had understood about how <code>finally</code> works with try-with-resources (and it does not seem like safe design at all... presumably this was only done for backwards compatibility reasons).",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 3683805,
+        "reputation" : 9340,
+        "user_id" : 3950982,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/7491f45ae073ed6bfe01b1e63fb06bf0?s=256&d=identicon&r=PG",
+        "display_name" : "Luke Hutchison",
+        "link" : "https://stackoverflow.com/users/3950982/luke-hutchison"
+      },
+      "creation_date" : 1756156527,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

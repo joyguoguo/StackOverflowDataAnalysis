@@ -1,0 +1,131 @@
+{
+  "question" : {
+    "question_id" : 79716060,
+    "title" : "JTable custom CellRenderer: Display Cell in color depending on another property of current item",
+    "body" : "<p>I have a class Person, with an attribute <code>boolean isDead</code>.</p>\n<p>I want to display a list or <code>Person</code>s in a <code>JTable</code>. Each row in the <code>JTable</code> represents one <code>Person</code>.</p>\n<p>I want to display the <code>Person</code>'s name in a different color if the <code>Person</code> is dead. So I need to connect the current row to the corresponding object <code>Person</code>.</p>\n<p>Using the code below, I need to pass the <code>TableModel</code> into the <code>TableCellRenderer</code> to make this work: <code>PersonTablecellRenderer</code> CTOR accepts the <code>PersonTableModel</code> to look up the line's <code>Person</code> item later (<code>final Person person = mModel.getItemInRow(modelIndex);</code>).</p>\n<p>Is there any cleaner way to go about it?</p>\n<p>(yes, I put this all into static inner classes for this demo, so you can copy it in one go and don't have to mess with 100s of files; IRL these are lots of separate classes and files)</p>\n<pre><code>package stackoverflow;\n\nimport java.awt.BorderLayout;\nimport java.awt.Color;\nimport java.awt.Component;\nimport java.util.ArrayList;\nimport java.util.function.Function;\n\nimport javax.swing.JFrame;\nimport javax.swing.JScrollPane;\nimport javax.swing.JTable;\nimport javax.swing.UIManager;\nimport javax.swing.event.TableModelListener;\nimport javax.swing.table.DefaultTableCellRenderer;\nimport javax.swing.table.TableModel;\n\n\n\npublic class ItemBasedTableCellRenderer extends JFrame {\n    private static final long serialVersionUID = 1538589452450196943L;\n\n\n\n    public static void main(final String... args) throws Exception {\n        UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName());\n\n        new ItemBasedTableCellRenderer().setVisible(true);\n    }\n\n\n\n    /* Library class. Uses a observable list, but this would be too much code to embed here, so we'll ignore the update/repaint stuff here */\n    public abstract class JcTableModel&lt;T&gt; implements TableModel {\n        protected final ArrayList&lt;TableModelListener&gt;       mListeners  = new ArrayList&lt;&gt;();\n        protected final ArrayList&lt;JcJTableColumnWrapper&lt;T&gt;&gt; mColumns    = new ArrayList&lt;&gt;();\n        protected final ArrayList&lt;T&gt;                        mItems      = new ArrayList&lt;&gt;();    // this would be observable and triggering TableModelEvents IRL\n\n        public JcJTableColumnWrapper&lt;T&gt; addColumn(final String pTitle, final Function&lt;T, Object&gt; pGetValueLambda, final Class&lt;?&gt; pColType) {\n            final JcJTableColumnWrapper&lt;T&gt; wrapper = new JcJTableColumnWrapper&lt;&gt;(pTitle, pGetValueLambda, pColType);\n            mColumns.add(wrapper);\n            return wrapper;\n        }\n\n        public ArrayList&lt;T&gt; getBackingList() {\n            return mItems;\n        }\n\n        @Override public int getColumnCount() {\n            return mColumns.size();\n        }\n        @Override public int getRowCount() {\n            return getBackingList().size();\n        }\n        @Override public String getColumnName(final int pColumn) {\n            return mColumns.get(pColumn).mTitle;\n        }\n        @Override public Class&lt;?&gt; getColumnClass(final int pColumnIndex) {\n            return mColumns.get(pColumnIndex).mColType;\n        }\n\n        @Override public Object getValueAt(final int pRow, final int pColumn) {\n            final T item = getBackingList().get(pRow);\n            return mColumns.get(pColumn).getValue(item);\n        }\n        @Override public void setValueAt(final Object pArg0, final int pArg1, final int pArg2) { /* */}\n\n        @Override public boolean isCellEditable(final int pRow, final int pColumn) {\n            return false;\n        }\n\n        @Override public void addTableModelListener(final TableModelListener pArg0) {\n            mListeners.add(pArg0);\n        }\n        @Override public void removeTableModelListener(final TableModelListener pArg0) {\n            mListeners.remove(pArg0);\n        }\n\n        public T getItemInRow(final int pRowIndex) {\n            if (pRowIndex &lt; 0 || mItems.size() &lt;= pRowIndex) throw new IllegalArgumentException(&quot;Invalid index [&quot; + pRowIndex + &quot;]. Possible: [&quot; + (mItems.size() &lt; 1 ? &quot;NONE&quot; : (&quot;0-&quot; + (mItems.size() - 1)) + &quot;]&quot;));\n            return mItems.get(pRowIndex);\n        }\n    }\n\n    /* Library class */\n    public class JcJTableColumnWrapper&lt;T&gt; {\n        public final String                 mTitle;\n        private final Function&lt;T, Object&gt;   mLambda;\n        public final Class&lt;?&gt;               mColType;\n\n        public JcJTableColumnWrapper(final String pTitle, final Function&lt;T, Object&gt; pGetValueLambda, final Class&lt;?&gt; pColType) {\n            mTitle = pTitle;\n            mLambda = pGetValueLambda;\n            mColType = pColType;\n        }\n\n        public Object getValue(final T pT) {\n            return mLambda.apply(pT);\n        }\n    }\n\n    static class Person {\n        public final String     mName;\n        public final int        mAge;\n        public final int        mHeight;\n        public final boolean    mIsDead;\n\n        public Person(final String pName, final int pAge, final int pHeight, final boolean pIsDead) {\n            mName = pName;\n            mAge = pAge;\n            mHeight = pHeight;\n            mIsDead = pIsDead;\n        }\n    }\n\n    private class PersonTableModel extends JcTableModel&lt;Person&gt; {\n        public PersonTableModel() {\n            addColumn(&quot;Name&quot;, i -&gt; i.mName, String.class);\n            addColumn(&quot;Age&quot;, i -&gt; Integer.valueOf(i.mAge), Integer.class);\n            addColumn(&quot;Height&quot;, i -&gt; Integer.valueOf(i.mHeight), Integer.class);\n        }\n    }\n\n    static private class PersonTablecellRenderer extends DefaultTableCellRenderer {\n        private static final long       serialVersionUID    = -2926459004469528514L;\n        private final PersonTableModel  mModel;\n\n        public PersonTablecellRenderer(final PersonTableModel pCreaturesModel) {\n            mModel = pCreaturesModel; // &lt;-------- passing this in feels unclean\n        }\n\n        @Override public Component getTableCellRendererComponent(final JTable table, final Object value, final boolean isSelected, final boolean hasFocus, final int row, final int column) {\n            final Component c = super.getTableCellRendererComponent(table, value, isSelected, hasFocus, row, column);\n            final int modelIndex = table.convertRowIndexToModel(row);\n            final Person person = mModel.getItemInRow(modelIndex);\n            final Color col = person.mIsDead ? Color.GRAY : Color.WHITE;\n            c.setBackground(col);\n            System.out.println(&quot;\\tvalue=&quot; + value + &quot;\\trow=&quot; + row + &quot;\\tperson=&quot; + person);\n            return c;\n        }\n    }\n\n\n\n    private final JTable                    gTable                      = new JTable();\n    private final PersonTableModel          mPersonTableModel           = new PersonTableModel();\n    private final PersonTablecellRenderer   mPersonTableCellRenderer    = new PersonTablecellRenderer(mPersonTableModel);\n\n    public ItemBasedTableCellRenderer() {\n        setDefaultCloseOperation(DISPOSE_ON_CLOSE);\n        setTitle(&quot;Item Based TableCellRenderer - Test&quot;);\n        setLayout(new BorderLayout());\n\n        gTable.setAutoCreateRowSorter(true);\n        gTable.setModel(mPersonTableModel);\n        gTable.setDefaultRenderer(String.class, mPersonTableCellRenderer);\n        add(new JScrollPane(gTable));\n\n        final ArrayList&lt;Person&gt; bl = mPersonTableModel.getBackingList();\n        bl.add(new Person(&quot;Peter&quot;, 20, 183, false));\n        bl.add(new Person(&quot;Zenzi&quot;, 35, 160, true));\n        bl.add(new Person(&quot;Jockl&quot;, 50, 178, false));\n        bl.add(new Person(&quot;Mare&quot;, 34, 174, false));\n\n        setBounds(800, 300, 400, 400);\n    }\n\n\n\n}\n</code></pre>\n",
+    "tags" : [ "java", "swing", "jtable", "tablecellrenderer", "tablemodel" ],
+    "owner" : {
+      "account_id" : 2182934,
+      "reputation" : 2660,
+      "user_id" : 1932011,
+      "user_type" : "registered",
+      "accept_rate" : 71,
+      "profile_image" : "https://www.gravatar.com/avatar/612163480a1ccb4785fd647a003eefbb?s=256&d=identicon&r=PG",
+      "display_name" : "JayC667",
+      "link" : "https://stackoverflow.com/users/1932011/jayc667"
+    },
+    "is_answered" : true,
+    "view_count" : 93,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1753603128,
+    "creation_date" : 1753574363,
+    "link" : "https://stackoverflow.com/questions/79716060/jtable-custom-cellrenderer-display-cell-in-color-depending-on-another-property",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79716233,
+    "question_id" : 79716060,
+    "body" : "<p>You implemented the TableCellRenderer already - it has only one method:</p>\n<p><a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.desktop/javax/swing/table/TableCellRenderer.html#getTableCellRendererComponent(javax.swing.JTable,java.lang.Object,boolean,boolean,int,int)\" rel=\"nofollow noreferrer\">getTableCellRendererComponent(jJTable table, Object value, boolean isSelected, boolean hasFocus, int row, int column)</a></p>\n<p>Did you notice that the whole JTable is passed in, and with that the model (<code>table.getModel()</code>)?</p>\n<p>So you can get the other value using</p>\n<pre><code>table.getModel().getValueAt(row, otherColumn)\n</code></pre>\n<p>I prefer to add a method <code>getRow(int)</code> to my table models to I can retrieve the row entity (in your case Person) and do the needful. This requires some type casting but keeps the code more robust to visualization changes. But having mentioned that I see you have an <code>getItemInRow()</code> anyway.</p>\n<pre><code>((PersonTableModel)table).getItemInRow(...)\n</code></pre>\n<p>On top you likely want to modify foreground/background color based on <code>isSelected</code>, and add a border if `hasFocus`.</p>\n<p>As a result you can skip passing the model to the constructor.</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 5289146,
+      "reputation" : 9940,
+      "user_id" : 4222206,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/416696430ab23f397a5dbeda73e72896?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "queeg",
+      "link" : "https://stackoverflow.com/users/4222206/queeg"
+    },
+    "creation_date" : 1753602779,
+    "last_activity_date" : 1753603128,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79716233" : [ {
+      "comment_id" : 140635927,
+      "post_id" : 79716233,
+      "body" : "@JayC667 In such cases, where everything is fixed, I do not even create nested classes; I implement <code>TableCellRenderer</code> via lambda expression then (typically delegating to a <code>formatXyzProperty</code> method in the table class which does the work. Those renders can’t be used in the wrong context (unless someone is trying really hard)",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 3211603,
+        "reputation" : 300981,
+        "user_id" : 2711488,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+        "display_name" : "Holger",
+        "link" : "https://stackoverflow.com/users/2711488/holger"
+      },
+      "creation_date" : 1754063670,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140635904,
+      "post_id" : 79716233,
+      "body" : "@Holger That&#39;s also an interesting solution. IRL I&#39;m using a custom <code>MyTable extends JTable</code> that improves access/control over selected items drastically (taking care of the view/model index problems) where I also can dictate the access to the <code>TableModel</code>, thus the user simply cannot use &#39;wrong&#39; instance, because whatever he uses has and manages its own data.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2182934,
+        "reputation" : 2660,
+        "user_id" : 1932011,
+        "user_type" : "registered",
+        "accept_rate" : 71,
+        "profile_image" : "https://www.gravatar.com/avatar/612163480a1ccb4785fd647a003eefbb?s=256&d=identicon&r=PG",
+        "display_name" : "JayC667",
+        "link" : "https://stackoverflow.com/users/1932011/jayc667"
+      },
+      "creation_date" : 1754063269,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140635505,
+      "post_id" : 79716233,
+      "body" : "@JayC667 Both solutions will fail if the wrong <code>TableModel</code> is used. Trying to get the <code>Person</code> from the right <code>TableModel</code> has no worth if entirely unrelated information is displayed anyway. Also, the index might be out of bounds. One alternative, we use, is to never extract the properties in the table model—all columns provide the row entity and it’s always the cell renderer extracting the property that is displayed. That way, using other properties for colors, borders, tooltips, etc. works easily. But other built-in features stop working out-of-the-box. In our case, it’s acceptable.",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 3211603,
+        "reputation" : 300981,
+        "user_id" : 2711488,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+        "display_name" : "Holger",
+        "link" : "https://stackoverflow.com/users/2711488/holger"
+      },
+      "creation_date" : 1754055803,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140621394,
+      "post_id" : 79716233,
+      "body" : "Oh, if the renderer is applied with the wrong tablemodel the cast will fail (<code>ClassCastException</code>). Or you can throw a more talking exception (<code>throw new UnsupportedArgumentException(&#39;This renderer requires ...&quot;</code>)`. But in the end it is your code, so you are in control of weaving the classes into a GUI, right?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 5289146,
+        "reputation" : 9940,
+        "user_id" : 4222206,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/416696430ab23f397a5dbeda73e72896?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "queeg",
+        "link" : "https://stackoverflow.com/users/4222206/queeg"
+      },
+      "creation_date" : 1753608177,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140621387,
+      "post_id" : 79716233,
+      "body" : "I noticed that the JTable itself is passed - but in that case I&#39;d need casting (as you do), and I find that even worse than my solution, because of all the pitfalls: How to programmatically prevent another <code>TableModel</code> from being used? What, IF it gets used? No access to the item anymore. You&#39;re perfectly right about the <i>more robust to visualization changes</i>. I&#39;ll keep thinking a bit more into that direction. Thank you.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2182934,
+        "reputation" : 2660,
+        "user_id" : 1932011,
+        "user_type" : "registered",
+        "accept_rate" : 71,
+        "profile_image" : "https://www.gravatar.com/avatar/612163480a1ccb4785fd647a003eefbb?s=256&d=identicon&r=PG",
+        "display_name" : "JayC667",
+        "link" : "https://stackoverflow.com/users/1932011/jayc667"
+      },
+      "creation_date" : 1753607433,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

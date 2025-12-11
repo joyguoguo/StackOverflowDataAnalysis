@@ -1,0 +1,293 @@
+{
+  "question" : {
+    "question_id" : 79636650,
+    "title" : "Why is Java&#39;s Arrays.sort(int[]) 5&#215; faster than C++ std::sort(vector&lt;int&gt;)?",
+    "body" : "<p>I'm running a benchmark to compare sorting performance between Java and C++.\nSurprisingly, Java's Arrays.sort(int[]) is more than 5× faster than C++'s std::sort(std::vector) — even when compiling in Release mode with -O3.</p>\n<p>Furthermore,\nJava Arrays.sort(int[]) is over 30× faster than Collections.sort(List) in the same JVM process, same data (although uses Integer instead int, but.. 30x?), same size.\nThis shows an immense performance gap between primitive array sorting and object-based collections.</p>\n<p>What I did:</p>\n<ul>\n<li>Java uses Arrays.sort(int[]) on a freshly generated int[]</li>\n<li>Java also tests Collections.sort(List) built from the same input</li>\n<li>C++ uses std::sort(std::vector) with mt19937-generated input</li>\n<li>All benchmarks run until the total measured time exceeds 1 second</li>\n</ul>\n<p>C++ compiled with:</p>\n<pre><code>set(CMAKE_CXX_STANDARD 20)\ntarget_compile_options(sort PRIVATE $&lt;$&lt;CONFIG:Release&gt;:-O3&gt;)\n(though CMake’s Release config already applies -O3)\n</code></pre>\n<p>Same results in both GCC and Clang builds</p>\n<p>My questions:\nIs there something wrong with how I'm measuring time or using std::sort() in C++ or Java?\nIs Java’s Arrays.sort(int[]) really just that well-optimized?\nAnd how is it possible that Java's primitive sort is 30× faster than its own object-based Collections.sort()?</p>\n<p>Would love your thoughts!</p>\n<p>My changes in code: I comment out time-consumed tests for boxed Integer for Java\nbecause main problem is comparison between JAva and C++\nmy code\nJava:</p>\n<pre><code>import java.util.*;\nimport java.util.stream.Collectors;\n/*I comment time-consuming tests for boxed, due to main problem\n* java - c++ comparsin */\n\nclass CounterComparator implements Comparator&lt;Integer&gt; {\n    public long comparisons = 0;\n\n    @Override\n    public int compare(Integer a, Integer b) {\n        comparisons++;\n        return Integer.compare(a, b);\n    }\n}\n\npublic class Main {\n    public static double log2(double x) {\n        return Math.log(x) / Math.log(2);\n    }\n\n    public static void bench() {\n        Random rand = new Random();\n        ArrayList&lt;Double&gt; results = new ArrayList&lt;&gt;();\n        int minMeasureTime = 1_000_000_000;\n        int[] sizes = {\n                //1_000, 2_000, 5_000,\n                //10_000, 20_000, 50_000,\n                //100_000, 200_000, 500_000,\n                1_000_000, 2_000_000, 5_000_000};\n        long sum1 = 0, sum2 = 0;\n        for (int size : sizes) {\n            System.out.printf(&quot;%nsize %d%n&quot;, size);\n            long best1 = Long.MAX_VALUE;\n            long worst1 = Long.MIN_VALUE;\n            //long best1a = Long.MAX_VALUE;\n            //long best2 = Long.MAX_VALUE;\n            long measureTime = 0;\n            int nTrials = 0;\n            do {\n                int[] numbers = new int[size];\n                for (int i = 0; i &lt; size; i++) {\n                    numbers[i] = rand.nextInt();\n                }\n               /* Integer[] boxed = Arrays.stream(numbers)\n                        .boxed()\n                        .toArray(Integer[]::new);\n                ArrayList&lt;Integer&gt; list = new ArrayList&lt;&gt;(\n                        Arrays.stream(numbers).boxed().toList()\n                );*/\n                long startTime1 = System.nanoTime();\n                Arrays.sort(numbers);\n                long endTime1 = System.nanoTime();\n                long sortTime1 = endTime1 - startTime1;\n                if (sortTime1 &lt; best1) best1 = sortTime1;\n                if (sortTime1 &gt; worst1) worst1 = sortTime1;\n                measureTime += sortTime1;\n\n                /*long startTime1a = System.nanoTime();\n                Arrays.sort(boxed);\n                long endTime1a = System.nanoTime();\n                long sortTime1a = endTime1a - startTime1a;\n                if (sortTime1a &lt; best1a) best1a = sortTime1a;\n                measureTime += sortTime1a;\n\n                long startTime2 = System.nanoTime();\n                Collections.sort(list);\n                long endTime2 = System.nanoTime();\n                long sortTime2 = endTime2 - startTime2;\n                if (sortTime2 &lt; best2) best2 = sortTime2;\n                measureTime += sortTime2;*/\n                for (int i = 0; i &lt; size; i++) {\n                    sum1 += (long) i * numbers[i];\n                    //sum2 += (long) i * list.get(i);\n                }\n                nTrials++;\n            } while (measureTime &lt; minMeasureTime || nTrials &lt; 4);\n            double avg1 = (double)measureTime/nTrials;;\n            System.out.printf(&quot;nTrials=%d worst/best=%f avg/best=%f%n&quot;,\n                    nTrials, (double) worst1 / best1, (double) avg1 / best1);\n            System.out.printf(&quot;array sort time %f ms%n&quot;, (double) best1 / 1e6);\n            results.add((double) best1 / 1e6);\n            System.out.printf(&quot;array sort time/size/log2(size) %f ns%n&quot;, (double) best1 / size / log2(size));\n            //System.out.printf(&quot;boxed sort time %f times worse%n&quot;, (double) best1a / best1);\n            //System.out.printf(&quot;list sort time %f times worse%n&quot;, (double) best2 / best1);\n        }\n        System.out.printf(&quot;%n%n%d%n%n&quot;, sum1);\n        System.out.println(&quot;std::vector&lt;double&gt; javaResults = {&quot;);\n        for (int n = 0; n&lt;results.size(); n++) {\n            if (n%3==0) System.out.print(&quot;    &quot;);\n            double result = results.get(n);\n            System.out.printf(&quot;%f,&quot;, result);\n            if (n%3==2) System.out.println();\n        }\n        System.out.println(&quot;};&quot;);\n\n    }\n\n    public static void instrumentedSort() {\n        List&lt;Integer&gt; list = new ArrayList&lt;&gt;();\n        int size = 5_000_000;\n        Random rand = new Random();\n        for (int i = 0; i &lt; size; i++) {\n            list.add(rand.nextInt());\n        }\n\n        CounterComparator cmp = new CounterComparator();\n        list.sort(cmp);\n\n        System.out.println(&quot;Comparisons: &quot; + (double)cmp.comparisons/size);\n    }\n\n    public static void main(String[] args) {\n        //System.out.println(System.getProperty(&quot;java.version&quot;));\n        bench();\n        //instrumentedSort();\n    }\n}\n</code></pre>\n<p>C++</p>\n<pre><code>#include &lt;iostream&gt;\n#include &lt;vector&gt;\n#include &lt;algorithm&gt;\n#include &lt;random&gt;\n#include &lt;chrono&gt;\n#include &lt;cmath&gt;\n#include &lt;limits&gt;\n#include &quot;instrumented.h&quot;\n\ndouble log2(double x) {\n    return std::log(x) / std::log(2.0);\n}\n\nvoid bench() {\n    std::mt19937 rng(std::random_device{}());\n    std::uniform_int_distribution&lt;int&gt; dist(std::numeric_limits&lt;int&gt;::min(), std::numeric_limits&lt;int&gt;::max());\n\n    const long long minMeasureTime = 1'000'000'000; // 1 sekunda w ns\n    std::vector&lt;double&gt; javaResults = {\n        12.137375,25.167403,70.512346,\n    };\n\n    std::vector&lt;int&gt; sizes = {\n        // 1'000, 2'000, 5'000,\n        // 10'000, 20'000, 50'000,\n        // 100'000, 200'000, 500'000,\n        1'000'000, 2'000'000, 5'000'000\n    };\n\n    long long sum = 0;\n    for (int n = 0; n &lt; sizes.size(); ++n) {\n        int size = sizes[n];\n        std::cout &lt;&lt; &quot;\\nsize &quot; &lt;&lt; size &lt;&lt; &quot;\\n&quot;;\n\n        long long best = std::numeric_limits&lt;long long&gt;::max();\n        long long worst = std::numeric_limits&lt;long long&gt;::min();\n        long long totalTime = 0;\n        int nTrials = 0;\n\n        do {\n            std::vector&lt;int&gt; numbers(size);\n            for (int&amp; num : numbers) {\n                num = dist(rng);\n            }\n\n            auto start = std::chrono::high_resolution_clock::now();\n            std::sort(numbers.begin(), numbers.end());\n            auto end = std::chrono::high_resolution_clock::now();\n\n            auto elapsed = std::chrono::duration_cast&lt;std::chrono::nanoseconds&gt;(end - start).count();\n            if (elapsed &lt; best) best = elapsed;\n            if (elapsed &gt; worst) worst = elapsed;\n            totalTime += elapsed;\n\n            for (int i = 0; i &lt; size; ++i) {\n                sum += i + numbers[i];\n            }\n\n            ++nTrials;\n        } while (totalTime &lt; minMeasureTime || nTrials &lt; 4);\n\n        double avg = static_cast&lt;double&gt;(totalTime) / nTrials;\n        std::cout &lt;&lt; &quot;nTrials = &quot; &lt;&lt; nTrials &lt;&lt; &quot;\\n&quot;;\n        std::cout &lt;&lt; &quot;worst/best = &quot; &lt;&lt; (double)worst/best &lt;&lt; &quot;\\n&quot;;\n        std::cout &lt;&lt; &quot;avg/best = &quot; &lt;&lt; avg / best &lt;&lt; &quot;\\n&quot;;\n        std::cout &lt;&lt; &quot;vector sort time &quot; &lt;&lt; best / 1e6 &lt;&lt; &quot; ms\\n&quot;;\n        std::cout &lt;&lt; &quot;vector sort time/size/log2(size) = &quot;\n                  &lt;&lt; best / (size * log2(size)) &lt;&lt; &quot; ns\\n&quot;;\n        std::cout &lt;&lt; &quot;cpp/java = &quot; &lt;&lt; (best/1e6)/javaResults[n] &lt;&lt; &quot;\\n&quot;;\n    }\n\n    std::cout &lt;&lt; &quot;\\n\\n&quot; &lt;&lt; sum &lt;&lt; &quot;\\n&quot;;\n}\n\nvoid instrumentedSort() {\n    const int size = 5'000'000;\n    std::mt19937 rng(std::random_device{}());\n    std::uniform_int_distribution&lt;int&gt; dist(std::numeric_limits&lt;int&gt;::min(), std::numeric_limits&lt;int&gt;::max());\n    std::vector&lt;Instrumented&gt; v(size);\n    for (auto&amp; num : v) {\n        num.value = dist(rng);\n    }\n\n    std::sort(v.begin(), v.end());\n\n    std::cout &lt;&lt; &quot;Comparisons: &quot; &lt;&lt; (double)Counters::comparisons/size &lt;&lt; &quot;\\n&quot;;\n    std::cout &lt;&lt; &quot;Moves:       &quot; &lt;&lt; (double)Counters::moves/size &lt;&lt; &quot;\\n&quot;;\n}\n\nint main() {\n    bench();\n    instrumentedSort();\n    return 0;\n}\n\n</code></pre>\n<p>The method involves repeating the measurement multiple times (at least 4) for both Java and C++. For short-running cases, more iterations may be performed — up to a full second of total measured time. The shortest measured time is selected to avoid skewing the average due to outlier slow runs.</p>\n<p>The measurement for Integer[] in Java yields results comparable to — or even slightly worse than — List, which suggests that the entire slowdown is due to boxing, not the List abstraction itself.</p>\n<p>Instrumentation shows that C++ performs about 28% more comparisons than Java, which may partially explain the difference, but not the full performance gap.</p>\n<p>I don't measure time for instrumented sort. I am using gcc and clang release compilation for C++ and Java version 24.0.1.</p>\n<p>My example results, for 5_000_000 items:\nJava:</p>\n<pre class=\"lang-java prettyprint-override\"><code>size 5000000\narray sort time 72.074770 ms\narray sort time/size/log2(size) 0.647761 ns\nboxed sort time 37.159039 times worse\nlist sort time 36.949433 times worse\n\nComparisons: 21.0246302\n</code></pre>\n<p>C++</p>\n<pre class=\"lang-cpp prettyprint-override\"><code>size 5000000\navg/best = 1.01008\nvector sort time 392.507 ms\nvector sort time/size/log2(size) = 3.5276 ns\ncpp/java = 5.19037\n\nComparisons: 26.5094\nMoves:       18.3229\n</code></pre>\n<p>Regarding the uniqueness of random results:</p>\n<p>Test with average, best and worst results:</p>\n<pre><code>size 5000000\nnTrials=13 worst/best=1.532365 avg/best=1.158036\narray sort time 69.648759 ms\narray sort time/size/log2(size) 0.625958 ns\nboxed sort time 132426940110.372620 times worse\nlist sort time 132426940110.372620 times worse\n\nstd::vector&lt;double&gt; javaResults = {\n    0.005378,0.012421,0.036037,\n    0.077338,0.168021,0.451391,\n    0.947518,2.019160,5.549762,\n    11.804493,25.216794,69.648759,\n};\n\n</code></pre>\n<p>in c++:</p>\n<pre><code>size 5000000\nnTrials = 4\nworst/best = 1.03192\navg/best = 1.01166\nvector sort time 391.235 ms\nvector sort time/size/log2(size) = 3.51617 ns\ncpp/java = 5.61726\n\n</code></pre>\n<p>&quot;The tests are invalid all due to you using random numbers generated for java and C++. &quot;</p>\n<ul>\n<li>in Java avg/best is ony 1.072</li>\n</ul>\n<p>&quot;Also you should do something opaque with the data - like calculating\nand printing out a digest checksum - to avoid losing code due to optimizations&quot;  - is &quot;sum += i + numbers[i]&quot;</p>\n<p>My example results, for 5_000_000 items: Java:</p>\n<pre><code>size 5000000\nnTrials=14 worst/best=1.293286 avg/best=1.072794\narray sort time 70.512346 ms\narray sort time/size/log2(size) 0.633719 ns\n</code></pre>\n<p>C++ (gcc)</p>\n<pre><code>size 5000000\nnTrials = 4\nworst/best = 1.02853\navg/best = 1.01016\nvector sort time 393.92 ms\nvector sort time/size/log2(size) = 3.54029 ns\ncpp/java = 5.58654\n</code></pre>\n",
+    "tags" : [ "java", "c++", "performance", "sorting", "clang" ],
+    "owner" : {
+      "account_id" : 6667756,
+      "reputation" : 395,
+      "user_id" : 5144885,
+      "user_type" : "registered",
+      "accept_rate" : 0,
+      "profile_image" : "https://www.gravatar.com/avatar/fc830b1cc656837018ae2aeddf71223f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Saku",
+      "link" : "https://stackoverflow.com/users/5144885/saku"
+    },
+    "is_answered" : false,
+    "view_count" : 324,
+    "answer_count" : 1,
+    "score" : -4,
+    "last_activity_date" : 1748289149,
+    "creation_date" : 1748081081,
+    "link" : "https://stackoverflow.com/questions/79636650/why-is-javas-arrays-sortint-5%c3%97-faster-than-c-stdsortvectorint",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79639498,
+    "question_id" : 79636650,
+    "body" : "<p>My previous solution (memory access) was bad.\nI checked: the mystery of fast JIT sorting is solved.</p>\n<p>It's not about memory access — C++ handles that very well.</p>\n<p>The key is function inlining. C++ does inline functions, but not recursive ones.\nJIT inlines recursive functions for specific cases — e.g., for 5 million elements.</p>\n<p>As an example: Java code where the warm-up calls sort(), but for a much smaller number than 5 million, and the 5-million-element sort happens only once.</p>\n<p>The result: worse 20%-25% than C++.\nExactly the same as when I copied the class DualPivotQuicksort.java into my project for testing and wondered why it was no longer that fast.</p>\n<p>To prove it: test Java code: call many times sort for small array length (for example 100) and once call sort for 5 millions.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 6667756,
+      "reputation" : 395,
+      "user_id" : 5144885,
+      "user_type" : "registered",
+      "accept_rate" : 0,
+      "profile_image" : "https://www.gravatar.com/avatar/fc830b1cc656837018ae2aeddf71223f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Saku",
+      "link" : "https://stackoverflow.com/users/5144885/saku"
+    },
+    "creation_date" : 1748289149,
+    "last_activity_date" : 1748289149,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140456131,
+    "post_id" : 79636650,
+    "body" : "On the other hand, I don&#39;t know what algorithm <i>C++</i> and <i>Java</i> use to perform the sorting (this in turn depends on the version you use), but if it is not the same, you would be adding one more error since you would not compare <i>Java</i> against <i>C++</i> but <i>Java + algorithmA</i> against <i>C++ with algorithmB</i>.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 10843443,
+      "reputation" : 916,
+      "user_id" : 20882864,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+      "display_name" : "Marce Puente",
+      "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+    },
+    "creation_date" : 1748120133,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140456130,
+    "post_id" : 79636650,
+    "body" : "Your comparison attempt is wrong, as others have already commented, you should create the lists of numbers, save them in a file, and that each test is performed on them, on the other hand, in each iteration, the <i>JVM</i> performs small optimizations of the code, this generates an extra load in the execution of the first iterations, which also are not fully optimized, for what it is recommended, to make the comparison after having executed about 20 times the code (some indicate an execution of at least 10 seconds),",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10843443,
+      "reputation" : 916,
+      "user_id" : 20882864,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+      "display_name" : "Marce Puente",
+      "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+    },
+    "creation_date" : 1748120111,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140455381,
+    "post_id" : 79636650,
+    "body" : "I&#39;m seeing Java sort of array of ints as <i>slightly</i> (but only slightly) slower than C++ on my machine.  Java sort of list of ints is much slower than array of ints because every int has an extra indirection (costly), and there is no cache locality (very costly).",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 5820711,
+      "reputation" : 5531,
+      "user_id" : 4641116,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Gc52U.png?s=256",
+      "display_name" : "Eljay",
+      "link" : "https://stackoverflow.com/users/4641116/eljay"
+    },
+    "creation_date" : 1748094389,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140455199,
+    "post_id" : 79636650,
+    "body" : "There are lots of caveats to bench testing. In <code>C++</code> . For example the initial request for memory can take a long time. So doing a large allocation/deallocation before anything else can remove that issue. Also you should do something opaque with the data - like calculating and printing out a digest checksum - to avoid losing code due to optimizations. Also, pleas use <code>std::chrono::steady_clock</code> for timing as <code>std::chrono::high_resolution_clock</code> can be affected by external events and interruptions.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 4705420,
+      "reputation" : 48965,
+      "user_id" : 3807729,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/UEUbF.jpg?s=256",
+      "display_name" : "Galik",
+      "link" : "https://stackoverflow.com/users/3807729/galik"
+    },
+    "creation_date" : 1748087262,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140455180,
+    "post_id" : 79636650,
+    "body" : "Measuring performance in Java is really difficult see <a href=\"https://stackoverflow.com/q/504103/2670892\">How do I write a correct micro-benchmark in Java?</a>",
+    "score" : 4,
+    "owner" : {
+      "account_id" : 3159259,
+      "reputation" : 111552,
+      "user_id" : 2670892,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/4iPV5.png?s=256",
+      "display_name" : "greg-449",
+      "link" : "https://stackoverflow.com/users/2670892/greg-449"
+    },
+    "creation_date" : 1748086106,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140455145,
+    "post_id" : 79636650,
+    "body" : "The tests are invalid all due to you using random numbers generated for java and C++.  If you stored those random numbers from Java in a file, and then have the C++ code read those numbers from the files and fill the vector with those values, <i>then</i> maybe the comparisons are equivalent.  Many sorting algorithms are sensitive to how sorted the original data initially starts out as.",
+    "score" : 8,
+    "owner" : {
+      "account_id" : 3771148,
+      "reputation" : 35560,
+      "user_id" : 3133316,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/bb3856b94c79c96132452233f28f939e?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "PaulMcKenzie",
+      "link" : "https://stackoverflow.com/users/3133316/paulmckenzie"
+    },
+    "creation_date" : 1748084721,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140455133,
+    "post_id" : 79636650,
+    "body" : "Please <a href=\"https://stackoverflow.com/posts/79636650/edit\">edit</a> to include details about your test environment and/or the compiler/JRE versions. I also suggest you to consider editing back in the gist link to provide additional context. We are not against links, but links should only be used to provide additional (non-essential) contexts. All essential info need to be in the question itself. In other words, the question should be complete even if all links are replaced by plaintexts.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 4924989,
+      "reputation" : 5569,
+      "user_id" : 3966456,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/25308fb759b46d31f034ca07a26b0151?s=256&d=identicon&r=PG",
+      "display_name" : "Weijun Zhou",
+      "link" : "https://stackoverflow.com/users/3966456/weijun-zhou"
+    },
+    "creation_date" : 1748084268,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140455116,
+    "post_id" : 79636650,
+    "body" : "also FYI running the above code with libc++ sort mops the floor with all the other sorts, being about 3 times faster than java and 2 times faster than other C++ standard libraries.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 21269479,
+      "reputation" : 23168,
+      "user_id" : 15649230,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f191dec69044dc53c3e7c9bf4be1fcaa?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Ahmed AEK",
+      "link" : "https://stackoverflow.com/users/15649230/ahmed-aek"
+    },
+    "creation_date" : 1748083711,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140455112,
+    "post_id" : 79636650,
+    "body" : "theres lots of opportunity to reduce. You are asking two questions at once (java vs java and java vs c++), ask one. You made many measurements, choose the one that is representative to include it in the question.",
+    "score" : 4,
+    "owner" : {
+      "account_id" : 5140045,
+      "reputation" : 128658,
+      "user_id" : 4117728,
+      "user_type" : "registered",
+      "accept_rate" : 91,
+      "profile_image" : "https://www.gravatar.com/avatar/f304c8d1426bb73f4a0f87558c9a827d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "463035818_is_not_an_ai",
+      "link" : "https://stackoverflow.com/users/4117728/463035818-is-not-an-ai"
+    },
+    "creation_date" : 1748083565,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140455111,
+    "post_id" : 79636650,
+    "body" : "while the C++ benchmarks are legit, the java ones are not giving the same results at all, they are like 20% slower than the C++ code on my machine.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 21269479,
+      "reputation" : 23168,
+      "user_id" : 15649230,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f191dec69044dc53c3e7c9bf4be1fcaa?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Ahmed AEK",
+      "link" : "https://stackoverflow.com/users/15649230/ahmed-aek"
+    },
+    "creation_date" : 1748083564,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140455097,
+    "post_id" : 79636650,
+    "body" : "is gist with details, code is too big to embed",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 6667756,
+      "reputation" : 395,
+      "user_id" : 5144885,
+      "user_type" : "registered",
+      "accept_rate" : 0,
+      "profile_image" : "https://www.gravatar.com/avatar/fc830b1cc656837018ae2aeddf71223f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Saku",
+      "link" : "https://stackoverflow.com/users/5144885/saku"
+    },
+    "creation_date" : 1748083262,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140455091,
+    "post_id" : 79636650,
+    "body" : "I dont think comparing the <code>best</code> of each run is that meaningful, especially as you are using different input. You should actually use the same input for all 3 to be able to compare the results",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 5140045,
+      "reputation" : 128658,
+      "user_id" : 4117728,
+      "user_type" : "registered",
+      "accept_rate" : 91,
+      "profile_image" : "https://www.gravatar.com/avatar/f304c8d1426bb73f4a0f87558c9a827d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "463035818_is_not_an_ai",
+      "link" : "https://stackoverflow.com/users/4117728/463035818-is-not-an-ai"
+    },
+    "creation_date" : 1748083083,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140455072,
+    "post_id" : 79636650,
+    "body" : "&quot;<i>Is there something wrong with how I&#39;m measuring time</i>&quot; - how can we know without seeing the code and the details?",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 31180,
+      "reputation" : 29752,
+      "user_id" : 85421,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/kKvXH.gif?s=256",
+      "display_name" : "user85421",
+      "link" : "https://stackoverflow.com/users/85421/user85421"
+    },
+    "creation_date" : 1748082391,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140455062,
+    "post_id" : 79636650,
+    "body" : "Java <code>int[]</code> structure is nothing like <code>List&lt;Integer&gt;</code> - the latter is list of objects each of which would be separate lookup to retrieve int value. [Maybe Valhalla will change this]",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 5998820,
+      "reputation" : 16283,
+      "user_id" : 4712734,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f6e922a2cb7e2da59286f27b162aaca5?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "DuncG",
+      "link" : "https://stackoverflow.com/users/4712734/duncg"
+    },
+    "creation_date" : 1748081882,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140455033,
+    "post_id" : 79636650,
+    "body" : "please include all necessary details in the quesiton. A complete code example, how did you compile it, how did you measure, and what were the results? Details matter, and should be directly in the question",
+    "score" : 4,
+    "owner" : {
+      "account_id" : 5140045,
+      "reputation" : 128658,
+      "user_id" : 4117728,
+      "user_type" : "registered",
+      "accept_rate" : 91,
+      "profile_image" : "https://www.gravatar.com/avatar/f304c8d1426bb73f4a0f87558c9a827d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "463035818_is_not_an_ai",
+      "link" : "https://stackoverflow.com/users/4117728/463035818-is-not-an-ai"
+    },
+    "creation_date" : 1748081253,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

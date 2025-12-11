@@ -1,0 +1,198 @@
+{
+  "question" : {
+    "question_id" : 79606504,
+    "title" : "Kafka Performance Issue",
+    "body" : "<p>I'm currently working on a project using Java Spring Boot with Apache Kafka. We have multiple microservices communicating through Kafka, and our system is designed to process around 100,000 events (logs) per second (EPS),and each packet size is around 3 KB.\nHowever, I'm facing a significant performance issue. I've tried several Kafka and Spring Boot configuration optimizations, but the issue still persists.</p>\n<p>One critical observation:</p>\n<p>When I include the Kafka producer logic in my service, the overall performance drops drastically. But when I comment out the Kafka producer code, the processing becomes very fast.\nThis clearly points to the Kafka producer being a bottleneck, but I'm not sure what specifically is causing the issue — whether it's improper configuration, blocking I/O, synchronous sending, or something else.</p>\n<p>Has anyone experienced a similar issue?\nAny help or insights would be greatly appreciated.</p>\n<p>This is my kafka producer configuration:</p>\n<pre><code>KafkaProducerConfig.java\n\nBean(name = &quot;packetData&quot;)\n    public KafkaProducer&lt;String, PacketData&gt; packetDataKafkaProducer() {\n        Map&lt;String, Object&gt; config = new HashMap&lt;&gt;();\n        config.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, kafkaURLConfiguration.getKafkaURL());\n        config.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);\n        config.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, JsonSerializer.class);\n        config.put(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, 600000);\n        config.put(ProducerConfig.BATCH_SIZE_CONFIG, 200000);\n        config.put(ProducerConfig.LINGER_MS_CONFIG, 10);\n        config.put(ProducerConfig.COMPRESSION_TYPE_CONFIG, COMPRESSION_TYPE);\n        return new KafkaProducer&lt;&gt;(config, new StringSerializer(), new JsonSerializer&lt;&gt;());\n    }\n\nProducerService.java\n\nProducerRecord&lt;String, Object&gt; records = new ProducerRecord&lt;&gt;(driver.getCollectionTopic(), packetData);\n        kafkaProducer.send(records);\n</code></pre>\n",
+    "tags" : [ "java", "spring-boot", "apache-kafka", "spring-kafka", "apache-kafka-connect" ],
+    "owner" : {
+      "account_id" : 39942829,
+      "reputation" : 31,
+      "user_id" : 29528927,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/bde6e85eea8dbab241065ec1395560ef?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "abhijeet cyberevolve",
+      "link" : "https://stackoverflow.com/users/29528927/abhijeet-cyberevolve"
+    },
+    "is_answered" : true,
+    "view_count" : 345,
+    "answer_count" : 2,
+    "score" : 3,
+    "last_activity_date" : 1747820438,
+    "creation_date" : 1746430831,
+    "link" : "https://stackoverflow.com/questions/79606504/kafka-performance-issue",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79606544,
+    "question_id" : 79606504,
+    "body" : "<p>Two main factors and another related one, as I see it:</p>\n<ul>\n<li><strong>Batch Size</strong></li>\n</ul>\n<pre class=\"lang-java prettyprint-override\"><code>config.put(ProducerConfig.BATCH_SIZE_CONFIG, 200_000); \n</code></pre>\n<p>That is a very, very high batch size. Unless your messages are extremely large, the producer might <strong>wait a long time</strong> to fill a batch, causing latency.</p>\n<p>Try lowering it to a more typical value like <strong>32KB</strong>:</p>\n<pre class=\"lang-java prettyprint-override\"><code>config.put(ProducerConfig.BATCH_SIZE_CONFIG, Integer.toString(32 * 1024));\n</code></pre>\n<p>or let it be the <strong>default</strong> value, which is <strong>16KB</strong>.</p>\n<ul>\n<li><strong>Timeout ms</strong></li>\n</ul>\n<pre><code>config.put(ProducerConfig.DELIVERY_TIMEOUT_MS_CONFIG, 600000); // 10 minutes\n</code></pre>\n<p>This is <strong>way too high</strong> for a high-throughput, low-latency system. 10 minutes for a timeout...Set this closer to 2–5 seconds (<code>2000–5000</code> ms), for example.</p>\n<ul>\n<li><em><strong>Manually creating a <code>KafkaProducer</code> in SB</strong></em></li>\n</ul>\n<p>Bypasses the conveniences and optimizations that SpringBoot provides through <code>KafkaTemplate</code>.</p>\n<p>Manually creating a <code>KafkaProducer</code> means you're responsible for all of that yourself, and it’s easy to introduce inefficiencies or threading issues, especially under heavy load.</p>\n<p>From the official Spring documentation:</p>\n<blockquote>\n<p><em>&quot;KafkaTemplate provides high-level operations to send data to Kafka topics. It is the preferred way to interact with Kafka from Spring Boot applications, managing producers and handling exceptions internally.&quot;</em></p>\n</blockquote>\n<p><a href=\"https://docs.spring.io/spring-kafka/docs/3.0.0/reference/html/\" rel=\"nofollow noreferrer\">https://docs.spring.io/spring-kafka/docs/3.0.0/reference/html/</a><br />\n<a href=\"https://medium.com/@AlexanderObregon/integrating-spring-boot-with-kafka-for-messaging-8bd07e76b038\" rel=\"nofollow noreferrer\">https://medium.com/@AlexanderObregon/integrating-spring-boot-with-kafka-for-messaging-8bd07e76b038</a></p>\n",
+    "score" : 4,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 2465829,
+      "reputation" : 13577,
+      "user_id" : 2148953,
+      "user_type" : "registered",
+      "accept_rate" : 96,
+      "profile_image" : "https://i.sstatic.net/DVHoP84E.jpg?s=256",
+      "display_name" : "aran",
+      "link" : "https://stackoverflow.com/users/2148953/aran"
+    },
+    "creation_date" : 1746432518,
+    "last_activity_date" : 1746433967,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79606677,
+    "question_id" : 79606504,
+    "body" : "<p>If you're using KafkaTemplate.send() without handling the ListenableFuture returned, you're effectively blocking the calling thread until the message is acknowledged by the Kafka broker. This is a major performance killer at high throughput.</p>\n<p><strong>Solution:</strong></p>\n<p>Use asynchronous sending with callbacks. Handle the ListenableFuture to avoid blocking.</p>\n<pre><code>\n@Autowired\nprivate KafkaTemplate&lt;String, String&gt; kafkaTemplate;\n\npublic void sendMessage(String topic, String message) {\n    ListenableFuture&lt;SendResult&lt;String, String&gt;&gt; future = kafkaTemplate.send(topic, message);\n\n    future.addCallback(new ListenableFutureCallback&lt;SendResult&lt;String, String&gt;&gt;() {\n\n        @Override\n        public void onSuccess(SendResult&lt;String, String&gt; result) {\n            // Log success (optional, but good for monitoring)\n            System.out.println(&quot;Sent message=[&quot; + message +\n                               &quot;] with offset=[&quot; + result.getRecordMetadata().offset() + &quot;]&quot;);\n        }\n\n        @Override\n        public void onFailure(Throwable ex) {\n            // Handle failure (critical - log, retry, etc.)\n            System.err.println(&quot;Unable to send message=[&quot; + message + &quot;] due to : &quot; + ex.getMessage());\n        }\n    });\n}\n</code></pre>\n<p>The addCallback method allows you to execute code when the send operation succeeds or fails, without blocking the main thread. Proper error handling is crucial here.</p>\n<h3>======Update====</h3>\n<p>When Using addCallback method Also Tune these settings based on your specific requirements. Here's an example configuration:</p>\n<pre><code>@Configuration\npublic class KafkaProducerConfig {\n\n    @Value(&quot;${spring.kafka.bootstrap-servers}&quot;)\n    private String bootstrapServers;\n\n    @Bean\n    public ProducerFactory&lt;String, String&gt; producerFactory() {\n        Map&lt;String, Object&gt; configProps = new HashMap&lt;&gt;();\n        configProps.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);\n        configProps.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);\n        configProps.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class);\n\n        // Performance tuning\n        configProps.put(ProducerConfig.LINGER_MS_CONFIG, 20);       // Wait up to 20ms to batch\n        configProps.put(ProducerConfig.BATCH_SIZE_CONFIG, 16384 * 4); // 64KB batch size\n        configProps.put(ProducerConfig.COMPRESSION_TYPE_CONFIG, &quot;snappy&quot;); // Enable compression\n        configProps.put(ProducerConfig.ACKS_CONFIG, &quot;1&quot;);           // Require one acknowledgment\n        configProps.put(ProducerConfig.BUFFER_MEMORY_CONFIG, 33554432); // 32MB buffer\n        configProps.put(ProducerConfig.MAX_REQUEST_SIZE_CONFIG, 1048576); // 1MB max request size\n\n        return new DefaultKafkaProducerFactory&lt;&gt;(configProps);\n    }\n\n    @Bean\n    public KafkaTemplate&lt;String, String&gt; kafkaTemplate() {\n        return new KafkaTemplate&lt;&gt;(producerFactory());\n    }\n}\n</code></pre>\n<p><em><strong>****Config Details</strong>****</em></p>\n<p><code>linger.ms</code>: Increasing this to 20ms allows the producer to accumulate more messages into a batch before sending.</p>\n<p><code>batch.size</code>: Increasing this to 64KB allows for larger batches.</p>\n<p><code>compression.type</code>: Enabling Snappy compression reduces network bandwidth. Experiment with different compression algorithms to find the best one for your data.</p>\n<p><code>acks=1</code>: Provides a good balance between performance and reliability.</p>\n<p><code>buffer.memory</code>: Increase the buffer memory to accommodate more messages.</p>\n<p><code>max.request.size</code>: Increase the maximum request size to allow for larger batches.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 10927511,
+      "reputation" : 3218,
+      "user_id" : 8031784,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/ikcJL.png?s=256",
+      "display_name" : "Aniruddh Parihar",
+      "link" : "https://stackoverflow.com/users/8031784/aniruddh-parihar"
+    },
+    "creation_date" : 1746437914,
+    "last_activity_date" : 1746522561,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140396095,
+    "post_id" : 79606504,
+    "body" : "Hi @Frox , I have added my Kafka producer configuration and the code I use to send messages in the question above. Please check and let me know if you see anything wrong or missing. Thanks!",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 39942829,
+      "reputation" : 31,
+      "user_id" : 29528927,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/bde6e85eea8dbab241065ec1395560ef?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "abhijeet cyberevolve",
+      "link" : "https://stackoverflow.com/users/29528927/abhijeet-cyberevolve"
+    },
+    "creation_date" : 1746431616,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140396080,
+    "post_id" : 79606504,
+    "body" : "Please share code as text and other actionable information. &quot;I&#39;ve tried several configurations&quot; is not at all helpful. Please specify what you have configured exactly and what results did it produce.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 38870157,
+      "reputation" : 679,
+      "user_id" : 28993166,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/40f55b63213d62c189e6dfd59ab06e04?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Frox",
+      "link" : "https://stackoverflow.com/users/28993166/frox"
+    },
+    "creation_date" : 1746431123,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79606677" : [ {
+      "comment_id" : 140399549,
+      "post_id" : 79606677,
+      "body" : "@abhijeetcyberevolve: I am Putting some update on this answer. lets try them with ListenableFuture callback methods.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10927511,
+        "reputation" : 3218,
+        "user_id" : 8031784,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/ikcJL.png?s=256",
+        "display_name" : "Aniruddh Parihar",
+        "link" : "https://stackoverflow.com/users/8031784/aniruddh-parihar"
+      },
+      "creation_date" : 1746522190,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140399164,
+      "post_id" : 79606677,
+      "body" : "Hey, @Anuridh Parihar ,  I have implemented given code but i am still unable to achieve the desired throughput. Currently, I&#39;m getting around 25,000 EPS. Any further suggestions or insights would be greatly appreciated!",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 39942829,
+        "reputation" : 31,
+        "user_id" : 29528927,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/bde6e85eea8dbab241065ec1395560ef?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "abhijeet cyberevolve",
+        "link" : "https://stackoverflow.com/users/29528927/abhijeet-cyberevolve"
+      },
+      "creation_date" : 1746515240,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79606544" : [ {
+      "comment_id" : 140399625,
+      "post_id" : 79606544,
+      "body" : "Ok, so no key partitioning strategy here, just round-robin. What if you try with config.put(ProducerConfig.ACKS_CONFIG, &quot;1&quot;);?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2465829,
+        "reputation" : 13577,
+        "user_id" : 2148953,
+        "user_type" : "registered",
+        "accept_rate" : 96,
+        "profile_image" : "https://i.sstatic.net/DVHoP84E.jpg?s=256",
+        "display_name" : "aran",
+        "link" : "https://stackoverflow.com/users/2148953/aran"
+      },
+      "creation_date" : 1746524016,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140399535,
+      "post_id" : 79606544,
+      "body" : "Hi @aran, thanks for the follow-up! Currently, I don&#39;t have any partitions configured on the topic in the setup, but during testing, I tried with 10–20 partitions and didn’t use any key while producing messages. Kafka automatically distributed the data across the partitions as expected.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 39942829,
+        "reputation" : 31,
+        "user_id" : 29528927,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/bde6e85eea8dbab241065ec1395560ef?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "abhijeet cyberevolve",
+        "link" : "https://stackoverflow.com/users/29528927/abhijeet-cyberevolve"
+      },
+      "creation_date" : 1746522040,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140399336,
+      "post_id" : 79606544,
+      "body" : "Hi @abhijeetcyberevolve, how many partitions the topic has? What is the key you are using? Are all messages sent to the same partition? Just to dismiss &quot;hotspotting&quot;",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2465829,
+        "reputation" : 13577,
+        "user_id" : 2148953,
+        "user_type" : "registered",
+        "accept_rate" : 96,
+        "profile_image" : "https://i.sstatic.net/DVHoP84E.jpg?s=256",
+        "display_name" : "aran",
+        "link" : "https://stackoverflow.com/users/2148953/aran"
+      },
+      "creation_date" : 1746518227,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140399156,
+      "post_id" : 79606544,
+      "body" : "Hey, @aran I have implemented these configurations but i am still unable to achieve the desired throughput. Currently, I&#39;m getting around 25,000 EPS. Any further suggestions or insights would be greatly appreciated!",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 39942829,
+        "reputation" : 31,
+        "user_id" : 29528927,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/bde6e85eea8dbab241065ec1395560ef?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "abhijeet cyberevolve",
+        "link" : "https://stackoverflow.com/users/29528927/abhijeet-cyberevolve"
+      },
+      "creation_date" : 1746515093,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

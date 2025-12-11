@@ -1,0 +1,208 @@
+{
+  "question" : {
+    "question_id" : 79613384,
+    "title" : "Force an ExecutorService thread shutdown in Java to end infinite loop",
+    "body" : "<p>I'm updating some Java code I wrote several years ago that is part of a larger program for testing Java code written by young students.  The idea is similar to JUnit tests but written specifically into a GUI for entry-level coders.</p>\n<p>The point of this code segment is to ask <em><strong>Object o</strong></em> to invoke its <em><strong>Method m</strong></em> and return whatever <em><strong>Method m</strong></em> returned.  In the event that an exception is thrown, it should return the exception.</p>\n<p>My approach is to create a <em><strong>Callable</strong></em> that invokes the provided <em><strong>Method m</strong></em>.  I use an <em><strong>Executor</strong></em> to run a <em><strong>FutureTask</strong></em> containing that <em><strong>Callable</strong></em> through a single thread.  It works great... unless <em><strong>Method m</strong></em> contains an infinite loop.  Then the thread never shuts down, no matter how nicely I ask.  You'll see there's some code I previously used (currently commented out) to aggressively force a shutdown, but that isn't supported anymore.  It used to work fine.  Now that I've commented this <strong>thread.stop()</strong> section out, the thread containing the student's infinite loop continues to run causing problems for other tests.</p>\n<p>I know that the documented approach is to ensure the code in <em><strong>Method m</strong></em> is interruptible, but I'm not in control of what goes into <strong>Method m</strong>.  That method was  written by 14-year-olds who are new to coding and it is expected to be full of mistakes (including possible infinite loops.)</p>\n<p>Any suggestions?</p>\n<pre><code>public static Object getObjectByInvokingMethod(Object o, Method m, Object[] args ) {\n   \n      ExecutorService es = null;\n      FutureTask&lt;?&gt; theTask = null;\n      Object returnObject = null;      \n   \n      try {\n         Callable&lt;Object&gt; myCallable =    \n               new Callable&lt;Object&gt;()\n               {\n                  public Object call() {\n                     Object returnObject = null;\n                     try {\n                        returnObject = m.invoke(o, args);              \n                     } catch (Exception e) {\n                        returnObject = e;\n                     }\n                     return returnObject;\n                  }\n               };        \n                           \n         theTask = new FutureTask&lt;Object&gt;(myCallable);                                          \n         es = Executors.newSingleThreadExecutor();\n         es.execute(theTask);\n         returnObject = theTask.get(5, TimeUnit.SECONDS); //5 second timeout                          \n         theTask.cancel(true);\n         es.shutdownNow();\n         return returnObject;   //Return whatever method m returned (or exception thrown)\n     \n      } catch (TimeoutException e) {\n         if (theTask != null) theTask.cancel(true);\n         if (es != null) es.shutdownNow();    \n         /* *********  THIS IS WHAT I USED TO DO, BUT DOESN'T WORK IN NEWER JAVA\n         try{\n            final Field threadField = theTask.getClass().getDeclaredField(&quot;runner&quot;);\n            threadField.setAccessible(true);                    \n            Thread t = (Thread)threadField.get(theTask);\n            t.stop();\n         }catch(Exception e2){\n            System.out.print(&quot;Problem occurred while forcibly stopping FutureTask thread&quot;);\n         }\n         *************** */\n         return e;  //return exception for further handling      \n      } catch (Exception e) {\n         System.out.print(&quot;Something else went wrong.&quot;);\n         return e;  //return exception for further handling\n      }    \n   }\n</code></pre>\n",
+    "tags" : [ "java", "multithreading", "executorservice", "futuretask" ],
+    "owner" : {
+      "account_id" : 17026350,
+      "reputation" : 45,
+      "user_id" : 12317486,
+      "user_type" : "registered",
+      "profile_image" : "https://graph.facebook.com/10215746492642968/picture?type=large",
+      "display_name" : "Kris McCoy",
+      "link" : "https://stackoverflow.com/users/12317486/kris-mccoy"
+    },
+    "is_answered" : true,
+    "view_count" : 136,
+    "answer_count" : 1,
+    "score" : 4,
+    "last_activity_date" : 1746765485,
+    "creation_date" : 1746755161,
+    "link" : "https://stackoverflow.com/questions/79613384/force-an-executorservice-thread-shutdown-in-java-to-end-infinite-loop",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79613492,
+    "question_id" : 79613384,
+    "body" : "<p>The <code>Thread.stop()</code> method was deprecated and later disabled because it could leave shared data in an inconsistent state and corrupt the JVM. That's why your hack no longer works on newer Java versions.</p>\n<p>In Java, you can't stop a thread unless the code inside it checks for <code>Thread.interrupted()</code> and stops itself.</p>\n<p>Instead of using <code>ExecutorService</code> and <code>FutureTask</code>, try another approach - run the code in a separate JVM process using <code>ProcessBuilder</code>.\nYou can set a timeout and, if the code hangs (e.g. infinite loop), just kill the process.</p>\n<p>Something like this:</p>\n<pre><code>ProcessBuilder pb = new ProcessBuilder(&quot;java&quot;, &quot;StudentCodeRunner&quot;);\nProcess process = pb.start();\n\nboolean finished = process.waitFor(10, TimeUnit.SECONDS);\nif (!finished) {\n    process.destroyForcibly();\n}\n\n</code></pre>\n<p>If you keep using threads, you can detect timeouts and treat them as test failures,\nbut you can't safely stop the thread, it will just stay running in the background.</p>\n",
+    "score" : 6,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 38931631,
+      "reputation" : 671,
+      "user_id" : 29023248,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/WxoZEuKw.png?s=256",
+      "display_name" : "Aleksey Bykov",
+      "link" : "https://stackoverflow.com/users/29023248/aleksey-bykov"
+    },
+    "creation_date" : 1746765485,
+    "last_activity_date" : 1746765485,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140409741,
+    "post_id" : 79613384,
+    "body" : "Hello Kris, I&#39;m just rambling... what if your application launches another application with the student file as a parameter, and this one, if it detects an infinite loop, after writing a log, terminates its execution?.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 10843443,
+      "reputation" : 916,
+      "user_id" : 20882864,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+      "display_name" : "Marce Puente",
+      "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+    },
+    "creation_date" : 1746763655,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79613492" : [ {
+      "comment_id" : 140412212,
+      "post_id" : 79613492,
+      "body" : "@KrisMcCoy Separate out your code that tests the students&#39; methods into its own application. You would then launch that application in a separate process with a student&#39;s assignment on the class-path/module-path. The application would be responsible for invoking the method(s)-under-test and sending the results back to your GUI application (the parent process). Since you&#39;re already invoking the students&#39; methods via reflection, nothing will change for them. All the communication infrastructure will be hidden from them. They won&#39;t even necessarily know your test application exists.",
+      "score" : 3,
+      "owner" : {
+        "account_id" : 8532578,
+        "reputation" : 49884,
+        "user_id" : 6395627,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Slaw",
+        "link" : "https://stackoverflow.com/users/6395627/slaw"
+      },
+      "creation_date" : 1746818663,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140411485,
+      "post_id" : 79613492,
+      "body" : "You grossly overestimate my students. If they can&#39;t write a while loop that prints the numbers 1 through 10 without screwing it up and writing an infinite loop, they aren&#39;t going to serialize a a JSON.  I need to make sure that a failed test is caused by them failing to accomplish the assigned standard, not their failure to make their code compatible with my grading system.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 17026350,
+        "reputation" : 45,
+        "user_id" : 12317486,
+        "user_type" : "registered",
+        "profile_image" : "https://graph.facebook.com/10215746492642968/picture?type=large",
+        "display_name" : "Kris McCoy",
+        "link" : "https://stackoverflow.com/users/12317486/kris-mccoy"
+      },
+      "creation_date" : 1746803813,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140411037,
+      "post_id" : 79613492,
+      "body" : "@pebbleunit - Great point, really appreciate the clarification! Totally agree, asking students to serialize their results to JSON and write to <code>System.out</code> is a nice idea.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 38931631,
+        "reputation" : 671,
+        "user_id" : 29023248,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/WxoZEuKw.png?s=256",
+        "display_name" : "Aleksey Bykov",
+        "link" : "https://stackoverflow.com/users/29023248/aleksey-bykov"
+      },
+      "creation_date" : 1746796277,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140411015,
+      "post_id" : 79613492,
+      "body" : "You can ask your students to serialize their objects to JSON and write it to <code>System.out</code>, then you can deserialize it from JSON. Theres a lot of popular libraries that handle the JSON part, so its easier for your students and you. Rather than having to ensure each POJO is perfectly serializable. Even if you cant serialize it back into a POJO, you can just process the data as a JsonNode.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 21724606,
+        "reputation" : 1431,
+        "user_id" : 16034206,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/MRBdT.jpg?s=256",
+        "display_name" : "pebble unit",
+        "link" : "https://stackoverflow.com/users/16034206/pebble-unit"
+      },
+      "creation_date" : 1746795823,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140410932,
+      "post_id" : 79613492,
+      "body" : "So yes, you can get back things like an <code>ArrayList</code>, but it needs to go through serialization - you&#39;re crossing a JVM boundary, so you can&#39;t just return objects directly.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 38931631,
+        "reputation" : 671,
+        "user_id" : 29023248,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/WxoZEuKw.png?s=256",
+        "display_name" : "Aleksey Bykov",
+        "link" : "https://stackoverflow.com/users/29023248/aleksey-bykov"
+      },
+      "creation_date" : 1746794331,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140410929,
+      "post_id" : 79613492,
+      "body" : "@KrisMcCoy - Good question - <code>ProcessBuilder</code> only gives you access to the process&#39;s <code>stdout</code>, <code>stderr</code>, and exit code - not direct Java objects like <code>ArrayList</code>. But you can still pass data back by serializing the result in the subprocess (the student&#39;s code) and reading it from <code>stdout</code> in the main process.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 38931631,
+        "reputation" : 671,
+        "user_id" : 29023248,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/WxoZEuKw.png?s=256",
+        "display_name" : "Aleksey Bykov",
+        "link" : "https://stackoverflow.com/users/29023248/aleksey-bykov"
+      },
+      "creation_date" : 1746794293,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140410925,
+      "post_id" : 79613492,
+      "body" : "@VGR - Thanks a lot! Really appreciate your support. Totally agree - once code ignores interrupts, it&#39;s basically untouchable without killing the JVM.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 38931631,
+        "reputation" : 671,
+        "user_id" : 29023248,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/WxoZEuKw.png?s=256",
+        "display_name" : "Aleksey Bykov",
+        "link" : "https://stackoverflow.com/users/29023248/aleksey-bykov"
+      },
+      "creation_date" : 1746794243,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140410884,
+      "post_id" : 79613492,
+      "body" : "Thanks for the lead.  I&#39;m going to see where this takes me.  Out of curiousity, do you know if ProcessBuilder allows for return data?  For example, if I used ProcessBuilder to run a student method that was supposed to build and return an ArrayList, can I run that student code with a ProcessBuilder and retrieve the ArrayList that was returned by their method?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 17026350,
+        "reputation" : 45,
+        "user_id" : 12317486,
+        "user_type" : "registered",
+        "profile_image" : "https://graph.facebook.com/10215746492642968/picture?type=large",
+        "display_name" : "Kris McCoy",
+        "link" : "https://stackoverflow.com/users/12317486/kris-mccoy"
+      },
+      "creation_date" : 1746793472,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140410677,
+      "post_id" : 79613492,
+      "body" : "This is the correct answer.  Code that ignores interrupts is rogue code which cannot be stopped by any means other than shutting down the JVM.",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 2053598,
+        "reputation" : 44936,
+        "user_id" : 1831987,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/38b1c37530189ec4471a43a618e33f67?s=256&d=identicon&r=PG",
+        "display_name" : "VGR",
+        "link" : "https://stackoverflow.com/users/1831987/vgr"
+      },
+      "creation_date" : 1746788956,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

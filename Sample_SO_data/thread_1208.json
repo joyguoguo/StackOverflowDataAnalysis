@@ -1,0 +1,108 @@
+{
+  "question" : {
+    "question_id" : 79731760,
+    "title" : "Unsatisfied dependency for synthetic bean at runtime",
+    "body" : "<p>I’m a contributor of the OpenSource project <a href=\"https://www.vanillabp.io\" rel=\"nofollow noreferrer\">VanillaBP</a> which is providing hexagonal architecture to business processing applications using process engines.</p>\n<p>In the past VanillaBP was only available to Spring Boot applications and we are working on bringing this also to Quarkus.</p>\n<p>The idea is to provide a Quarkus extension “vanillabp” which collects adapters (in the manner of a hexagonal architecture) from other extensions (identified by capability <code>vanillabp-adapter</code>) which are specific to a certain process engine used. Based on the configuration and the adapters given beans are constructed implementing the port (in the manner of hexagonale architecture), so the main application does not need to know about the process engine implementation details.</p>\n<p>However, for those beans we construct SyntheticBeans need to be initialised during runtime (connect to process engine, do some validation of given configuration in conjunction with the status reported by the process engine):</p>\n<p><a href=\"https://github.com/vanillabp/adapter-platform-integration/blob/issue/unsatisfied-dependency-using-quarkus-maven-build-plugin/quarkus-integration/deployment/src/main/java/io/vanillabp/integration/deployment/VanillaBpIntegrationProcessor.java#L209\" rel=\"nofollow noreferrer\">https://github.com/vanillabp/adapter-platform-integration/blob/issue/unsatisfied-dependency-using-quarkus-maven-build-plugin/quarkus-integration/deployment/src/main/java/io/vanillabp/integration/deployment/VanillaBpIntegrationProcessor.java#L209</a></p>\n<p>This works fine in tests but unfortunately, those beans are not found during runtime. There is a Maven module <code>main-integration-test</code> which uses the extension in a regular way</p>\n<p><a href=\"https://github.com/vanillabp/adapter-platform-integration/tree/issue/unsatisfied-dependency-using-quarkus-maven-build-plugin/quarkus-integration/integration-tests/main-integration-test\" rel=\"nofollow noreferrer\">https://github.com/vanillabp/adapter-platform-integration/tree/issue/unsatisfied-dependency-using-quarkus-maven-build-plugin/quarkus-integration/integration-tests/main-integration-test</a></p>\n<p>and on building, I get this error (hint: there are two different beans used which are both not found):</p>\n<pre><code>[ERROR] Failed to execute goal io.quarkus:quarkus-maven-plugin:3.22.3:build (default) on project quarkus-main-integration-test: Failed to build quarkus application: io.quarkus.builder.BuildException: Build failure: Build failed due to errors\n[ERROR]         [error]: Build step io.quarkus.arc.deployment.ArcProcessor#validate threw an exception: jakarta.enterprise.inject.spi.DeploymentException: Found 2 deployment problems: \n[ERROR] [1] Unsatisfied dependency for type io.vanillabp.spi.process.ProcessService&lt;io.vanillabp.integration.test.sample.Aggregate&gt; and qualifiers [@Default]\n[ERROR]         - injection target: io.vanillabp.integration.test.sample.SampleWorkflowService#processService\n[ERROR]         - declared on CLASS bean [types=[io.vanillabp.integration.test.sample.SampleWorkflowService, java.lang.Object], qualifiers=[@Default, @Any], target=io.vanillabp.integration.test.sample.SampleWorkflowService]\n[ERROR] [2] Unsatisfied dependency for type io.vanillabp.spi.process.ProcessService&lt;io.vanillabp.integration.test.sample2.Aggregate&gt; and qualifiers [@Default]\n[ERROR]         - injection target: io.vanillabp.integration.test.sample2.SampleWorkflowService#processService\n[ERROR]         - declared on CLASS bean [types=[java.lang.Object, io.vanillabp.integration.test.sample2.SampleWorkflowService], qualifiers=[@Default, @Any], target=io.vanillabp.integration.test.sample2.SampleWorkflowService]\n</code></pre>\n<p>As far as I could figure out, it seems to be a problem to construct this bean based on a Java class having no default-constructor. When I add a default-constructor this constructor is executed. I used <a href=\"https://github.com/quarkusio/quarkus/blob/896f24580bf2b6fe1339e8fcc8d7a4199d2e76d0/extensions/arc/deployment/src/main/java/io/quarkus/arc/deployment/SyntheticBeanBuildItem.java#L181\" rel=\"nofollow noreferrer\">createWith</a> which is documented to be used for connecting external classes as beans which only provide non-default-constructors.</p>\n<p>I also found some examples on GitHub of other extensions which do this in the same way and obviously are fine:</p>\n<p><a href=\"https://github.com/quarkiverse/quarkus-openapi-generator/blob/main/client/runtime/src/main/java/io/quarkiverse/openapi/generator/AuthenticationRecorder.java#L52\" rel=\"nofollow noreferrer\">https://github.com/quarkiverse/quarkus-openapi-generator/blob/main/client/runtime/src/main/java/io/quarkiverse/openapi/generator/AuthenticationRecorder.java#L52</a></p>\n<p>What is missing? I tried a lot of different approaches (<code>runtimeValue</code>, etc.) but non worked. I don’t want to avoid non-default-constructors because they are necessary to connect some given APIs of process engines. I want to know how to deal with this in the right way.</p>\n<p>Thanks,\nStephan</p>\n",
+    "tags" : [ "java", "dependency-injection", "quarkus", "classpath", "javabeans" ],
+    "owner" : {
+      "account_id" : 15103838,
+      "reputation" : 41,
+      "user_id" : 10900089,
+      "user_type" : "registered",
+      "profile_image" : "https://lh6.googleusercontent.com/-W-09N53byzU/AAAAAAAAAAI/AAAAAAAAAAA/AKxrwcYvBXlSN-C_vWIOLf8H5063IH67pQ/mo/s256-rj/photo.jpg",
+      "display_name" : "Stephan Pelikan",
+      "link" : "https://stackoverflow.com/users/10900089/stephan-pelikan"
+    },
+    "is_answered" : false,
+    "view_count" : 63,
+    "answer_count" : 0,
+    "score" : 4,
+    "last_activity_date" : 1754982744,
+    "creation_date" : 1754896515,
+    "link" : "https://stackoverflow.com/questions/79731760/unsatisfied-dependency-for-synthetic-bean-at-runtime",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140666511,
+    "post_id" : 79731760,
+    "body" : "I figured out what the problem was: It didn&#39;t belong to the synthetic beans. I loaded a runtime class during augmentation and accidentally suppressed the stacktrace. Now I moved loaded the class into the recorder method, what resolved the error. As usual: the error was between keyboard and chair. @Ladicek: Thank you helping me!",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 15103838,
+      "reputation" : 41,
+      "user_id" : 10900089,
+      "user_type" : "registered",
+      "profile_image" : "https://lh6.googleusercontent.com/-W-09N53byzU/AAAAAAAAAAI/AAAAAAAAAAA/AKxrwcYvBXlSN-C_vWIOLf8H5063IH67pQ/mo/s256-rj/photo.jpg",
+      "display_name" : "Stephan Pelikan",
+      "link" : "https://stackoverflow.com/users/10900089/stephan-pelikan"
+    },
+    "creation_date" : 1755201485,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140662393,
+    "post_id" : 79731760,
+    "body" : "I see your bean is <code>@Singleton</code>, so my comment above doesn&#39;t apply. I read the question again and it seems the beans are not registered. Your <code>@BuildStep</code> takes a <code>BuildProducer&lt;SyntheticBeanBuildItem&gt;</code>, so it should be invoked. It also takes a <code>BeanArchiveIndexBuildItem</code> and looks for annotations in that index, so better make sure that the archives containing the annotated classes are bean archives (include <code>META-INF&#47;beans.xml</code> or a Jandex index).",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 385127,
+      "reputation" : 6762,
+      "user_id" : 742081,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/238e8b2100a5366b226234b946026462?s=256&d=identicon&r=PG",
+      "display_name" : "Ladicek",
+      "link" : "https://stackoverflow.com/users/742081/ladicek"
+    },
+    "creation_date" : 1755081934,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140662380,
+    "post_id" : 79731760,
+    "body" : "To debug the build process, just use <code>mvnDebug</code> instead of <code>mvn</code>.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 385127,
+      "reputation" : 6762,
+      "user_id" : 742081,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/238e8b2100a5366b226234b946026462?s=256&d=identicon&r=PG",
+      "display_name" : "Ladicek",
+      "link" : "https://stackoverflow.com/users/742081/ladicek"
+    },
+    "creation_date" : 1755081570,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140661856,
+    "post_id" : 79731760,
+    "body" : "The problem is not about the constructor: I replaced the bean by a simple dummy bean having a default-constructor and it didn&#39;t work either. I added a System.out right before this line <a href=\"https://github.com/vanillabp/adapter-platform-integration/blob/issue/unsatisfied-dependency-using-quarkus-maven-build-plugin/quarkus-integration/deployment/src/main/java/io/vanillabp/integration/deployment/VanillaBpIntegrationProcessor.java#L209\" rel=\"nofollow noreferrer\">github.com/vanillabp/adapter-platform-integration/blob/issue&zwnj;&#8203;/&hellip;</a> and it is not executed during build of &quot;main-integration-test&quot;. I will try to check how to debug what quarkus-maven-build-plugin is running.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 15103838,
+      "reputation" : 41,
+      "user_id" : 10900089,
+      "user_type" : "registered",
+      "profile_image" : "https://lh6.googleusercontent.com/-W-09N53byzU/AAAAAAAAAAI/AAAAAAAAAAA/AKxrwcYvBXlSN-C_vWIOLf8H5063IH67pQ/mo/s256-rj/photo.jpg",
+      "display_name" : "Stephan Pelikan",
+      "link" : "https://stackoverflow.com/users/10900089/stephan-pelikan"
+    },
+    "creation_date" : 1755067994,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140656689,
+    "post_id" : 79731760,
+    "body" : "Regardless of the creation function, if the synthetic bean has a normal scope (like <code>@ApplicationScoped</code> or <code>@RequestScoped</code>), the implementation class has to have a zero-parameter constructor (or it must be possible to create one automatically by bytecode transformation). It is not used to create an instance of the bean, but it is used to create a <i>client proxy</i>, which is what in fact gets injected.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 385127,
+      "reputation" : 6762,
+      "user_id" : 742081,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/238e8b2100a5366b226234b946026462?s=256&d=identicon&r=PG",
+      "display_name" : "Ladicek",
+      "link" : "https://stackoverflow.com/users/742081/ladicek"
+    },
+    "creation_date" : 1754897300,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

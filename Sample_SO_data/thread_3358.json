@@ -1,0 +1,46 @@
+{
+  "question" : {
+    "question_id" : 79554231,
+    "title" : "Multiple beans in context - how to dynamically select based on config?",
+    "body" : "<p>I have this application that works fine for a single job:</p>\n<pre class=\"lang-java prettyprint-override\"><code> interface Job {\n     void foo();\n }\n\n class JobA implements Job {\n     void foo() {...}\n }\n\n class JobB implements Job {\n     void foo() {...}\n }\n\n class JobExecutor {\n    \n    Job job;\n    // autowired constructor\n    public JobExecutor(Job job) {this.job = job;}\n }\n</code></pre>\n<pre><code>@Configuration\npublic class MyConfiguration {\n\n    @ConditionalOnProperty(name = &quot;job.name&quot;, havingValue = &quot;jobA&quot;)\n    @Bean \n    public Job jobA() {\n         return new JobA();\n    }\n\n    @ConditionalOnProperty(name = &quot;job.name&quot;, havingValue = &quot;jobB&quot;)\n    @Bean \n    public Job jobB() {\n         return new JobB();\n    }\n    @Bean\n    public JobExecutor jobExecutor(Job job) {\n       return new JobExecutor(job);\n    }\n}\n</code></pre>\n<p>config:</p>\n<pre><code> job.name = jobA # or jobB\n</code></pre>\n<hr />\n<p>But now I want to extend the application to take 2 jobs so the config is updated like this:</p>\n<pre><code> job1.name = jobA # or jobB or jobC\n job2.name = jobA # or jobB or jobC\n</code></pre>\n<p>then the config is as follows:</p>\n<pre><code>@Configuration\npublic class MyConfiguration {\n\n    @ConditionalOnExpression(&quot;#{'${job1.name}' == 'jobA' or '${job2.name}' == 'jobA'}&quot;)\n    @Bean \n    public Job jobA() {\n         return new JobA();\n    }\n\n    @ConditionalOnExpression(&quot;#{'${job1.name}' == 'jobB' or '${job2.name}' == 'jobB'}&quot;)\n    @Bean \n    public Job jobB() {\n         return new JobB();\n    }\n\n    @ConditionalOnExpression(&quot;#{'${job1.name}' == 'jobC' or '${job2.name}' == 'jobC'}&quot;)\n    @Bean \n    public Job jobC() {\n         return new JobC();\n    }\n}\n</code></pre>\n<p>then the Job classes are as follows (where every job is a subtype of <code>Job</code>):</p>\n<pre><code> interface Job {\n     void foo();\n }\n\n class JobA implements Job {\n     void foo() {...}\n }\n\n class JobB implements Job {\n     void foo() {...}\n }\n\n class JobC implements Job {\n     void foo() {...}\n }\n\n class JobExecutor {\n    \n    Job job1;\n    Job job2;\n    // autowired constructor -- spring complains about multiple beans.\n    public JobExecutor(Job job1, job2) { .... }\n }\n</code></pre>\n<p>but the problem comes when spring tries to autowire the <code>Job</code> classes because now there are two and it is also possible that the job1 and job2 are configured to the same Job eg JobA.. in this case it works fine because only one bean of the Job type is created</p>\n<p>but how to use mutliple jobs ? I thought about using the <code>@Qualifier</code> tag but this is not really possible because the job comes from config</p>\n",
+    "tags" : [ "java", "spring", "javabeans", "spring-bean" ],
+    "owner" : {
+      "account_id" : 39601793,
+      "reputation" : 9,
+      "user_id" : 29359561,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/60a90b046799d247213c7540c625768d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "kawikawi",
+      "link" : "https://stackoverflow.com/users/29359561/kawikawi"
+    },
+    "is_answered" : false,
+    "view_count" : 39,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1743733540,
+    "creation_date" : 1743726315,
+    "link" : "https://stackoverflow.com/questions/79554231/multiple-beans-in-context-how-to-dynamically-select-based-on-config",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79554345,
+    "question_id" : 79554231,
+    "body" : "<p>Use a Map&lt;String, Job&gt; injection pattern and dynamically select based on config values</p>\n<p>Spring can inject all beans of type Job into a Map&lt;String, Job&gt;, where the bean name is the key.</p>\n<p>This allows you to use configuration properties like job1.name and job2.name to look up the right bean at runtime, without relying on multiple conditional bean definitions.</p>\n<p><strong>1. Define jobs as regular beans with specific names</strong></p>\n<pre><code>@Configuration\npublic class MyConfiguration {\n\n    @Bean(&quot;jobA&quot;)\n    public Job jobA() {\n        return new JobA();\n    }\n\n    @Bean(&quot;jobB&quot;)\n    public Job jobB() {\n        return new JobB();\n    }\n\n    @Bean(&quot;jobC&quot;)\n    public Job jobC() {\n        return new JobC();\n    }\n\n    @Bean\n    public JobExecutor jobExecutor(\n            Map&lt;String, Job&gt; jobMap,\n            @Value(&quot;${job1.name}&quot;) String job1Name,\n            @Value(&quot;${job2.name}&quot;) String job2Name) {\n\n        Job job1 = jobMap.get(job1Name);\n        Job job2 = jobMap.get(job2Name);\n\n        return new JobExecutor(job1, job2);\n    }\n}\n</code></pre>\n<p>2. Your JobExecutor class</p>\n<pre><code>public class JobExecutor {\n\n    private final Job job1;\n    private final Job job2;\n\n    public JobExecutor(Job job1, Job job2) {\n        this.job1 = job1;\n        this.job2 = job2;\n    }\n\n    public void execute() {\n        job1.foo();\n        job2.foo();\n    }\n}\n</code></pre>\n<p>3. Your application.properties</p>\n<pre><code>job1.name=jobA\njob2.name=jobB\n</code></pre>\n<p>No need for @ConditionalOnExpression or @ConditionalOnProperty on every bean</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 7645025,
+      "reputation" : 440,
+      "user_id" : 5795975,
+      "user_type" : "registered",
+      "profile_image" : "https://lh6.googleusercontent.com/-6KwPUS4RnyA/AAAAAAAAAAI/AAAAAAAAC8w/auZqreI45x0/s256-rj/photo.jpg",
+      "display_name" : "Vijay",
+      "link" : "https://stackoverflow.com/users/5795975/vijay"
+    },
+    "creation_date" : 1743733540,
+    "last_activity_date" : 1743733540,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : { }
+}

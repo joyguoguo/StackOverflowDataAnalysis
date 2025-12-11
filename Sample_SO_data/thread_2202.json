@@ -1,0 +1,44 @@
+{
+  "question" : {
+    "question_id" : 79638907,
+    "title" : "Make MapStruct map attributes with back references",
+    "body" : "<p><em>(related: <a href=\"https://stackoverflow.com/questions/79632498/updating-jpa-entity-graphs-automatically\">Updating JPA entity graphs automatically</a>)</em></p>\n<p>It seems it's a limitation of MapStruct. But it could also very well be that I'm unaware of some MapStruct features (especially, newer features).</p>\n<p>Suppose I need to map a <code>List</code> of emails to a <code>List</code> of <code>EmailData</code>:</p>\n<pre class=\"lang-java prettyprint-override\"><code>import jakarta.persistence.Entity;\nimport jakarta.persistence.Id;\nimport jakarta.persistence.JoinColumn;\nimport jakarta.persistence.ManyToOne;\nimport jakarta.persistence.Table;\nimport jakarta.validation.constraints.Email;\nimport lombok.Getter;\nimport lombok.Setter;\nimport org.hibernate.annotations.Cache;\nimport org.hibernate.annotations.CacheConcurrencyStrategy;\n\n@Entity\n@Getter\n@Setter\n@Table(name = &quot;email_data&quot;)\n@Cache(usage = CacheConcurrencyStrategy.READ_WRITE)\npublic class EmailData {\n\n    @ManyToOne\n    @JoinColumn(name = &quot;user_id&quot;)\n    private User user;\n    @Id\n    @Email(message = &quot;Email must be valid&quot;)\n    private String email;\n</code></pre>\n<p>The problem is I need a <code>User</code>.</p>\n<pre class=\"lang-java prettyprint-override\"><code>// simplified User\n\nimport jakarta.persistence.Entity;\nimport jakarta.persistence.GeneratedValue;\nimport jakarta.persistence.GenerationType;\nimport jakarta.persistence.Id;\nimport jakarta.persistence.OneToMany;\nimport jakarta.persistence.Table;\nimport lombok.Getter;\nimport lombok.Setter;\n\nimport java.util.List;\n\n@Entity\n@Getter\n@Setter\n@Table(name = &quot;\\&quot;user\\&quot;&quot;)\npublic class User {\n\n    @Id\n    @GeneratedValue(strategy = GenerationType.IDENTITY)\n    private Long id;\n    @OneToMany(mappedBy = &quot;user&quot;)\n    private List&lt;EmailData&gt; emailData;\n}\n</code></pre>\n<p>I expect MapStruct to set the <code>User</code> that I pass in for all <code>EmailData</code> instances. Basically, I want it to generate this:</p>\n<pre class=\"lang-java prettyprint-override\"><code>import org.mapstruct.Mapper;\n\nimport java.util.List;\n\n@Mapper\npublic interface EmailMapper {\n\n    // probably other mapping methods\n\n    default List&lt;EmailData&gt; toEmailDatas(List&lt;String&gt; emails, User user) {\n        return emails.stream().map(e -&gt; {\n            EmailData emailData = new EmailData();\n            emailData.setEmail(e);\n            emailData.setUser(user);\n            return emailData;\n        }).toList();\n    }\n}\n</code></pre>\n<p>Suppose, it's too complex for MapStruct to create, that's fine by me.</p>\n<p>What is <em>not</em> fine, is MapStruct's inability to use that method here:</p>\n<pre class=\"lang-java prettyprint-override\"><code>import org.mapstruct.BeanMapping;\nimport org.mapstruct.Mapper;\nimport org.mapstruct.Mapping;\nimport org.mapstruct.MappingTarget;\nimport org.mapstruct.NullValuePropertyMappingStrategy;\n\n@Mapper(uses = EmailMapper.class)\npublic interface UserMapper {\n\n    @Mapping(target = &quot;id&quot;, source = &quot;sourceUser.id&quot;)\n    @Mapping(target = &quot;emailData&quot;, source = &quot;dto.emailData&quot;)\n    User toUser(UpdateUserRequestDto dto, User sourceUser); // here\n\n    UserResponseDto toResponseDto(User user);\n\n    @BeanMapping(nullValuePropertyMappingStrategy = NullValuePropertyMappingStrategy.IGNORE)\n    void updateUser(@MappingTarget User targetUser, User sourceUser);\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>import lombok.Getter;\nimport lombok.Setter;\n\nimport java.util.List;\n\n@Getter\n@Setter\npublic class UpdateUserRequestDto {\n\n    private Long id;\n    private List&lt;String&gt; emailData;\n}\n</code></pre>\n<p>If my <code>UserService</code>'s method, one that accepts <code>UpdateUserRequestDto</code>, can't rely on <code>UserMapper</code> to map all <code>User</code> attributes, then I would have to inject <code>EmailMapper</code> too and force the service to map emails itself. It's not much of an issue if there are only emails involved, but if <code>User</code> has multiple <code>@OneToMany</code> attributes like <code>EmailData</code>, then I would need to inject a lots of mappers! I'm not comfortable with it. A <code>UserService</code> should operate with <code>User</code> things only: <code>UserRepository</code>, <code>UserMapper</code>.</p>\n<pre class=\"lang-java prettyprint-override\"><code>// what I want to work\n\n@Service\n@Transactional(readOnly = true)\n@RequiredArgsConstructor\npublic class UserServiceImpl implements UserService {\n\n    private final UserRepository repository;\n    private final UserMapper userMapper; // only one mapper, for User\n\n    @Override\n    @Transactional(readOnly = false)\n    public UserResponseDto update(UpdateUserRequestDto userRequestDto) {\n        User user = loadUser(userRequestDto.getId());\n        userMapper.updateUser(user, userMapper.toUser/*can't generate*/(userRequestDto, user));\n        User updatedUser = repository.save(user);\n        return userMapper.toResponseDto(updatedUser);\n    }\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>java: Can't map property &quot;List&lt;String&gt; emailData&quot; to &quot;List&lt;EmailData&gt; emailData&quot;. Consider to declare/implement a mapping method: &quot;List&lt;EmailData&gt; map(List&lt;String&gt; value)&quot;.\n</code></pre>\n<p>Is there a way to make MapStruct map attributes with back references like that?</p>\n",
+    "tags" : [ "java", "mapstruct" ],
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2681,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "is_answered" : false,
+    "view_count" : 49,
+    "answer_count" : 0,
+    "score" : 0,
+    "last_activity_date" : 1748262593,
+    "creation_date" : 1748262593,
+    "link" : "https://stackoverflow.com/questions/79638907/make-mapstruct-map-attributes-with-back-references",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140555165,
+    "post_id" : 79638907,
+    "body" : "In such case I often used @AfterMapping that would fix the backreferences.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2174445,
+      "reputation" : 159,
+      "user_id" : 1925500,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/9c4008148558719a186c616c8c234b91?s=256&d=identicon&r=PG",
+      "display_name" : "freafrea",
+      "link" : "https://stackoverflow.com/users/1925500/freafrea"
+    },
+    "creation_date" : 1751360110,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

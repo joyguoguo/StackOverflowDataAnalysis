@@ -1,0 +1,114 @@
+{
+  "question" : {
+    "question_id" : 79692403,
+    "title" : "Does cancelling a Future re-interrupt a thread?",
+    "body" : "<p>In chapter 7.1.5 of the &quot;Java Concurrency in Practice&quot; book, it says</p>\n<blockquote>\n<p>When <code>Future.get</code> throws <code>InterruptedException</code> or <code>TimeoutException</code> and you know that the results is no longer needed by the program, cancel the task with <code>Future.cancel</code>.</p>\n</blockquote>\n<p>code: Listing 7.10 Cancelling a task using Future.</p>\n<pre class=\"lang-java prettyprint-override\"><code>public static void timedRun(Runnable r,\n                            long timeout, TimeUnit unit)\n                            throws InterruptedException {\n    Future&lt;?&gt; task = taskExec.submit(r);\n    try {\n        task.get(timeout, unit);\n    } catch (TimeoutException e) {\n        // task will be cancelled below\n    } catch (ExecutionException e) {\n        // exception thrown in task: rethrow\n        throw launderThrowable(e.getCause());\n    } finally {\n        // Harmless if task already completed\n        task.cancel(true); // interrupt if running\n    }\n}\n</code></pre>\n<p>When <code>task.get(timeout, unit)</code> throws an <code>InterruptedException</code>, the <code>finally</code> block calls <code>task.cancel(true)</code>. If the original exception didn’t terminate the thread running <code>Runnable r</code>, that cancellation will cause <code>task.get(timeout, unit)</code> to throw another <code>InterruptedException</code>.</p>\n<p>I can't understand why we need two InterruptedException.</p>\n",
+    "tags" : [ "java", "concurrency", "interrupt", "interruption" ],
+    "owner" : {
+      "account_id" : 13259968,
+      "reputation" : 61,
+      "user_id" : 9574849,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-XdUIqdMkCWA/AAAAAAAAAAI/AAAAAAAAAAA/4252rscbv5M/s256-rj/photo.jpg",
+      "display_name" : "Flamer",
+      "link" : "https://stackoverflow.com/users/9574849/flamer"
+    },
+    "is_answered" : true,
+    "view_count" : 147,
+    "answer_count" : 2,
+    "score" : 0,
+    "last_activity_date" : 1751982032,
+    "creation_date" : 1751870509,
+    "link" : "https://stackoverflow.com/questions/79692403/does-cancelling-a-future-re-interrupt-a-thread",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79692454,
+    "question_id" : 79692403,
+    "body" : "<p>According to the <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/util/concurrent/Future.html#cancel(boolean)\" rel=\"nofollow noreferrer\">javadoc</a> for <code>cancel</code>, it does not throw <code>InteruptedException</code>.  There is only one possible <code>InteruptedException</code> in your example.</p>\n<p>A <code>InteruptedException</code> will be thrown by <code>task.get(timeout, unit)</code> if (and only if) <strong>the current thread</strong> is interrupted.  Calling <code>task.cancel(true)</code> doesn't interrupt the current thread.  It interrupts the thread that is running the task that you are cancelling.</p>\n<p>So to respond to your comment:</p>\n<blockquote>\n<p>When the thread <code>t1</code> running the <code>Runnable</code> <code>r</code> is unexpectedly interrupted, the <code>finally</code> block calls <code>task.cancel(true)</code>, which in turn attempts to interrupt <code>t1</code> again.</p>\n</blockquote>\n<p>In fact<sup>1</sup>, when the thread <code>t1</code> running <code>r</code> is interrupted and the possible<sup>2</sup> resulting <code>InteruptedException</code> is not handled by <code>r</code>, it will be caught by the worker thread and saved in the <code>Future</code> object.  Later, when <code>Future.get</code> is called, an <code>ExecutionException</code> will be created with the saved exception as its cause.  The former is then thrown on the <code>get</code> call's thread.</p>\n<p>Yes ... the <code>finally</code> <em>may</em> result in a second <code>Thread.interrupt()</code> to the thread that is (or was) running <code>r</code>, but it is harmless.  Assuming that <code>r</code> failed to handle the <code>InteruptedException</code> the first time, it certainly won't be raised on <code>r.run()</code>'s call stack the second time around.  That call stack was unwound by worker thread ... before the <code>ExecutionException</code> was created!</p>\n<hr />\n<p><sup>1 - This is based on my general understanding of Java threads and interrupts, and reading of the javadocs.  I haven't tried to confirm this via a testcase or by reading the source code.<br>\n2 - This is not the only possible outcome of an unexpected interrupt.</sup></p>\n",
+    "score" : 7,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 47283,
+      "reputation" : 723428,
+      "user_id" : 139985,
+      "user_type" : "registered",
+      "accept_rate" : 69,
+      "profile_image" : "https://www.gravatar.com/avatar/147c5a9cc1feec049c50da791ac7d144?s=256&d=identicon&r=PG",
+      "display_name" : "Stephen C",
+      "link" : "https://stackoverflow.com/users/139985/stephen-c"
+    },
+    "creation_date" : 1751873608,
+    "last_activity_date" : 1751886610,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79692803,
+    "question_id" : 79692403,
+    "body" : "<p>I may be mistaken, but it seems to me you have a misconception about which threads are interrupted and when. There are two threads involved in the example.</p>\n<ol>\n<li><p><code>T1</code> - The thread which invoked <code>timedRun</code>. This thread submits the task <code>r</code> to the executer, then waits for it to complete by calling <code>Future::get(long,TimeUnit)</code>.</p>\n</li>\n<li><p><code>T2</code> - The executor thread which is executing <code>r</code>.</p>\n</li>\n</ol>\n<p>When <code>T1</code> invokes <code>get</code> on the future it blocks until the task completes, the future is cancelled, the timeout elapses, or <code>T1</code> is interrupted. In the case where <code>T1</code> is interrupted, <code>get</code> throws an <code>InterruptedException</code>. <strong>This has no effect on <code>T2</code></strong>; it continues to execute <code>r</code> as if nothing has happened. To interrupt <code>T2</code> you need to cancel the future by invoking <code>cancel(true)</code>.</p>\n<p>Interrupting <code>T2</code> is independent of <code>T1</code>. It cannot cause a &quot;second&quot; <code>InterruptedException</code> in the <code>timedRun</code> method, because the exception--if thrown--occurs in <code>T2</code>. Also, calling <code>get</code> on a cancelled future will actually result in a <code>CancellationException</code> being thrown. But that wouldn't happen in the example since <code>get</code> is never called more than once.</p>\n<p>Semantically, interrupting <code>T1</code> while it's blocked in <code>get</code> means &quot;stop waiting for the task to complete&quot;. It <em>does not</em> mean &quot;cancel the task&quot;. The example does end up cancelling the task in this case, but that behavior is not required. It would be perfectly valid to let <code>T2</code> continue to execute <code>r</code> while <code>T1</code> &quot;moves on&quot;.</p>\n<p>In contrast, calling <code>task.cancel(true)</code> means &quot;cancel the future and interrupt the task thread&quot;. This leads to <code>T2</code> being interrupted in the example. And if <code>r</code> is implemented to correctly respond to interrupts then this will cause the task to terminate early. Note if you were to pass <code>false</code> when cancelling the task then <code>T2</code> would <em>not</em> be interrupted. The future would simply be marked &quot;cancelled&quot; but <code>r</code>, if already started, would continue to execute unimpeded<sup>1</sup>.</p>\n<p>The example is implemented to ensure the task is cancelled if <code>task.get(timeout, unit)</code> returns <em>for any reason</em><sup>2</sup>. Why? Because often if the timeout elapses or the wait is explicitly interrupted then the task should stop. Either the task is taking too long or some other condition means the task is no longer needed.</p>\n<hr />\n<p><sup>1. If a future's task has not already started then cancelling the future will prevent the task from ever starting, regardless of whether <code>true</code> or <code>false</code> was passed to <code>cancel</code>.</sup></p>\n<p><sup>2. Cancelling an already completed future has no effect. However, putting the call to <code>cancel</code> in the <code>finally</code> block makes the implementation slightly easier and more straightforward.</sup></p>\n",
+    "score" : 4,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 8532578,
+      "reputation" : 49884,
+      "user_id" : 6395627,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Slaw",
+      "link" : "https://stackoverflow.com/users/6395627/slaw"
+    },
+    "creation_date" : 1751888727,
+    "last_activity_date" : 1751888727,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140570585,
+    "post_id" : 79692403,
+    "body" : "@Flamer <i>How</i> unexpectedly?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 195331,
+      "reputation" : 281037,
+      "user_id" : 438154,
+      "user_type" : "registered",
+      "accept_rate" : 98,
+      "profile_image" : "https://www.gravatar.com/avatar/4ec21df1e55febf8deb2e3b24b9cb39b?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Sotirios Delimanolis",
+      "link" : "https://stackoverflow.com/users/438154/sotirios-delimanolis"
+    },
+    "creation_date" : 1751891547,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140569805,
+    "post_id" : 79692403,
+    "body" : "When the thread t1 running the Runnable r is unexpectedly interrupted, the finally block calls task.cancel(true), which in turn attempts to interrupt t1 again. @WasabiThumbs",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 13259968,
+      "reputation" : 61,
+      "user_id" : 9574849,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-XdUIqdMkCWA/AAAAAAAAAAI/AAAAAAAAAAA/4252rscbv5M/s256-rj/photo.jpg",
+      "display_name" : "Flamer",
+      "link" : "https://stackoverflow.com/users/9574849/flamer"
+    },
+    "creation_date" : 1751871389,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140569783,
+    "post_id" : 79692403,
+    "body" : "It&#39;s not possible for a single method invocation to raise 2 exceptions, what do you mean here?",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 14914414,
+      "reputation" : 1185,
+      "user_id" : 10808904,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Ts8fIsJj.png?s=256",
+      "display_name" : "Xavier Pedraza",
+      "link" : "https://stackoverflow.com/users/10808904/xavier-pedraza"
+    },
+    "creation_date" : 1751870807,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

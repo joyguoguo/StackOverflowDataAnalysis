@@ -1,0 +1,259 @@
+{
+  "question" : {
+    "question_id" : 79536604,
+    "title" : "Java options within Kubernetes container",
+    "body" : "<p>I am working with Java application and I’m going to deploy it within container.\nI have prepared Dockerfile with</p>\n<p><code>ENTRYPOINT [&quot;java&quot;, &quot;-jar&quot;, &quot;java_j.jar&quot;]</code></p>\n<p>in my Java application.\nI have prepared some helm charts too.</p>\n<p>Is it possible to use only one variable to specify all Java options interested by me in it to use it within container.args (Deployment.yaml)?</p>\n<p>{root}/values.yaml:</p>\n<pre><code>TEST_JAVA_OPTS = &quot;-XX:+UseSerialGC&quot;\nTEST_JAVA_MEMORY_OPTS = &quot;-Xmx256m -XX:MetaspaceSize=64m&quot;\n{root}/templates/Deployment.yaml\n</code></pre>\n<p>{root}/templates/Deployment.yaml</p>\n<pre><code>...\nspec:\n   containers:\n      - name: test-java-service\n        command:\n           - java\n           - '{{ .Values.TEST_JAVA_MEMORY_OPTS }}'\n           - '{{ .Values.TEST_JAVA_OPTS }}'\n           - -jar\n           - java_j.jar\n...\n</code></pre>\n<p>For now it doesn’t work to me because each my application startup failes with <code>Improperly specified VM option</code>. I guess it tries to give java entire string as one java option. That is wrong of course.\nMy purpose is to avoid a lot of variables for each java option and to let change it in Deployment directly (I know that there is a possibility to set environment variables in Dockerfile at ENTRYPOINT part but let assume this option is disabled for us)</p>\n<p>Kubernetes version: 1.28.12</p>\n",
+    "tags" : [ "java", "kubernetes", "kubernetes-helm" ],
+    "owner" : {
+      "account_id" : 19254369,
+      "reputation" : 91,
+      "user_id" : 16262239,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/e68ae72a8e53358cebeed37b0d14b965?s=256&d=identicon&r=PG",
+      "display_name" : "Disteonne",
+      "link" : "https://stackoverflow.com/users/16262239/disteonne"
+    },
+    "is_answered" : true,
+    "view_count" : 466,
+    "answer_count" : 2,
+    "score" : 1,
+    "last_activity_date" : 1743013157,
+    "creation_date" : 1742996358,
+    "link" : "https://stackoverflow.com/questions/79536604/java-options-within-kubernetes-container",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79536877,
+    "question_id" : 79536604,
+    "body" : "<p>In your Helm chart, you need to split out the different low-level JVM settings into individual items in the <code>command:</code> list.  The easiest way to do this is to make the Helm-level settings be a list of options, and then you can iterate over it.</p>\n<pre class=\"lang-yaml prettyprint-override\"><code># values.yaml\njvmOptions:\n  - -XX:UseSerialGC\n  - -Xmx256m\n  - -XX:MetaspaceSize=64m\n</code></pre>\n<pre class=\"lang-yaml prettyprint-override\"><code># templates/deployments.yaml\n         command:\n           - java\n{{- range .Values.jvmOptions }}\n           - {{ toJson . }}\n{{- end }}\n           - -jar\n           - java_j.jar\n</code></pre>\n<p>Since <code>.Values.jvmOptions</code> is a list here, the template <code>range</code> construct loops through it, setting <code>.</code> to each item in turn.  In the example here, I use the <code>toJson</code> extension function to ensure each item is properly quoted as a string that fits on a single line.</p>\n<p>Nothing would stop you from having multiple lists of option settings that you combined this way.</p>\n<p>If you really want the JVM options as a space-separated string, then you need to split that string into words.  There is a <a href=\"https://masterminds.github.io/sprig/string_slice.html\" rel=\"nofollow noreferrer\"><code>splitList</code></a> extension function (not mentioned in the Helm documentation but it's there) that can do this.</p>\n<pre class=\"lang-yaml prettyprint-override\"><code># values.yaml\njvmOptions: &quot;-XX:UseSerialGC -Xmx256M -XX:MetaspaceSize=64m&quot;\n</code></pre>\n<pre class=\"lang-yaml prettyprint-override\"><code># templates/deployments.yaml\n         command:\n           - java\n{{- range splitList &quot; &quot; .Values.jvmOptions }}\n           - {{ toJson . }}\n{{- end }}\n           - -jar\n           - java_j.jar\n</code></pre>\n<p>The template part looks almost identical except for adding <code>splitList</code> in.  Note that this is a fairly naïve splitting; there's not going to be any support for quoting or embedding spaces inside a single option or any non-space whitespace.</p>\n<p>Finally: note that the standard JVMs do support passing options in environment variables; see for example <a href=\"https://stackoverflow.com/questions/52986487/what-is-the-difference-between-jdk-java-options-and-java-tool-options-when-using\">What is the difference between JDK_JAVA_OPTIONS and JAVA_TOOL_OPTIONS when using Java 11?</a>  You could just set this environment variable without trying to reconstruct <code>command:</code>.  (IME if you have a choice, managing Kubernetes manifests tends to be easier if you can set environment variables as opposed to using command-line options.)</p>\n<pre class=\"lang-yaml prettyprint-override\"><code># values.yaml\njvmOptions: &quot;-XX:UseSerialGC -Xmx256M -XX:MetaspaceSize=64m&quot;\n</code></pre>\n<pre class=\"lang-yaml prettyprint-override\"><code># templates/deployments.yaml\n         env:\n{{- with .Values.jvmOptions }}\n           - name: JDK_JAVA_OPTIONS\n             value: {{ toJson . }}\n{{- end }}\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 13863020,
+      "reputation" : 164901,
+      "user_id" : 10008173,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/bc86d913c15f3b126673faa654e9668c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "David Maze",
+      "link" : "https://stackoverflow.com/users/10008173/david-maze"
+    },
+    "creation_date" : 1743011867,
+    "last_activity_date" : 1743011867,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79536853,
+    "question_id" : 79536604,
+    "body" : "<p>According to the <a href=\"https://kubernetes.io/docs/tasks/inject-data-application/define-command-argument-container/\" rel=\"nofollow noreferrer\">Kubernetes docs</a>, split the command array and the arguments array into <code>command</code> and <code>args</code> sections.</p>\n<blockquote>\n<p>When you create a Pod, you can define a command and arguments for the containers that run in the Pod. To define a command, include the <code>command</code> field in the configuration file. To define arguments for the command, include the <code>args</code> field in the configuration file. The command and arguments that you define cannot be changed after the Pod is created.</p>\n<p>The command and arguments that you define in the configuration file override the default command and arguments provided by the container image. If you define args, but do not define a command, the default command is used with your new arguments.</p>\n</blockquote>\n<pre><code>spec:\n  containers:\n    - name: test-java-service\n      image: &lt;your_image_name_here&gt;\n      command:\n        - java\n      args:\n        - {{ .Values.TEST_JAVA_MEMORY_OPTS | quote }}\n        - {{ .Values.TEST_JAVA_OPTS | quote }}\n        - &quot;-jar&quot;\n        - java_j.jar\n</code></pre>\n<p>When Helm populates values, don't specify the quotes yourself, or else the values replacement string will be interpreted literally as that string.  Instead, pipe the Helm value to <code>quote</code>.  Place quotes around any value that could be interpreted specially in YAML, such as values with <code>-</code> characters, like your Java options.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 1888343,
+      "reputation" : 178713,
+      "user_id" : 1707091,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/dJrV3.jpg?s=256",
+      "display_name" : "rgettman",
+      "link" : "https://stackoverflow.com/users/1707091/rgettman"
+    },
+    "creation_date" : 1743011308,
+    "last_activity_date" : 1743011308,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140266574,
+    "post_id" : 79536604,
+    "body" : "@muzzletov, yes, I can technically. But that is not a case for me here. I am trying to figure out how to do that with “one string” variables notation with kubernetes",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 19254369,
+      "reputation" : 91,
+      "user_id" : 16262239,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/e68ae72a8e53358cebeed37b0d14b965?s=256&d=identicon&r=PG",
+      "display_name" : "Disteonne",
+      "link" : "https://stackoverflow.com/users/16262239/disteonne"
+    },
+    "creation_date" : 1743017090,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140266565,
+    "post_id" : 79536604,
+    "body" : "yes, you can do that. System.getenv(&quot;TEST_JAVA_TOOL_OPTIONS&quot;)",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2251196,
+      "reputation" : 722,
+      "user_id" : 1983401,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/z2oYG.jpg?s=256",
+      "display_name" : "muzzletov",
+      "link" : "https://stackoverflow.com/users/1983401/muzzletov"
+    },
+    "creation_date" : 1743016855,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140266492,
+    "post_id" : 79536604,
+    "body" : "@muzzletov Hello) Let&#39;s assume there are requirements to use env variables that are different from original like JDK_JAVA_OPTIONS or JAVA_TOOL_OPTIONS",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 19254369,
+      "reputation" : 91,
+      "user_id" : 16262239,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/e68ae72a8e53358cebeed37b0d14b965?s=256&d=identicon&r=PG",
+      "display_name" : "Disteonne",
+      "link" : "https://stackoverflow.com/users/16262239/disteonne"
+    },
+    "creation_date" : 1743015366,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140266465,
+    "post_id" : 79536604,
+    "body" : "you dont need to do anything at the dockerfile, you just provide the environment variables and it works.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2251196,
+      "reputation" : 722,
+      "user_id" : 1983401,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/z2oYG.jpg?s=256",
+      "display_name" : "muzzletov",
+      "link" : "https://stackoverflow.com/users/1983401/muzzletov"
+    },
+    "creation_date" : 1743014787,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140266440,
+    "post_id" : 79536604,
+    "body" : "why dont you just use environment variables?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2251196,
+      "reputation" : 722,
+      "user_id" : 1983401,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/z2oYG.jpg?s=256",
+      "display_name" : "muzzletov",
+      "link" : "https://stackoverflow.com/users/1983401/muzzletov"
+    },
+    "creation_date" : 1743014447,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79536877" : [ {
+      "comment_id" : 140267204,
+      "post_id" : 79536877,
+      "body" : "You&#39;re just doing a simple O(<i>n</i>) loop over a list and doing basic string manipulation; compared even with the cost of sending the rendered Kubernetes manifest to the API server, this is basically free (doubly so on modern hardware).",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 13863020,
+        "reputation" : 164901,
+        "user_id" : 10008173,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/bc86d913c15f3b126673faa654e9668c?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "David Maze",
+        "link" : "https://stackoverflow.com/users/10008173/david-maze"
+      },
+      "creation_date" : 1743029593,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140266321,
+      "post_id" : 79536877,
+      "body" : "David, hello! Thank you for your answer. I am sure it will work because I tried the same at initial stage with splitList but. How do you think there is no the other way to do it without splitting and ranging? I am afraid it would be not okay for optimization. Maybe it&#39;s okay for single application but if we are talking about bulk deploy (more then I dont know..50 application) it can take some time to parse and range just to prepare arguments",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 19254369,
+        "reputation" : 91,
+        "user_id" : 16262239,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/e68ae72a8e53358cebeed37b0d14b965?s=256&d=identicon&r=PG",
+        "display_name" : "Disteonne",
+        "link" : "https://stackoverflow.com/users/16262239/disteonne"
+      },
+      "creation_date" : 1743012660,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79536853" : [ {
+      "comment_id" : 140266360,
+      "post_id" : 79536853,
+      "body" : "Of course I did. All the values are the same as I wrote above: <code>TEST_JAVA_OPTS = &quot;-XX:+UseSerialGC&quot; TEST_JAVA_MEMORY_OPTS = &quot;-Xmx256m -XX:MetaspaceSize=64m&quot;</code>. I believe it takes the 1st one specified in args  sees &#39;-XX&#39; remove it and thinks that entire string it&#39;s an option. UPD: thank you for noticement, there was a typo in my description here",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 19254369,
+        "reputation" : 91,
+        "user_id" : 16262239,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/e68ae72a8e53358cebeed37b0d14b965?s=256&d=identicon&r=PG",
+        "display_name" : "Disteonne",
+        "link" : "https://stackoverflow.com/users/16262239/disteonne"
+      },
+      "creation_date" : 1743013113,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140266342,
+      "post_id" : 79536853,
+      "body" : "The Java option has a <code>+</code> in it.  Try <code>-XX:+UseSerialGC</code>.  <a href=\"https://download.java.net/java/early_access/loom/docs/specs/man/java.html\" rel=\"nofollow noreferrer\">download.java.net/java/early_access/loom/docs/specs/man/&hellip;</a>",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1888343,
+        "reputation" : 178713,
+        "user_id" : 1707091,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/dJrV3.jpg?s=256",
+        "display_name" : "rgettman",
+        "link" : "https://stackoverflow.com/users/1707091/rgettman"
+      },
+      "creation_date" : 1743012999,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140266301,
+      "post_id" : 79536853,
+      "body" : "Error in my logs still the same:   <code>Improperly specified VM option &#39;UseSerialGC -Xmx256m -XX:MetaspaceSize=64m&#39; Error: Could not create the Java Virtual Machine. Error: A fatal exception has occurred. Program will exit</code>   I did what you mentioned: changed quotation and seperated comman and args. It was almost like &#39;copy and past&#39; and still doesnt work",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 19254369,
+        "reputation" : 91,
+        "user_id" : 16262239,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/e68ae72a8e53358cebeed37b0d14b965?s=256&d=identicon&r=PG",
+        "display_name" : "Disteonne",
+        "link" : "https://stackoverflow.com/users/16262239/disteonne"
+      },
+      "creation_date" : 1743012416,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140266289,
+      "post_id" : 79536853,
+      "body" : "How does it not work?  What is the error you&#39;re getting here?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1888343,
+        "reputation" : 178713,
+        "user_id" : 1707091,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/dJrV3.jpg?s=256",
+        "display_name" : "rgettman",
+        "link" : "https://stackoverflow.com/users/1707091/rgettman"
+      },
+      "creation_date" : 1743012196,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140266268,
+      "post_id" : 79536853,
+      "body" : "Undortunatelly this way of solution doesnt work :( I did what you mensioned but still have the same issue with Improperly specified VM option",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 19254369,
+        "reputation" : 91,
+        "user_id" : 16262239,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/e68ae72a8e53358cebeed37b0d14b965?s=256&d=identicon&r=PG",
+        "display_name" : "Disteonne",
+        "link" : "https://stackoverflow.com/users/16262239/disteonne"
+      },
+      "creation_date" : 1743011956,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

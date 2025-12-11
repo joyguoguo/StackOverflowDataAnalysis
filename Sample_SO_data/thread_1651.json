@@ -1,0 +1,259 @@
+{
+  "question" : {
+    "question_id" : 79687696,
+    "title" : "Oracle testcontainer is not starting in the pipeline",
+    "body" : "<p>I am using Java 21 and Spring Boot 3.3.3, and starting a test container with Oracle DB in my integration tests like this:</p>\n<p>build.gradle:</p>\n<pre class=\"lang-none prettyprint-override\"><code>testImplementation &quot;org.testcontainers:oracle-free:1.20.1&quot;\n</code></pre>\n<p>Oracle container setup:</p>\n<pre class=\"lang-java prettyprint-override\"><code>import org.junit.jupiter.api.extension.BeforeAllCallback;\nimport org.junit.jupiter.api.extension.ExtensionContext;\nimport org.testcontainers.oracle.OracleContainer;\n\nimport java.sql.Connection;\nimport java.sql.DriverManager;\nimport java.sql.Statement;\nimport java.time.Duration;\n\n\npublic class OracleTestContainerExtension implements BeforeAllCallback {\n\n    private static final String ORACLE_IMAGE = &quot;gvenzl/oracle-free:23.5-slim-faststart&quot;;\n    private static final String SYSTEM_USERNAME = &quot;SYSTEM&quot;;\n\n    private static final OracleContainer ORACLE_CONTAINER = new OracleContainer(ORACLE_IMAGE)\n            .withStartupTimeout(Duration.ofMinutes(5))\n            .withPassword(&quot;test_password&quot;)\n            .withDatabaseName(&quot;test_db&quot;)\n            .withReuse(true);\n\n    @Override\n    public void beforeAll(ExtensionContext context) throws Exception {\n        if (!ORACLE_CONTAINER.isRunning()) {\n            ORACLE_CONTAINER.start();\n\n            createTablesAndQueues();\n\n            System.setProperty(&quot;spring.datasource.url&quot;, ORACLE_CONTAINER.getJdbcUrl());\n            System.setProperty(&quot;spring.datasource.username&quot;, SYSTEM_USERNAME);\n            System.setProperty(&quot;spring.datasource.password&quot;, ORACLE_CONTAINER.getPassword());\n        }\n    }\n\n    private void createTablesAndQueues() throws Exception {\n        try (Connection connection = DriverManager.getConnection(\n                ORACLE_CONTAINER.getJdbcUrl(),\n                SYSTEM_USERNAME,\n                ORACLE_CONTAINER.getPassword())) {\n\n            Statement statement = connection.createStatement();\n            statement.executeUpdate(loadFromResources(&quot;/data/sql/init/init_queue_tables_and_queues.sql&quot;));\n\n            statement.close();\n        }\n    }\n}\n</code></pre>\n<p>Then I use this extension in the test:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@SpringBootTest(webEnvironment = RANDOM_PORT)\n@ExtendWith(OracleTestContainerExtension.class)\nclass IntegrationTests {\n  // tests\n}\n</code></pre>\n<p>When I start my tests locally, they work, but if I start tests in the pipeline, I receive an error:</p>\n<pre class=\"lang-none prettyprint-override\"><code>ERROR [Test worker] o.t.c.GenericContainer: Log output from the failed container:\n    CONTAINER: starting up...\n    CONTAINER: first database startup, initializing...\n    CONTAINER: starting up Oracle Database...\n    LSNRCTL for Linux: Version 23.0.0.0.0 - for Oracle Cloud and Engineered Systems on 25-JUN-2025 13:44:16\n    Copyright (c) 1991, 2024, Oracle.  All rights reserved.\n    Starting /opt/oracle/product/23ai/dbhomeFree/bin/tnslsnr: please wait...\n    TNSLSNR for Linux: Version 23.0.0.0.0 - for Oracle Cloud and Engineered Systems\n    System parameter file is /opt/oracle/product/23ai/dbhomeFree/network/admin/listener.ora\n    Log messages written to /opt/oracle/diag/tnslsnr/7974453683d2/listener/alert/log.xml\n    Listening on: (DESCRIPTION=(ADDRESS=(PROTOCOL=ipc)(KEY=EXTPROC_FOR_FREE)))\n    Listening on: (DESCRIPTION=(ADDRESS=(PROTOCOL=tcp)(HOST=0.0.0.0)(PORT=1521)))\n    Connecting to (DESCRIPTION=(ADDRESS=(PROTOCOL=IPC)(KEY=EXTPROC_FOR_FREE)))\n    STATUS of the LISTENER\n    ------------------------\n    Alias                     LISTENER\n    Version                   TNSLSNR for Linux: Version 23.0.0.0.0 - for Oracle Cloud and Engineered Systems\n    Start Date                25-JUN-2025 13:44:17\n    Uptime                    0 days 0 hr. 0 min. 0 sec\n    Trace Level               off\n    Security                  ON: Local OS Authentication\n    SNMP                      OFF\n    Default Service           FREE\n    Listener Parameter File   /opt/oracle/product/23ai/dbhomeFree/network/admin/listener.ora\n    Listener Log File         /opt/oracle/diag/tnslsnr/7974453683d2/listener/alert/log.xml\n    Listening Endpoints Summary...\n      (DESCRIPTION=(ADDRESS=(PROTOCOL=ipc)(KEY=EXTPROC_FOR_FREE)))\n      (DESCRIPTION=(ADDRESS=(PROTOCOL=tcp)(HOST=0.0.0.0)(PORT=1521)))\n    The listener supports no services\n    The command completed successfully\n    ORA-00600: internal error code, arguments: [ksmcsg: failed to get total shm available], [], [], [], [], [], [], [], [], [], [], []\n    ORA-27300: OS system dependent operation:Cannot open /proc/sys/kernel/shm failed with status: 75\n    ORA-27301: OS failure message: Value too large for defined data type\n    ORA-27302: failure occurred at: sskgmgtssa_1\n</code></pre>\n<p>My integration test stage for the GitLab pipeline is:</p>\n<pre class=\"lang-yaml prettyprint-override\"><code>integration-tests:\n  stage: test\n  # There is a problem with gradle 8.12\n  # Before changing the version to 8.12 you have to check if a test in the services is still running\n  # Error loading shared library ld-linux-x86-64.so.2: No such file or directory\n  image: dockerhub.devops.mycompany.com/gradle:8.14-jdk21-alpine\n  cache:\n    key: &quot;$CI_COMMIT_REF_SLUG-gradle&quot;\n    paths:\n      - &quot;.gradle&quot;\n  variables:\n    DOCKER_DRIVER: overlay2\n    DOCKER_TLS_CERTDIR: &quot;/certs&quot;\n    DOCKER_HOST: tcp://docker:2376\n    DOCKER_TLS_VERIFY: 1\n    DOCKER_CERT_PATH: &quot;$DOCKER_TLS_CERTDIR/client&quot;\n  services:\n    - name: 'dockerhub.devops.mycompany.com/docker:28.3.0-dind' # DOCKER_DIND_IMAGE\n      command: [ '--registry-mirror=https://dockerhub.devops.mycompany.com' ]\n      alias: docker\n  tags:\n    - otc_run_sysbox_xl\n  script:\n    - $GRADLE_CLI_BIN ${TRACE+--debug} --build-cache --gradle-user-home $GRADLE_USER_HOME/ -x build integrationTest\n  rules:\n    - if: $GRADLE_INTEGRATION_TESTS_ENABLED == &quot;true&quot;\n  needs:\n    - gradle-build\n  artifacts:\n    when: on_success\n    expire_in: 1 day\n    paths:\n      - ./**/build/reports/tests/integrationTest/*\n</code></pre>\n<p>I see that this happened after switching the GitLab runner in our infrastructure, and I can't use the old runner.</p>\n<p>I also think the problem might be that <a href=\"https://docs.docker.com/security/for-admins/hardened-desktop/enhanced-container-isolation/#what-happens-when-enhanced-container-isolation-is-turned-on\" rel=\"nofollow noreferrer\">Enhanced Container Isolation</a> is enabled, but I haven't been able to figure out how to bypass it to solve my problem.</p>\n<p>Any ideas?</p>\n",
+    "tags" : [ "java", "spring", "oracle-database", "spring-boot", "testcontainers" ],
+    "owner" : {
+      "account_id" : 18586978,
+      "reputation" : 3850,
+      "user_id" : 15000097,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/yFl4M.jpg?s=256",
+      "display_name" : "Georgii Lvov",
+      "link" : "https://stackoverflow.com/users/15000097/georgii-lvov"
+    },
+    "is_answered" : true,
+    "view_count" : 366,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1752756210,
+    "creation_date" : 1751470161,
+    "link" : "https://stackoverflow.com/questions/79687696/oracle-testcontainer-is-not-starting-in-the-pipeline",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79692947,
+    "question_id" : 79687696,
+    "body" : "<p>From your runner tag <code>otc_run_sysbox_xl</code> I guess you are running on sysbox.</p>\n<p>Looks like you are running into <a href=\"https://github.com/nestybox/sysbox/issues/909\" rel=\"nofollow noreferrer\">Error Cannot open /proc/sys/kernel/shm failed with status: 75 #909</a></p>\n<p>It seems to be fixed by <a href=\"https://github.com/nestybox/sysbox-fs/pull/105\" rel=\"nofollow noreferrer\">Fix access to /proc/sys/kernel/shm* inside container. #105</a></p>\n",
+    "score" : 2,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 1713236,
+      "reputation" : 26569,
+      "user_id" : 1570854,
+      "user_type" : "registered",
+      "accept_rate" : 71,
+      "profile_image" : "https://i.sstatic.net/ef6Ng.jpg?s=256",
+      "display_name" : "Lesiak",
+      "link" : "https://stackoverflow.com/users/1570854/lesiak"
+    },
+    "creation_date" : 1751895480,
+    "last_activity_date" : 1751895480,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140576952,
+    "post_id" : 79687696,
+    "body" : "@AndreyB.Panfilov Once again, please read carefully - the problem is not with the image. And what do you mean by &quot;trying to save a couple of MBs for the Docker image&quot;, who is trying to do that?) Besides that, pls recommend the other oracle image for Testcontainers to avoid endlessly waiting for loading and startup?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 18586978,
+      "reputation" : 3850,
+      "user_id" : 15000097,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/yFl4M.jpg?s=256",
+      "display_name" : "Georgii Lvov",
+      "link" : "https://stackoverflow.com/users/15000097/georgii-lvov"
+    },
+    "creation_date" : 1752068901,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140576475,
+    "post_id" : 79687696,
+    "body" : "@GeorgiiLvov the Q is neither about spring, java or test-containers. Someone is trying to save a couple of MBs for docker image and meanwhile the same person is bundling monstrous DB into it, this is ridiculous.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 4181375,
+      "reputation" : 6263,
+      "user_id" : 3426309,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/v58O6.jpg?s=256",
+      "display_name" : "Andrey B. Panfilov",
+      "link" : "https://stackoverflow.com/users/3426309/andrey-b-panfilov"
+    },
+    "creation_date" : 1752059436,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140576009,
+    "post_id" : 79687696,
+    "body" : "@AndreyB.Panfilov, why this question must be addressed to image maintainer, since the problem was in the sysbox?",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 18586978,
+      "reputation" : 3850,
+      "user_id" : 15000097,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/yFl4M.jpg?s=256",
+      "display_name" : "Georgii Lvov",
+      "link" : "https://stackoverflow.com/users/15000097/georgii-lvov"
+    },
+    "creation_date" : 1752047593,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140571206,
+    "post_id" : 79687696,
+    "body" : "I’m voting to close this question because it must be addressed to SW maintainer: <a href=\"https://github.com/gvenzl/oci-oracle-free/issues\" rel=\"nofollow noreferrer\">github.com/gvenzl/oci-oracle-free/issues</a>",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 4181375,
+      "reputation" : 6263,
+      "user_id" : 3426309,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/v58O6.jpg?s=256",
+      "display_name" : "Andrey B. Panfilov",
+      "link" : "https://stackoverflow.com/users/3426309/andrey-b-panfilov"
+    },
+    "creation_date" : 1751904640,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140570380,
+    "post_id" : 79687696,
+    "body" : "@knittl, okay, how to fix it?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 18586978,
+      "reputation" : 3850,
+      "user_id" : 15000097,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/yFl4M.jpg?s=256",
+      "display_name" : "Georgii Lvov",
+      "link" : "https://stackoverflow.com/users/15000097/georgii-lvov"
+    },
+    "creation_date" : 1751886654,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140570361,
+    "post_id" : 79687696,
+    "body" : "&quot;OS system dependent operation:Cannot open /proc/sys/kernel/shm failed with status: 75&quot;",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 39208,
+      "reputation" : 269387,
+      "user_id" : 112968,
+      "user_type" : "registered",
+      "accept_rate" : 68,
+      "profile_image" : "https://i.sstatic.net/zHTaT.png?s=256",
+      "display_name" : "knittl",
+      "link" : "https://stackoverflow.com/users/112968/knittl"
+    },
+    "creation_date" : 1751885781,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140570127,
+    "post_id" : 79687696,
+    "body" : "When I used oracle with testcontainers, i didn&#39;t use the gvenzl/oracle-free image, but the ones from this part: <a href=\"https://github.com/oracle/docker-images/blob/main/OracleDatabase/SingleInstance/README.md\" rel=\"nofollow noreferrer\">github.com/oracle/docker-images/blob/main/OracleDatabase/&hellip;</a> . It&#39;s a bit more complicated because you have to build the image locally, but I found it more stable. Also, I start the containers with DockerComposeContainer.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1601399,
+      "reputation" : 638,
+      "user_id" : 1482356,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/d6160b6e40d230fa92c6da8072b2f7e5?s=256&d=identicon&r=PG",
+      "display_name" : "Peter Adrian",
+      "link" : "https://stackoverflow.com/users/1482356/peter-adrian"
+    },
+    "creation_date" : 1751879437,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140570052,
+    "post_id" : 79687696,
+    "body" : "@PeterAdrian, I don&#39;t think that the size is a problem, but I tried with some other shm sizes as well - had no effect",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 18586978,
+      "reputation" : 3850,
+      "user_id" : 15000097,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/yFl4M.jpg?s=256",
+      "display_name" : "Georgii Lvov",
+      "link" : "https://stackoverflow.com/users/15000097/georgii-lvov"
+    },
+    "creation_date" : 1751877369,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140563566,
+    "post_id" : 79687696,
+    "body" : "I&#39;m not sure if this helps, but TestContainers offer a way to modify the image using <code>withCreateContainerCmdModifier</code>. You can use <code>cmd -&gt; cmd.getHostConfig().withShmSize(...)</code> to set a custom value for the shared memory setting",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1601399,
+      "reputation" : 638,
+      "user_id" : 1482356,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/d6160b6e40d230fa92c6da8072b2f7e5?s=256&d=identicon&r=PG",
+      "display_name" : "Peter Adrian",
+      "link" : "https://stackoverflow.com/users/1482356/peter-adrian"
+    },
+    "creation_date" : 1751582438,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79692947" : [ {
+      "comment_id" : 140593636,
+      "post_id" : 79692947,
+      "body" : "Great, good job!",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1713236,
+        "reputation" : 26569,
+        "user_id" : 1570854,
+        "user_type" : "registered",
+        "accept_rate" : 71,
+        "profile_image" : "https://i.sstatic.net/ef6Ng.jpg?s=256",
+        "display_name" : "Lesiak",
+        "link" : "https://stackoverflow.com/users/1570854/lesiak"
+      },
+      "creation_date" : 1752662780,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140593076,
+      "post_id" : 79692947,
+      "body" : "UPDATE: After upgrading the sysbox to version 0.6.7, the problem is gone - the Oracle container is starting without errors",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 18586978,
+        "reputation" : 3850,
+        "user_id" : 15000097,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/yFl4M.jpg?s=256",
+        "display_name" : "Georgii Lvov",
+        "link" : "https://stackoverflow.com/users/15000097/georgii-lvov"
+      },
+      "creation_date" : 1752652037,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140576006,
+      "post_id" : 79692947,
+      "body" : "Thanks for the help! My version of sysbox is <code>0.6.6</code>, I don&#39;t have a possibility to upgrade it now, but I think it will solve the problem.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 18586978,
+        "reputation" : 3850,
+        "user_id" : 15000097,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/yFl4M.jpg?s=256",
+        "display_name" : "Georgii Lvov",
+        "link" : "https://stackoverflow.com/users/15000097/georgii-lvov"
+      },
+      "creation_date" : 1752047528,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140570989,
+      "post_id" : 79692947,
+      "body" : "Looks very promising. I will try to figure out which sysbox version I am using",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 18586978,
+        "reputation" : 3850,
+        "user_id" : 15000097,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/yFl4M.jpg?s=256",
+        "display_name" : "Georgii Lvov",
+        "link" : "https://stackoverflow.com/users/15000097/georgii-lvov"
+      },
+      "creation_date" : 1751900169,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

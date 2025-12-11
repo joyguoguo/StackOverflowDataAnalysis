@@ -1,0 +1,79 @@
+{
+  "question" : {
+    "question_id" : 79553464,
+    "title" : "How to sort a column by data from another column in JTable",
+    "body" : "<p>I need to sort the column with &quot;File creation date&quot;, but if the column &quot;File type&quot; == FyleType.DIRECTORY this row should be at the top.\nThat is, first sorting should be by type, and then by date.</p>\n<p>My JTable:</p>\n<hr />\n<div class=\"s-table-container\"><table class=\"s-table\">\n<thead>\n<tr>\n<th style=\"text-align: left;\">Type</th>\n<th style=\"text-align: center;\">Filename</th>\n<th style=\"text-align: right;\">Date</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td style=\"text-align: left;\">DIRECTORY</td>\n<td style=\"text-align: center;\">filename1</td>\n<td style=\"text-align: right;\">2025.04.03</td>\n</tr>\n<tr>\n<td style=\"text-align: left;\">DIRECTORY</td>\n<td style=\"text-align: center;\">filename2</td>\n<td style=\"text-align: right;\">2025.02.01</td>\n</tr>\n<tr>\n<td style=\"text-align: left;\">FILE</td>\n<td style=\"text-align: center;\">filename3.txt</td>\n<td style=\"text-align: right;\">2025.01.01</td>\n</tr>\n<tr>\n<td style=\"text-align: left;\">FILE</td>\n<td style=\"text-align: center;\">filename4.txt</td>\n<td style=\"text-align: right;\">2025.02.03</td>\n</tr>\n</tbody>\n</table></div>\n<p>I tried using</p>\n<pre><code>TableRowSorter&lt;FileTableModel&gt; tableRowSorter = new TableRowSorter&lt;&gt;(tableModel);\ntableRowSorter.setComparator(2, ((o1, o2) -&gt; {}\n</code></pre>\n<p>Comparator but it only gets the value of the current cell and I can't get the file type because the date is not unique</p>\n",
+    "tags" : [ "java", "swing", "jtable", "comparator", "tablerowsorter" ],
+    "owner" : {
+      "account_id" : 25171329,
+      "reputation" : 33,
+      "user_id" : 22410795,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/eb67ae522e76db93d8825e3333a04977?s=256&d=identicon&r=PG",
+      "display_name" : "Starkvell",
+      "link" : "https://stackoverflow.com/users/22410795/starkvell"
+    },
+    "is_answered" : true,
+    "view_count" : 67,
+    "answer_count" : 1,
+    "score" : 2,
+    "last_activity_date" : 1743745788,
+    "creation_date" : 1743696406,
+    "link" : "https://stackoverflow.com/questions/79553464/how-to-sort-a-column-by-data-from-another-column-in-jtable",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79554542,
+    "question_id" : 79553464,
+    "body" : "<p>Another option is to create a <code>JTable</code> that contains a <code>File</code> copy of every data column.\nThis way, you would need to change the <code>TableCellRenderer</code> to display the file type, file name, or file creation date from the <code>File</code> depending on the column,\nbut the comparators for each column would be able to get the file type and file creation date from the <code>File</code> at the same time.</p>\n<pre class=\"lang-java prettyprint-override\"><code>import java.awt.*;\nimport java.io.File;\nimport java.io.IOException;\nimport java.nio.file.Files;\nimport java.nio.file.attribute.BasicFileAttributes;\nimport java.nio.file.attribute.FileTime;\nimport java.text.DateFormat;\nimport java.text.SimpleDateFormat;\nimport java.util.Arrays;\nimport java.util.Collections;\nimport java.util.Comparator;\nimport java.util.List;\nimport java.util.Optional;\nimport javax.swing.*;\nimport javax.swing.table.DefaultTableCellRenderer;\nimport javax.swing.table.DefaultTableModel;\nimport javax.swing.table.TableModel;\nimport javax.swing.table.TableRowSorter;\n\npublic class GroupDirectoriesFirstComparatorTest {\n  private Component makeUI() {\n    String[] columnNames = {&quot;Type&quot;, &quot;Filename&quot;, &quot;Date&quot;};\n    DefaultTableModel model = new DefaultTableModel(columnNames, 0) {\n      @Override\n      public Class&lt;?&gt; getColumnClass(int column) {\n        return File.class;\n      }\n    };\n    JTable table = new JTable(model);\n    table.setAutoCreateRowSorter(true);\n    table.setDefaultRenderer(File.class, new FileCellRenderer());\n    RowSorter&lt;? extends TableModel&gt; sorter = table.getRowSorter();\n    if (sorter instanceof TableRowSorter) {\n      TableRowSorter&lt;? extends TableModel&gt; rs =\n          (TableRowSorter&lt;? extends TableModel&gt;) sorter;\n      for (int i = 0; i &lt; model.getColumnCount(); i++) {\n        rs.setComparator(i, new GroupDirectoriesFirstComparator(table, i));\n      }\n    }\n    JButton button = new JButton(&quot;Choose directory&quot;);\n    button.addActionListener(e -&gt; {\n      JFileChooser chooser = new JFileChooser();\n      chooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);\n      int ret = chooser.showOpenDialog(button.getRootPane());\n      if (ret == JFileChooser.APPROVE_OPTION) {\n        model.setRowCount(0);\n        File[] files = chooser.getSelectedFile().listFiles();\n        if (files != null) {\n          Arrays.stream(files)\n              .map(f -&gt; Collections.nCopies(3, f).toArray())\n              .forEach(model::addRow);\n        }\n      }\n    });\n    JPanel p = new JPanel(new BorderLayout());\n    p.add(new JScrollPane(table));\n    p.add(button, BorderLayout.SOUTH);\n    return p;\n  }\n\n  public static void main(String[] args) {\n    EventQueue.invokeLater(() -&gt; {\n      JFrame frame = new JFrame();\n      frame.setDefaultCloseOperation(WindowConstants.EXIT_ON_CLOSE);\n      frame.getContentPane().add(\n          new GroupDirectoriesFirstComparatorTest().makeUI());\n      frame.pack();\n      frame.setLocationRelativeTo(null);\n      frame.setVisible(true);\n    });\n  }\n}\n\nclass FileCellRenderer extends DefaultTableCellRenderer {\n  private final DateFormat dateFormat = new SimpleDateFormat(&quot;yyyy.MM.dd&quot;);\n\n  @Override\n  public Component getTableCellRendererComponent(\n      JTable table, Object value,\n      boolean isSelected, boolean hasFocus,\n      int row, int column) {\n    Component c = super.getTableCellRendererComponent(\n        table, value, isSelected, hasFocus, row, column);\n    if (c instanceof JLabel &amp;&amp; value instanceof File) {\n      JLabel l = (JLabel) c;\n      l.setHorizontalAlignment(LEFT);\n      File file = (File) value;\n      switch (table.convertColumnIndexToModel(column)) {\n        case 0:\n          l.setText(file.isDirectory() ? &quot;DIRECTORY&quot; : &quot;FILE&quot;);\n          break;\n        case 1:\n          l.setText(file.getName());\n          break;\n        case 2:\n          l.setHorizontalAlignment(RIGHT);\n          try {\n            BasicFileAttributes attr =\n                Files.readAttributes(file.toPath(), BasicFileAttributes.class);\n            l.setText(dateFormat.format(attr.creationTime().toMillis()));\n          } catch (IOException e) {\n            throw new RuntimeException(e);\n          }\n          break;\n        default:\n          break;\n      }\n    }\n    return c;\n  }\n}\n\nclass FileComparator implements Comparator&lt;File&gt; {\n  private final int column;\n\n  public FileComparator(int column) {\n    this.column = column;\n  }\n\n  @Override\n  public int compare(File a, File b) {\n    switch (column) {\n      case 0: return getWeight(a) - getWeight(b);\n      case 2: return Long.compare(getCreationTime(a), getCreationTime(b));\n      default: return a.getName().compareToIgnoreCase(b.getName());\n    }\n  }\n\n  public int getColumn() {\n    return column;\n  }\n\n  public static int getWeight(File file) {\n    return file.isDirectory() ? 1 : 2;\n  }\n\n  public static Long getCreationTime(File file) {\n    BasicFileAttributes attr;\n    try {\n      attr = Files.readAttributes(file.toPath(), BasicFileAttributes.class);\n    } catch (IOException e) {\n      throw new RuntimeException(e);\n    }\n    return Optional.ofNullable(attr)\n        .map(BasicFileAttributes::creationTime)\n        .map(FileTime::toMillis)\n        .orElse(0L);\n  }\n}\n\n// https://java-swing-tips.blogspot.com/2011/11/jtable-group-directories-first-sorting.html\nclass GroupDirectoriesFirstComparator extends FileComparator {\n  private final JTable table;\n\n  public GroupDirectoriesFirstComparator(JTable table, int column) {\n    super(column);\n    this.table = table;\n  }\n\n  @Override\n  public int compare(File a, File b) {\n    int v = getWeight(a) - getWeight(b);\n    return v == 0 ? super.compare(a, b) : v * getSortOrderDirection();\n  }\n\n  private int getSortOrderDirection() {\n    int dir = 1;\n    List&lt;? extends RowSorter.SortKey&gt; keys = table.getRowSorter().getSortKeys();\n    if (!keys.isEmpty()) {\n      RowSorter.SortKey sortKey = keys.get(0);\n      if (sortKey.getColumn() == getColumn() &amp;&amp;\n          sortKey.getSortOrder() == SortOrder.DESCENDING) {\n        dir = -1;\n      }\n    }\n    return dir;\n  }\n}\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 59184,
+      "reputation" : 9898,
+      "user_id" : 177145,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/dBKps.png?s=256",
+      "display_name" : "aterai",
+      "link" : "https://stackoverflow.com/users/177145/aterai"
+    },
+    "creation_date" : 1743745788,
+    "last_activity_date" : 1743745788,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140297066,
+    "post_id" : 79553464,
+    "body" : "You need something like <code>TableRowSorter&lt;TableModel&gt; sorter = new TableRowSorter&lt;TableModel&gt;(table.getModel()); table.setRowSorter(sorter);sorter.setSortKeys(List.of(new RowSorter.SortKey(0, SortOrder.ASCENDING), new RowSorter.SortKey(2, SortOrder.ASCENDING)));</code>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 22124137,
+      "reputation" : 4243,
+      "user_id" : 16376827,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/1ImPw.png?s=256",
+      "display_name" : "g00se",
+      "link" : "https://stackoverflow.com/users/16376827/g00se"
+    },
+    "creation_date" : 1743719070,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140296435,
+    "post_id" : 79553464,
+    "body" : "<i>first sorting should be by type, and then by date.</i> - you can set the &quot;sort keys&quot; that you want the data sorted by. This allows you to specify multiple columns. See: <a href=\"https://stackoverflow.com/a/65093631/131872\">stackoverflow.com/a/65093631/131872</a> for a simple example to get you started. You would set the SortKeys when you load data into the table, not in an ActionListener.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 44852,
+      "reputation" : 324701,
+      "user_id" : 131872,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/a0ced8e21d2a761db718acb6362b9225?s=256&d=identicon&r=PG",
+      "display_name" : "camickr",
+      "link" : "https://stackoverflow.com/users/131872/camickr"
+    },
+    "creation_date" : 1743707148,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

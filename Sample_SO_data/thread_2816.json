@@ -1,0 +1,71 @@
+{
+  "question" : {
+    "question_id" : 79593127,
+    "title" : "Write section of buffer using Java&#39;s FileChannel",
+    "body" : "<p>Java's <code>FileChannel</code> class supports 4 write methods, one of which caters for writing a section of a buffer from a specified position to the end of the buffer:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public abstract int write(ByteBuffer src,\n                          long position)\n</code></pre>\n<p>But what I'd like is something along the lines:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public abstract int write(ByteBuffer src,\n                              long position, long length)\n</code></pre>\n<p>that writes a section of a buffer from an offset and of a specified length.</p>\n<p>I've never understood why <code>FileChannel</code> doesn't support this, and does anyone know of a way of achieving the same result?</p>\n",
+    "tags" : [ "java" ],
+    "owner" : {
+      "user_type" : "does_not_exist",
+      "display_name" : "user900699"
+    },
+    "is_answered" : true,
+    "view_count" : 105,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1745707664,
+    "creation_date" : 1745605575,
+    "link" : "https://stackoverflow.com/questions/79593127/write-section-of-buffer-using-javas-filechannel",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79593157,
+    "question_id" : 79593127,
+    "body" : "<h2>FileChannel</h2>\n<p>The <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/nio/channels/FileChannel.html#write(java.nio.ByteBuffer,long)\" rel=\"nofollow noreferrer\"><code>FileChannel#write(ByteBuffer,long)</code></a> method isn't doing what you think it is. The\n<code>position</code> parameter of that method is not related to the buffer. It is the position <em>within the\nfile</em> at which the write begins. This overrides the channel's inherent position. From the\ndocumentation:</p>\n<blockquote>\n<p>Writes a sequence of bytes to this channel from the given buffer, <strong>starting at the given file\nposition</strong> <em>[emphasis added]</em>.</p>\n<p>This method works in the same manner as the <code>write(ByteBuffer)</code> method, except that <strong>bytes are\nwritten starting at the given file position rather than at the channel's current position</strong>\n<em>[emphasis added]</em>. This method does not modify this channel's position. If the given position is\ngreater than or equal to the file's current size then the file will be grown to accommodate the new\nbytes; the values of any bytes between the previous end-of-file and the newly-written bytes are\nunspecified.</p>\n<p>If the file is open in append mode, then the effect of invoking this method is unspecified.</p>\n<h5>Parameters:</h5>\n<p><code>src</code> - The buffer from which bytes are to be transferred</p>\n<p><code>position</code> - <strong>The file position at which the transfer is to begin; must be non-negative</strong>\n<em>[emphasis added]</em></p>\n</blockquote>\n<p>That's why there's no accompanying <code>write(ByteBuffer,long,long)</code> method. Also note that buffers\nare indexed by <code>int</code>, so the fact the parameters are <code>long</code> wouldn't make sense. Though you may be\nwondering why there is a <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/nio/channels/FileChannel.html#write(java.nio.ByteBuffer%5B%5D,int,int)\" rel=\"nofollow noreferrer\"><code>FileChannel#write(ByteBuffer[],int,int)</code></a> method then. For that\nmethod, the two <code>int</code> parameters are for controlling which span of the buffer <em>array</em> is used; they\nhave nothing to do with the buffers themselves.</p>\n<h2>Buffers</h2>\n<p>It's not the responsibility of the channel (file or otherwise) to control where it reads from or\nwrites to a buffer. That responsibility is the buffer's, which maintains its own position, limit,\nand capacity state<sup>1</sup>. From the documentation of <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/nio/ByteBuffer.html#slice(int,int)\" rel=\"nofollow noreferrer\"><code>java.nio.Buffer</code></a>:</p>\n<blockquote>\n<p>A container for data of a specific primitive type.</p>\n<p>A buffer is a linear, finite sequence of elements of a specific primitive type. Aside from its\ncontent, the essential properties of a buffer are its capacity, limit, and position:</p>\n<ul>\n<li><p>A buffer's <em>capacity</em> is the number of elements it contains. The capacity of a buffer is never\nnegative and never changes.</p>\n</li>\n<li><p>A buffer's <em>limit</em> is the index of the first element that should not be read or written. A\nbuffer's limit is never negative and is never greater than its capacity.</p>\n</li>\n<li><p>A buffer's <em>position</em> is the index of the next element to be read or written. A buffer's\nposition is never negative and is never greater than its limit.</p>\n</li>\n</ul>\n<h3>Transferring data</h3>\n<p>Each subclass of this class defines two categories of <em>get</em> and <em>put</em> operations:</p>\n<ul>\n<li><p><em>Relative</em> operations read or write one or more elements starting at the current position and\nthen increment the position by the number of elements transferred. If the requested transfer\nexceeds the limit then a relative <em>get</em> operation throws a <code>BufferUnderflowException</code> and a relative\n<em>put</em> operation throws a <code>BufferOverflowException</code>; in either case, no data is transferred.</p>\n</li>\n<li><p><em>Absolute</em> operations take an explicit element index and do not affect the position. Absolute\n<em>get</em> and <em>put</em> operations throw an <code>IndexOutOfBoundsException</code> if the index argument exceeds the limit.</p>\n</li>\n</ul>\n<p>Data may also, of course, be transferred in to or out of a buffer by the I/O operations of an\nappropriate channel, which are always relative to the current position.</p>\n</blockquote>\n<p>Where <code>0 &lt;= position &lt;= limit &lt;= capacity</code>. I recommend reading the full documentation of <code>Buffer</code>\nand <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/nio/ByteBuffer.html\" rel=\"nofollow noreferrer\"><code>ByteBuffer</code></a> to truly understand how buffers work.</p>\n<p>So, if you want to control which section of the buffer is read from when writing to a channel, then\nyou should manipulate the buffer's position and limit. You can use <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/nio/ByteBuffer.html#position(int)\" rel=\"nofollow noreferrer\"><code>ByteBuffer#position(int)</code></a>\nand <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/nio/ByteBuffer.html#limit(int)\" rel=\"nofollow noreferrer\"><code>ByteBuffer#limit(int)</code></a> to do this, respectively. And if you want to isolate the changes to\nthe position and limit then you can use <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/nio/ByteBuffer.html#duplicate()\" rel=\"nofollow noreferrer\"><code>ByteBuffer#duplicate()</code></a> to duplicate the buffer. The\nduplicate buffer will maintain its own position and limit state independent of the original, but\nthe two will continue to share the same underlying data. For example:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public static void writeRange(\n    WritableByteChannel ch, ByteBuffer buf, int off, int len) throws IOException {\n  var dup = buf.duplicate().limit(off + len).position(off);\n  while (dup.hasRemaining()) {\n    ch.write(dup);\n  }\n}\n</code></pre>\n<p>That can be simplified by making use of <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/nio/ByteBuffer.html#slice(int,int)\" rel=\"nofollow noreferrer\"><code>ByteBuffer#slice(int,int)</code></a><sup>2</sup>. For example:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public static void writeRange(\n    WritableByteChannel ch, ByteBuffer buf, int off, int len) throws IOException {\n  var slice = buf.slice(off, len);\n  while (slice.hasRemaining()) {\n    ch.write(slice);\n  }\n}\n</code></pre>\n<p>Though note that <code>slice(int index, int length)</code> uses the buffer's limit as the end point instead\nof the buffer's capacity:</p>\n<blockquote>\n<h5>Throws:</h5>\n<p><code>IndexOutOfBoundsException</code> - If <code>index</code> is negative or greater than <code>limit()</code>, <code>length</code> is\nnegative, or <code>length &gt; limit() - index</code></p>\n</blockquote>\n<hr />\n<p><sup>1. This state is one of the advantages a buffer has over a normal Java array.</sup></p>\n<p><sup>2. As pointed out by <a href=\"https://stackoverflow.com/users/207421/user207421\">@user207421</a> in <a href=\"https://stackoverflow.com/questions/79593127/write-section-of-buffer-using-javas-filechannel/79593157#comment140370954_79593127\">a comment</a>. Note <code>ByteBuffer#slice(int,int)</code>\nrequires Java 13+. On older versions you can use <code>ByteBuffer#slice()</code>, which is based on the\nposition and limit of the buffer.</sup></p>\n",
+    "score" : 5,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 8532578,
+      "reputation" : 49884,
+      "user_id" : 6395627,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Slaw",
+      "link" : "https://stackoverflow.com/users/6395627/slaw"
+    },
+    "creation_date" : 1745607295,
+    "last_activity_date" : 1745707664,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140370954,
+    "post_id" : 79593127,
+    "body" : "Use <code>Buffer.slice()</code>.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 71739,
+      "reputation" : 311869,
+      "user_id" : 207421,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/5cfe5f7d64f44be04f147295f5c7b88e?s=256&d=identicon&r=PG",
+      "display_name" : "user207421",
+      "link" : "https://stackoverflow.com/users/207421/user207421"
+    },
+    "creation_date" : 1745629695,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79593157" : [ {
+      "comment_id" : 140371539,
+      "post_id" : 79593157,
+      "body" : "Thanks Slaw for the clarification - I confused the file-position with the buffer-position. Looks like &quot;slice(int index, int length)&quot; as others have commented. Thanks again for everyone&#39;s help.",
+      "score" : 1,
+      "owner" : {
+        "user_type" : "does_not_exist",
+        "display_name" : "user900699"
+      },
+      "creation_date" : 1745662740,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

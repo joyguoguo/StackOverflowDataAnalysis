@@ -1,0 +1,225 @@
+{
+  "question" : {
+    "question_id" : 79548974,
+    "title" : "Explain the code in Cell that cancels edit on focus loss in JavaFX",
+    "body" : "<p>Please consider the following code from <code>javafx.scene.control.Cell</code> (<a href=\"https://github.com/openjdk/jfx/blob/5c78234b43d1fffa1fea0d1406599ed46af8c863/modules/javafx.controls/src/main/java/javafx/scene/control/Cell.java#L361\" rel=\"nofollow noreferrer\">link</a>):</p>\n<pre><code>super.focusedProperty().addListener(new InvalidationListener() {\n    @Override public void invalidated(Observable property) {\n        pseudoClassStateChanged(PSEUDO_CLASS_FOCUSED, isFocused()); // TODO is this necessary??\n\n        // The user has shifted focus, so we should cancel the editing on this cell\n        if (!isFocused() &amp;&amp; isEditing()) {\n            cancelEdit();\n        }\n    }\n});\n</code></pre>\n<p>This code (as I understand) cancels edit when the cell becomes unfocused.  However, if the cell is editable we can assume it will have another control inside, for example <code>TextField</code>. And according to the code above when this <code>TextField</code> becomes focused then <code>cancelEdit</code> should happen.</p>\n<p>But as we know we can enter a new value in <code>TextField</code> (so, the <code>TextField</code> has the focus) and <code>cancelEdit</code> is not called. Could anyone explain it? What is the magic here?</p>\n",
+    "tags" : [ "java", "javafx" ],
+    "owner" : {
+      "account_id" : 34599290,
+      "reputation" : 1188,
+      "user_id" : 26656564,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/882f996623517814360ba4bb403102e7?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "SilverCube",
+      "link" : "https://stackoverflow.com/users/26656564/silvercube"
+    },
+    "is_answered" : true,
+    "view_count" : 282,
+    "answer_count" : 1,
+    "score" : 4,
+    "last_activity_date" : 1743977673,
+    "creation_date" : 1743534507,
+    "link" : "https://stackoverflow.com/questions/79548974/explain-the-code-in-cell-that-cancels-edit-on-focus-loss-in-javafx",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79558045,
+    "question_id" : 79548974,
+    "body" : "<p>This issue looks interesting. So I tried to give a check at the flow of the operations and came to the below conclusions. I am writing in purpose of general explanation. Some might already know some of these concepts.</p>\n<p>The listener code you mentioned in <code>javafx.scene.control.Cell</code>, is in the super class of all cell implementations. So this is the general logic that applies to all cell implementations. Now the tricky part is: this gets triggered only when the focus is changed/updated. If a cell never updated its <code>focused</code> value, then this part of logic never gets executed.</p>\n<p>To check this, I set ids to TableRow &amp; TableCell (in the factories) and I included <code>focusedProperty</code> listeners to <code>TableCell</code>, <code>TableRow</code> and also a listener to <code>focusOwnerProperty</code> of Scene.</p>\n<p><a href=\"https://i.sstatic.net/M6BSImzp.gif\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/M6BSImzp.gif\" alt=\"enter image description here\" /></a></p>\n<p>Output log:</p>\n<pre><code>TableRow: 'Row1' changed focused to : true\nTableRow: 'Row1' changed focused to : false\nTableRow: 'Row3' changed focused to : true\nScene focus owner :: CheckBox@147ec98b[styleClass=check-box]'Test Focus'\nScene focus owner :: TableView@4efd58d5[styleClass=table-view]\nTableRow: 'Row3' changed focused to : false\nTableRow: 'Row5' changed focused to : true\nTableRow: 'Row3' changed focused to : true\nTableRow: 'Row5' changed focused to : false\nTableRow: 'Row3' changed focused to : false\nTableRow: 'Row5' changed focused to : true\nTableRow: 'Row3' changed focused to : true\nTableRow: 'Row5' changed focused to : false\nScene focus owner :: TextField@2093a517[styleClass=text-input text-field]\nTableRow: 'Row3' changed focused to : false\nTableRow: 'Row5' changed focused to : true\nScene focus owner :: TableView@4efd58d5[styleClass=table-view]\n</code></pre>\n<p>In the above gif/output, you can see that the TableRow focused gets updated and Scene's focusOwner gets updated, but the TableCell focus never gets updated or printed.</p>\n<p>This is because, <strong>it is never been updated to true</strong>. To check this you need to refer to the <code>updateFocus()</code> method of <code>TableCell</code> or <code>ListCell</code> class.</p>\n<p><strong>TableCell:</strong></p>\n<pre><code>private void updateFocus() {\n    final boolean isFocused = isFocused();\n    if (! isInCellSelectionMode()) {\n        if (isFocused) {\n            setFocused(false);\n        }\n        return;\n    }\n\n    final TableView&lt;S&gt; tableView = getTableView();\n    final TableRow&lt;S&gt; tableRow = getTableRow();\n    final int index = getIndex();\n    if (index == -1 || tableView == null || tableRow == null) return;\n\n    final TableViewFocusModel&lt;S&gt; fm = tableView.getFocusModel();\n    if (fm == null) {\n        setFocused(false);\n        return;\n    }\n\n    setFocused(fm.isFocused(index, getTableColumn()));\n}\n</code></pre>\n<p><strong>ListCell:</strong></p>\n<pre><code>private void updateFocus() {\n    int index = getIndex();\n    ListView&lt;T&gt; listView = getListView();\n    if (index == -1 || listView == null) return;\n\n    FocusModel&lt;T&gt; fm = listView.getFocusModel();\n    if (fm == null) {\n        setFocused(false);\n        return;\n    }\n\n    setFocused(fm.isFocused(index));\n}\n</code></pre>\n<p>From the above code, the only case a <code>TableCell</code> or <code>ListCell</code> gets <code>focused</code> updated to <code>true</code> is only if it has focusModel set and the <code>focusedCell</code> of focusModel is set to this cell. In all other cases the <code>focused</code> will always be false and will never get a chance to trigger the listener in <code>Cell</code> class.</p>\n<p>Ok, now you may get the doubt that what if somehow it has <code>focusModel</code> and <code>focusedCell</code> set to the current clicked <code>Cell</code>. This should set the focus to <code>true</code> and when the <code>TextField</code> gets focused this should call cancelEdit(). Right?.</p>\n<p>If you check the code of indexChanged() method in <code>TableCell</code> or <code>ListCell</code>:</p>\n<p><strong>TableCell:</strong></p>\n<pre><code>@Override void indexChanged(int oldIndex, int newIndex) {\n    super.indexChanged(oldIndex, newIndex);\n\n    // Ideally we would just use the following two lines of code, rather\n    // than the updateItem() call beneath, but if we do this we end up with\n    // JDK-8126803 where all the columns are collapsed.\n    // itemDirty = true;\n    // requestLayout();\n    updateItem(oldIndex);\n    updateSelection();\n    updateFocus();\n\n    // Fix for JDK-8150525\n    updateEditing();\n}\n</code></pre>\n<p><strong>ListCell:</strong></p>\n<pre><code>@Override  void indexChanged(int oldIndex, int newIndex) {\n    super.indexChanged(oldIndex, newIndex);\n\n    if (isEditing() &amp;&amp; newIndex == oldIndex) {\n        // no-op\n        // Fix for JDK-8123482 - if we (needlessly) update the index whilst the\n        // cell is being edited it will no longer be in an editing state.\n        // This means that in certain (common) circumstances that it will\n        // appear that a cell is uneditable as, despite being clicked, it\n        // will not change to the editing state as a layout of VirtualFlow\n        // is immediately invoked, which forces all cells to be updated.\n    } else {\n        updateItem(oldIndex);\n        updateSelection();\n        updateFocus();\n        updateEditing();\n    }\n}\n</code></pre>\n<p>The updateFocus() method is called before updateEditing(). So if the updateFocus has turned on/off the focus of cell  and triggered the listener(to cancel the edit), the next execution is to call the updateEditing(). So that is the reason you will never see impact of cancelEdit when focus change happens from Cell to TextField.</p>\n<p>Another thing to note in the provided gif is that, the Scene's focusOwner never get updated to TableRow or TableCell. This is because a Scene's focusOwner gets updated only when the Node's <code>requestFocus()</code> method is called. For TableRow &amp; TableCell ( in fact a Cell) implementation never have a call to requestFocus() for that cell.</p>\n<p>It is now clear that multiple nodes can have <code>focused</code> set to <code>true</code>. In this case a TableRow and TextField will have its <code>focused</code> to <code>true</code> at the same time. I think the <a href=\"https://openjfx.io/javadoc/23/javafx.graphics/javafx/scene/Node.html#focusedProperty\" rel=\"nofollow noreferrer\">Node.focusedProperty</a> API is more specific about focusOwner of Scene.</p>\n<p>I hope this provides some clarification. I am open for any further corrections or suggestions regarding these observations. :)</p>\n",
+    "score" : 6,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 7717111,
+      "reputation" : 10689,
+      "user_id" : 5844477,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/801ce427cdcbac7f648471e75d6d818e?s=256&d=identicon&r=PG",
+      "display_name" : "Sai Dandem",
+      "link" : "https://stackoverflow.com/users/5844477/sai-dandem"
+    },
+    "creation_date" : 1743933591,
+    "last_activity_date" : 1743977673,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140308920,
+    "post_id" : 79548974,
+    "body" : "I spent a while digging through the source code but could not actually find how the virtualized controls are keeping the cell in a focused state while their included controls have the keyboard focus. I’m keen to figure these things out, but there’s a limit to the amount of time I can commit.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 2518243,
+      "reputation" : 210906,
+      "user_id" : 2189127,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/e8e6e627b4b90ec816c5c7aa04cbcc26?s=256&d=identicon&r=PG",
+      "display_name" : "James_D",
+      "link" : "https://stackoverflow.com/users/2189127/james-d"
+    },
+    "creation_date" : 1744047172,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140302934,
+    "post_id" : 79548974,
+    "body" : "@James_D To be honest, I expected a solution from you, like from a JavaFX guru. I can tell myself that something&#39;s off here.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 34599290,
+      "reputation" : 1188,
+      "user_id" : 26656564,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/882f996623517814360ba4bb403102e7?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "SilverCube",
+      "link" : "https://stackoverflow.com/users/26656564/silvercube"
+    },
+    "creation_date" : 1743872891,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140287683,
+    "post_id" : 79548974,
+    "body" : "A quick test shows that the cell still has its <code>focusedProperty</code> set to <code>true</code>, even when the control (e.g. <code>TextField</code>) it contains is the focus owner for the scene. This situation contradicts the API specification for <a href=\"https://openjfx.io/javadoc/23/javafx.graphics/javafx/scene/Node.html#focusedProperty\" rel=\"nofollow noreferrer\"><code>Node.focusedProperty</code></a>, so some things are definitely not as they should be.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2518243,
+      "reputation" : 210906,
+      "user_id" : 2189127,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/e8e6e627b4b90ec816c5c7aa04cbcc26?s=256&d=identicon&r=PG",
+      "display_name" : "James_D",
+      "link" : "https://stackoverflow.com/users/2189127/james-d"
+    },
+    "creation_date" : 1743538463,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79558045" : [ {
+      "comment_id" : 140310700,
+      "post_id" : 79558045,
+      "body" : "Another reason for the way <code>Cell</code> is implemented with regards to <code>focused</code> could be about styling (keep the cell styled as focused even if the &quot;true&quot; focused node is a descendant). Though with the introduction of properties like <code>Node.focusWithin</code> in JavaFX 19 this reasoning no longer applies.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 8532578,
+        "reputation" : 49884,
+        "user_id" : 6395627,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Slaw",
+        "link" : "https://stackoverflow.com/users/6395627/slaw"
+      },
+      "creation_date" : 1744097921,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140310680,
+      "post_id" : 79558045,
+      "body" : "I agree this <i>should</i> be a bug. It makes sense that only one node in a scene should be focused at any given time. At this point, however, the behavior is likely grandfathered in and is unlikely to change. All this with the cells seems like an unfortunate &quot;hack&quot; due to items, and thus cells, of a virtualized control needing to be focusable separately from the scene&#39;s focus mechanism. It would have made more sense, in my opinion, to introduce a <code>cellFocused</code> property in <code>Cell</code>. Likely too late now though.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 8532578,
+        "reputation" : 49884,
+        "user_id" : 6395627,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Slaw",
+        "link" : "https://stackoverflow.com/users/6395627/slaw"
+      },
+      "creation_date" : 1744097508,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140310335,
+      "post_id" : 79558045,
+      "body" : "Node&#39;s <code>setFocused(boolean)</code> being as <code>protected</code>, I think it opens the flexibility to update <code>focused</code> property, without impacting the Scene&#39;s <code>focusOwner</code> property. So either this method should be corrected or the API doc should be corrected.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 7717111,
+        "reputation" : 10689,
+        "user_id" : 5844477,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/801ce427cdcbac7f648471e75d6d818e?s=256&d=identicon&r=PG",
+        "display_name" : "Sai Dandem",
+        "link" : "https://stackoverflow.com/users/5844477/sai-dandem"
+      },
+      "creation_date" : 1744091276,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140310002,
+      "post_id" : 79558045,
+      "body" : "“Multiple nodes can have focused set to true”. This is a bug, at least in the sense that it contradicts the API specification. The API docs for <code>Node</code> state that for a node to have focused set to true, it must be the focus owner of a scene. Since that is a property, and can have no more than one value, at most one node in any scene should have focused set to true.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 2518243,
+        "reputation" : 210906,
+        "user_id" : 2189127,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/e8e6e627b4b90ec816c5c7aa04cbcc26?s=256&d=identicon&r=PG",
+        "display_name" : "James_D",
+        "link" : "https://stackoverflow.com/users/2189127/james-d"
+      },
+      "creation_date" : 1744078493,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140306766,
+      "post_id" : 79558045,
+      "body" : "This <a href=\"https://github.com/openjdk/jfx/commit/05fd4c30da48776da85b668dc04eac80df4ce517#diff-6bad847ad0c2ab857b61323a3855a67b93d7183387b900fd6348d7f895e8fc21\" rel=\"nofollow noreferrer\">commit message</a> may give some extra insights. It was later reverted back to the current implementation.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 4923865,
+        "reputation" : 9713,
+        "user_id" : 3965675,
+        "user_type" : "registered",
+        "accept_rate" : 24,
+        "profile_image" : "https://www.gravatar.com/avatar/a6ed801dcf8eab4b34b7d973081c0913?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Raghavendra N",
+        "link" : "https://stackoverflow.com/users/3965675/raghavendra-n"
+      },
+      "creation_date" : 1744012462,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140305817,
+      "post_id" : 79558045,
+      "body" : "Ok, I checked the code of <code>ListCell</code>. More or less it has the same implementation as <code>TableCell</code>. Updated the answer to  include the <code>ListCell</code> code as well.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 7717111,
+        "reputation" : 10689,
+        "user_id" : 5844477,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/801ce427cdcbac7f648471e75d6d818e?s=256&d=identicon&r=PG",
+        "display_name" : "Sai Dandem",
+        "link" : "https://stackoverflow.com/users/5844477/sai-dandem"
+      },
+      "creation_date" : 1743977738,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140304753,
+      "post_id" : 79558045,
+      "body" : "I need to chk that. Will provide an update tomorrow.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 7717111,
+        "reputation" : 10689,
+        "user_id" : 5844477,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/801ce427cdcbac7f648471e75d6d818e?s=256&d=identicon&r=PG",
+        "display_name" : "Sai Dandem",
+        "link" : "https://stackoverflow.com/users/5844477/sai-dandem"
+      },
+      "creation_date" : 1743946818,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140304731,
+      "post_id" : 79558045,
+      "body" : "Thank you for your answer. You example is with <code>TableView</code> and we see that row is focused, but cell is now. But what about <code>ListView</code>?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 34599290,
+        "reputation" : 1188,
+        "user_id" : 26656564,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/882f996623517814360ba4bb403102e7?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "SilverCube",
+        "link" : "https://stackoverflow.com/users/26656564/silvercube"
+      },
+      "creation_date" : 1743946073,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

@@ -1,0 +1,244 @@
+{
+  "question" : {
+    "question_id" : 79566626,
+    "title" : "Spring Boot Reactive with Webflux: Security with LDAP bind fails",
+    "body" : "<p>Upgraded an Spring Boot application.</p>\n<ul>\n<li>Java 11 &gt; Java 21</li>\n<li>Spring Boot 2.3.3 &gt; 3.4.4</li>\n<li>Spring Zuul &gt; Spring Cloud Gateway</li>\n<li>Hystrix Fallback &gt; Resiliance4j</li>\n<li>Using Spring Security and Spring LDAP</li>\n</ul>\n<p>The Application has both local users authentication and ldap authentication.</p>\n<p>I started migrating from Zuul to Spring Cloud Gateway.<br />\nIf I where to use the Spring Cloud Gateway MVC instead, then I would have to implement the routing in Java.<br />\nUsing the Reactive Spring Cloud Gateway I could configure all routes in my application.yml</p>\n<p>However that meant I had to configure a Reactive Spring Security.\\</p>\n<ul>\n<li>The ReactiveUserDetailsService and MapReactiveUserDetailsService instead of InMemoryUserDetailsManager.\\</li>\n<li>The SecurityWebFilterChain instead of SecurityFilterChain.\\</li>\n<li>The ReactiveAuthenticationManager, UserDetailsRepositoryReactiveAuthenticationManager and DelegatingReactiveAuthenticationManager.</li>\n</ul>\n<p>This migration worked fine for the local users authentication, but I got problem with the LDAP Authentication.</p>\n<pre><code>@Bean(name = &quot;authenticationManager&quot;)\npublic ReactiveAuthenticationManager authenticationManager(\n    final ReactiveUserDetailsService userDetailsService,\n    final ReactiveAuthenticationManager ldapAuthenticationManager\n) {\n    final List&lt;ReactiveAuthenticationManager&gt; managers = new ArrayList&lt;&gt;();\n    if (ldapEnabled) {\n        managers.add(ldapAuthenticationManager);\n    }\n\n    managers.add(new UserDetailsRepositoryReactiveAuthenticationManager(userDetailsService) {{\n        setPasswordEncoder(passwordEncoder);\n    }});\n    return new DelegatingReactiveAuthenticationManager(managers);\n}\n\n@Bean(name = &quot;ldapAuthenticationManager&quot;)\npublic ReactiveAuthenticationManager ldapAuthenticationManager(\n    final LdapContextSource ldapContextSource,\n    final UserDetailsContextMapperImpl userDetailsContextMapper,\n    final LdapAuthoritiesPopulator ldapAuthoritiesPopulator\n) {\n    final var factory = new LdapBindAuthenticationManagerFactory(ldapContextSource);\n    factory.setUserSearchBase(ldapUserSearchBase);\n    factory.setUserSearchFilter(ldapUserSearchFilter);\n    factory.setUserDetailsContextMapper(userDetailsContextMapper);\n    factory.setLdapAuthoritiesPopulator(ldapAuthoritiesPopulator);\n    final var authenticationManager = factory.createAuthenticationManager();\n    return new ReactiveAuthenticationManagerAdapter(authenticationManager);\n}\n\n@Bean\npublic LdapContextSource ldapContextSource() {\n    final var ldapContextSource = new LdapContextSource();\n    ldapContextSource.setUrl(ldapUrl);\n    ldapContextSource.setUserDn(ldapBindDn);\n    ldapContextSource.setPassword(ldapBindPassword);\n    // Explicitly configure environment props\n    ldapContextSource.setBaseEnvironmentProperties(\n        Map.of(\n            &quot;java.naming.referral&quot;, &quot;follow&quot;,\n            &quot;java.naming.security.authentication&quot;, &quot;simple&quot;\n        )\n    );\n\n    // Manually initialize the context\n    ldapContextSource.afterPropertiesSet();\n\n    return ldapContextSource;\n}\n</code></pre>\n<p>However this does not work. I made several Ldap test cases to debug this. Connecting to LDAP, searching and authentication.<br />\nThey all work, but the LDAP Bind Spring Security does not work.\\</p>\n<blockquote>\n<p>[LDAP: error code 49 - 80090308: LdapErr: DSID-0C09044A, comment: AcceptSecurityContext error, data 52e, v3839]</p>\n</blockquote>\n<p>These test cases I made uses directly either the LdapContextSource, LdapTemplate, FilterBasedLdapUserSearch or InitialDirContext.</p>\n<p>It is just this LdapBindAuthenticationManagerFactory and the AuthenticationManager it creates that does not work.<br />\nPerhaps because LdapAuthenticationManager does not support WebFlux Reactive? Wrapping it in ReactiveAuthenticationManagerAdapter however does not work.</p>\n<p>I came up with a workaround that works, however it is much more verbose and boilerplate.\nWell ChatGpt helped me a bit to find this workaround.</p>\n<pre><code>@Bean(name = &quot;ldapAuthenticationManager&quot;)\npublic ReactiveAuthenticationManager ldapAuthenticationManager(\n    final LdapContextSource ldapContextSource\n) {\n    return auth -&gt; {\n        final var username = auth.getName();\n        final var password = auth.getCredentials().toString();\n        // UPN format username instead of DN\n        final var upn = username.contains(&quot;@&quot;) ? username : username + &quot;@company.com&quot;;\n\n        return Mono.&lt;Authentication&gt;fromCallable(() -&gt; {\n            // Step 1: Bind as the user\n            final var ctx = ldapContextSource.getContext(upn, password);\n\n            // Step 2: Search for user DN using bound context\n            final var sc = new SearchControls();\n            sc.setSearchScope(SearchControls.SUBTREE_SCOPE);\n\n            final var results = ctx.search(\n                ldapUserSearchBase,\n                ldapUserSearchFilter.replace(&quot;{0}&quot;, username),\n                sc\n            );\n\n            String userDn = null;\n            while (results.hasMore()) {\n                final var sr = results.next();\n                userDn = sr.getNameInNamespace();\n                break;\n            }\n\n            if (userDn == null) {\n                ctx.close();\n                throw new BadCredentialsException(&quot;User not found in LDAP&quot;);\n            }\n\n            // Step 3: Search for groups (authorities) using the bound user context\n            List&lt;GrantedAuthority&gt; authorities = new ArrayList&lt;&gt;();\n\n            NamingEnumeration&lt;SearchResult&gt; groupResults = ctx.search(\n                ldapGroupSearchBase,\n                ldapGroupSearchFilter.replace(&quot;{0}&quot;, userDn),\n                sc\n            );\n\n            while (groupResults.hasMore()) {\n                final var group = groupResults.next();\n                final var cn = group.getAttributes().get(&quot;cn&quot;);\n                if (cn != null) {\n                    final var role = cn.get().toString();\n                    authorities.add(new SimpleGrantedAuthority(role));\n                }\n            }\n\n            ctx.close();\n            return new UsernamePasswordAuthenticationToken(username, password, authorities);\n        }).onErrorMap(e -&gt; {\n            return new BadCredentialsException(&quot;LDAP authentication failed&quot;, e);\n        });\n    };\n}\n</code></pre>\n<p>Now I have a workaround that works, but I hate it. It is too verbose and too much boilerplate.\nAlso what about my UserDetailsContextMapper and LdapAuthoritiesPopulator I no longer can use.</p>\n<p>Does anyone have a better solution to continue to use the LdapBindAuthenticationManagerFactory?</p>\n<p>I added this logging to the application (both the old and migrated)</p>\n<pre><code>logging:\n  level:\n    com.company.goods: debug\n    org.springframework.cloud.gateway: debug\n    org.springframework.web: debug\n    org.springframework.security: trace\n    org.springframework.security.authentication: trace\n    org.springframework.security.ldap: trace\n    org.springframework.security.ldap.SpringSecurityLdapTemplate: trace\n    org.springframework.security.ldap.authentication: trace\n    org.springframework.security.ldap.authentication.LdapAuthenticationProvider: trace\n    org.springframework.ldap: trace\n    org.springframework.ldap.core: trace\n    org.springframework.ldap.core.support: trace\n    com.sun.jndi: DEBUG\n    javax.naming: DEBUG\n</code></pre>\n<p>When running the Old application I get this logging when authentication with LDAP on /api/login. User data and company data has been sanitized.</p>\n<pre><code>DEBUG o.s.security.web.FilterChainProxy - /auth/login at position 5 of 12 in additional filter chain; firing Filter: 'JWTLoginFilter'\nDEBUG o.s.s.w.u.m.AntPathRequestMatcher - Checking match of request : '/auth/login'; against '/auth/login'\nDEBUG n.t.r.l.auth.security.JWTLoginFilter - Request is to process authentication\nDEBUG o.s.s.authentication.ProviderManager - Authentication attempt using org.springframework.security.authentication.dao.DaoAuthenticationProvider\nDEBUG o.s.s.a.d.DaoAuthenticationProvider - User 'myuser' not found\nDEBUG o.s.s.authentication.ProviderManager - Authentication attempt using org.springframework.security.authentication.dao.DaoAuthenticationProvider\nDEBUG o.s.s.a.d.DaoAuthenticationProvider - User 'myuser' not found\nDEBUG o.s.s.authentication.ProviderManager - Authentication attempt using org.springframework.security.ldap.authentication.LdapAuthenticationProvider\nDEBUG o.s.s.l.a.LdapAuthenticationProvider - Processing authentication request for user: myuser\nDEBUG o.s.s.l.s.FilterBasedLdapUserSearch - Searching for user 'myuser', with user search [ searchFilter: '(sAMAccountName={0})', searchBase: 'DC=company,DC=com', scope: subtree, searchTimeLimit: 0, derefLinkFlag: false ]\nDEBUG o.s.l.c.s.AbstractContextSource - Got Ldap context on server 'ldap://adldap.company.com:389'\nDEBUG o.s.s.l.SpringSecurityLdapTemplate - Searching for entry under DN '', base = 'dc=company,dc=no', filter = '(sAMAccountName={0})'\nDEBUG o.s.s.l.SpringSecurityLdapTemplate - Found DN: CN=My Name (myuser),OU=Users,OU=CompanyGroup,OU=CompanyGroup_A,DC=company,DC=com\nDEBUG o.s.s.l.a.BindAuthenticator - Attempting to bind as cn=My Name (myuser),ou=Users,ou=CompanyGroup,ou=CompanyGroup_A,dc=company,dc=no\nDEBUG o.s.l.c.s.AbstractContextSource - Got Ldap context on server 'ldap://adldap.company.com:389'\nDEBUG o.s.s.l.a.BindAuthenticator - Retrieving attributes...\nDEBUG o.s.s.l.u.DefaultLdapAuthoritiesPopulator - Getting authorities for user cn=My Name (myuser),ou=Users,ou=CompanyGroup,ou=CompanyGroup_A,dc=company,dc=no\nDEBUG o.s.s.l.u.DefaultLdapAuthoritiesPopulator - Searching for roles for user 'myuser', DN = 'cn=My Name (myuser),ou=Users,ou=CompanyGroup,ou=CompanyGroup_A,dc=company,dc=com', with filter (member={0}) in search base 'OU=SecurityGroups,OU=Cloud Objects,DC=company,DC=com'\nDEBUG o.s.s.l.SpringSecurityLdapTemplate - Using filter: (member=cn=My Name \\28myuser\\29,ou=Users,ou=CompanyGroup,ou=CompanyGroup_A,dc=company,dc=no)\nDEBUG o.s.ldap.core.LdapTemplate - The returnObjFlag of supplied SearchControls is not set but a ContextMapper is used - setting flag to true\nDEBUG o.s.l.c.s.AbstractContextSource - Got Ldap context on server 'ldap://adldap.company.com:389'\nDEBUG o.s.s.l.u.DefaultLdapAuthoritiesPopulator - Roles from search: [{spring.security.ldap.dn=[CN=CompanyConsultants,OU=SecurityGroups,OU=Cloud Objects,DC=company,DC=com], cn=[CompanyConsultants]}]\nDEBUG o.s.s.w.h.writers.HstsHeaderWriter - Not injecting HSTS header since it did not match the requestMatcher org.springframework.security.web.header.writers.HstsHeaderWriter$SecureRequestMatcher@757b1109\n</code></pre>\n<p>When running the migrated application and calling /api/login I get this logs.</p>\n<pre><code>TRACE 19588 --- [lrm-auth-service] [oundedElastic-1] o.s.s.authentication.ProviderManager     : Authenticating request with LdapAuthenticationProvider (1/1)\nDEBUG 19588 --- [lrm-auth-service] [oundedElastic-1] o.s.s.l.a.BindAuthenticator              : Failed to bind with any user DNs []\nTRACE 19588 --- [lrm-auth-service] [oundedElastic-1] o.s.s.l.a.BindAuthenticator              : Searching for user using FilterBasedLdapUserSearch [searchFilter=(sAMAccountName={0}); searchBase=DC=company,DC=com; scope=subtree; searchTimeLimit=0; derefLinkFlag=false ]\nTRACE 19588 --- [lrm-auth-service] [oundedElastic-1] o.s.s.l.s.FilterBasedLdapUserSearch      : Searching for user 'myuser', with FilterBasedLdapUserSearch [searchFilter=(sAMAccountName={0}); searchBase=DC=company,DC=com; scope=subtree; searchTimeLimit=0; derefLinkFlag=false ]\nWARN 19588  --- [lrm-auth-service] [oundedElastic-1] n.t.goods.service.auth.web.AuthController  : Authentication failed for user myuser\n\norg.springframework.security.authentication.InternalAuthenticationServiceException: [LDAP: error code 49 - 80090308: LdapErr: DSID-0C09044A, comment: AcceptSecurityContext error, data 52e, v3839]\n        at org.springframework.security.ldap.authentication.LdapAuthenticationProvider.doAuthentication(LdapAuthenticationProvider.java:190) ~[spring-security-ldap-6.4.2.jar:6.4.2]\n        at org.springframework.security.ldap.authentication.AbstractLdapAuthenticationProvider.authenticate(AbstractLdapAuthenticationProvider.java:80) ~[spring-security-ldap-6.4.2.jar:6.4.2]\n        at org.springframework.security.authentication.ProviderManager.authenticate(ProviderManager.java:182) ~[spring-security-core-6.4.2.jar:6.4.2]\n        at org.springframework.security.authentication.ReactiveAuthenticationManagerAdapter.doAuthenticate(ReactiveAuthenticationManagerAdapter.java:60) ~[spring-security-core-6.4.2.jar:6.4.2]\n        at reactor.core.publisher.MonoFlatMap$FlatMapMain.onNext(MonoFlatMap.java:132) ~[reactor-core-3.7.2.jar:3.7.2]\n        at reactor.core.publisher.FluxSubscribeOnValue$ScheduledScalar.run(FluxSubscribeOnValue.java:181) ~[reactor-core-3.7.2.jar:3.7.2]\n        at reactor.core.scheduler.SchedulerTask.call(SchedulerTask.java:68) ~[reactor-core-3.7.2.jar:3.7.2]\n        at reactor.core.scheduler.SchedulerTask.call(SchedulerTask.java:28) ~[reactor-core-3.7.2.jar:3.7.2]\n        at java.base/java.util.concurrent.FutureTask.run(FutureTask.java:317) ~[na:na]\n        at java.base/java.util.concurrent.ScheduledThreadPoolExecutor$ScheduledFutureTask.run(ScheduledThreadPoolExecutor.java:304) ~[na:na]\n        at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1144) ~[na:na]\n        at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:642) ~[na:na]\n        at java.base/java.lang.Thread.run(Thread.java:1583) ~[na:na]\nCaused by: org.springframework.ldap.AuthenticationException: [LDAP: error code 49 - 80090308: LdapErr: DSID-0C09044A, comment: AcceptSecurityContext error, data 52e, v3839]\n        at org.springframework.ldap.support.LdapUtils.convertLdapException(LdapUtils.java:193) ~[spring-ldap-core-3.2.10.jar:3.2.10]\n        at org.springframework.ldap.core.support.AbstractContextSource.createContext(AbstractContextSource.java:362) ~[spring-ldap-core-3.2.10.jar:3.2.10]\n        at org.springframework.ldap.core.support.AbstractContextSource.doGetContext(AbstractContextSource.java:148) ~[spring-ldap-core-3.2.10.jar:3.2.10]\n        at org.springframework.ldap.core.support.AbstractContextSource.getReadOnlyContext(AbstractContextSource.java:168) ~[spring-ldap-core-3.2.10.jar:3.2.10]\n        at org.springframework.ldap.core.LdapTemplate.executeReadOnly(LdapTemplate.java:789) ~[spring-ldap-core-3.2.10.jar:3.2.10]\n        at org.springframework.security.ldap.SpringSecurityLdapTemplate.searchForSingleEntry(SpringSecurityLdapTemplate.java:261) ~[spring-security-ldap-6.4.2.jar:6.4.2]\n        at org.springframework.security.ldap.search.FilterBasedLdapUserSearch.searchForUser(FilterBasedLdapUserSearch.java:100) ~[spring-security-ldap-6.4.2.jar:6.4.2]\n        at org.springframework.security.ldap.authentication.BindAuthenticator.authenticate(BindAuthenticator.java:88) ~[spring-security-ldap-6.4.2.jar:6.4.2]\n        at org.springframework.security.ldap.authentication.LdapAuthenticationProvider.doAuthentication(LdapAuthenticationProvider.java:174) ~[spring-security-ldap-6.4.2.jar:6.4.2]\n        ... 12 common frames omitted\nCaused by: javax.naming.AuthenticationException: [LDAP: error code 49 - 80090308: LdapErr: DSID-0C09044A, comment: AcceptSecurityContext error, data 52e, v3839]\n        at java.naming/com.sun.jndi.ldap.LdapCtx.mapErrorCode(LdapCtx.java:3260) ~[na:na]\n        at java.naming/com.sun.jndi.ldap.LdapCtx.processReturnCode(LdapCtx.java:3206) ~[na:na]\n        at java.naming/com.sun.jndi.ldap.LdapCtx.processReturnCode(LdapCtx.java:2992) ~[na:na]\n        at java.naming/com.sun.jndi.ldap.LdapCtx.connect(LdapCtx.java:2906) ~[na:na]\n        at java.naming/com.sun.jndi.ldap.LdapCtx.&lt;init&gt;(LdapCtx.java:349) ~[na:na]\n        at java.naming/com.sun.jndi.ldap.LdapCtxFactory.getLdapCtxFromUrl(LdapCtxFactory.java:229) ~[na:na]\n        at java.naming/com.sun.jndi.ldap.LdapCtxFactory.getUsingURL(LdapCtxFactory.java:189) ~[na:na]\n        at java.naming/com.sun.jndi.ldap.LdapCtxFactory.getUsingURLs(LdapCtxFactory.java:247) ~[na:na]\n        at java.naming/com.sun.jndi.ldap.LdapCtxFactory.getLdapCtxInstance(LdapCtxFactory.java:154) ~[na:na]\n        at java.naming/com.sun.jndi.ldap.LdapCtxFactory.getInitialContext(LdapCtxFactory.java:84) ~[na:na]\n        at java.naming/javax.naming.spi.NamingManager.getInitialContext(NamingManager.java:520) ~[na:na]\n        at java.naming/javax.naming.InitialContext.getDefaultInitCtx(InitialContext.java:305) ~[na:na]\n        at java.naming/javax.naming.InitialContext.init(InitialContext.java:236) ~[na:na]\n        at java.naming/javax.naming.ldap.InitialLdapContext.&lt;init&gt;(InitialLdapContext.java:154) ~[na:na]\n        at org.springframework.ldap.core.support.LdapContextSource.getDirContextInstance(LdapContextSource.java:44) ~[spring-ldap-core-3.2.10.jar:3.2.10]\n        at org.springframework.ldap.core.support.AbstractContextSource.createContext(AbstractContextSource.java:350) ~[spring-ldap-core-3.2.10.jar:3.2.10]\n        ... 19 common frames omitted\n</code></pre>\n<p>Tried suggestions from M.Deinum<br />\n1.</p>\n<pre><code>ldapContextSource.setCacheEnvironmentProperties(false);\n</code></pre>\n<ol start=\"2\">\n<li></li>\n</ol>\n<pre><code>final var authenticationManager = factory.createAuthenticationManager();\nfinal var adapter = new ReactiveAuthenticationManagerAdapter(authenticationManager);\nadapter.setScheduler(Schedulers.immediate());\nreturn adapter;\n</code></pre>\n",
+    "tags" : [ "java", "spring-boot", "spring-security", "spring-webflux", "spring-ldap" ],
+    "owner" : {
+      "account_id" : 2058273,
+      "reputation" : 911,
+      "user_id" : 1835477,
+      "user_type" : "registered",
+      "accept_rate" : 59,
+      "profile_image" : "https://www.gravatar.com/avatar/3b65fecacf57c96ec1f85b26804c6d32?s=256&d=identicon&r=PG",
+      "display_name" : "DJViking",
+      "link" : "https://stackoverflow.com/users/1835477/djviking"
+    },
+    "is_answered" : false,
+    "view_count" : 110,
+    "answer_count" : 0,
+    "score" : 0,
+    "last_activity_date" : 1744370242,
+    "creation_date" : 1744287520,
+    "link" : "https://stackoverflow.com/questions/79566626/spring-boot-reactive-with-webflux-security-with-ldap-bind-fails",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140331440,
+    "post_id" : 79566626,
+    "body" : "If you figure it out, please drop a note here for future reference.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126800,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1744608957,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140324340,
+    "post_id" : 79566626,
+    "body" : "On an end note: I am not sure what I did. What I tweaked, but it now works.... Just in time for Easter holidays. Hate not knowing what was the problem.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 2058273,
+      "reputation" : 911,
+      "user_id" : 1835477,
+      "user_type" : "registered",
+      "accept_rate" : 59,
+      "profile_image" : "https://www.gravatar.com/avatar/3b65fecacf57c96ec1f85b26804c6d32?s=256&d=identicon&r=PG",
+      "display_name" : "DJViking",
+      "link" : "https://stackoverflow.com/users/1835477/djviking"
+    },
+    "creation_date" : 1744372597,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140323943,
+    "post_id" : 79566626,
+    "body" : "Did not work with <code>Schedulers.immediate()</code> either. I will try opening a ticket on Spring Security project.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2058273,
+      "reputation" : 911,
+      "user_id" : 1835477,
+      "user_type" : "registered",
+      "accept_rate" : 59,
+      "profile_image" : "https://www.gravatar.com/avatar/3b65fecacf57c96ec1f85b26804c6d32?s=256&d=identicon&r=PG",
+      "display_name" : "DJViking",
+      "link" : "https://stackoverflow.com/users/1835477/djviking"
+    },
+    "creation_date" : 1744364877,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140323854,
+    "post_id" : 79566626,
+    "body" : "Then it really looks like some threading information that gets lost. Not sure if that is an LDAP implementation issue (it used the JDK default one) or a Project Reactor one / reactive one. What you can try, last thing, is to set the <code>scheduler</code> on the <code>ReactiveAuthenticationManagerAdapter</code> to <code>Schedulers.immediate()</code>. That should call it from the calling thread instead of a scheduled one. Next to that I would suggest opening a ticket on the Spring Security project.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126800,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1744363215,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140323773,
+    "post_id" : 79566626,
+    "body" : "Setting <code>cacheEnvironmentProperties</code> to either <code>false</code> or <code>true</code> did not work.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2058273,
+      "reputation" : 911,
+      "user_id" : 1835477,
+      "user_type" : "registered",
+      "accept_rate" : 59,
+      "profile_image" : "https://www.gravatar.com/avatar/3b65fecacf57c96ec1f85b26804c6d32?s=256&d=identicon&r=PG",
+      "display_name" : "DJViking",
+      "link" : "https://stackoverflow.com/users/1835477/djviking"
+    },
+    "creation_date" : 1744361946,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140323682,
+    "post_id" : 79566626,
+    "body" : "Then it looks like there is some thread based state involved that gets lost. One thing you could try is to set the <code>cacheEnvironmentProperties</code> to <code>false</code>. This will recreate the environment properties for the lookup each time when needed.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126800,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1744360601,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140323672,
+    "post_id" : 79566626,
+    "body" : "Let us <a href=\"https://chat.stackoverflow.com/rooms/259397/discussion-between-djviking-and-m-deinum\">continue this discussion in chat</a>.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2058273,
+      "reputation" : 911,
+      "user_id" : 1835477,
+      "user_type" : "registered",
+      "accept_rate" : 59,
+      "profile_image" : "https://www.gravatar.com/avatar/3b65fecacf57c96ec1f85b26804c6d32?s=256&d=identicon&r=PG",
+      "display_name" : "DJViking",
+      "link" : "https://stackoverflow.com/users/1835477/djviking"
+    },
+    "creation_date" : 1744360401,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140323628,
+    "post_id" : 79566626,
+    "body" : "I upgraded to Spring Boot 3.4.4 and Java 21. Also moved from Web to Webflux (Reactive). The password is correct. I send the same password JSON to both applications. I have made some Unit tests using either LdapContextSource, LdapTemplate, FilterBasedLdapUserSearch or DirContext to connect and search LDAP with the excact same password. Those work.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2058273,
+      "reputation" : 911,
+      "user_id" : 1835477,
+      "user_type" : "registered",
+      "accept_rate" : 59,
+      "profile_image" : "https://www.gravatar.com/avatar/3b65fecacf57c96ec1f85b26804c6d32?s=256&d=identicon&r=PG",
+      "display_name" : "DJViking",
+      "link" : "https://stackoverflow.com/users/1835477/djviking"
+    },
+    "creation_date" : 1744359708,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140323517,
+    "post_id" : 79566626,
+    "body" : "A bit of googling indicates that the exception would mean that the username is valid but the password is wrong. <a href=\"https://stackoverflow.com/questions/31411665/ldap-error-code-49-80090308-ldaperr-dsid-0c0903a9-comment-acceptsecurityc\" title=\"ldap error code 49 80090308 ldaperr dsid 0c0903a9 comment acceptsecurityc\">stackoverflow.com/questions/31411665/&hellip;</a> might have some hints. Did you ony upgrade spring or also moved to a newer Java version?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126800,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1744357527,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140323465,
+    "post_id" : 79566626,
+    "body" : "I added logging for both versions of the application.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2058273,
+      "reputation" : 911,
+      "user_id" : 1835477,
+      "user_type" : "registered",
+      "accept_rate" : 59,
+      "profile_image" : "https://www.gravatar.com/avatar/3b65fecacf57c96ec1f85b26804c6d32?s=256&d=identicon&r=PG",
+      "display_name" : "DJViking",
+      "link" : "https://stackoverflow.com/users/1835477/djviking"
+    },
+    "creation_date" : 1744356468,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140320755,
+    "post_id" : 79566626,
+    "body" : "Well you could enable TRACE logging for the old application and compare that with the new one. Can you include the logging in your question?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126800,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1744293832,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140320537,
+    "post_id" : 79566626,
+    "body" : "Yes, both. Could not discern anything what happened, or not happened. Other than that LDAP Error line.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2058273,
+      "reputation" : 911,
+      "user_id" : 1835477,
+      "user_type" : "registered",
+      "accept_rate" : 59,
+      "profile_image" : "https://www.gravatar.com/avatar/3b65fecacf57c96ec1f85b26804c6d32?s=256&d=identicon&r=PG",
+      "display_name" : "DJViking",
+      "link" : "https://stackoverflow.com/users/1835477/djviking"
+    },
+    "creation_date" : 1744291153,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140320351,
+    "post_id" : 79566626,
+    "body" : "Have you tried enabling DEBUG or TRACE logging to see what happens?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126800,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1744288216,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

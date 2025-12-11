@@ -1,0 +1,122 @@
+{
+  "question" : {
+    "question_id" : 79680346,
+    "title" : "ServerSocket.accept() fails to stop on close() in Docker",
+    "body" : "<p>I've used to close a socket to stop a server asynchronously. This no longer works.</p>\n<h1>MCVE</h1>\n<pre><code>package com.example.bug;\n\nimport java.io.Closeable;\nimport java.io.IOException;\nimport java.net.ServerSocket;\nimport java.net.Socket;\n\n\npublic class SocketInvalidArgument implements Closeable {\n    \n    public static void main(String[] args) throws IOException, InterruptedException {\n        for (int i = 0; i&lt;1000; i++) {\n            try (SocketInvalidArgument serve = new SocketInvalidArgument()) {\n                Thread.sleep(i);\n            }\n        }\n    }\n    \n    private final ServerSocket socket;\n    private final Thread acceptThread;\n    public SocketInvalidArgument() throws IOException {\n         socket = new ServerSocket(0);\n         acceptThread = new Thread(() -&gt; {\n            try (Closeable closeable = socket) {\n                while (true) {\n                    try {\n                        try (Socket client = socket.accept()) { // Hangs indefinitely\n                            // The client is immediately closed, not needed for this test\n                        }\n                    } catch (Exception e) {\n                        if (!socket.isClosed()) {\n                            e.printStackTrace();\n                        }\n                        break;\n                    }\n                }\n                socket.close();\n            } catch (Exception e) {\n                e.printStackTrace();\n            }\n         });\n         acceptThread.start();\n    }\n    \n    \n    @Override\n    public void close() throws IOException {\n        try {\n            socket.close();\n            socket.close();\n            socket.close();\n        } finally {\n            try {\n                acceptThread.join(); // Hangs indefinitely\n            } catch (InterruptedException e) {\n                Thread.currentThread().interrupt();\n                throw new IOException(e);\n            }\n        }\n    }\n\n}\n</code></pre>\n<p>It consistently hangs indefinitely on first or second iteration.</p>\n<pre><code>&quot;main&quot; #1 [44] prio=5 os_prio=0 cpu=3511.20ms elapsed=769.07s tid=0x00002aaab002a920 nid=44 in Object.wait()  [0x00002aaaacc8f000]\n   java.lang.Thread.State: WAITING (on object monitor)\n        at java.lang.Object.wait0(java.base@21.0.7/Native Method)\n        - waiting on &lt;0x000000008bf7b0d0&gt; (a java.lang.Thread)\n        at java.lang.Object.wait(java.base@21.0.7/Object.java:366)\n        at java.lang.Thread.join(java.base@21.0.7/Thread.java:2079)\n        - locked &lt;0x000000008bf7b0d0&gt; (a java.lang.Thread)\n        at java.lang.Thread.join(java.base@21.0.7/Thread.java:2155)\n        at com.example.bug.SocketInvalidArgument.close(SocketInvalidArgument.java:55)\n        at com.example.bug.SocketInvalidArgument.main(SocketInvalidArgument.java:15)\n        at java.lang.invoke.LambdaForm$DMH/0x00002aab3d030c00.invokeStatic(java.base@21.0.7/LambdaForm$DMH)\n        at java.lang.invoke.LambdaForm$MH/0x00002aab3d14d000.invoke(java.base@21.0.7/LambdaForm$MH)\n        at java.lang.invoke.Invokers$Holder.invokeExact_MT(java.base@21.0.7/Invokers$Holder)\n        at jdk.internal.reflect.DirectMethodHandleAccessor.invokeImpl(java.base@21.0.7/DirectMethodHandleAccessor.java:154)\n        at jdk.internal.reflect.DirectMethodHandleAccessor.invoke(java.base@21.0.7/DirectMethodHandleAccessor.java:103)\n        at java.lang.reflect.Method.invoke(java.base@21.0.7/Method.java:580)\n        at com.sun.tools.javac.launcher.Main.execute(jdk.compiler@21.0.7/Main.java:484)\n        at com.sun.tools.javac.launcher.Main.run(jdk.compiler@21.0.7/Main.java:208)\n        at com.sun.tools.javac.launcher.Main.main(jdk.compiler@21.0.7/Main.java:135)\n\n&quot;Thread-0&quot; #20 [65] prio=5 os_prio=0 cpu=2.91ms elapsed=765.22s tid=0x00002aaab0603520 nid=65 runnable  [0x00002aabefd7f000]\n   java.lang.Thread.State: RUNNABLE\n        at sun.nio.ch.Net.accept(java.base@21.0.7/Native Method)\n        at sun.nio.ch.NioSocketImpl.accept(java.base@21.0.7/NioSocketImpl.java:748)\n        at java.net.ServerSocket.implAccept(java.base@21.0.7/ServerSocket.java:698)\n        at java.net.ServerSocket.platformImplAccept(java.base@21.0.7/ServerSocket.java:663)\n        at java.net.ServerSocket.implAccept(java.base@21.0.7/ServerSocket.java:639)\n        at java.net.ServerSocket.implAccept(java.base@21.0.7/ServerSocket.java:585)\n        at java.net.ServerSocket.accept(java.base@21.0.7/ServerSocket.java:543)\n        at com.example.bug.SocketInvalidArgument.lambda$new$0(SocketInvalidArgument.java:29)\n        at com.example.bug.SocketInvalidArgument$$Lambda/0x00002aab3d14c238.run(Unknown Source)\n        at java.lang.Thread.runWith(java.base@21.0.7/Thread.java:1596)\n        at java.lang.Thread.run(java.base@21.0.7/Thread.java:1583)\n</code></pre>\n<p>To reproduce:</p>\n<pre><code>docker run --rm --platform=linux/x86_64 -ti maven:3.9.9-eclipse-temurin-21 /bin/bash\ncat &gt; SocketInvalidArgument.java # paste the code\njava SocketInvalidArgument.java\n</code></pre>\n<h1>Environment</h1>\n<ul>\n<li>OpenJDK 64-Bit Server VM Temurin-21.0.7+6 (build 21.0.7+6-LTS, mixed mode, sharing)</li>\n<li>Ubuntu 24.04.2 LTS (Linux 76083b607a5d 6.10.14-linuxkit #1 SMP Thu Mar 20 16:32:56 UTC 2025 x86_64 x86_64 x86_64 GNU/Linux)</li>\n<li>Docker Desktop (4.40.0 (187762))</li>\n<li>MacOS 12.7.6 Darwin (MacBook-Pro.local 21.6.0 Darwin Kernel Version 21.6.0: Mon Jun 24 00:58:06 PDT 2024; root:xnu-8020.240.18.709.2~1/RELEASE_ARM64_T6000 arm64)</li>\n</ul>\n<p>It works as expected (creates a bunch of servers and shuts them down after a delay) on other platforms.</p>\n<p>For example, if instead of x86_64 architecture I use Ubuntu image for aarh64, the sample works fine.</p>\n<h1>Question</h1>\n<ul>\n<li>Is this approach wrong?</li>\n<li>What is the proper way to shutdown accepting Thread?</li>\n</ul>\n",
+    "tags" : [ "java", "sockets", "java-21" ],
+    "owner" : {
+      "account_id" : 43022,
+      "reputation" : 24626,
+      "user_id" : 125562,
+      "user_type" : "registered",
+      "accept_rate" : 64,
+      "profile_image" : "https://i.sstatic.net/SdIqA.png?s=256",
+      "display_name" : "Basilevs",
+      "link" : "https://stackoverflow.com/users/125562/basilevs"
+    },
+    "is_answered" : true,
+    "view_count" : 125,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1751018149,
+    "creation_date" : 1750934999,
+    "link" : "https://stackoverflow.com/questions/79680346/serversocket-accept-fails-to-stop-on-close-in-docker",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79681747,
+    "question_id" : 79680346,
+    "body" : "<p>Did you check if any &quot;socket.close()&quot; actually goes through and changes the socket's state? If the first one throws exception (with information that might be the clue), execution would immediately go to the finally block and the stack traces would look the same.</p>\n",
+    "score" : 3,
+    "is_accepted" : true,
+    "owner" : {
+      "user_type" : "does_not_exist",
+      "display_name" : "user30907982"
+    },
+    "creation_date" : 1751018149,
+    "last_activity_date" : 1751018149,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140546782,
+    "post_id" : 79680346,
+    "body" : "@DuncG I rely on <code>break</code> in catch block, not on condition. Let me edit the condition out for clarity.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 43022,
+      "reputation" : 24626,
+      "user_id" : 125562,
+      "user_type" : "registered",
+      "accept_rate" : 64,
+      "profile_image" : "https://i.sstatic.net/SdIqA.png?s=256",
+      "display_name" : "Basilevs",
+      "link" : "https://stackoverflow.com/users/125562/basilevs"
+    },
+    "creation_date" : 1751016912,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140546498,
+    "post_id" : 79680346,
+    "body" : "The while loop condition isn&#39;t triggered, though SocketException should happen. Have you tried <code>while (!socket.isClosed() &amp;&amp; !Thread.interrupted())</code>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 5998820,
+      "reputation" : 16283,
+      "user_id" : 4712734,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f6e922a2cb7e2da59286f27b162aaca5?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "DuncG",
+      "link" : "https://stackoverflow.com/users/4712734/duncg"
+    },
+    "creation_date" : 1751010257,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79681747" : [ {
+      "comment_id" : 140547979,
+      "post_id" : 79681747,
+      "body" : "This is not a problem in a sense, that Java bug I&#39;m experiencing is much more severe. Socket should be closed and accept should exit. There is no reason for <code>close()</code> method to throw.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 43022,
+        "reputation" : 24626,
+        "user_id" : 125562,
+        "user_type" : "registered",
+        "accept_rate" : 64,
+        "profile_image" : "https://i.sstatic.net/SdIqA.png?s=256",
+        "display_name" : "Basilevs",
+        "link" : "https://stackoverflow.com/users/125562/basilevs"
+      },
+      "creation_date" : 1751044561,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140547894,
+      "post_id" : 79681747,
+      "body" : "@Basilevs That&#39;s cool.   Just FYI: Your original approach made sure the thread that executed &quot;socket.accept()&quot; had actually finished when SocketInvalidArgument.close() returns (execution blocked until then).  The added timeout with join no longer assures that, so the &quot;socket.accept()&quot;-thread could just stay in that state and the serversocket stays unclosed.",
+      "score" : 0,
+      "owner" : {
+        "user_type" : "does_not_exist",
+        "display_name" : "user30907982"
+      },
+      "creation_date" : 1751042078,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140546924,
+      "post_id" : 79681747,
+      "body" : "Thanks, this was indeed the case! I&#39;ve added a timeout to join and see IOException: Invalid argument.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 43022,
+        "reputation" : 24626,
+        "user_id" : 125562,
+        "user_type" : "registered",
+        "accept_rate" : 64,
+        "profile_image" : "https://i.sstatic.net/SdIqA.png?s=256",
+        "display_name" : "Basilevs",
+        "link" : "https://stackoverflow.com/users/125562/basilevs"
+      },
+      "creation_date" : 1751020139,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

@@ -1,0 +1,113 @@
+{
+  "question" : {
+    "question_id" : 79549898,
+    "title" : "How to change output time format in AssertThat",
+    "body" : "<p>Using Hamcrest AssertThat LocalDateTime, I am getting the date in AM/PM format. What should be done to get the output in 24-hours format?</p>\n<p>Code snippet:</p>\n<pre class=\"lang-java prettyprint-override\"><code>LocalDateTime actualJobExecutionTime = date.toInstant().atZone(ZoneId.systemDefault()).toLocalDateTime();\n.....\n\nLocalDateTime expectedDateTime = LocalDateTime.now();\n\nassertThat(actualJobExecutionTime, LocalDateTimeMatchers.after(expectedDateTime));\n</code></pre>\n<p>Output:</p>\n<pre class=\"lang-none prettyprint-override\"><code>java.lang.AssertionError: \nExpected: the date is after Mi., 02 Apr. 2025 08:28:16.482 AM\n     but: date is Mo., 31 März 2025 09:33:35.000 AM\n</code></pre>\n<p>Found reason of that in LocalDataTimeFormatter.class:</p>\n<pre><code>package org.exparity.hamcrest.date.core.format;\n\nimport java.time.LocalDateTime;\nimport java.time.format.DateTimeFormatter;\nimport org.exparity.hamcrest.date.core.TemporalFormatter;\n\npublic class LocalDateTimeFormatter implements TemporalFormatter&lt;LocalDateTime&gt; {\n    private static final DateTimeFormatter DATE_TIME_FORMAT = DateTimeFormatter.ofPattern(&quot;EEE, dd MMM yyyy hh:mm:ss.SSS a&quot;);\n    private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern(&quot;EEE, dd MMM yyyy&quot;);\n\n    public LocalDateTimeFormatter() {\n    }\n\n    public String describe(LocalDateTime temporal) {\n        return temporal.format(DATE_TIME_FORMAT);\n    }\n\n    public String describeDate(LocalDateTime temporal) {\n        return temporal.format(DATE_FORMAT);\n    }\n}\n</code></pre>\n<p>So, my preliminary (and perhaps final) solution is to write/rewrite 2 additional classes:</p>\n<ol>\n<li>CustomHamcrestDateMatcher:</li>\n</ol>\n<pre><code>import org.exparity.hamcrest.date.core.DateMatcher;\nimport org.exparity.hamcrest.date.core.IsAfter;\nimport org.exparity.hamcrest.date.core.wrapper.LocalDateTimeWrapper;\n\nimport java.time.LocalDateTime;\n\npublic abstract class CustomHamcrestDateMatcher {\n    public CustomHamcrestDateMatcher() {\n    }\n\n    public static DateMatcher&lt;LocalDateTime&gt; after(LocalDateTime date) {\n        return new IsAfter&lt;&gt;(new LocalDateTimeWrapper(date), new CustomLocalDateTimeFormatter());\n    }\n}\n\n</code></pre>\n<p>2)CustomLocalDateTimeFormatter (with new/specific DateTime Format):</p>\n<pre><code>import org.exparity.hamcrest.date.core.TemporalFormatter;\n\nimport java.time.LocalDateTime;\nimport java.time.format.DateTimeFormatter;\n\npublic class CustomLocalDateTimeFormatter implements TemporalFormatter&lt;LocalDateTime&gt; {\n        private static final DateTimeFormatter DATE_TIME_FORMAT = DateTimeFormatter.ofPattern(&quot;EEE, dd MMM yyyy HH:mm:ss&quot;);\n        private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern(&quot;EEE, dd MMM yyyy&quot;);\n\n        public CustomLocalDateTimeFormatter() {\n        }\n\n        public String describe(LocalDateTime temporal) {\n            return temporal.format(DATE_TIME_FORMAT);\n        }\n\n        public String describeDate(LocalDateTime temporal) {\n            return temporal.format(DATE_FORMAT);\n        }\n    }\n\n</code></pre>\n",
+    "tags" : [ "java", "assertion", "hamcrest" ],
+    "owner" : {
+      "account_id" : 8422001,
+      "reputation" : 41,
+      "user_id" : 10023554,
+      "user_type" : "registered",
+      "profile_image" : "https://graph.facebook.com/873225432806311/picture?type=large",
+      "display_name" : "Pavel Tsirulnikov",
+      "link" : "https://stackoverflow.com/users/10023554/pavel-tsirulnikov"
+    },
+    "is_answered" : false,
+    "view_count" : 86,
+    "answer_count" : 1,
+    "score" : 2,
+    "last_activity_date" : 1743660848,
+    "creation_date" : 1743576859,
+    "link" : "https://stackoverflow.com/questions/79549898/how-to-change-output-time-format-in-assertthat",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79552105,
+    "question_id" : 79549898,
+    "body" : "<h2>tl;dr</h2>\n<p>To assert a given <code>java.util.Date</code> moment is in the future:</p>\n<pre class=\"lang-java prettyprint-override\"><code>assertThat(                                  // Hamcrest call.\n    myJavaUtilDate.toInstant() ,             // Convert from legacy class `java.util.Date` to its modern replacement, `java.time.Instant`. \n    InstantMatchers.after( Instant.now() )   // `InstantMatchers` class is from the eXparity library *Hamcrest Date* version 2.0.8+.\n);\n</code></pre>\n<h2>Do not use <code>java.time.LocalDateTime</code> for moments</h2>\n<blockquote>\n<p>LocalDateTime actualJobExecutionTime = date.toInstant().atZone(ZoneId.systemDefault()).toLocalDateTime();</p>\n</blockquote>\n<p>Drop that conversion to <code>LocalDateTime</code>, unneeded.</p>\n<p>Assuming your <code>date</code> is a legacy <code>java.util.Date</code> object, convert to a <code>ZonedDateTime</code> by applying a <code>ZoneId</code>.</p>\n<pre class=\"lang-java prettyprint-override\"><code>ZoneId z = ZoneId.of ( &quot;America/Edmonton&quot; ) ;  // Or ZoneId.systemDefault()\nZonedDateTime zdt = myJavaUtil.toInstant().atZone ( z ) ;\n</code></pre>\n<p>You wrote:</p>\n<blockquote>\n<p><code>LocalDateTime.now();</code></p>\n</blockquote>\n<p>Never use <code>LocalDateTime</code> when you mean to represent a moment, a specific point on the timeline. That class represents merely a date with time-of-day, but lacks the context of a time zone or offset-from-UTC. So a <code>LocalDateTime</code> is inherently ambiguous with respect to the timeline. I cannot imagine a scenario where calling <code>LocalDateTime.now</code> is optimal or wise.</p>\n<p>Using <code>LocalDateTime</code> strips away the time zone or offset. So you are left comparing noon on January 23, 2025 without knowing if that is noon in Tokyo Japan, noon in Toulouse France, or noon in Toledo Ohio US — three different moments several hours apart.</p>\n<h2><code>java.time.Instant</code></h2>\n<p>Apparently you simply want to see if the passed <code>java.util.Date</code> object represents a moment in the future. If so, you are working too hard. No need for time zones, no need for <code>ZonedDateTime</code>, and no need for <code>LocalDateTime</code>.</p>\n<p>Skip the time zones. Just use a moment as seen in UTC, with an offset-from-UTC of zero hours-minutes-seconds. For that, use <code>java.time.Instant</code>. <code>Instant</code> is the modern class for representing a moment in UTC, while <code>java.util.Date</code> is the legacy class for the same purpose. <code>Instant</code> supplants <code>java.util.Date</code>.</p>\n<pre class=\"lang-java prettyprint-override\"><code>Instant then = myJavaUtilDate.toInstant() ;\nInstant now = Instant.now() ;  // Current moment as seen in UTC.\nboolean isFuture = then.isAfter ( now ) ;\n</code></pre>\n<p>For your purposes, we can collapse that code to the following, assuming you are using the <em>eXparity</em> library, <a href=\"https://github.com/eXparity/hamcrest-date\" rel=\"nofollow noreferrer\"><em>Hamcrest Date</em></a>.</p>\n<pre class=\"lang-java prettyprint-override\"><code>assertThat(\n    myJavaUtilDate.toInstant() , \n    InstantMatchers.after( Instant.now() )\n);\n</code></pre>\n<p>You will find <code>InstantMatchers</code> in version 2.0.8 and later (<a href=\"https://github.com/eXparity/hamcrest-date/blob/master/src/main/java/org/exparity/hamcrest/date/InstantMatchers.java#:%7E:text=InstantMatchers.java\" rel=\"nofollow noreferrer\">source code</a>). Quite odd to not have been included much earlier; <code>Instant</code> is the basic building-block of <em>java.time</em>.</p>\n<p>For more info of the various <em>java.time</em> types (<code>Instant</code>, <code>ZonedDateTime</code>, <code>LocalDateTime</code>, and more), see <a href=\"https://stackoverflow.com/a/32443004/642706\">my Answer</a> on the Question, <a href=\"https://stackoverflow.com/q/32437550/642706\"><em>What's the difference between Instant and LocalDateTime?</em></a>.</p>\n<hr />\n<p>If possible, phase out the use of <code>java.util.Date</code>, <code>java.sql.Date</code>, <code>Calendar</code>, <code>SimpleDateFormat</code>, and all the other legacy date-time classes. They are a bloody awful mess of flaws and poor design. They are error-prone, and should be avoided. Use only <em>java.time</em> classes.</p>\n",
+    "score" : -1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 322981,
+      "reputation" : 346951,
+      "user_id" : 642706,
+      "user_type" : "registered",
+      "accept_rate" : 58,
+      "profile_image" : "https://i.sstatic.net/ZWEI3.jpg?s=256",
+      "display_name" : "Basil Bourque",
+      "link" : "https://stackoverflow.com/users/642706/basil-bourque"
+    },
+    "creation_date" : 1743659341,
+    "last_activity_date" : 1743660848,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140293250,
+    "post_id" : 79549898,
+    "body" : "Did you get <code>LocalDateTimeMatchers</code> from <i>eXparity</i> library? You need to document such facts within your Question; don&#39;t make us guess.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 322981,
+      "reputation" : 346951,
+      "user_id" : 642706,
+      "user_type" : "registered",
+      "accept_rate" : 58,
+      "profile_image" : "https://i.sstatic.net/ZWEI3.jpg?s=256",
+      "display_name" : "Basil Bourque",
+      "link" : "https://stackoverflow.com/users/642706/basil-bourque"
+    },
+    "creation_date" : 1743659578,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140293229,
+    "post_id" : 79549898,
+    "body" : "What <i>exactly</i> is <code>date</code>? Is that a <code>java.util.Date</code> object?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 322981,
+      "reputation" : 346951,
+      "user_id" : 642706,
+      "user_type" : "registered",
+      "accept_rate" : 58,
+      "profile_image" : "https://i.sstatic.net/ZWEI3.jpg?s=256",
+      "display_name" : "Basil Bourque",
+      "link" : "https://stackoverflow.com/users/642706/basil-bourque"
+    },
+    "creation_date" : 1743658904,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140289192,
+    "post_id" : 79549898,
+    "body" : "If it&#39;s <a href=\"https://github.com/eXparity/hamcrest-date\" rel=\"nofollow noreferrer\">github.com/eXparity/hamcrest-date</a>, it seems you need to call <code>atLocale(...)</code> on the matcher (looking at the source only, didn&#39;t try it).",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 213468,
+      "reputation" : 110282,
+      "user_id" : 466862,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/d873f397779db38cd510d9ee5416fd43?s=256&d=identicon&r=PG",
+      "display_name" : "Mark Rotteveel",
+      "link" : "https://stackoverflow.com/users/466862/mark-rotteveel"
+    },
+    "creation_date" : 1743579433,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140289148,
+    "post_id" : 79549898,
+    "body" : "Which library provides <code>LocalDateTimeMatchers</code>? It isn&#39;t part of <code>org.hamcrest:hamcrest:3.0</code>.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 213468,
+      "reputation" : 110282,
+      "user_id" : 466862,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/d873f397779db38cd510d9ee5416fd43?s=256&d=identicon&r=PG",
+      "display_name" : "Mark Rotteveel",
+      "link" : "https://stackoverflow.com/users/466862/mark-rotteveel"
+    },
+    "creation_date" : 1743578611,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

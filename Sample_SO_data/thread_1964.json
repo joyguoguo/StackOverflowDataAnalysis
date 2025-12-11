@@ -1,0 +1,246 @@
+{
+  "question" : {
+    "question_id" : 79659795,
+    "title" : "How can I significantly reduce the size of an encoded string (hash) while keeping it reversible?",
+    "body" : "<p>I'm working on a Java (JDK 21) application where I need to transmit a very large string (around 20,000 characters). This string is an encoded structure (like a hash or serialized data), and I need:</p>\n<p>The encoded result to be as short as possible, ideally under 4,000 characters.</p>\n<p>The process to be fully reversible (I must recover the original string exactly).</p>\n<p>To avoid using any external storage, such as Redis, a database, or cache.</p>\n<p>A clean Java-only solution, no dependencies on external tools or services.</p>\n<p>What I've tried so far:</p>\n<p>Compressing the string using Deflater, GZIP, and encoding the result using Base64 (URL-safe).</p>\n<p>The result is still too long — for example, around 13,000+ characters with Base64URL-encoded Deflate.</p>\n<p>So my question is:</p>\n<p>Is there any more efficient way — algorithmic, custom encoding, or otherwise — to reduce the size of a large string, while keeping it reversible and implemented in plain Java?</p>\n<p>Any suggestions, techniques, or insights would be very much appreciated!</p>\n<pre><code>public class EncryptionUtil {\n\n    private static final String AES = &quot;AES/ECB/PKCS5Padding&quot;;\n    private static final String SECRET = &quot;secret&quot;;\n    private final SecretKey secretKey;\n    private final RefinementEncryptionConfig encryptionConfig;\n\n    public FilterEncryptionUtil(RefinementEncryptionConfig encryptionConfig) {\n        this.encryptionConfig = encryptionConfig;\n        this.secretKey = new SecretKeySpec(SECRET.getBytes(StandardCharsets.UTF_8), &quot;AES&quot;);\n    }\n\n    public String generateEncryptedUrl(List&lt;Refinement&gt; refinements) {\n        String compactString = generateCompactRefinementString(refinements);\n        return encryptCompactString(compactString);\n    }\n\n    public String encryptCompactString(String compactString) {\n        try {\n            Cipher cipher = Cipher.getInstance(AES);\n            cipher.init(Cipher.ENCRYPT_MODE, secretKey);\n            byte[] encrypted = cipher.doFinal(compactString.getBytes(StandardCharsets.UTF_8));\n            return Base64.getUrlEncoder().withoutPadding().encodeToString(encrypted);\n        } catch (Exception e) {\n            throw new RuntimeException(&quot;Encryption failed&quot;, e);\n        }\n    }\n\n    private String generateCompactRefinementString(List&lt;Refinement&gt; refinements) {\n        Map&lt;String, String&gt; navigationAliases = encryptionConfig.getEncryptIdentifiers();\n\n        StringBuilder buffer = new StringBuilder();\n        Map&lt;String, List&lt;String&gt;&gt; valueRefinements = new LinkedHashMap&lt;&gt;();\n        List&lt;String&gt; rangeRefinements = new ArrayList&lt;&gt;();\n\n        for (Refinement r : refinements) {\n            String alias = navigationAliases.getOrDefault(r.getNavigationName(), r.getNavigationName());\n\n            if (&quot;Range&quot;.equalsIgnoreCase(r.getType())) {\n                String rangeStr = alias + &quot;:R:&quot; + r.getLow() + &quot;-&quot; + r.getHigh();\n                rangeRefinements.add(rangeStr);\n            } else {\n                valueRefinements.computeIfAbsent(alias, k -&gt; new ArrayList&lt;&gt;()).add(r.getValue());\n            }\n        }\n\n        if (!rangeRefinements.isEmpty()) {\n            buffer.append(String.join(&quot;#&quot;, rangeRefinements));\n        }\n\n        for (Map.Entry&lt;String, List&lt;String&gt;&gt; entry : valueRefinements.entrySet()) {\n            if (!buffer.isEmpty()) buffer.append(&quot;#&quot;);\n            String part = entry.getKey() + &quot;:V:&quot; + String.join(&quot;|&quot;, entry.getValue());\n            buffer.append(part);\n        }\n\n        return buffer.toString();\n    }\n\n    public List&lt;Refinement&gt; decodeEncryptedUrl(String encryptedBase64) {\n        try {\n            byte[] decoded = Base64.getUrlDecoder().decode(encryptedBase64);\n\n            Cipher cipher = Cipher.getInstance(AES);\n            cipher.init(Cipher.DECRYPT_MODE, secretKey);\n            byte[] decryptedBytes = cipher.doFinal(decoded);\n            String compactString = new String(decryptedBytes, StandardCharsets.UTF_8);\n\n            return parseCompactRefinementString(compactString);\n        } catch (Exception e) {\n            throw new RuntimeException(&quot;Decryption failed&quot;, e);\n        }\n    }\n\n    private List&lt;Refinement&gt; parseCompactRefinementString(String compactString) {\n        List&lt;Refinement&gt; refinements = new ArrayList&lt;&gt;();\n        Map&lt;String, String&gt; aliasToNav = encryptionConfig.getDecryptIdentifiers();\n\n        String[] parts = compactString.split(&quot;#&quot;);\n        for (String part : parts) {\n            String[] section = part.split(&quot;:&quot;);\n            if (section.length &lt; 3) continue;\n\n            String alias = section[0];\n            String type = section[1];\n            String data = section[2];\n            String navName = aliasToNav.getOrDefault(alias, alias);\n\n            if (&quot;R&quot;.equals(type)) {\n                String[] range = data.split(&quot;-&quot;);\n                if (range.length == 2) {\n                    Refinement r = new Refinement();\n                    r.setType(&quot;Range&quot;);\n                    r.setNavigationName(navName);\n                    r.setLow(range[0]);\n                    r.setHigh(range[1]);\n                    refinements.add(r);\n                }\n            } else if (&quot;V&quot;.equals(type)) {\n                String[] values = data.split(&quot;\\\\|&quot;);\n                for (String value : values) {\n                    Refinement r = new Refinement();\n                    r.setType(&quot;Value&quot;);\n                    r.setNavigationName(navName);\n                    r.setValue(value);\n                    refinements.add(r);\n                }\n            }\n        }\n\n        return refinements;\n    }\n\n}\n</code></pre>\n<p>Additional Context:</p>\n<p>To clarify some constraints:</p>\n<p>I cannot use a POST request — the encoded data must be transmitted as a URL parameter in a GET request.</p>\n<p>This is why minimizing the resulting string size is critical (ideally &lt; 4000 characters to stay within typical URL limits).</p>\n<p>I'm encoding a large list of integers (e.g., [6957109, 11370445, ...], potentially up to 20,000 unique values).</p>\n<p>These numbers are not repeated and must be preserved exactly on decode.</p>\n<p>The class I shared is responsible for encoding this data, and I must keep the entire process self-contained in Java, with no external services, no database (e.g., Mongo), and no temporary cache (e.g., Redis).</p>\n<p>I’m not allowed to change the architectural decision — including mapping the data to a UUID or external lookup.</p>\n<p>So, my current idea is to compress or represent the list of integers in a more compact form before encoding.</p>\n<p>I've tried Deflate + Base64 (URL-safe), but with 20,000 numbers, the final string still ends up being too large. I’m looking for ideas such as:</p>\n<p>Better compression strategies for lists of integers in Java.</p>\n<p>Custom number encoding (e.g., delta encoding, variable-length encoding).</p>\n<p>Any creative reversible transformation that produces a smaller string.</p>\n<p>Any insights or Java-only techniques would be incredibly helpful. Thank you!</p>\n<pre><code>public static byte[] compress(List&lt;String&gt; numberStrings) throws IOException {\n        if (numberStrings == null || numberStrings.isEmpty()) return new byte[0];\n\n        // Convert strings to longs and sort\n        List&lt;Long&gt; numbers = numberStrings.stream()\n                .map(Long::parseLong)\n                .sorted()\n                .toList();\n\n        // Delta encoding with variable-length bytes\n        List&lt;Byte&gt; deltas = new ArrayList&lt;&gt;();\n        long prev = numbers.get(0);\n        deltas.add((byte) (prev &amp; 0xFF)); // Store first number's least significant byte\n\n        for (int i = 1; i &lt; numbers.size(); i++) {\n            long delta = numbers.get(i) - prev;\n            prev = numbers.get(i);\n            while (delta &gt; 0) {\n                byte b = (byte) (delta &amp; 0x7F);\n                delta &gt;&gt;&gt;= 7; // Use unsigned right shift\n                if (delta &gt; 0) b |= 0x80;\n                deltas.add(b);\n            }\n        }\n\n        // Deflate compression\n        Deflater deflater = new Deflater(Deflater.BEST_COMPRESSION, true);\n        deflater.setInput(toByteArray(deltas));\n        try (ByteArrayOutputStream baos = new ByteArrayOutputStream()) {\n            byte[] buffer = new byte[1024];\n            deflater.finish();\n            while (!deflater.finished()) {\n                int count = deflater.deflate(buffer);\n                baos.write(buffer, 0, count);\n            }\n            return baos.toByteArray();\n        } finally {\n            deflater.end();\n        }\n    }\n\n    private static byte[] toByteArray(List&lt;Byte&gt; bytes) {\n        byte[] result = new byte[bytes.size()];\n        for (int i = 0; i &lt; bytes.size(); i++) {\n            result[i] = bytes.get(i);\n        }\n        return result;\n    }\n\n    public static List&lt;Integer&gt; decompress(byte[] compressed) {\n        if (compressed == null || compressed.length == 0) return new ArrayList&lt;&gt;();\n\n        // Inflate decompression\n        Inflater inflater = new Inflater(true);\n        inflater.setInput(compressed);\n        try (ByteArrayOutputStream baos = new ByteArrayOutputStream()) {\n            byte[] buffer = new byte[1024];\n            while (!inflater.finished()) {\n                int count = inflater.inflate(buffer);\n                baos.write(buffer, 0, count);\n            }\n            return decodeDeltas(baos.toByteArray());\n        } catch (Exception e) {\n            e.printStackTrace();\n            return new ArrayList&lt;&gt;();\n        } finally {\n            inflater.end();\n        }\n    }\n\n    private static List&lt;Integer&gt; decodeDeltas(byte[] decompressedBytes) {\n        List&lt;Integer&gt; numbers = new ArrayList&lt;&gt;();\n        int value = decompressedBytes[0] &amp; 0xFF;\n        numbers.add(value);\n\n        for (int i = 1; i &lt; decompressedBytes.length; ) {\n            int delta = 0;\n            int shift = 0;\n            while (i &lt; decompressedBytes.length &amp;&amp; (decompressedBytes[i] &amp; 0x80) != 0) {\n                delta |= (decompressedBytes[i] &amp; 0x7F) &lt;&lt; shift;\n                shift += 7;\n                i++;\n            }\n            if (i &lt; decompressedBytes.length) {\n                delta |= (decompressedBytes[i] &amp; 0x7F) &lt;&lt; shift;\n                i++;\n            }\n            value += delta;\n            numbers.add(value);\n        }\n        return numbers;\n    }\n\n    public static String bytesToHex(byte[] bytes) {\n        StringBuilder sb = new StringBuilder();\n        for (byte b : bytes) sb.append(String.format(&quot;%02X&quot;, b));\n        return sb.toString();\n    }\n\n    public static void main(String[] args) throws IOException {\n        Set&lt;String&gt; uniqueNumbers = new HashSet&lt;&gt;();\n        Random random = new Random();\n        long min = 1_000_000_000L;\n        long max = 9_999_999_999L;\n\n        while (uniqueNumbers.size() &lt; 2000) {\n            long number = min + (long) (random.nextDouble() * (max - min));\n            uniqueNumbers.add(String.valueOf(number));\n        }\n        List&lt;String&gt; listSkus = new ArrayList&lt;&gt;(uniqueNumbers);\n\n        byte[] compressed = compress(listSkus);\n        String compressedString = bytesToHex(compressed);\n        System.out.println(&quot;Compressed size (bytes): &quot; + compressed.length);\n        System.out.println(&quot;Compressed string: &quot; + compressedString);\n\n        listSkus.subList(0, 10).forEach(System.out::println);\n\n        List&lt;Integer&gt; decompressed = decompress(compressed);\n        System.out.println(&quot;Decompressed count: &quot; + decompressed.size());\n        decompressed.subList(0, 10).forEach(System.out::println);\n    }\n   \n</code></pre>\n",
+    "tags" : [ "java", "spring-boot" ],
+    "owner" : {
+      "account_id" : 13075331,
+      "reputation" : 148,
+      "user_id" : 9447658,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/ddc1cacfe96ff3d88ac22e2d5710109b?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Sebastian Ruiz Perez",
+      "link" : "https://stackoverflow.com/users/9447658/sebastian-ruiz-perez"
+    },
+    "is_answered" : true,
+    "view_count" : 151,
+    "answer_count" : 2,
+    "score" : 3,
+    "last_activity_date" : 1749668355,
+    "creation_date" : 1749530855,
+    "link" : "https://stackoverflow.com/questions/79659795/how-can-i-significantly-reduce-the-size-of-an-encoded-string-hash-while-keepin",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79660132,
+    "question_id" : 79659795,
+    "body" : "<p>Hashes are not reversible. They do allow collisions.</p>\n<p>So using compression is the best idea. If it does not work, you have to accept that sometimes it's not possible.</p>\n<p>What may be possible is to make the string generation shorter ; or split the string and transmit parts one at a time.</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 4751899,
+      "reputation" : 182,
+      "user_id" : 3841737,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/ce20bf22d2c5b85420f935226bacf571?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "guigolum",
+      "link" : "https://stackoverflow.com/users/3841737/guigolum"
+    },
+    "creation_date" : 1749546755,
+    "last_activity_date" : 1749546755,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79662514,
+    "question_id" : 79659795,
+    "body" : "<p>You can encode the number in an arbitrary base, like base93. That would be using every printable char except comma, so you can use it as your list delimiter. Adjust the list of chars as needed. With base 93 you will get about a 50% size reduction if you have large numbers. Maybe will compression you can squeeze that down some more. I am pretty sure that is the best you can do with some mathematically analysis of the numbers.</p>\n<pre><code>        private static final char[] DIGITS = &quot; !\\&quot;#$%&amp;'()*+-./0123456789:;&lt;=&gt;?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\\\]^_`abcdefghijklmnopqrstuvwxyz{|}~&quot;.toCharArray();\n    \n    public static String toCustomBase(int number) {\n        if (number &lt; 0) throw new IllegalArgumentException(&quot;Negative numbers not supported&quot;);\n\n        int base = DIGITS.length;\n        if (number == 0) return String.valueOf(DIGITS[0]);\n\n        StringBuilder result = new StringBuilder();\n        while (number &gt; 0) {\n            int remainder = number % base;\n            result.append(DIGITS[remainder]);\n            number /= base;\n        }\n\n        return result.reverse().toString();\n    }\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 16876231,
+      "reputation" : 627,
+      "user_id" : 12203568,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/c0a1ebcbcbce659f122308d76b30af7a?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "SephB",
+      "link" : "https://stackoverflow.com/users/12203568/sephb"
+    },
+    "creation_date" : 1749668355,
+    "last_activity_date" : 1749668355,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140504194,
+    "post_id" : 79659795,
+    "body" : "The unchangeable architecural decision about encoding in a GET request will have to be changed. Start the process now.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 71739,
+      "reputation" : 311869,
+      "user_id" : 207421,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/5cfe5f7d64f44be04f147295f5c7b88e?s=256&d=identicon&r=PG",
+      "display_name" : "user207421",
+      "link" : "https://stackoverflow.com/users/207421/user207421"
+    },
+    "creation_date" : 1749608721,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140501863,
+    "post_id" : 79659795,
+    "body" : "The problem here is that you haven&#39;t stated your goal - so much so that it <a href=\"https://technojeeves.com/index.php/aliasjava1/15-smart-questions\" rel=\"nofollow noreferrer\">verges on being an XY question</a>",
+    "score" : 3,
+    "owner" : {
+      "account_id" : 22124137,
+      "reputation" : 4243,
+      "user_id" : 16376827,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/1ImPw.png?s=256",
+      "display_name" : "g00se",
+      "link" : "https://stackoverflow.com/users/16376827/g00se"
+    },
+    "creation_date" : 1749549292,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140501842,
+    "post_id" : 79659795,
+    "body" : "@MarkRotteveel encrypting <code>compactString</code> yes, and for <code>compactString</code> also UTF-8 is used here. However that 20K initial string is mentioned. That being binary data - in a <i>String</i>?? So something is fishy here. I would not trust the binary conversion at this point.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 960307,
+      "reputation" : 110397,
+      "user_id" : 984823,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Z2KYN.jpg?s=256",
+      "display_name" : "Joop Eggen",
+      "link" : "https://stackoverflow.com/users/984823/joop-eggen"
+    },
+    "creation_date" : 1749548602,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140501783,
+    "post_id" : 79659795,
+    "body" : "@JoopEggen The OP is using UTF-8, which means a character is 1-4 bytes (and considering surrogate pairs, sometimes two characters are 4 bytes).",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 213468,
+      "reputation" : 110282,
+      "user_id" : 466862,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/d873f397779db38cd510d9ee5416fd43?s=256&d=identicon&r=PG",
+      "display_name" : "Mark Rotteveel",
+      "link" : "https://stackoverflow.com/users/466862/mark-rotteveel"
+    },
+    "creation_date" : 1749547147,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140501318,
+    "post_id" : 79659795,
+    "body" : "How much <b>information</b> does your message actually contain? Are you sure that this is even representable with no pre-shared knowledge using 4000 characters? If not are you able to pre-share knowledge between all parties of the communication involved?",
+    "score" : 5,
+    "owner" : {
+      "account_id" : 1580843,
+      "reputation" : 13706,
+      "user_id" : 1466267,
+      "user_type" : "registered",
+      "accept_rate" : 91,
+      "profile_image" : "https://www.gravatar.com/avatar/c47d1f7544a8c4a1bb7a41d511f53604?s=256&d=identicon&r=PG",
+      "display_name" : "SpaceTrucker",
+      "link" : "https://stackoverflow.com/users/1466267/spacetrucker"
+    },
+    "creation_date" : 1749537296,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140501284,
+    "post_id" : 79659795,
+    "body" : "Base64 has a payload of 6/8 and java char is 2 bytes. So: check for a binary transfer, and <i>maybe:</i> use <code>byte[]&#47;OutputStream</code>. If the string is actually a hash this is weird, lossy; the char array only containing a 0 high byte? (ASCII).",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 960307,
+      "reputation" : 110397,
+      "user_id" : 984823,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Z2KYN.jpg?s=256",
+      "display_name" : "Joop Eggen",
+      "link" : "https://stackoverflow.com/users/984823/joop-eggen"
+    },
+    "creation_date" : 1749536144,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140501188,
+    "post_id" : 79659795,
+    "body" : "As for encryption, why aren&#39;t you using TLS? HTTPS?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 71739,
+      "reputation" : 311869,
+      "user_id" : 207421,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/5cfe5f7d64f44be04f147295f5c7b88e?s=256&d=identicon&r=PG",
+      "display_name" : "user207421",
+      "link" : "https://stackoverflow.com/users/207421/user207421"
+    },
+    "creation_date" : 1749533075,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140501183,
+    "post_id" : 79659795,
+    "body" : "A hash is usually not reversible, so don&#39;t think or write about using it, it will confuse others with a similar problem as well as users that might have an answer to your problem. What properties does your encoding need to have? What exactly is your input, didn&#39;t find out if it is a string and if yes, which encoding that could have. Why does your example contain encryption? Please separate your problems into small chunks and try to solve only one by one. We need more details about your problem(s) to be able to help!",
+    "score" : 7,
+    "owner" : {
+      "account_id" : 3391382,
+      "reputation" : 5360,
+      "user_id" : 2846138,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/2sp68.png?s=256",
+      "display_name" : "cyberbrain",
+      "link" : "https://stackoverflow.com/users/2846138/cyberbrain"
+    },
+    "creation_date" : 1749532942,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140501168,
+    "post_id" : 79659795,
+    "body" : "Why does it have to be URL-safe? Can&#39;t you send it via POST?",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 71739,
+      "reputation" : 311869,
+      "user_id" : 207421,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/5cfe5f7d64f44be04f147295f5c7b88e?s=256&d=identicon&r=PG",
+      "display_name" : "user207421",
+      "link" : "https://stackoverflow.com/users/207421/user207421"
+    },
+    "creation_date" : 1749532461,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79660132" : [ {
+      "comment_id" : 140505091,
+      "post_id" : 79660132,
+      "body" : "@SebastianRuizPerez sorry I won&#39;t re read everything in the hope of finding exactly what you changed ? Also I won&#39;t make the effort to answer again if you don&#39;t even tell me how my answer is, or is not, useful to you.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 4751899,
+        "reputation" : 182,
+        "user_id" : 3841737,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/ce20bf22d2c5b85420f935226bacf571?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "guigolum",
+        "link" : "https://stackoverflow.com/users/3841737/guigolum"
+      },
+      "creation_date" : 1749638424,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140504024,
+      "post_id" : 79660132,
+      "body" : "Update the Question",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 13075331,
+        "reputation" : 148,
+        "user_id" : 9447658,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/ddc1cacfe96ff3d88ac22e2d5710109b?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Sebastian Ruiz Perez",
+        "link" : "https://stackoverflow.com/users/9447658/sebastian-ruiz-perez"
+      },
+      "creation_date" : 1749598674,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

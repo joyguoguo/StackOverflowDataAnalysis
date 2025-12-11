@@ -1,0 +1,76 @@
+{
+  "question" : {
+    "question_id" : 79547344,
+    "title" : "CORS error when accessing back-end from external address",
+    "body" : "<p>I am hosting a Next.js front-end and a Spring Boot back-end in Docker on the same server. The front-end runs on port 3001, and the back-end runs on port 8080.</p>\n<p>Server IP (external address): 192.168.100.116<br />\nFront-end URL (inside the network): <a href=\"http://192.168.100.116:3001\" rel=\"nofollow noreferrer\">http://192.168.100.116:3001</a><br />\nBack-end API URL: <a href=\"http://192.168.100.116:8080/api/v1/auth/authenticate\" rel=\"nofollow noreferrer\">http://192.168.100.116:8080/api/v1/auth/authenticate</a></p>\n<p>When accessing the front-end from my PC (same WiFi network), I get this CORS error when trying to call the back-end API:</p>\n<blockquote>\n<p>Access to XMLHttpRequest at 'http://192.168.100.116:8080/api/v1/auth/authenticate'\nfrom origin 'http://192.168.100.116:3001' has been blocked by CORS policy:<br />\nResponse to preflight request doesn't pass access control check:\nNo 'Access-Control-Allow-Origin' header is present on the requested resource.</p>\n</blockquote>\n<p>✅ Calling API from localhost:3001 works.</p>\n<p>❌ Calling API from 192.168.100.116:3001 fails with CORS error.</p>\n<p>What additional steps should I take to properly configure CORS in Spring Boot and Docker networking to allow external front-end requests from 192.168.100.116:3001 to 192.168.100.116:8080?</p>\n<p>Docker-compose file</p>\n<pre class=\"lang-yaml prettyprint-override\"><code>version: &quot;3.9&quot;\nservices:\n  postgres_db:\n    restart: always\n    image: postgres:16.4\n    container_name: project_xxx_postgres_db\n    environment:\n      POSTGRES_USER: xxx\n      POSTGRES_PASSWORD: xxx\n      POSTGRES_DB: project-ai-reception-db\n    ports:\n      - &quot;5431:5432&quot;\n    volumes:\n      - project_xxx_container_data:/var/lib/postgresql/data\n    networks:\n      - project-ai-rec-network\n    healthcheck:\n      test: [&quot;CMD-SHELL&quot;, &quot;pg_isready -U postgres&quot;]\n      interval: 10s\n      timeout: 5s\n      retries: 5\n\n  backend:\n    restart: always\n    image: xxx/project-ai-reception-backend:0.0.122\n    container_name: project_xxx_backend\n    ports:\n      - &quot;8080:8080&quot;\n    networks:\n      - project-ai-rec-network\n    depends_on:\n      postgres_db:\n        condition: service_healthy\n    volumes:\n      - uploads:/app/uploads\n      - backend_logs:/app/logs\n    extra_hosts:\n      - &quot;host.docker.internal:host-gateway&quot;\n    environment:\n      - SPRING_APPLICATION_JSON={&quot;server.address&quot;:&quot;0.0.0.0&quot;}\n\n  cms-frontend:\n    restart: always\n    image: xxx/project-ai-reception-cms:0.0.5\n    container_name: cms-frontend\n    ports:\n      - &quot;3001:3001&quot;\n    environment:\n      - NEXT_PUBLIC_BACKEND_URL=http://192.168.100.116:8080 # Use service name instead of IP\n      - NEXT_PUBLIC_XXX_VOLUME_MANAGER_URL=http://192.168.100.116:5000\n    depends_on:\n      - backend\n      - XXX-volume-manager\n    networks:\n      - project-ai-rec-network\n\nvolumes:\n  project_xxx_container_data:\n  uploads:\n  album:\n  backend_logs:\n\nnetworks:\n  project-ai-rec-network:\n</code></pre>\n<p>Spring Boot project</p>\n<pre class=\"lang-java prettyprint-override\"><code>package com.xxx.ai_reception_backend.config;\n\nimport lombok.RequiredArgsConstructor;\nimport org.springframework.beans.factory.annotation.Value;\nimport org.springframework.context.annotation.Bean;\nimport org.springframework.context.annotation.Configuration;\nimport org.springframework.http.HttpStatus;\nimport org.springframework.security.authentication.AuthenticationProvider;\nimport org.springframework.security.config.annotation.web.builders.HttpSecurity;\nimport org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;\nimport org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;\nimport org.springframework.security.config.http.SessionCreationPolicy;\nimport org.springframework.security.core.AuthenticationException;\nimport org.springframework.security.web.AuthenticationEntryPoint;\nimport org.springframework.security.web.SecurityFilterChain;\nimport org.springframework.security.web.access.AccessDeniedHandler;\nimport org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;\n\nimport jakarta.servlet.http.HttpServletRequest;\nimport jakarta.servlet.http.HttpServletResponse;\nimport org.springframework.web.cors.CorsConfiguration;\nimport org.springframework.web.cors.CorsConfigurationSource;\nimport org.springframework.web.cors.UrlBasedCorsConfigurationSource;\n\nimport java.time.LocalDateTime;\nimport java.util.Arrays;\n\nimport static org.springframework.security.config.Customizer.withDefaults;\n\n@Configuration\n@EnableWebSecurity\n@RequiredArgsConstructor\npublic class SecurityConfig {\n\n//    @Value(&quot;${spring.web.cors.allowed-origin-patterns-cms}&quot;)\n//    private String cms_frontend_url;\n//\n//    @Value(&quot;${spring.web.cors.allowed-origin-patterns-frontdoor}&quot;)\n//    private String frontdoor_frontend_url;\n\n    private final  JwtAuthenticationFilter jwtAuthFilter;\n    private final AuthenticationProvider authenicationProvider;\n\n    @Bean\n    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {\n        http\n                .csrf(AbstractHttpConfigurer::disable)  // Updated way to disable CSRF\n                .cors(cors -&gt; cors.configurationSource(corsConfigurationSource())) // Apply CORS config\n                //.cors(withDefaults()) // Ensure CORS is enabled\n                .headers(headers -&gt; headers\n                        .addHeaderWriter((request, response) -&gt; {\n                            response.setHeader(&quot;Access-Control-Allow-Origin&quot;, &quot;*&quot;);\n                            response.setHeader(&quot;Access-Control-Allow-Methods&quot;, &quot;GET, POST, PUT, DELETE, OPTIONS&quot;);\n                            response.setHeader(&quot;Access-Control-Allow-Headers&quot;, &quot;Authorization, Content-Type&quot;);\n                            response.setHeader(&quot;Access-Control-Allow-Credentials&quot;, &quot;true&quot;);\n                        })\n                )\n                .authorizeHttpRequests(auth -&gt; auth\n                        // Permit Swagger and API docs access without authentication\n                        .requestMatchers(\n                                &quot;/v3/api-docs/**&quot;,\n                                &quot;/swagger-ui/**&quot;,\n                                &quot;/swagger-ui.html&quot;,\n                                &quot;/images/**&quot;,\n                                &quot;/album/image/**&quot;,\n                                &quot;/api/v1/attendance/create&quot;,\n                                &quot;/api/v1/workpass/broadcast/admin&quot;,\n                                &quot;/api/v1/mqtt/**&quot;,\n                                &quot;/api/v1/demo&quot;\n                        ).permitAll()\n                        // Define other public endpoints\n                        .requestMatchers(&quot;/api/v1/auth/**&quot;).permitAll()\n                        // Secure all other endpoints\n                        .anyRequest().authenticated()\n                )\n                .sessionManagement(session -&gt; session\n                        .sessionCreationPolicy(SessionCreationPolicy.STATELESS)  // Set session management policy to stateless\n                )\n                .authenticationProvider(authenicationProvider)  // Set the custom authentication provider\n                .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)  // Add JWT filter before UsernamePasswordAuthenticationFilter\n                .exceptionHandling(exceptions -&gt; {\n                    exceptions\n                            .accessDeniedHandler(accessDeniedHandler())        // Handle 403 Forbidden\n                            .authenticationEntryPoint(authenticationEntryPoint()); // Handle 401 Unauthorized\n                });\n        return http.build();\n    }\n\n\n    // Custom Access Denied Handler for 403 Forbidden\n    @Bean\n    public AccessDeniedHandler accessDeniedHandler() {\n        return (HttpServletRequest request, HttpServletResponse response, org.springframework.security.access.AccessDeniedException ex) -&gt; {\n            response.setStatus(HttpServletResponse.SC_FORBIDDEN); // 403 FORBIDDEN\n            response.setContentType(&quot;application/json&quot;);\n            String jsonResponse = String.format(\n                    &quot;{\\&quot;message\\&quot;: \\&quot;%s\\&quot;, \\&quot;details\\&quot;: %s, \\&quot;statusCode\\&quot;: \\&quot;%d\\&quot;, \\&quot;time\\&quot;: \\&quot;%s\\&quot;}&quot;,\n                    &quot;You don't have permission to access this resource. &quot;+ex.getMessage(),\n                    &quot;Access Denied&quot;,\n                    HttpStatus.FORBIDDEN.value(),\n                    LocalDateTime.now()\n            );\n            response.getWriter().write(jsonResponse);\n        };\n    }\n\n    @Bean\n    public AuthenticationEntryPoint authenticationEntryPoint() {\n        return (HttpServletRequest request, HttpServletResponse response, AuthenticationException authException) -&gt; {\n            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED); // 401 UNAUTHORIZED\n            response.setContentType(&quot;application/json&quot;);\n            String jsonResponse = String.format(\n                    &quot;{\\&quot;message\\&quot;: \\&quot;%s\\&quot;, \\&quot;details\\&quot;: %s, \\&quot;statusCode\\&quot;: \\&quot;%d\\&quot;, \\&quot;time\\&quot;: \\&quot;%s\\&quot;}&quot;,\n                    &quot;Please login to access this resource. &quot;+authException.getMessage(),\n                    &quot;Unauthorized&quot;,\n                    HttpStatus.UNAUTHORIZED.value(),\n                    LocalDateTime.now()\n            );\n            response.getWriter().write(jsonResponse);\n        };\n    }\n\n    @Bean\n    public CorsConfigurationSource corsConfigurationSource() {\n        CorsConfiguration configuration = new CorsConfiguration();\n//        configuration.setAllowedOriginPatterns(Arrays.asList(&quot;*&quot;)); // Allow all origins\n        configuration.setAllowedOrigins(Arrays.asList(\n                &quot;http://192.168.100.116:3001&quot;,\n                &quot;http://192.168.100.116:3000&quot;,\n                &quot;http://192.168.1.86:3000&quot;,\n                &quot;http://192.168.1.86:3001&quot;\n        ));\n        configuration.setAllowedMethods(Arrays.asList(&quot;GET&quot;, &quot;POST&quot;, &quot;PUT&quot;, &quot;DELETE&quot;, &quot;OPTIONS&quot;));\n        configuration.setAllowedHeaders(Arrays.asList(&quot;Authorization&quot;, &quot;Content-Type&quot;));\n        configuration.setAllowCredentials(true); // Allow credentials like cookies\n\n        UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();\n        source.registerCorsConfiguration(&quot;/**&quot;, configuration);\n        return source;\n    }\n\n}\n</code></pre>\n",
+    "tags" : [ "java", "spring-boot", "next.js", "cors" ],
+    "owner" : {
+      "account_id" : 19984547,
+      "reputation" : 339,
+      "user_id" : 14646945,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/87470e785ea5221efad7787061f99eb1?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "AlexMoshi",
+      "link" : "https://stackoverflow.com/users/14646945/alexmoshi"
+    },
+    "is_answered" : false,
+    "view_count" : 65,
+    "answer_count" : 0,
+    "score" : 0,
+    "last_activity_date" : 1743490135,
+    "creation_date" : 1743458635,
+    "link" : "https://stackoverflow.com/questions/79547344/cors-error-when-accessing-back-end-from-external-address",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140310175,
+    "post_id" : 79547344,
+    "body" : "I figure out that SecurityConfig.java is not running in docker. I have no idea why it is not running.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 19984547,
+      "reputation" : 339,
+      "user_id" : 14646945,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/87470e785ea5221efad7787061f99eb1?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "AlexMoshi",
+      "link" : "https://stackoverflow.com/users/14646945/alexmoshi"
+    },
+    "creation_date" : 1744086302,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140287599,
+    "post_id" : 79547344,
+    "body" : "in addition to asgarov&#39;s suggestion, enable the debug log level for SecurityFilterChain to see what&#39;s going on during your access attempt.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 11555562,
+      "reputation" : 569,
+      "user_id" : 8466853,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/cd7f72b426ce3c46739900b8ba014e26?s=256&d=identicon&r=PG",
+      "display_name" : "Arno",
+      "link" : "https://stackoverflow.com/users/8466853/arno"
+    },
+    "creation_date" : 1743537308,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140285590,
+    "post_id" : 79547344,
+    "body" : "by the time your <code>corsConfigurationSource</code> Bean is created the <code>securityFilterChain</code> has probably already set up default cors. You need to force your <code>corsConfigurationSource</code> bean to be created first. Try adding <code>@DependsOn(&quot;corsConfigurationSource</code>&quot;)` over the <code>securityFilterChain</code> method. For more info see my answer <a href=\"https://stackoverflow.com/questions/78666949/spring-boot-restful-service-and-cors-problem/78666972#78666972\">here</a>",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 16657879,
+      "reputation" : 4340,
+      "user_id" : 12038714,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a-/AAuE7mAgRe8u2G_kzJJ-KZ2yZwAD1E4kxs9eRlqnY45BUw=k-s256",
+      "display_name" : "asgarov1",
+      "link" : "https://stackoverflow.com/users/12038714/asgarov1"
+    },
+    "creation_date" : 1743491090,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

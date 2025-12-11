@@ -1,0 +1,78 @@
+{
+  "question" : {
+    "question_id" : 79611713,
+    "title" : "Spring websocket doesn&#39;t work after SSL configuration error 501, but https works",
+    "body" : "<p>It worked before configuring SSL. After adding SSL https works. My config file:</p>\n<pre><code>spring.application.name=host\n\n# Database connection params (postgresql)\nspring.datasource.url=jdbc\\:postgresql\\://127.0.0.1\\:5432/cubes_and_mods\nspring.datasource.username=durak\nspring.datasource.password=1234\n\nserver.ssl.enabled=true\nserver.ssl.key-store-type=PKCS12\nserver.ssl.key-store=classpath:host.p12\nserver.ssl.key-store-password=yourpassword\nserver.ssl.key-alias=host\n\nserver.port: 8083\nignore-source-checking: true\n\nlogging.level.org.springframework.beans=DEBUG\nlogging.level.org.springframework.context=DEBUG\nlogging.level.org.springframework.web.socket=DEBUG\nlogging.level.org.springframework.web.socket.handler=DEBUG\n\n\n# Отключаем HTTP/2 на уровне Spring Boot:\nserver.http2.enabled=false\n\n# (Опционально) Жёстко задаём, что Tomcat — только HTTP/1.1\nserver.tomcat.protocol-header=HTTP/1.1\n\nlogging.level.org.springframework.web.socket.config=TRACE\nlogging.level.org.apache.tomcat=DEBUG\nlogging.level.org.apache.tomcat.util.net=TRACE\nlogging.level.org.apache.coyote=DEBUG\n</code></pre>\n<p>Trying to connect with postman to ws://127.0.0.1:8083/console error 400</p>\n<pre class=\"lang-none prettyprint-override\"><code>Error: Unexpected server response: 400\nHandshake Details\nRequest Method: GET\nStatus Code: 400 \nRequest Headers\nSec-WebSocket-Version: 13\nSec-WebSocket-Key: TXRhgNgfslcOqiZFgfAO6g==\nConnection: Upgrade\nUpgrade: websocket\nSec-WebSocket-Extensions: permessage-deflate; client_max_window_bits\nHost: 127.0.0.1:8083\nResponse Headers\nContent-Type: text/plain;charset=UTF-8\nConnection: close\n</code></pre>\n<p>Trying to connect with postman to wss://127.0.0.1:8083/console error 501</p>\n<pre class=\"lang-none prettyprint-override\"><code>Error: Unexpected server response: 501\nHandshake Details\nRequest Method: GET\nStatus Code: 501 \nRequest Headers\nSec-WebSocket-Version: 13\nSec-WebSocket-Key: kOgjZzwlP1ptEGKrV74eJw==\nConnection: Upgrade\nUpgrade: websocket\nSec-WebSocket-Extensions: permessage-deflate; client_max_window_bits\nHost: 127.0.0.1:8083\nResponse Headers\nVary\n0: Origin\n1: Access-Control-Request-Method\n2: Access-Control-Request-Headers\nContent-Length: 0\nDate: Thu, 08 May 2025 04:00:20 GMT\nConnection: close\n</code></pre>\n<p>Changing the server port to 8443 didn't give any result. The problem is not in postman:</p>\n<pre class=\"lang-none prettyprint-override\"><code>wscat -c wss://localhost:8443/console --no-check\nerror: Unexpected server response: 501\n</code></pre>\n<p>Let's see other configs:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Configuration\n@EnableWebSocket\npublic class WebsocketConfig implements WebSocketConfigurer {\n\n    @Autowired\n    private WebsocketMinecraftConsole websocketMinecraftConsole; // Внедряем WebsocketMinecraftConsole\n\n    @Override\n    public void registerWebSocketHandlers(WebSocketHandlerRegistry registry) {\n\n        System.out.println(&quot;WebsocketConfig.registerWebSocketHandlers&quot;);\n        // I've seen this print\n\n        registry.addHandler(websocketMinecraftConsole, &quot;/console&quot;)\n        .setAllowedOrigins(&quot;*&quot;)\n        .setAllowedOriginPatterns(&quot;*&quot;); // Добавьте это;\n    }\n\n    @Bean\n    public ServerEndpointExporter serverEndpointExporter() {\n        return new ServerEndpointExporter();\n    }\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>@Configuration\npublic class WebConfig implements WebMvcConfigurer {\n    @Override\n    public void addCorsMappings(CorsRegistry registry) {\n        registry.addMapping(&quot;/**&quot;)\n                .allowedOrigins(&quot;*&quot;) \n                .allowedMethods(&quot;GET&quot;, &quot;POST&quot;, &quot;PUT&quot;, &quot;DELETE&quot;, &quot;OPTIONS&quot;)\n                .allowedHeaders(&quot;*&quot;);\n    }\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>@Component\npublic class WebsocketMinecraftConsole extends TextWebSocketHandler {\n    \n    private boolean firstMessage; // Is it the first message is ID of mineserver\n    private DockerContainerHandler handler; // Handler for CURRENT SOCKET, contains minecraft server object from DB\n    \n    @Autowired\n    private ServiceDockerContainersHandlers ServiceHandlers;\n//...\n</code></pre>\n<p>There's no normal out. The code of websocket cannot be runned.</p>\n<pre><code>Logs after trying to connect:\n025-05-08T11:05:30.954+07:00 DEBUG 63134 --- [host] [nio-8083-Poller] org.apache.tomcat.util.net.NioEndpoint   : timeout completed: keys processed=0; now=1746677130954; nextExpiration=1746677130953; keyCount=0; hasEvents=false; eval=false\n2025-05-08T11:05:31.712+07:00 DEBUG 63134 --- [host] [nio-8083-exec-3] o.a.tomcat.util.net.SecureNioChannel     : The SNI host name extracted for connection [java.nio.channels.SocketChannel[connected local=/127.0.0.1:8083 remote=/127.0.0.1:36958]] was [null]\n2025-05-08T11:05:31.720+07:00 DEBUG 63134 --- [host] [nio-8083-exec-3] org.apache.tomcat.util.net.NioEndpoint   : Registered write interest for [org.apache.tomcat.util.net.NioEndpoint$NioSocketWrapper@39737313:org.apache.tomcat.util.net.SecureNioChannel@622c27b8:java.nio.channels.SocketChannel[connected local=/127.0.0.1:8083 remote=/127.0.0.1:36958]]\n2025-05-08T11:05:31.720+07:00 DEBUG 63134 --- [host] [nio-8083-exec-4] org.apache.tomcat.util.net.NioEndpoint   : Registered write interest for [org.apache.tomcat.util.net.NioEndpoint$NioSocketWrapper@39737313:org.apache.tomcat.util.net.SecureNioChannel@622c27b8:java.nio.channels.SocketChannel[connected local=/127.0.0.1:8083 remote=/127.0.0.1:36958]]\n2025-05-08T11:05:31.721+07:00 DEBUG 63134 --- [host] [nio-8083-exec-5] org.apache.tomcat.util.net.NioEndpoint   : Registered read interest for [org.apache.tomcat.util.net.NioEndpoint$NioSocketWrapper@39737313:org.apache.tomcat.util.net.SecureNioChannel@622c27b8:java.nio.channels.SocketChannel[connected local=/127.0.0.1:8083 remote=/127.0.0.1:36958]]\n2025-05-08T11:05:31.721+07:00 DEBUG 63134 --- [host] [nio-8083-exec-6] org.apache.tomcat.util.net.NioEndpoint   : Registered write interest for [org.apache.tomcat.util.net.NioEndpoint$NioSocketWrapper@39737313:org.apache.tomcat.util.net.SecureNioChannel@622c27b8:java.nio.channels.SocketChannel[connected local=/127.0.0.1:8083 remote=/127.0.0.1:36958]]\n2025-05-08T11:05:31.722+07:00 DEBUG 63134 --- [host] [nio-8083-exec-7] o.a.tomcat.util.net.SocketWrapperBase    : Socket: [org.apache.tomcat.util.net.NioEndpoint$NioSocketWrapper@39737313:org.apache.tomcat.util.net.SecureNioChannel@622c27b8:java.nio.channels.SocketChannel[connected local=/127.0.0.1:8083 remote=/127.0.0.1:36958]], Read from buffer: [0]\n2025-05-08T11:05:31.722+07:00 DEBUG 63134 --- [host] [nio-8083-exec-7] org.apache.tomcat.util.net.NioEndpoint   : Socket: [org.apache.tomcat.util.net.NioEndpoint$NioSocketWrapper@39737313:org.apache.tomcat.util.net.SecureNioChannel@622c27b8:java.nio.channels.SocketChannel[connected local=/127.0.0.1:8083 remote=/127.0.0.1:36958]], Read direct from socket: [230]\n2025-05-08T11:05:31.723+07:00 DEBUG 63134 --- [host] [nio-8083-exec-7] org.apache.tomcat.util.net.NioEndpoint   : Calling [org.apache.tomcat.util.net.NioEndpoint@362580d7].closeSocket([org.apache.tomcat.util.net.NioEndpoint$NioSocketWrapper@39737313:org.apache.tomcat.util.net.SecureNioChannel@622c27b8:java.nio.channels.SocketChannel[connected local=/127.0.0.1:8083 remote=/127.0.0.1:36958]])\n2025-05-08T11:05:32.723+07:00 DEBUG 63134 --- [host] [nio-8083-Poller] org.apache.tomcat.util.net.NioEndpoint   : timeout completed: keys processed=0; now=1746677132723; nextExpiration=1746677131954; keyCount=0; hasEvents=false; eval=false\n</code></pre>\n<p>But SSL works! HTTPS isn't broken? How can I make this microservice to bind wss://[address]/console socket work? Chat GPT and Deep Seek don't understand anything</p>\n",
+    "tags" : [ "java", "spring", "ssl", "tomcat", "websocket" ],
+    "owner" : {
+      "account_id" : 41830325,
+      "reputation" : 36,
+      "user_id" : 30469051,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f065e9f24bfeb438d46bf2ff65ac13ce?s=256&d=identicon&r=PG",
+      "display_name" : "tankoman 228",
+      "link" : "https://stackoverflow.com/users/30469051/tankoman-228"
+    },
+    "is_answered" : false,
+    "view_count" : 62,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1746720036,
+    "creation_date" : 1746677637,
+    "link" : "https://stackoverflow.com/questions/79611713/spring-websocket-doesnt-work-after-ssl-configuration-error-501-but-https-works",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79611959,
+    "question_id" : 79611713,
+    "body" : "<p>The most stupid lost of 6 hours of my life!!!</p>\n<pre><code>@RestController  \n@RequestMapping(&quot;/&quot;)  \npublic class RootController {\n\n    @GetMapping(&quot;/{id_user}&quot;)  \n    public ResponseEntity\\&lt;Void\\&gt; global_network_config() {   \n        return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).build();   \n    }  \n\n}\n</code></pre>\n<p>Spring thought that &quot;/console&quot; means &quot;/&quot; with parh variable &quot;console&quot;!!!!!</p>\n<p>The problem was solved by adding &quot;ms&quot;</p>\n<pre><code>    @GetMapping(&quot;/ms/{id_user}&quot;)  \n    public ResponseEntity\\&lt;Void\\&gt; global_network_config() {   \n        return ResponseEntity.status(HttpStatus.NOT_IMPLEMENTED).build();   \n    }  \n</code></pre>\n<p>And to avoid problem with code 200 make normal socket config:</p>\n<pre><code>registry.addHandler(websocketMinecraftConsole, &quot;/console&quot;)  \n.setAllowedOrigins(&quot;\\*&quot;);\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 41830325,
+      "reputation" : 36,
+      "user_id" : 30469051,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f065e9f24bfeb438d46bf2ff65ac13ce?s=256&d=identicon&r=PG",
+      "display_name" : "tankoman 228",
+      "link" : "https://stackoverflow.com/users/30469051/tankoman-228"
+    },
+    "creation_date" : 1746691379,
+    "last_activity_date" : 1746691379,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140406734,
+    "post_id" : 79611713,
+    "body" : "Even if I turn off SSL the problem is the same",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 41830325,
+      "reputation" : 36,
+      "user_id" : 30469051,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f065e9f24bfeb438d46bf2ff65ac13ce?s=256&d=identicon&r=PG",
+      "display_name" : "tankoman 228",
+      "link" : "https://stackoverflow.com/users/30469051/tankoman-228"
+    },
+    "creation_date" : 1746689917,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140406623,
+    "post_id" : 79611713,
+    "body" : "If I try to connect to ws://127.0.0.1:8083/consolewesduifyhdisuyh I get the same error. It does not care about request path, not sending 404, always error 501",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 41830325,
+      "reputation" : 36,
+      "user_id" : 30469051,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f065e9f24bfeb438d46bf2ff65ac13ce?s=256&d=identicon&r=PG",
+      "display_name" : "tankoman 228",
+      "link" : "https://stackoverflow.com/users/30469051/tankoman-228"
+    },
+    "creation_date" : 1746687711,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

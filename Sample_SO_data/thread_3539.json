@@ -1,0 +1,94 @@
+{
+  "question" : {
+    "question_id" : 79541611,
+    "title" : "Using LocalContainerEntityManagerFactoryBean.setManagedTypes instead of @EntityScan (Spring Boot)",
+    "body" : "<p>When using <code>@EntityScan</code> all entities in the specified basePackages are picked up by the scan. <a href=\"https://github.com/frankkriegl-zero/jpa-managed-types-sample/tree/stackoverflow-question-79541611?tab=readme-ov-file#motivation\" rel=\"nofollow noreferrer\">For certain reasons</a>, we would like to avoid that.</p>\n<p>We had the idea to replace the <code>@EntityScan</code> annotation with manual configuration to include only specific entity classes, instead of every entity in the package, by calling <code>factoryBean.setManagedTypes(managedTypes)</code>.</p>\n<p>There is <a href=\"https://www.baeldung.com/the-persistence-layer-with-spring-and-jpa#javaconfig\" rel=\"nofollow noreferrer\">one baeldung post</a> that goes into this direction, but the focus is not on setting single managedTypes.</p>\n<p>Actually, we were surprised that we couldn't find any blogpost, stackoverflow question, etc. dealing with the question &quot;Is it possible to configure @EntityScan or an alternative to only track single classes, not full packages?&quot;.</p>\n<p><strong>Are there any issues or drawbacks in doing so, in a Spring Boot application?</strong></p>\n<p>The javadoc of <code>LocalContainerEntityManagerFactoryBean.setManagedTypes</code> even says:</p>\n<blockquote>\n<p>Set the PersistenceManagedTypes to use to build the list of managed types as an alternative to entity scanning.\n-- <a href=\"https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/orm/jpa/LocalContainerEntityManagerFactoryBean.html#setManagedTypes(org.springframework.orm.jpa.persistenceunit.PersistenceManagedTypes)\" rel=\"nofollow noreferrer\">https://docs.spring.io...orm/jpa/LocalContainerEntityManagerFactoryBean</a></p>\n</blockquote>\n<p>I created an example project to demonstrate the idea: <a href=\"https://github.com/frankkriegl-zero/jpa-managed-types-sample/tree/stackoverflow-question-79541611\" rel=\"nofollow noreferrer\">https://github.com/frankkriegl-zero/jpa-managed-types-sample/tree/stackoverflow-question-79541611</a></p>\n<p>From the configuration class <a href=\"https://github.com/frankkriegl-zero/jpa-managed-types-sample/blob/b2c24b861aa29a3ac3de8e3352f96aa826a3a4aa/src/main/java/org/example/bookstore/config/JpaConfig.java\" rel=\"nofollow noreferrer\">JpaConfig</a>:</p>\n<pre><code>@Configuration\npublic class JpaConfig {\n\nList&lt;String&gt; sharedManagedEntityClassNames = Stream.of(\n            external.model.Book.class // located in a 'remote' package, outside of org.example.bookstore\n    ).map(Class::getName).toList();\n\nList&lt;String&gt; managedEntityPackages = List.of(\n            &quot;org.example.bookstore.model&quot;\n    );\n\n@Bean(name = &quot;persistenceManagedTypes&quot;)\nPersistenceManagedTypes persistenceManagedTypes(ResourceLoader resourceLoader) {\n    var scanResult = new PersistenceManagedTypesScanner(resourceLoader)\n            .scan(managedEntityPackages.toArray(new String[0]));\n\n    // merge the shared managed entity class names with the scanned ones\n    List&lt;String&gt; managedClassNames = new ArrayList&lt;&gt;();\n    managedClassNames.addAll(sharedManagedEntityClassNames);\n    managedClassNames.addAll(scanResult.getManagedClassNames());\n\n    return PersistenceManagedTypes.of(managedClassNames, Collections.emptyList());\n}\n\n// entityManagerFactoryBean\n\n}\n</code></pre>\n<p>This is how we override the entityManagerFactory bean:</p>\n<pre><code>@Bean(name = &quot;entityManagerFactory&quot;)\npublic EntityManagerFactory entityManagerFactory(DataSource dataSource,\n                                                 PersistenceManagedTypes managedTypes) {\n    LocalContainerEntityManagerFactoryBean factoryBean = new LocalContainerEntityManagerFactoryBean();\n    factoryBean.setDataSource(dataSource);\n    factoryBean.setJpaVendorAdapter(new HibernateJpaVendorAdapter());\n\n    factoryBean.setManagedTypes(managedTypes); // alternative to @EntityScan and @EnableJpaRepositories\n\n    factoryBean.afterPropertiesSet();\n    return factoryBean.getObject();\n}\n</code></pre>\n<p>We do not feel too confident about creating our own emFactory bean, as this is the backbone of every JPA related logic in a JPA-based application:</p>\n<ol>\n<li>We are uncertain if it could create additional maintenance effort in case the framework implementations (Spring Boot or Hibernate) change here.</li>\n<li>Since this is a critical component with rather complex configuration settings, we are somewhat afraid of overseeing something and break the application's persistence layer.</li>\n</ol>\n<p><strong>Any advice or experience with using <code>setManagedTypes(PersistenceManagedTypes)</code> instead of <code>@EntityScan</code>?</strong></p>\n<p>Thanks!</p>\n",
+    "tags" : [ "java", "spring-boot", "hibernate", "jpa", "spring-data-jpa" ],
+    "owner" : {
+      "account_id" : 14207624,
+      "reputation" : 45,
+      "user_id" : 10263724,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/7324c397bab8cb6dd5c537907af5289e?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "franok",
+      "link" : "https://stackoverflow.com/users/10263724/franok"
+    },
+    "is_answered" : true,
+    "view_count" : 127,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1743409309,
+    "creation_date" : 1743169783,
+    "link" : "https://stackoverflow.com/questions/79541611/using-localcontainerentitymanagerfactorybean-setmanagedtypes-instead-of-entitys",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79542185,
+    "question_id" : 79541611,
+    "body" : "<p>If my memory serves me right that could be implemented using following way:</p>\n<pre><code>@Bean\npublic HibernatePropertiesCustomizer extraEntities() {\n    return map -&gt; {\n        List&lt;Class&gt; extra = new ArrayList&lt;&gt;();\n        extra.add(MyEntity.class);\n        var existing = map.get(AvailableSettings.LOADED_CLASSES);\n        if (existing != null) {\n            extra.addAll((Collection&lt;Class&gt;) existing);\n        }\n        map.put(AvailableSettings.LOADED_CLASSES, extra);\n    };\n}\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 4181375,
+      "reputation" : 6263,
+      "user_id" : 3426309,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/v58O6.jpg?s=256",
+      "display_name" : "Andrey B. Panfilov",
+      "link" : "https://stackoverflow.com/users/3426309/andrey-b-panfilov"
+    },
+    "creation_date" : 1743186725,
+    "last_activity_date" : 1743186725,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140282474,
+    "post_id" : 79541611,
+    "body" : "based on the answer by @andrey-b-panfilov I updated the example project with the suggested solution: <a href=\"https://github.com/frankkriegl-zero/jpa-managed-types-sample\" rel=\"nofollow noreferrer\">github.com/frankkriegl-zero/jpa-managed-types-sample</a> (original code for the question is now on a separate branch)",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 14207624,
+      "reputation" : 45,
+      "user_id" : 10263724,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/7324c397bab8cb6dd5c537907af5289e?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "franok",
+      "link" : "https://stackoverflow.com/users/10263724/franok"
+    },
+    "creation_date" : 1743425477,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140274035,
+    "post_id" : 79541611,
+    "body" : "One workaround is to put every entity class into a dedicated package and specify every entity-package on a fine-grained level in the entity scan annotation. This is somewhat cumbersome - a lot of boilerplate code and useless packages are created. Hence we came up with the idea of using <code>setManagedTypes(PersistenceManagedTypes)</code>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 14207624,
+      "reputation" : 45,
+      "user_id" : 10263724,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/7324c397bab8cb6dd5c537907af5289e?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "franok",
+      "link" : "https://stackoverflow.com/users/10263724/franok"
+    },
+    "creation_date" : 1743170067,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140274032,
+    "post_id" : 79541611,
+    "body" : "The reason/motivation behind this question: In a modulith (modular monolith) project there might be shared entities that are used by multiple modules. The modules share a database, but not every module must have access to every table, while some tables need to be accessed by multiple modules. This is enforced by different DB Users per module and respective DB User Grants. Problem is, that the entity scan includes all entities in the specified package. If an entity is included in the entity scan for which the module doesn&#39;t have table access permission, the app will fail at runtime.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 14207624,
+      "reputation" : 45,
+      "user_id" : 10263724,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/7324c397bab8cb6dd5c537907af5289e?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "franok",
+      "link" : "https://stackoverflow.com/users/10263724/franok"
+    },
+    "creation_date" : 1743170040,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

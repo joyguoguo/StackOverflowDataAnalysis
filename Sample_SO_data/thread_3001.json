@@ -1,0 +1,98 @@
+{
+  "question" : {
+    "question_id" : 79579084,
+    "title" : "Using ScopedValue instead of ThreadLocal in Servlet Filter in spring boot app",
+    "body" : "<p>Our application heavily uses ThreadLocals where we read values from ServletRequest parameters and provide theses as a global context on Thread Level to other Services.</p>\n<p>Something like this:</p>\n<pre><code>@Component\n@Order(1)\npublic class ParameterHandlingFilter implements Filter {\n\n  public static ThreadLocal&lt;String&gt; EXAMPLE = new ThreadLocal&lt;&gt;();\n\n  @Override\n  public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain)\n      throws ServletException, IOException {\n    HttpServletRequest req = (HttpServletRequest) request;\n\n    EXAMPLE.set(req.getParameter(&quot;example&quot;));\n    try {\n        chain.doFilter(request, response);\n    }finally {\n        EXAMPLE.remove();\n    }\n  }\n}\n</code></pre>\n<p>Lots of articles suggest to use previewed <a href=\"https://openjdk.org/jeps/487\" rel=\"noreferrer\">Scoped Values</a> feature as a better approach especially with <a href=\"https://openjdk.org/jeps/444\" rel=\"noreferrer\">Virtual Threads</a> in mind.</p>\n<p>How would be a good approach to handle the IOException and ServletException thrown by the doFilter Method of FilterChain?</p>\n<p>To catch the Exception and wrap it in a RuntimeExeptions seems a bit odd for me and for sonarqube.</p>\n<pre><code>public class ParameterHandlingFilterScopedValue implements Filter {\n\n  public static final ScopedValue&lt;String&gt; EXAMPLE = ScopedValue.newInstance();\n\n  @Override\n  public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain) {\n    HttpServletRequest req = (HttpServletRequest) request;\n\n    ScopedValue.where(EXAMPLE, req.getParameter(&quot;example&quot;)).run(() -&gt; {\n        try {\n            chain.doFilter(request, response);\n        }\n        catch (Exception e) {\n            throw new RuntimeException(e);\n        }\n    });\n  }\n}\n</code></pre>\n<p>Is there a better solution for this usecase?</p>\n",
+    "tags" : [ "java", "spring", "spring-boot", "virtual-threads", "structured-concurrency" ],
+    "owner" : {
+      "account_id" : 4645073,
+      "reputation" : 1225,
+      "user_id" : 3763679,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/a0A3d.jpg?s=256",
+      "display_name" : "Andreas Radauer",
+      "link" : "https://stackoverflow.com/users/3763679/andreas-radauer"
+    },
+    "is_answered" : true,
+    "view_count" : 536,
+    "answer_count" : 2,
+    "score" : 8,
+    "last_activity_date" : 1745058301,
+    "creation_date" : 1744887443,
+    "link" : "https://stackoverflow.com/questions/79579084/using-scopedvalue-instead-of-threadlocal-in-servlet-filter-in-spring-boot-app",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79582274,
+    "question_id" : 79579084,
+    "body" : "<p>I would use <a href=\"https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/lang/ScopedValue.html#callWhere(java.lang.ScopedValue,T,java.util.concurrent.Callable)\" rel=\"noreferrer\"><code>ScopedValue.callWhere</code></a> that takes a <a href=\"https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/util/concurrent/Callable.html\" rel=\"noreferrer\"><code>Callable </code></a>instread of a <code>Runnable</code>.</p>\n<pre><code>public class ParameterHandlingFilterScopedValue implements Filter {\n\n    public static final ScopedValue&lt;String&gt; EXAMPLE = ScopedValue.newInstance();\n\n    @Override\n    public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain) throws ServletException, IOException {\n        HttpServletRequest req = (HttpServletRequest) request;\n\n        try {\n            ScopedValue.callWhere(EXAMPLE, req.getParameter(&quot;example&quot;), () -&gt; {\n                chain.doFilter(request, response);\n                return null;\n            });\n        } catch (ServletException | IOException e) {\n            throw e;\n        } catch (Exception e) {\n            throw new ServletException(&quot;Exception in ParameterHandlingFilter&quot;, e);\n        }\n    }\n}\n</code></pre>\n",
+    "score" : 5,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 947184,
+      "reputation" : 51960,
+      "user_id" : 974186,
+      "user_type" : "registered",
+      "accept_rate" : 79,
+      "profile_image" : "https://www.gravatar.com/avatar/c15302ffd647821303b07aa25eaa77a4?s=256&d=identicon&r=PG",
+      "display_name" : "Ren&#233; Link",
+      "link" : "https://stackoverflow.com/users/974186/ren%c3%a9-link"
+    },
+    "creation_date" : 1745058301,
+    "last_activity_date" : 1745058301,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79579994,
+    "question_id" : 79579084,
+    "body" : "<p>Whether it is safe to wrap checked exception into unchecked one depends on how the exception will be analyzed and therefore it is impossible to answer this question without knowing the details. Best practice of exception analysis is to traverse the entire chain of <code>Throwable.cause</code> attribute, like, for example, <code>org.apache.commons.lang3.exception.ExceptionUtils.getThrowables</code> does, but you never know...</p>\n<p>Speaking of the Filter Chain, it is not uncommon that one filter analyzes exceptions, thrown by a filter downstream and acts correspondingly to such analysis. Although not directly related to your case, the example is Spring Security's <code>org.springframework.security.web.access.ExceptionTranslationFilter.</code></p>\n<p>Therefore, to be on the safe side and unless the opposite is required by design it is better to relay downstack the same exception that was thrown upstack. It can be achieved by <code>Runnable</code> implementation, which is specific to the checked exceptions being thrown:</p>\n<pre><code>class FilterChainRunner implements Runnable {\n\n    private final ServletRequest request;\n    private final ServletResponse response;\n    private final FilterChain chain;\n    private IOException ioe;\n    private ServletException se;\n\n    public FilterChainRunner(ServletRequest request, ServletResponse response, FilterChain chain) {\n        this.request = request;\n        this.response = response;\n        this.chain = chain;\n    }\n\n    @Override\n    public void run() {\n        try {\n            chain.doFilter(request, response);\n        } catch (IOException ioe) {\n            this.ioe = ioe;\n        } catch (ServletException se) {\n            this.se = se;\n        }\n    }\n\n    public void throwIfPresent() throws IOException, ServletException {\n        if (ioe != null)\n            throw ioe;\n        if (se != null)\n            throw se;\n    }\n}\n</code></pre>\n<p>and the invocation will look like:</p>\n<pre><code>    @Override\n    public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain)\n            throws IOException, ServletException {\n        \n        final HttpServletRequest req = (HttpServletRequest) request;\n        final FilterChainRunner runner = new FilterChainRunner(request, response, chain);\n        ScopedValue.where(EXAMPLE, req.getParameter(&quot;example&quot;)).run(runner);\n        runner.throwIfPresent();\n    }\n</code></pre>\n<p>As you see, the problem is mainly about lambdas, not about <code>ScopedValue</code> or Structured Concurrency. Even though <code>ScopedValue.Carrier.run</code> accepts lambda as argument it does not have to be.</p>\n<p>Code-wise, <code>FilterChainRunner</code> looks like much ado about nothing, so I'd rather wrap <code>ScopedValue</code> orchestration into it, but it is up to design preferences. Other approach is to have it like local class, i.e inside of <code>doFilter</code> method, then no constructor  will be necessary - you know the best.</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 2745991,
+      "reputation" : 2794,
+      "user_id" : 2366397,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/24ee2b89e9791e936235b16af77ebda4?s=256&d=identicon&r=PG",
+      "display_name" : "igor.zh",
+      "link" : "https://stackoverflow.com/users/2366397/igor-zh"
+    },
+    "creation_date" : 1744920170,
+    "last_activity_date" : 1744920170,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140346083,
+    "post_id" : 79579084,
+    "body" : "Great usage of <code>ScopedValue</code>.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 2745991,
+      "reputation" : 2794,
+      "user_id" : 2366397,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/24ee2b89e9791e936235b16af77ebda4?s=256&d=identicon&r=PG",
+      "display_name" : "igor.zh",
+      "link" : "https://stackoverflow.com/users/2366397/igor-zh"
+    },
+    "creation_date" : 1744920236,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140344463,
+    "post_id" : 79579084,
+    "body" : "Maybe just resplace <code>RuntimeException</code> with a more specific one. <code>java.util.concurrent.CompletionException</code> might be a more appropriate candidate provided by java itself.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1580843,
+      "reputation" : 13706,
+      "user_id" : 1466267,
+      "user_type" : "registered",
+      "accept_rate" : 91,
+      "profile_image" : "https://www.gravatar.com/avatar/c47d1f7544a8c4a1bb7a41d511f53604?s=256&d=identicon&r=PG",
+      "display_name" : "SpaceTrucker",
+      "link" : "https://stackoverflow.com/users/1466267/spacetrucker"
+    },
+    "creation_date" : 1744892406,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

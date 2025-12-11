@@ -1,0 +1,100 @@
+{
+  "question" : {
+    "question_id" : 79655144,
+    "title" : "Does Transactional on READ_COMMITTED prevent two requests from overwriting each others changes?",
+    "body" : "<p>Lets say I have an entity lottery ticket. It has the winning_ticket set to true and the winner set to null. I have some code <code>draw_ticket(Player player, Ticket ticket)</code>. It should throw an exception if winner is already set, otherwise set winner to the player. It should also call <code>winner.balance+=100</code> then save the entity.</p>\n<p>Here's the pseudocode</p>\n<pre><code>@Transactional(rollbackOn=Exception.class)\npublic void drawTicket(UUID playerId, UUID ticketId){\n    var player=playerRepository.findById(playerId);\n    var ticket=playerRepository.findById(ticketId);\n\n    if(ticket.winner==null)\n        ticket.winner=player\n    else\n        throw new TicketAlreadyRedeemedException()\n\n    if(ticket.winningTicket==true)\n        player.balance+=100\n        \n    playerRepository.save(player)\n    ticketRepository.save(ticket)\n}\n</code></pre>\n<p>Two requests happen simultaneously</p>\n<ul>\n<li>Player A calls the function (through a request) and wins</li>\n<li>Player B calls the function (through a request) and wins</li>\n</ul>\n<p>The function is protected by Transactional and READ_COMMITTED</p>\n<p>Will only one player be reliably credited? Is marking the function as transactional enough to prevent race conditions?</p>\n<p>It seems obvious to me that READ_COMMITTED should protect me and reliably prevent race conditions, but chatGPT claims it doesn't and that transactions literally only undo changes if an exception happens.</p>\n",
+    "tags" : [ "java", "spring-boot", "concurrency" ],
+    "owner" : {
+      "account_id" : 3251786,
+      "reputation" : 2482,
+      "user_id" : 2741831,
+      "user_type" : "registered",
+      "accept_rate" : 76,
+      "profile_image" : "https://www.gravatar.com/avatar/c638b05bf29d8b4305f592fd7c570e10?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "user2741831",
+      "link" : "https://stackoverflow.com/users/2741831/user2741831"
+    },
+    "is_answered" : true,
+    "view_count" : 51,
+    "answer_count" : 2,
+    "score" : -1,
+    "last_activity_date" : 1749199485,
+    "creation_date" : 1749152951,
+    "link" : "https://stackoverflow.com/questions/79655144/does-transactional-on-read-committed-prevent-two-requests-from-overwriting-each",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79655205,
+    "question_id" : 79655144,
+    "body" : "<blockquote>\n<p>It seems obvious to me that READ_COMMITTED should protect me and reliably prevent race conditions</p>\n</blockquote>\n<p>Why would it? What's your assumption here?</p>\n<p>You didn't specify what database, but let's assume postgres:</p>\n<blockquote>\n<p>Read Committed is the default isolation level in PostgreSQL. When a transaction runs on this isolation level, a SELECT query sees only data committed before the query began and never sees either uncommitted data or changes committed during query execution by concurrent transactions. (However, the SELECT does see the effects of previous updates executed within this same transaction, even though they are not yet committed.) Notice that two successive SELECTs can see different data, even though they are within a single transaction, when other transactions commit changes during execution of the first SELECT.<br />\nIf a target row found by a query while executing an UPDATE statement (or DELETE or SELECT FOR UPDATE) has already been updated by a concurrent uncommitted transaction then the second transaction that tries to update this row will wait for the other transaction to commit or rollback. In the case of rollback, the waiting transaction can proceed to change the row. In the case of commit (and if the row still exists; i.e. was not deleted by the other transaction), the query will be re-executed for this row to check that the new row version still satisfies the query search condition. If the new row version satisfies the query search condition then the row will be updated (or deleted or marked for update). Note that the starting point for the update will be the new row version; moreover, after the update the doubly-updated row is visible to subsequent SELECTs in the current transaction. Thus, the current transaction is able to see the effects of the other transaction for this specific row.</p>\n</blockquote>\n<p><a href=\"https://www.postgresql.org/docs/7.2/xact-read-committed.html\" rel=\"nofollow noreferrer\">https://www.postgresql.org/docs/7.2/xact-read-committed.html</a></p>\n<p>In your case <em>&quot;the query will be re-executed for this row to check that the new row version still satisfies the query search condition&quot;</em> is still true.</p>\n<p>What you can do:</p>\n<ul>\n<li>Optimistic locking with <code>@Version</code> version field</li>\n<li>Pessimistic locking with <code>SELECT FOR UPDATE</code></li>\n<li>Ensure that the new row version does not satisfies the query search condition anymore (<code>WHERE winner IS NULL</code>)</li>\n<li>More strict isolation level</li>\n</ul>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 9255220,
+      "reputation" : 3053,
+      "user_id" : 6874359,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/r51dv.jpg?s=256",
+      "display_name" : "peterulb",
+      "link" : "https://stackoverflow.com/users/6874359/peterulb"
+    },
+    "creation_date" : 1749157930,
+    "last_activity_date" : 1749199485,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79655202,
+    "question_id" : 79655144,
+    "body" : "<p>I think you're confused about what READ COMMITTED means. When two transactions are running in parallel then the only thing READ COMMITTED does is prevent them from seeing each others' changes. <a href=\"https://www.postgresql.org/docs/7.2/xact-read-committed.html\" rel=\"nofollow noreferrer\">https://www.postgresql.org/docs/7.2/xact-read-committed.html</a></p>\n<p>In your case, both players will be able to redeem the ticket, you have multiple ways of solving this, one of them is the following:</p>\n<p>You can make your ticketRepository.save() update the ticket only where winner IS NULL, this way the slower transaction will not affect the row if it has been already updated by the faster transaction. In addition you can <code>RETURNING</code> to know if the row was updated or not and deal with it in your code accordingly.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 26289969,
+      "reputation" : 545,
+      "user_id" : 19957114,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/er744.jpg?s=256",
+      "display_name" : "dev-rifaii",
+      "link" : "https://stackoverflow.com/users/19957114/dev-rifaii"
+    },
+    "creation_date" : 1749157799,
+    "last_activity_date" : 1749157799,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140491620,
+    "post_id" : 79655144,
+    "body" : "Possible duplicate: <a href=\"https://stackoverflow.com/questions/4034976/difference-between-read-commited-and-repeatable-read-in-sql-server\">Difference between &quot;read commited&quot; and &quot;repeatable read&quot; in SQL Server</a>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 5281408,
+      "reputation" : 20275,
+      "user_id" : 4216641,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/dVLIh.jpg?s=256",
+      "display_name" : "Turing85",
+      "link" : "https://stackoverflow.com/users/4216641/turing85"
+    },
+    "creation_date" : 1749158014,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79655205" : [ {
+      "comment_id" : 140492606,
+      "post_id" : 79655205,
+      "body" : "@Version is how I ended up solving it (didn&#39;t do the other ones, which should be fine)    Kind of nuts how that isn&#39;t on by default",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 3251786,
+        "reputation" : 2482,
+        "user_id" : 2741831,
+        "user_type" : "registered",
+        "accept_rate" : 76,
+        "profile_image" : "https://www.gravatar.com/avatar/c638b05bf29d8b4305f592fd7c570e10?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "user2741831",
+        "link" : "https://stackoverflow.com/users/2741831/user2741831"
+      },
+      "creation_date" : 1749200689,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

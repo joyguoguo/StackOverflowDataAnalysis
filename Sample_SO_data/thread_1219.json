@@ -1,0 +1,133 @@
+{
+  "question" : {
+    "question_id" : 79730004,
+    "title" : "Performance difference emailing between NodeJS and Java",
+    "body" : "<p>I benchmarked sending 10000 simple mail in Java and Nodejs.</p>\n<p>I user FakeSmtp as mail server in running in local.</p>\n<p>With <strong>NodeJs</strong> it took <strong>3 minutes 10 seconds.</strong></p>\n<p>In <strong>Java</strong> it took over <strong>15 minutes.</strong></p>\n<p>Why is there such a big difference ?</p>\n<p>Is Java just slower or is it doing things Node doesn't ?\nIn java I noticed a pause every ~200 emails send, in Node there is no pause.\nI use jakarta.mail 2.0.2</p>\n<p>NodeJs code</p>\n<pre><code>const nodemailer = require('nodemailer');\n\n// SMTP local\nconst transporter = nodemailer.createTransport({\n  host: 'localhost',\n  port: 25, \n  secure: false,\n  tls: {\n    rejectUnauthorized: false\n  }\n});\n\n// Fonction pour envoyer un seul email\nfunction sendEmail(index) {\n  return transporter.sendMail({\n    from: 'test@localhost',\n    to: `user${index}@example.com`,\n    subject: `Test email ${index}`,\n    text: `Ceci est le message numéro ${index}`\n  });\n}\n\nasync function main() {\n  console.time('envoi_10000_emails');\n  for (let i = 1; i &lt;= 10000; i++) {\n    try {\n      await sendEmail(i);\n      console.log(`Email ${i} sent`);\n    } catch (err) {\n      console.error(`Error email ${i}:`, err.message);\n    }\n  }\n  console.timeEnd('envoi_10000_emails');\n}\n\nmain();\n</code></pre>\n<p>Java Code :</p>\n<pre><code>import jakarta.mail.*;\nimport jakarta.mail.internet.*;\n\nimport java.util.Properties;\n\npublic class SequentialEmailSender2 {\n\n    private static final String SMTP_HOST = &quot;localhost&quot;;\n    private static final int SMTP_PORT = 25; \n    private static final int TOTAL_EMAILS = 10000;\n\n    private static Session session;\n\n    private static Transport transport;\n\n    public static void main(String[] args) throws MessagingException {\n        long startTime = System.currentTimeMillis();\n\n        Properties props = new Properties();\n        props.put(&quot;mail.smtp.host&quot;, SMTP_HOST);\n        props.put(&quot;mail.smtp.port&quot;, SMTP_PORT);\n        props.put(&quot;mail.smtp.auth&quot;, &quot;false&quot;);\n        props.put(&quot;mail.smtp.starttls.enable&quot;, &quot;false&quot;);\n\n        session = Session.getInstance(props);\n        transport = session.getTransport(&quot;smtp&quot;);\n        transport.connect();\n\n        for (int i = 1; i &lt;= TOTAL_EMAILS; i++) {\n            try {\n                sendEmail(session, i);\n                System.out.println(&quot;Email &quot; + i + &quot; sent.&quot;);\n            } catch (MessagingException e) {\n                System.err.println(&quot;Error email &quot; + i + &quot; : &quot; + e.getMessage());\n            }\n        }\n\n        long endTime = System.currentTimeMillis();\n        System.out.println(&quot;total : &quot; + (endTime - startTime) + &quot; ms&quot;);\n    }\n\n    private static void sendEmail(Session session, int index) throws MessagingException {\n        Message message = new MimeMessage(session);\n        message.setFrom(new InternetAddress(&quot;test@localhost&quot;));\n        message.setRecipient(Message.RecipientType.TO,new InternetAddress(&quot;user&quot; + index + &quot;@example.com&quot;));\n        message.setSubject(&quot;Test email &quot; + index);\n        message.setText(&quot;Ceci est le message numéro &quot; + index);\n\n        transport.sendMessage(message, message.getAllRecipients());\n    }\n\n}\n</code></pre>\n<p>Java with 50 threads : 13 minutes 45 second still far from 3 minutes</p>\n<pre><code>public class BatchEmailSender3 {\n\n    private static final String SMTP_HOST = &quot;localhost&quot;;\n    private static final int SMTP_PORT = 25;\n    private static final int TOTAL_EMAILS = 10000;\n    private static final int BATCH_SIZE = 50;\n\n    private static Session session;\n\n    private static Transport transport;\n\n    public static void main(String[] args) throws MessagingException {\n        long startTime = System.currentTimeMillis();\n\n        Properties props = new Properties();\n        props.put(&quot;mail.smtp.host&quot;, SMTP_HOST);\n        props.put(&quot;mail.smtp.port&quot;, SMTP_PORT);\n        props.put(&quot;mail.smtp.auth&quot;, &quot;false&quot;);\n        props.put(&quot;mail.smtp.starttls.enable&quot;, &quot;false&quot;);\n\n        session = Session.getInstance(props);\n        transport = session.getTransport(&quot;smtp&quot;);\n        transport.connect();\n\n        ExecutorService executor = Executors.newFixedThreadPool(BATCH_SIZE);\n\n        for (int i = 1; i &lt;= TOTAL_EMAILS; i++) {\n            final int index = i;\n            executor.submit(() -&gt; {\n                sendEmail(session, index);\n            });\n        }\n        executor.shutdown();\n        try {\n            if (!executor.awaitTermination(20, TimeUnit.MINUTES)) {\n                System.err.println(&quot;Timeout atteint avant fin des envois.&quot;);\n            }\n        } catch (InterruptedException e) {\n            System.err.println(&quot;Interrompu pendant l’attente.&quot;);\n            Thread.currentThread().interrupt();\n        }\n\n        long endTime = System.currentTimeMillis();\n        System.out.println(&quot;Temps total : &quot; + (endTime - startTime) + &quot; ms&quot;);\n    }\n\n    private static void sendEmail(Session session, int index) {\n        try {\n            Message message = new MimeMessage(session);\n            message.setFrom(new InternetAddress(&quot;test@localhost&quot;));\n            message.setRecipients(Message.RecipientType.TO,\n                    InternetAddress.parse(&quot;user&quot; + index + &quot;@example.com&quot;));\n            message.setSubject(&quot;Test email &quot; + index);\n            message.setText(&quot;Ceci est le contenu de l'email numéro &quot; + index);\n\n            transport.sendMessage(message, message.getAllRecipients());\n        } catch (MessagingException e) {\n            System.err.println(&quot;Error email &quot; + index + &quot; : &quot; + e.getMessage());\n        }\n    }\n\n}\n</code></pre>\n",
+    "tags" : [ "java", "node.js", "jakarta-mail" ],
+    "owner" : {
+      "account_id" : 134484,
+      "reputation" : 3704,
+      "user_id" : 336657,
+      "user_type" : "registered",
+      "accept_rate" : 65,
+      "profile_image" : "https://i.sstatic.net/6TEcm.jpg?s=256",
+      "display_name" : "jpprade",
+      "link" : "https://stackoverflow.com/users/336657/jpprade"
+    },
+    "is_answered" : false,
+    "view_count" : 95,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1754900627,
+    "creation_date" : 1754669153,
+    "link" : "https://stackoverflow.com/questions/79730004/performance-difference-emailing-between-nodejs-and-java",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79731822,
+    "question_id" : 79730004,
+    "body" : "<p>After restarting &amp; Eclipse</p>\n<p>Everything ranfaster</p>\n<p>I was able to send 10 00 mail in 40 second in java</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 134484,
+      "reputation" : 3704,
+      "user_id" : 336657,
+      "user_type" : "registered",
+      "accept_rate" : 65,
+      "profile_image" : "https://i.sstatic.net/6TEcm.jpg?s=256",
+      "display_name" : "jpprade",
+      "link" : "https://stackoverflow.com/users/336657/jpprade"
+    },
+    "creation_date" : 1754900627,
+    "last_activity_date" : 1754900627,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140652704,
+    "post_id" : 79730004,
+    "body" : "Try commenting  the actual send email operation to see if the difference is in the email. Also is the node version multi threaded or asynchronous?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 372682,
+      "reputation" : 26512,
+      "user_id" : 721855,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/vZiox.png?s=256",
+      "display_name" : "aled",
+      "link" : "https://stackoverflow.com/users/721855/aled"
+    },
+    "creation_date" : 1754678175,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140652648,
+    "post_id" : 79730004,
+    "body" : "added a pool of 50 thread results are still far from 3 minutes",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 134484,
+      "reputation" : 3704,
+      "user_id" : 336657,
+      "user_type" : "registered",
+      "accept_rate" : 65,
+      "profile_image" : "https://i.sstatic.net/6TEcm.jpg?s=256",
+      "display_name" : "jpprade",
+      "link" : "https://stackoverflow.com/users/336657/jpprade"
+    },
+    "creation_date" : 1754676746,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140652408,
+    "post_id" : 79730004,
+    "body" : "At a quick glance, I guess you&#39;re benefiting from asynchronous processing in the case of your Node.js code, while your Java code is fully synchronous and single-threaded. Instead, try to make your Java code multi-threaded.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 213468,
+      "reputation" : 110282,
+      "user_id" : 466862,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/d873f397779db38cd510d9ee5416fd43?s=256&d=identicon&r=PG",
+      "display_name" : "Mark Rotteveel",
+      "link" : "https://stackoverflow.com/users/466862/mark-rotteveel"
+    },
+    "creation_date" : 1754670434,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79731822" : [ {
+      "comment_id" : 140661903,
+      "post_id" : 79731822,
+      "body" : "@StephenC yeah sorry, I found it out when I tried to run my benchmark in full command line like node",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 134484,
+        "reputation" : 3704,
+        "user_id" : 336657,
+        "user_type" : "registered",
+        "accept_rate" : 65,
+        "profile_image" : "https://i.sstatic.net/6TEcm.jpg?s=256",
+        "display_name" : "jpprade",
+        "link" : "https://stackoverflow.com/users/336657/jpprade"
+      },
+      "creation_date" : 1755069057,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140659542,
+      "post_id" : 79731822,
+      "body" : "You didn&#39;t mention in your question that you were running your benchmark from within Eclipse, or while Eclipse was running.  Be aware that Eclipse can use a lot of memory, and that can affect performance of other things; e.g. your benchmark.  For example, if you don&#39;t have enough RAM ... you can push the machine into VM thrashing, and that will have a serious impact on performance.",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 47283,
+        "reputation" : 723428,
+        "user_id" : 139985,
+        "user_type" : "registered",
+        "accept_rate" : 69,
+        "profile_image" : "https://www.gravatar.com/avatar/147c5a9cc1feec049c50da791ac7d144?s=256&d=identicon&r=PG",
+        "display_name" : "Stephen C",
+        "link" : "https://stackoverflow.com/users/139985/stephen-c"
+      },
+      "creation_date" : 1754991008,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

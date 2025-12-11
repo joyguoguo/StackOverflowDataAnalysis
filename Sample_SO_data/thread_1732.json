@@ -1,0 +1,251 @@
+{
+  "question" : {
+    "question_id" : 79679814,
+    "title" : "Map two Java `Optional`s or produce the one with a value",
+    "body" : "<p>Is there a Java method or a succinct approach to combine two <code>Optional</code> instances using a mapping function if both are present; otherwise produce one or the other that has a value?</p>\n<p>Here is how it would look conceptually in a clunky, non-functional approach:</p>\n<pre class=\"lang-java prettyprint-override\"><code>&lt;T&gt; Optional&lt;T&gt; mapOr(Optional&lt;T&gt; optional1, Optional&lt;T&gt; optional2, BinaryOperator&lt;T&gt; fun)\n  if(optional1.isPresent() &amp;&amp; optional2.isPresent()) {\n    return Optional.of(fun.apply(optional.get(), optional2.get()));\n  } else {\n    return optional1.or(() -&gt; optional2);\n  }\n}\n</code></pre>\n<p>(I would never want to write code like that; I'm just spelling out the semantics.)</p>\n<p>As a hypothetical use case, let's say I have two optional things I want to link together (like in a linked list), but I don't know if either exists. I want to end up with the first thing, optionally linking to the second one, through some hypothetical <code>this.link(…)</code> function.</p>\n<pre class=\"lang-java prettyprint-override\"><code>Optional&lt;E&gt; linkedList = mapOr(optionalElement1, optionalElement2, this::link);\n</code></pre>\n<p>A more functional implementation approach might be:</p>\n<pre class=\"lang-java prettyprint-override\"><code>&lt;T&gt; Optional&lt;T&gt; mapOr(Optional&lt;T&gt; optional1, Optional&lt;T&gt; optional2, BinaryOperator&lt;T&gt; fun) {\n  return optional1.map(o1 -&gt; optional2.map(o2 -&gt; fun.apply(o1, o2))\n      .or(() -&gt; optional1)).or(() -&gt; optional2);\n}\n</code></pre>\n<p>But that is hideous.</p>\n<p>Is there some common functional paradigm I'm missing here? It almost reminds me of a stream reduction operation, that is something like this:</p>\n<pre class=\"lang-java prettyprint-override\"><code>&lt;T&gt; Optional&lt;T&gt; mapOr(Optional&lt;T&gt; optional1, Optional&lt;T&gt; optional2, BinaryOperator&lt;T&gt; fun) {\n  return Stream.of(optional1, optional2)\n      .filter(Optional::isPresent)\n      .map(Optional::get)\n      .reduce(fun);\n}\n</code></pre>\n<p>What's cool about that approach is that it can be generalized to any number of <code>Optional</code>s. (I'm skeptical about its performance, though.) Still I would have to create a utility method—I wouldn't want to use something that wordy over and over (and I need to use this in several places). Later I realized I could convert the <code>Optional</code>s to streams, concat them, and then perform the reduce (as Holger mentions in one of the answers); that would be slightly prettier functional programming, but still pretty verbose.</p>\n<p>Unfortunately after more thought, I realize that this is not exactly what I need; rather than <code>link(link(link(1, 2), 3), 4)</code>, I need <code>link(1, link(2, link(3, 4)))</code>. Further <a href=\"https://en.wikipedia.org/wiki/Fold_(higher-order_function)\" rel=\"nofollow noreferrer\">research</a> reveals that what I want is a &quot;right fold&quot;. I don't immediately see a right fold stream operation in Java. Nevertheless this would work with only two values.</p>\n<p>Does Java have something more concise made for this operation already?</p>\n",
+    "tags" : [ "java", "java-stream" ],
+    "owner" : {
+      "account_id" : 184786,
+      "reputation" : 22234,
+      "user_id" : 421049,
+      "user_type" : "registered",
+      "accept_rate" : 50,
+      "profile_image" : "https://www.gravatar.com/avatar/4b9b843fe8e233b2f70e0f2a8e7db4e8?s=256&d=identicon&r=PG",
+      "display_name" : "Garret Wilson",
+      "link" : "https://stackoverflow.com/users/421049/garret-wilson"
+    },
+    "is_answered" : true,
+    "view_count" : 240,
+    "answer_count" : 3,
+    "score" : 5,
+    "last_activity_date" : 1750950594,
+    "creation_date" : 1750901119,
+    "link" : "https://stackoverflow.com/questions/79679814/map-two-java-optionals-or-produce-the-one-with-a-value",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79680318,
+    "question_id" : 79679814,
+    "body" : "<p>All of your approaches can be slightly simplified.</p>\n<ol>\n<li><p>The non-functional approach</p>\n<pre class=\"lang-java prettyprint-override\"><code>&lt;T&gt; Optional&lt;T&gt; mapOr(Optional&lt;T&gt; value1, Optional&lt;T&gt; value2, BinaryOperator&lt;T&gt; fun) {\n    return value1.isPresent()? value2.isPresent()?\n        Optional.of(fun.apply(value1.get(), value2.get())): value1: value2;\n}\n</code></pre>\n</li>\n<li><p>The first functional approach</p>\n<pre class=\"lang-java prettyprint-override\"><code>&lt;T&gt; Optional&lt;T&gt; mapOr(Optional&lt;T&gt; value1, Optional&lt;T&gt; value2, BinaryOperator&lt;T&gt; fun) {\n    return value1.map(t1 -&gt; value2.map(t2 -&gt; fun.apply(t1, t2)).orElse(t1))\n                 .or(() -&gt; value2);\n}\n</code></pre>\n</li>\n<li><p>The Stream approach</p>\n<pre class=\"lang-java prettyprint-override\"><code>&lt;T&gt; Optional&lt;T&gt; mapOr(Optional&lt;T&gt; value1, Optional&lt;T&gt; value2, BinaryOperator&lt;T&gt; fun) {\n    return Stream.concat(value1.stream(), value2.stream()).reduce(fun);\n}\n</code></pre>\n</li>\n</ol>\n<p>Considering that Java has no built-in operators we could utilize here, these are already the most concise ways to express this operation.</p>\n",
+    "score" : 6,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 3211603,
+      "reputation" : 300981,
+      "user_id" : 2711488,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+      "display_name" : "Holger",
+      "link" : "https://stackoverflow.com/users/2711488/holger"
+    },
+    "creation_date" : 1750933804,
+    "last_activity_date" : 1750933804,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79679870,
+    "question_id" : 79679814,
+    "body" : "<p>I think the &quot;clunky, non-functional approach&quot; is the best you currently have available. It's clear and to the point.</p>\n",
+    "score" : 3,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 1544842,
+      "reputation" : 635,
+      "user_id" : 6036446,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-v4u_YcpdVno/AAAAAAAAAAI/AAAAAAAAKXc/ITrtXij-cec/s256-rj/photo.jpg",
+      "display_name" : "Juan C Nuno",
+      "link" : "https://stackoverflow.com/users/6036446/juan-c-nuno"
+    },
+    "creation_date" : 1750907983,
+    "last_activity_date" : 1750907983,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79680454,
+    "question_id" : 79679814,
+    "body" : "<p>The consent - even from you yourself - seems to be that this is too circumstantial</p>\n<p>However. You could create a utility class <code>Optionals</code> with this function to wrap <code>Optional</code> around a binary operator and its operands.</p>\n<pre><code>public static &lt;T&gt; Optional&lt;T&gt; binaryOperator(Optional&lt;T&gt; lhs,\n                                             Optional&lt;T&gt; rhs,\n                                             BinaryOperator&lt;T&gt; binop) {\n    return Stream.concat(lhs.stream(), rhs.stream()).reduce(binop);\n}\n</code></pre>\n<p>A test:</p>\n<pre><code>Optional&lt;String&gt; a = Optional.of(&quot;a&quot;);\nOptional&lt;String&gt; b = Optional.of(&quot;b&quot;);\nOptional&lt;String&gt; c = Optional.empty();\nBinaryOperator&lt;String&gt; bo = String::concat;\nOptional&lt;String&gt; r;\nr = binaryOperator(a, b, bo);\nSystem.out.println(&quot;a b: &quot; + r);\nr = binaryOperator(a, c, bo);\nSystem.out.println(&quot;a c: &quot; + r);\nr = binaryOperator(c, b, bo);\nSystem.out.println(&quot;c b: &quot; + r);\nr = binaryOperator(c, c, bo);\nSystem.out.println(&quot;c c: &quot; + r);\n</code></pre>\n<p>yielding:</p>\n<pre><code>a b: Optional[ab]\na c: Optional[a]\nc b: Optional[b]\nc c: Optional.empty\n</code></pre>\n<p>If you have such a use case of several operations and a heavy usage of <code>Optional</code>, then it is fine.</p>\n<p>The <strong>Stream</strong> solution (first specified in Holger's answer, deserving the kudos) seems semantically appropriate: do the operation if possible, otherwise take one side.</p>\n<p>Together with providing the wrapping of <code>Optional</code> it is not that horrible.</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 960307,
+      "reputation" : 110397,
+      "user_id" : 984823,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Z2KYN.jpg?s=256",
+      "display_name" : "Joop Eggen",
+      "link" : "https://stackoverflow.com/users/984823/joop-eggen"
+    },
+    "creation_date" : 1750939323,
+    "last_activity_date" : 1750939929,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140544558,
+    "post_id" : 79679814,
+    "body" : "Mr. Polywhirl, while over the years I also have grown to disagree with the esteemed Brian Goetz on his general disapproval of <code>Optional&lt;T&gt;</code> as a method parameter, here you are taking his caution out of context. He was referring to <code>Optional&lt;T&gt;</code> method parameters as vehicles for transferring values as inputs to a method. Here, however, the <code>Optional&lt;T&gt;</code> <i>is</i> the value; the method is performing operations <i>on the <code>Optional&lt;T&gt;</code> itself</i>, providing a utility function that Java left out of <code>Optional&lt;T&gt;</code>. Thus I would imagine Goetz would find this usage covered by the &quot;almost&quot; in &quot;almost never&quot;.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 184786,
+      "reputation" : 22234,
+      "user_id" : 421049,
+      "user_type" : "registered",
+      "accept_rate" : 50,
+      "profile_image" : "https://www.gravatar.com/avatar/4b9b843fe8e233b2f70e0f2a8e7db4e8?s=256&d=identicon&r=PG",
+      "display_name" : "Garret Wilson",
+      "link" : "https://stackoverflow.com/users/421049/garret-wilson"
+    },
+    "creation_date" : 1750947143,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140544371,
+    "post_id" : 79679814,
+    "body" : "<b>Note:</b> <a href=\"https://stackoverflow.com/users/3553087/brian-goetz\">Brian Goetz</a> argues against using <code>Optional&lt;T&gt;</code> for method params, due to clarity issues, misuse of semantics, and that using it for input parameters was never intended. Here is a quote: <a href=\"https://stackoverflow.com/a/26328555/1762224\"><i>&quot;You should almost never use {an <code>Optional&lt;T&gt;</code>} as a field of something or a method parameter.&quot;</i></a>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1960454,
+      "reputation" : 49127,
+      "user_id" : 1762224,
+      "user_type" : "registered",
+      "accept_rate" : 61,
+      "profile_image" : "https://www.gravatar.com/avatar/20969bd926bb6a29ee19a07a25f7fea8?s=256&d=identicon&r=PG",
+      "display_name" : "Mr. Polywhirl",
+      "link" : "https://stackoverflow.com/users/1762224/mr-polywhirl"
+    },
+    "creation_date" : 1750944553,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140542963,
+    "post_id" : 79679814,
+    "body" : "One trivial example of how you&#39;re entirely missing the forest for the trees here: Your &#39;link 2 optional linkedlists together&#39; code deserves the disdain you reserved for your first snippet, because that code is atrocious. In that code, an <code>Optional.NONE</code> is semantically and functionally equivalent to an empty list, so why in the blazes did you even get here? Whatever gave you an <code>Optional&lt;List&gt;</code> should have given you a <code>List</code> - an empty one, in whatever case it is currently returning NONE. <b>That</b> would be the &#39;correct style move&#39;. Not this obsession.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 401843,
+      "reputation" : 107186,
+      "user_id" : 768644,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+      "display_name" : "rzwitserloot",
+      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+    },
+    "creation_date" : 1750905722,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140542959,
+    "post_id" : 79679814,
+    "body" : "Oof, the entitled &quot;I wouldn&#39;t <i>stoop so low</i>&quot; wafting off this is painful. If you put some style on a pedestal like this, you&#39;re not going to write good code. You&#39;re clearly more concerned about style than about anything else, including writing readable code, maintainable code, abstracted code, let alone <i>working code</i>. Maybe take a moment to realise that you&#39;re looking for a good solution. The sentence ends there. It does not continue with &quot;... but that uses what I think is the pinnacle of style&quot;.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 401843,
+      "reputation" : 107186,
+      "user_id" : 768644,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+      "display_name" : "rzwitserloot",
+      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+    },
+    "creation_date" : 1750905548,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140542953,
+    "post_id" : 79679814,
+    "body" : "I fixed several syntax and semantic errors in your code.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 71739,
+      "reputation" : 311869,
+      "user_id" : 207421,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/5cfe5f7d64f44be04f147295f5c7b88e?s=256&d=identicon&r=PG",
+      "display_name" : "user207421",
+      "link" : "https://stackoverflow.com/users/207421/user207421"
+    },
+    "creation_date" : 1750905154,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140542945,
+    "post_id" : 79679814,
+    "body" : "<i>&quot;I would never want to write code like that; I&#39;m just spelling out the semantics&quot;</i> Concise, readable, efficient, and easy to debug and test, so what&#39;s not to like? Takes me back to when we had to rely on Guava to get functional idioms in Java, and they put this in their docs: <i>Excessive use of Guava&#39;s functional programming idioms can lead to verbose, confusing, unreadable, and inefficient code. These are by far the most easily (and most commonly) abused parts of Guava, and when you go to preposterous lengths to make your code &quot;a one-liner,&quot; the Guava team weeps.</i>",
+    "score" : 7,
+    "owner" : {
+      "account_id" : 4362282,
+      "reputation" : 98626,
+      "user_id" : 3558960,
+      "user_type" : "registered",
+      "accept_rate" : 60,
+      "profile_image" : "https://www.gravatar.com/avatar/a98b52149d419c2aad558befe51c8cc5?s=256&d=identicon&r=PG",
+      "display_name" : "Robby Cornelissen",
+      "link" : "https://stackoverflow.com/users/3558960/robby-cornelissen"
+    },
+    "creation_date" : 1750904618,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140542897,
+    "post_id" : 79679814,
+    "body" : "Given the current API of <code>Optional</code>, I would honestly go with your first approach (the &quot;clunky, non-functional approach&quot;). It would be nice if <code>Optional</code> had some kind of &quot;combine&quot; method, but alas it does not. Also, your stream approach can replace the <code>filter</code> and <code>map</code> operations with a single <code>flatMap(Optional::stream)</code> (Java 9+).",
+    "score" : 4,
+    "owner" : {
+      "account_id" : 8532578,
+      "reputation" : 49884,
+      "user_id" : 6395627,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Slaw",
+      "link" : "https://stackoverflow.com/users/6395627/slaw"
+    },
+    "creation_date" : 1750902131,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79680318" : [ {
+      "comment_id" : 140544744,
+      "post_id" : 79680318,
+      "body" : "@GarretWilson For most scenarios, the non-functional approach as shown in the answer will be the most efficient, as it will only create a new object if both optionals are present and an optional to represent the result of merging will be needed. But in most cases, the differences will be negligible or even eliminated by the optimizer. A right-fold behavior would be enforced at the caller, i.e. <code>mapOr(a, mapOr(b , c))</code>",
+      "score" : 3,
+      "owner" : {
+        "account_id" : 3211603,
+        "reputation" : 300981,
+        "user_id" : 2711488,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+        "display_name" : "Holger",
+        "link" : "https://stackoverflow.com/users/2711488/holger"
+      },
+      "creation_date" : 1750949931,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140544225,
+      "post_id" : 79680318,
+      "body" : "Thanks for taking the time to point out that first functional approach (#2 in your answer) could be simplified with the <code>orElse(t1)</code>. Nice! I had a feeling there was something in there that could be tweaked. Because I&#39;m going to hide this behind a method, #2 is the approach I&#39;m going with as it&#39;s probably the most efficient. (I&#39;m going to make it even a little more efficient by removing the need for a lambda, replacing the last <code>.or(…)</code> with a call to another utility <code>return optional.isPresent() ? optional : otherOptional</code>. I wish Java had an <code>.or(Optional&lt;&gt;)</code> form.)",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 184786,
+        "reputation" : 22234,
+        "user_id" : 421049,
+        "user_type" : "registered",
+        "accept_rate" : 50,
+        "profile_image" : "https://www.gravatar.com/avatar/4b9b843fe8e233b2f70e0f2a8e7db4e8?s=256&d=identicon&r=PG",
+        "display_name" : "Garret Wilson",
+        "link" : "https://stackoverflow.com/users/421049/garret-wilson"
+      },
+      "creation_date" : 1750941631,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140544172,
+      "post_id" : 79680318,
+      "body" : "Thanks Holder. I actually thought of your last approach overnight. But this morning I realized that while it will work for only two values, it has the wrong association precedence for more values. (I need a right fold instead of a left fold.) But for two values this should work.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 184786,
+        "reputation" : 22234,
+        "user_id" : 421049,
+        "user_type" : "registered",
+        "accept_rate" : 50,
+        "profile_image" : "https://www.gravatar.com/avatar/4b9b843fe8e233b2f70e0f2a8e7db4e8?s=256&d=identicon&r=PG",
+        "display_name" : "Garret Wilson",
+        "link" : "https://stackoverflow.com/users/421049/garret-wilson"
+      },
+      "creation_date" : 1750940661,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

@@ -1,0 +1,98 @@
+{
+  "question" : {
+    "question_id" : 79628098,
+    "title" : "jaxb-maven-plugin xsd to java: how to solve xsd with root element and child element having the same name",
+    "body" : "<p>I have a similar structure as this xsd:</p>\n<pre class=\"lang-xml prettyprint-override\"><code>&lt;xs:element name=&quot;address&quot;&gt;\n  &lt;xs:complexType&gt;\n    &lt;xs:choice&gt;\n      &lt;xs:element name=&quot;address&quot;&gt;\n        &lt;xs:complexType&gt;\n          &lt;xs:sequence&gt;\n            &lt;!-- ... --&gt;\n          &lt;/xs:sequence&gt;\n        &lt;/xs:complexType&gt;\n      &lt;/xs:element&gt;\n      &lt;xs:element name=&quot;mailbox&quot;&gt;\n        &lt;xs:complexType&gt;\n          &lt;xs:sequence&gt;\n            &lt;!-- ... --&gt;\n          &lt;/xs:sequence&gt;\n        &lt;/xs:complexType&gt;\n      &lt;/xs:element&gt;\n    &lt;/xs:choice&gt;\n  &lt;/xs:complexType&gt;\n&lt;/xs:element&gt;\n</code></pre>\n<p>In my opinion this is a bad schema. You should not name your elements in that way.\nI cannot change this schema since its comming from a third party.\nI have to convert this into a java model. Obviously this wont work out of the box.\nJAXB XSD to Java would try to generate something like this:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@XmlAccessorType(XmlAccessType.FIELD)\n@XmlType(name = &quot;&quot;, propOrder = {\n    &quot;address&quot;,\n    &quot;mailbox&quot;\n})\npublic static class Address implements Serializable, Cloneable, CopyTo, Equals, HashCode, MergeFrom, ToString\n{\n\n    Address.Address address;\n    Address.Mailbox mailbox;\n\n    public static class Address implements Serializable, Cloneable, CopyTo, Equals, HashCode, MergeFrom, ToString\n    {\n        // ...\n    }\n    \n    public static class Mailbox implements Serializable, Cloneable, CopyTo, Equals, HashCode, MergeFrom, ToString\n    {\n        // ...\n    }\n}\n</code></pre>\n<p>Ofcourse this results in the java error <code>Duplicate class: 'Address'.</code>\nSince I cannot change the schema I try to change the generated java class.\nI remembered there was a plugin for auto name resolution. So I tried:</p>\n<pre class=\"lang-xml prettyprint-override\"><code>&lt;plugin&gt;\n  &lt;groupId&gt;org.jvnet.jaxb&lt;/groupId&gt;\n  &lt;artifactId&gt;jaxb-maven-plugin&lt;/artifactId&gt;\n  &lt;version&gt;4.0.9&lt;/version&gt;\n  &lt;executions&gt;\n    &lt;execution&gt;\n      &lt;goals&gt;\n        &lt;goal&gt;generate&lt;/goal&gt;\n      &lt;/goals&gt;\n      &lt;configuration&gt;\n        &lt;debug&gt;true&lt;/debug&gt;\n        &lt;args&gt;\n          &lt;!-- Enable Equals Generation --&gt;\n          &lt;arg&gt;-Xequals&lt;/arg&gt;\n          &lt;!-- Enable Hashcode Generation --&gt;\n          &lt;arg&gt;-XhashCode&lt;/arg&gt;\n          &lt;!-- Enable ToString Generation --&gt;\n          &lt;arg&gt;-XtoString&lt;/arg&gt;\n          &lt;!-- Enable Builder Generation --&gt;\n          &lt;arg&gt;-Xfluent-api&lt;/arg&gt;\n          &lt;!-- Enable Inheritance Generation --&gt;\n          &lt;arg&gt;-Xinheritance&lt;/arg&gt;\n          &lt;!-- Enable Copy Generation --&gt;\n          &lt;arg&gt;-Xcopyable&lt;/arg&gt;\n          &lt;!-- Enable Merge Generation --&gt;\n          &lt;arg&gt;-Xmergeable&lt;/arg&gt;\n          &lt;!-- auto resolve conflicting names --&gt;\n          &lt;arg&gt;-XautoNameResolution&lt;/arg&gt;\n        &lt;/args&gt;\n        &lt;strict&gt;false&lt;/strict&gt;\n        &lt;extension&gt;true&lt;/extension&gt;\n        &lt;schemaDirectory&gt;src/main/resources/xsd&lt;/schemaDirectory&gt;\n        &lt;bindingDirectory&gt;src/main/resources/xjb&lt;/bindingDirectory&gt;\n        &lt;catalog&gt;src/main/resources/xsd/external/catalog.cat&lt;/catalog&gt;\n        &lt;generateDirectory&gt;${project.build.directory}/generated-sources&lt;/generateDirectory&gt;\n        &lt;plugins&gt;\n          &lt;plugin&gt;\n            &lt;groupId&gt;org.jvnet.jaxb&lt;/groupId&gt;\n            &lt;artifactId&gt;jaxb-plugins&lt;/artifactId&gt;\n            &lt;version&gt;4.0.9&lt;/version&gt;\n          &lt;/plugin&gt;\n          &lt;plugin&gt;\n            &lt;groupId&gt;org.jvnet.jaxb&lt;/groupId&gt;\n            &lt;artifactId&gt;jaxb-plugins-tools&lt;/artifactId&gt;\n            &lt;version&gt;4.0.9&lt;/version&gt;\n          &lt;/plugin&gt;\n        &lt;/plugins&gt;\n      &lt;/configuration&gt;\n    &lt;/execution&gt;\n  &lt;/executions&gt;\n&lt;/plugin&gt;\n</code></pre>\n<p>But that did not change the java class generation at all.\nSo I tried the bindings approach. I did the following:</p>\n<pre class=\"lang-xml prettyprint-override\"><code>&lt;jxb:bindings version=&quot;3.0&quot;\n              xmlns:jxb=&quot;http://java.sun.com/xml/ns/jaxb&quot;\n              xmlns:xs=&quot;http://www.w3.org/2001/XMLSchema&quot;&gt;\n  \n  &lt;jxb:bindings schemaLocation=&quot;schema.xsd&quot; node=&quot;/xs:schema/xs:element[@name='address']&quot;&gt;\n    &lt;jxb:class name=&quot;Address&quot;/&gt;\n  &lt;/jxb:bindings&gt;\n\n  &lt;jxb:bindings schemaLocation=&quot;schema.xsd&quot; node=&quot;/xs:schema/xs:element[@name='address']/xs:complexType/xs:choice/xs:element[@name='address']&quot;&gt;\n    &lt;jxb:class name=&quot;AddressDetails&quot;/&gt;\n  &lt;/jxb:bindings&gt;\n\n&lt;/jxb:bindings&gt;\n</code></pre>\n<p>But this results in: <code>Execution default of goal org.jvnet.jaxb:jaxb-maven-plugin:4.0.0:generate failed: Illegal class inheritance loop.  Outer class Address may not subclass from inner class: Address</code></p>\n<p>Im not sure what is really happening there.</p>\n<p>Is there any way to solve that problem?</p>\n",
+    "tags" : [ "java", "maven", "xsd", "jaxb" ],
+    "owner" : {
+      "account_id" : 2778891,
+      "reputation" : 10781,
+      "user_id" : 2391849,
+      "user_type" : "registered",
+      "accept_rate" : 84,
+      "profile_image" : "https://www.gravatar.com/avatar/486136ec1516b78c03114a7261413863?s=256&d=identicon&r=PG",
+      "display_name" : "Mulgard",
+      "link" : "https://stackoverflow.com/users/2391849/mulgard"
+    },
+    "is_answered" : true,
+    "view_count" : 155,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1747683830,
+    "creation_date" : 1747630794,
+    "link" : "https://stackoverflow.com/questions/79628098/jaxb-maven-plugin-xsd-to-java-how-to-solve-xsd-with-root-element-and-child-elem",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79629320,
+    "question_id" : 79628098,
+    "body" : "<p>Mulgard, you are very close. To demonstrate a solution, I completed your sample schema, as follows:</p>\n<p><strong>SameRootChildName.xsd</strong></p>\n<pre><code>&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot; ?&gt;\n&lt;xs:schema elementFormDefault=&quot;qualified&quot;\n    xmlns:xs=&quot;http://www.w3.org/2001/XMLSchema&quot;\n    targetNamespace=&quot;urn:example.org:srcn&quot;\n    xmlns:tns=&quot;urn:example.org:srcn&quot;\n&gt;\n\n    &lt;xs:element name=&quot;address&quot;&gt;\n        &lt;xs:complexType&gt;\n            &lt;xs:choice&gt;\n                &lt;xs:element name=&quot;address&quot;&gt;\n                    &lt;xs:complexType&gt;\n                        &lt;xs:sequence&gt;\n                            &lt;xs:element name=&quot;ellipsis&quot; type=&quot;xs:string&quot;/&gt;\n                        &lt;/xs:sequence&gt;\n                    &lt;/xs:complexType&gt;\n                &lt;/xs:element&gt;\n                &lt;xs:element name=&quot;mailbox&quot;&gt;\n                    &lt;xs:complexType&gt;\n                        &lt;xs:sequence&gt;\n                            &lt;xs:element name=&quot;ellipsis&quot; type=&quot;xs:string&quot;/&gt;\n                        &lt;/xs:sequence&gt;\n                    &lt;/xs:complexType&gt;\n                &lt;/xs:element&gt;\n            &lt;/xs:choice&gt;\n        &lt;/xs:complexType&gt;\n    &lt;/xs:element&gt;\n\n&lt;/xs:schema&gt;\n</code></pre>\n<p>Using this example, I am able to reproduce your error using the <code>xjc</code> command line tool:</p>\n<pre><code>xjc -d out -no-header SameRootChildName.xsd\n\nparsing a schema...\ncompiling a schema...\n[ERROR] Complex type and its child element share the same name &quot;Address&quot;. Use a class customization to resolve this conflict.\n  line 12 of file:SameRootChildName.xsd\n\nFailed to produce code.\n</code></pre>\n<p>Perhaps, this error message is more direct, &quot;Complex type and its child element share ...&quot; The <em>complex type</em> in the message is a reference to the anonymous type of the root level element named <code>address</code>. Here is a binding file that targets that type and binds a class customization to it. The customization changes the generated root class name to <code>AddressRoot</code> and leaves the child class name as <code>Address</code></p>\n<p><strong>SameRootChildName.xjb</strong></p>\n<pre><code>&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot; standalone=&quot;yes&quot;?&gt;\n&lt;jaxb:bindings jaxb:version=&quot;3.0&quot;\n    xmlns:jaxb=&quot;https://jakarta.ee/xml/ns/jaxb&quot;\n    xmlns:xs=&quot;http://www.w3.org/2001/XMLSchema&quot;\n&gt;\n\n    &lt;jaxb:globalBindings localScoping=&quot;toplevel&quot; &gt;\n        &lt;jaxb:serializable uid=&quot;20250501&quot; /&gt;\n    &lt;/jaxb:globalBindings&gt;\n\n    &lt;jaxb:bindings schemaLocation=&quot;SameRootChildName.xsd&quot; node=&quot;/xs:schema&quot;&gt;\n        &lt;jaxb:bindings node=&quot;xs:element[@name='address']&quot; &gt;\n            &lt;jaxb:class name=&quot;AddressRoot&quot;/&gt;\n        &lt;/jaxb:bindings&gt;\n    &lt;/jaxb:bindings&gt;\n\n&lt;/jaxb:bindings&gt;\n</code></pre>\n<p>Re-executing the `xjc' tool with the new binding file generated the classes successfully.</p>\n<pre><code>xjc -d out -no-header -b SameRootChildName.xjb SameRootChildName.xsd \nparsing a schema...\ncompiling a schema...\norg/example/srcn/Address.java\norg/example/srcn/AddressRoot.java\norg/example/srcn/Mailbox.java\norg/example/srcn/ObjectFactory.java\norg/example/srcn/package-info.java\n</code></pre>\n<p>This edit to the bindings file above works too:</p>\n<p><strong>SameRootChildName.xjb (edit)</strong></p>\n<pre><code>...\n&lt;jaxb:bindings node=&quot;xs:element[@name='address']&quot; &gt;\n    &lt;jaxb:bindings node=&quot;xs:complexType&quot; &gt;\n        &lt;jaxb:class name=&quot;AddressRoot&quot;/&gt;\n    &lt;/jaxb:bindings&gt;\n&lt;/jaxb:bindings&gt;\n...\n</code></pre>\n<p>Alternatively, this variant of the bindings file works by changing the name of the child class instead of the root class.</p>\n<p><strong>SameRootChildName2.xjb</strong></p>\n<pre><code>&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot; standalone=&quot;yes&quot;?&gt;\n&lt;jaxb:bindings jaxb:version=&quot;3.0&quot;\n    xmlns:jaxb=&quot;https://jakarta.ee/xml/ns/jaxb&quot;\n    xmlns:xs=&quot;http://www.w3.org/2001/XMLSchema&quot;\n&gt;\n\n    &lt;jaxb:globalBindings localScoping=&quot;toplevel&quot; &gt;\n        &lt;jaxb:serializable uid=&quot;20250501&quot; /&gt;\n    &lt;/jaxb:globalBindings&gt;\n\n    &lt;jaxb:bindings schemaLocation=&quot;SameRootChildName.xsd&quot; node=&quot;/xs:schema&quot;&gt;\n        &lt;jaxb:bindings node=&quot;xs:element[@name='address']&quot; &gt;\n            &lt;jaxb:bindings node=&quot;xs:complexType&quot; &gt;\n                &lt;jaxb:bindings node=&quot;xs:choice&quot; &gt;\n                    &lt;jaxb:bindings node=&quot;xs:element[@name='address']&quot; &gt;\n                        &lt;jaxb:bindings node=&quot;xs:complexType&quot; &gt;\n                            &lt;jaxb:class name=&quot;AddressDetails&quot;/&gt;\n                        &lt;/jaxb:bindings&gt;\n                    &lt;/jaxb:bindings&gt;\n                &lt;/jaxb:bindings&gt;\n            &lt;/jaxb:bindings&gt;\n        &lt;/jaxb:bindings&gt;\n    &lt;/jaxb:bindings&gt;\n\n&lt;/jaxb:bindings&gt;\n</code></pre>\n<p>The result is shown here:</p>\n<pre><code>xjc -d out -no-header -b SameRootChildName2.xjb SameRootChildName.xsd\n\nparsing a schema...\ncompiling a schema...\norg/example/srcn/Address.java\norg/example/srcn/AddressDetails.java\norg/example/srcn/Mailbox.java\norg/example/srcn/ObjectFactory.java\norg/example/srcn/package-info.java\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 3909931,
+      "reputation" : 561,
+      "user_id" : 3235583,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/721504354b2550253c68f256f2028fa0?s=256&d=identicon&r=PG",
+      "display_name" : "Rick O&#39;Sullivan",
+      "link" : "https://stackoverflow.com/users/3235583/rick-osullivan"
+    },
+    "creation_date" : 1747680713,
+    "last_activity_date" : 1747683830,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140438121,
+    "post_id" : 79628098,
+    "body" : "I&#39;ll look at this but one thing first : <code>jaxb-plugins-tools</code> is unnecessary when <code>jaxb-plugins</code> is provided",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 29874264,
+      "reputation" : 2973,
+      "user_id" : 22894892,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/mdevoOOD.jpg?s=256",
+      "display_name" : "Laurent Schoelens",
+      "link" : "https://stackoverflow.com/users/22894892/laurent-schoelens"
+    },
+    "creation_date" : 1747636005,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79629320" : [ {
+      "comment_id" : 140443400,
+      "post_id" : 79629320,
+      "body" : "You&#39;re welcome. I&#39;m glad the second variant (AddressDetails) solved your problem.  Yes, adding the complexType binding in the first variant (AddressRoot) is best practice for that variant, methinks.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 3909931,
+        "reputation" : 561,
+        "user_id" : 3235583,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/721504354b2550253c68f256f2028fa0?s=256&d=identicon&r=PG",
+        "display_name" : "Rick O&#39;Sullivan",
+        "link" : "https://stackoverflow.com/users/3235583/rick-osullivan"
+      },
+      "creation_date" : 1747757804,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140441412,
+      "post_id" : 79629320,
+      "body" : "The first variant did not work for me but the second did. Changing the outer class using the complexType binding worked. Thank you very much.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 2778891,
+        "reputation" : 10781,
+        "user_id" : 2391849,
+        "user_type" : "registered",
+        "accept_rate" : 84,
+        "profile_image" : "https://www.gravatar.com/avatar/486136ec1516b78c03114a7261413863?s=256&d=identicon&r=PG",
+        "display_name" : "Mulgard",
+        "link" : "https://stackoverflow.com/users/2391849/mulgard"
+      },
+      "creation_date" : 1747718640,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

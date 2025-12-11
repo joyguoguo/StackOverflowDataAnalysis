@@ -1,0 +1,81 @@
+{
+  "question" : {
+    "question_id" : 79569833,
+    "title" : "How to reference bean that is a record from a Spring expression?",
+    "body" : "<p>I have Spring Boot automatically reading in some <code>application.yaml</code> configuration into this record:</p>\n<pre><code>package foo.bar.baz;\n\n@ConfigurationProperties(prefix = &quot;apns&quot;)\npublic record ApnsConfiguration(\n    Duration gracefulShutdownTimeout,\n    int maxAttempts,\n    Duration minDelay,\n    Duration maxDelay,\n    List&lt;ApnsEndpoint&gt; endpoints\n</code></pre>\n<p>This object is read in perfectly fine and it is used with no problems in a number of places.</p>\n<p>I'm now trying to use <code>@Retryable</code> to retry a method.  When I specify literals for <code>maxAttempt</code> and for the arguments to <code>@Backoff</code> it works fine.  But I want to get those values from the bean (the multiplier is a constant as we are not interested in varying it in configuration).</p>\n<p>I have tried:</p>\n<pre><code>    @Retryable(\n        retryFor = RetryableException.class,\n        maxAttemptsExpression = &quot;#{@apnsConfiguration.maxAttempts}&quot;,\n        backoff = @Backoff(\n            delayExpression =\n                &quot;#{apnsConfiguration.minDelay.toMillis}&quot;,\n            maxDelayExpression =\n                &quot;#{@apnsConfiguration.maxDelay.toMillis}&quot;,\n            multiplier = BACKOFF_MULTIPLIER)\n    )\n</code></pre>\n<p>However when do that tests (and startup) fails with these errors:</p>\n<pre><code>EL1058E: A problem occurred when trying to resolve bean 'apnsConfiguration': 'Could not resolve bean reference against BeanFactory'\norg.springframework.expression.spel.SpelEvaluationException: EL1058E: A problem occurred when trying to resolve bean 'apnsConfiguration': 'Could not resolve bean reference against BeanFactory'\n[snip]\nCaused by: org.springframework.beans.factory.NoSuchBeanDefinitionException: No bean named 'apnsConfiguration' available\n    at app//org.springframework.beans.factory.support.DefaultListableBeanFactory.getBeanDefinition(DefaultListableBeanFactory.java:925)\n</code></pre>\n<p>I didn't understand why it wasn't finding the bean so I printed out the names of all the beans using this:</p>\n<pre><code>    @EventListener\n    public void handleContextRefreshed(final ContextRefreshedEvent event) {\n        Arrays.stream(event.getApplicationContext().getBeanDefinitionNames())\n            .forEach(name -&gt; log.info(&quot;Bean name: {}&quot;, name));\n    }\n</code></pre>\n<p>When I look at that output I see this:</p>\n<pre><code>Bean name: baz-foo.bar.baz.ApnsConfiguration\n</code></pre>\n<p>So I next changed the Spring expressions to be stuff like:</p>\n<pre><code>maxAttemptsExpression = &quot;#{@baz-foo.bar.baz.ApnsConfiguration.maxAttempts}&quot;\n</code></pre>\n<p>But that <strong>also</strong> failed to find the bean, complaining it couldn't find a bean named <code>baz</code>.</p>\n<p>In that printout of beans I see other beans I've created with totally normal names.  For example I have a</p>\n<pre><code>@Component\npublic final class ApnsMessageConverter implements Converter&lt;........&gt;\n</code></pre>\n<p>and that shows up in the list of names as <code>apnsMessageConverter</code> as expected.</p>\n<p>So it appears that Spring generates weird names when you have a record be a bean?  I though about giving it an explicit name by putting something like <code>@Configuration</code> on the <code>ApnsConfiguration</code> record since <code>@Configuration</code> allows you to specify a name but it's not an allowable annotation there.</p>\n<p>So is there any way to force a record to have a specific bean name?  And if not, does SpringEL have some syntax which will take <code>baz-foo.bar.baz.ApnsConfiguration</code> as the name of the bean rather than thinking that <code>baz</code> is the name of the bean (and I guess thinking the rest of the string is part of some expression)?</p>\n<hr />\n<p><strong>UPDATE</strong></p>\n<p>Through trial and error I have discovered that this works:</p>\n<pre><code>maxAttemptsExpression = &quot;#{(@'baz-foo.bar.baz..ApnsConfiguration').maxAttempts}&quot;\n</code></pre>\n<p>So at least I have <em>a</em> solution.</p>\n<p>But that's ugly as sin so I'd really prefer to somehow give the bean a better name.</p>\n",
+    "tags" : [ "java", "spring", "spring-boot", "spring-mvc", "spring-expression-language" ],
+    "owner" : {
+      "account_id" : 179030,
+      "reputation" : 13980,
+      "user_id" : 411393,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/f2e5f9f5893bd92a1eaa3f55bc3c3055?s=256&d=identicon&r=PG",
+      "display_name" : "QuantumMechanic",
+      "link" : "https://stackoverflow.com/users/411393/quantummechanic"
+    },
+    "is_answered" : true,
+    "view_count" : 165,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1744418787,
+    "creation_date" : 1744413767,
+    "link" : "https://stackoverflow.com/questions/79569833/how-to-reference-bean-that-is-a-record-from-a-spring-expression",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79569894,
+    "question_id" : 79569833,
+    "body" : "<p>I did some digging and found this github issue <a href=\"https://github.com/spring-projects/spring-boot/issues/19390\" rel=\"nofollow noreferrer\">Allow specifying beanname on @EnableConfigurationProperties</a></p>\n<p>As you have found out is that ConfigurationProperties are registered using their FQCN (fully qualified class name) than just their class name.</p>\n<p>it is also documented <a href=\"https://docs.spring.io/spring-boot/reference/features/external-config.html#features.external-config.typesafe-configuration-properties.enabling-annotated-types\" rel=\"nofollow noreferrer\">here</a> in the official docs</p>\n<blockquote>\n<p>When the <a href=\"https://docs.spring.io/spring-boot/3.4.4/api/java/org/springframework/boot/context/properties/ConfigurationProperties.html\" rel=\"nofollow noreferrer\"><code>@ConfigurationProperties</code></a> bean is registered using configuration property scanning or &gt; through <a href=\"https://docs.spring.io/spring-boot/3.4.4/api/java/org/springframework/boot/context/properties/EnableConfigurationProperties.html\" rel=\"nofollow noreferrer\"><code>@EnableConfigurationProperties</code></a>, the bean has a conventional name: <code>&lt;prefix&gt;-&lt;fqn&gt;</code>, where &gt; <code>&lt;prefix&gt;</code> is the environment key prefix specified in the <a href=\"https://docs.spring.io/spring-boot/3.4.4/api/java/org/springframework/boot/context/properties/ConfigurationProperties.html\" rel=\"nofollow noreferrer\"><code>@ConfigurationProperties</code></a> annotation and &gt; <code>&lt;fqn&gt;</code> is the fully qualified name of the bean. If the annotation does not provide any prefix, only the &gt; fully qualified name of the bean is used.</p>\n<p>Assuming that it is in the <code>com.example.app</code> package, the bean &gt; name of the <code>SomeProperties</code> example above is <code>some.properties-com.example.app.SomeProperties</code>.</p>\n</blockquote>\n<p>Sadly the recommended course of action is to either add a <code>@Component</code> annotation to the ConfigurationProperties annotated class, or an @Bean annotation function in a configuration class where you manually instantiate your properties class.</p>\n<p>I couldn't really understand the reasoning, but it seems that Spring considers properties files to not be in a public API which means they can change whenever, and since spel expressions are a runtime thing they dont recommend using dynamic values from external sources as it can be fragile.</p>\n<p>Thats my interpretation, so dont take my word for it.</p>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 2064278,
+      "reputation" : 15073,
+      "user_id" : 1840146,
+      "user_type" : "registered",
+      "accept_rate" : 86,
+      "profile_image" : "https://i.sstatic.net/JXdxm.png?s=256",
+      "display_name" : "Toerktumlare",
+      "link" : "https://stackoverflow.com/users/1840146/toerktumlare"
+    },
+    "creation_date" : 1744418787,
+    "last_activity_date" : 1744418787,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140329188,
+    "post_id" : 79569833,
+    "body" : "@RobSpoor fair question.  It&#39;s because the delay config values are specified as durations.  So <code>apns.minDelay</code> in <code>application.yaml</code> is <code>100ms</code> and <code>maxDelay</code> is <code>1s</code>.  I tried using properties and like you suggested and while they were found the context load still failed because because the expression didn&#39;t like the <code>ms</code> or the <code>s</code> -- it couldn&#39;t convert <code>100ms</code> or <code>1s</code> to what <code>@Backoff</code> wants.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 179030,
+      "reputation" : 13980,
+      "user_id" : 411393,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/f2e5f9f5893bd92a1eaa3f55bc3c3055?s=256&d=identicon&r=PG",
+      "display_name" : "QuantumMechanic",
+      "link" : "https://stackoverflow.com/users/411393/quantummechanic"
+    },
+    "creation_date" : 1744518914,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140327490,
+    "post_id" : 79569833,
+    "body" : "Instead of using <code>apnsConfiguration.maxAttempts</code> for the bean method, why not use <code>apns.maxAttempts</code> for the config value?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1211967,
+      "reputation" : 9964,
+      "user_id" : 1180351,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/pKB8y.png?s=256",
+      "display_name" : "Rob Spoor",
+      "link" : "https://stackoverflow.com/users/1180351/rob-spoor"
+    },
+    "creation_date" : 1744457747,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

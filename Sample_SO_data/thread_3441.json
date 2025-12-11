@@ -1,0 +1,46 @@
+{
+  "question" : {
+    "question_id" : 79549107,
+    "title" : "Custom Spark JdbcDialect is not used in cluster mode",
+    "body" : "<p>I have a custom <code>JdbcDialect</code>, and I am trying to get it registered in my Spark (v3.5.1) cluster.</p>\n<p>The dialect works perfectly fine in a local mode. Additionally, <code>canHandle</code> method implemented to always return <code>true</code> for now. This is how I excluded a DB URL and the dialect from the equation.</p>\n<p>The Spark cluster also successfully retrieves data from DB whenever I execute queries that don't require dialect customizations. This is how I made sure the cluster is healthy.</p>\n<p>I have prepared a minimal, reproducible example.</p>\n<p><strong>Dialect implementation:</strong></p>\n<pre class=\"lang-java prettyprint-override\"><code>import org.apache.spark.sql.connector.expressions.Expression;\nimport org.apache.spark.sql.jdbc.JdbcDialect;\nimport org.apache.spark.sql.jdbc.MySQLDialect;\nimport scala.Option;\n\npublic class MemSQL5Dialect extends JdbcDialect {\n\n    private static class SQLBuilder extends MySQLDialect.MySQLSQLBuilder {\n        // My customizations\n    }\n\n    @Override\n    public Option&lt;String&gt; compileExpression(Expression expr) {\n        try {\n            return Option.apply(new SQLBuilder().build(expr));\n        } catch (Exception e) {\n            return Option.empty();\n        }\n    }\n\n    @Override\n    public boolean canHandle(String url) {\n        return true;\n    }\n}\n</code></pre>\n<p><strong>Application implementation:</strong></p>\n<pre class=\"lang-java prettyprint-override\"><code>import org.apache.spark.sql.SparkSession;\nimport org.apache.spark.sql.jdbc.JdbcDialects;\n\nimport java.net.Inet4Address;\nimport java.util.Properties;\n\nimport static org.apache.spark.sql.functions.col;\n\npublic class Application {\n\n    public static void main(String[] args) throws Exception {\n        // Cluster is running using Docker, so I use IPv4.\n        var hostAddress = Inet4Address.getLocalHost().getHostAddress();\n\n        // JAR with dialect is copied to the folder inside Docker container, where Bitnami Spark\n        // keeps all other JARs. Double-checked JAR is there and JAR includes the dialect!\n        var applicationJarWithDialect = &quot;/opt/bitnami/spark/jars/spark-playground-SNAPSHOT.jar&quot;;\n\n        var sparkSession = SparkSession.builder()\n                .appName(&quot;Spark Playground&quot;)\n                // When set to &quot;local[*]&quot; works perfectly fine!\n                .master(&quot;spark://localhost:7077&quot;)\n                .config(&quot;spark.driver.host&quot;, hostAddress)\n                // I tried also these 2 properties below - did not help.\n                // .config(&quot;spark.driver.extraClassPath&quot;, applicationJarWithDialect)\n                // .config(&quot;spark.executor.extraClassPath&quot;, applicationJarWithDialect)\n                .getOrCreate();\n\n        // Trying to register the dialect on driver.\n        JdbcDialects.registerDialect(new MemSQL5Dialect());\n\n        var jdbcUrl = String.format(&quot;jdbc:mariadb://%s:3306/db&quot;, hostAddress);\n        var jdbcUsername = &quot;root&quot;;\n        var jdbcPassword = &quot;root&quot;;\n        var tableName = &quot;phonebook&quot;;\n\n        var properties = new Properties();\n        properties.put(&quot;user&quot;, jdbcUsername);\n        properties.put(&quot;password&quot;, jdbcPassword);\n        properties.put(&quot;driver&quot;, &quot;org.mariadb.jdbc.Driver&quot;);\n\n        try {\n            sparkSession.read().jdbc(jdbcUrl, tableName, properties)\n                    // If I change filter to something that doesn't require\n                    // dialect changes -- works fine as well!\n                    .filter(col(&quot;first_name&quot;).startsWith(&quot;J&quot;))\n                    .collectAsList()\n                    .forEach(System.out::println);\n        } finally {\n            sparkSession.close();\n        }\n    }\n}\n</code></pre>\n<p>Please help to understand what I am missing.</p>\n",
+    "tags" : [ "java", "apache-spark", "apache-spark-sql" ],
+    "owner" : {
+      "account_id" : 29353125,
+      "reputation" : 63,
+      "user_id" : 22489763,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/aa2a3dcf25f6997558e9df5649d04281?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Illia Chtchoma",
+      "link" : "https://stackoverflow.com/users/22489763/illia-chtchoma"
+    },
+    "is_answered" : true,
+    "view_count" : 88,
+    "answer_count" : 1,
+    "score" : 2,
+    "last_activity_date" : 1743696209,
+    "creation_date" : 1743538521,
+    "link" : "https://stackoverflow.com/questions/79549107/custom-spark-jdbcdialect-is-not-used-in-cluster-mode",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79553452,
+    "question_id" : 79549107,
+    "body" : "<p>It turned out, there were only 2 things that really mattered:</p>\n<ol>\n<li><p>The application JAR with the custom dialect had to be accessible for Spark workers. Same goes for DB driver. I put those into the folder where all other Spark dependency JARs were located.</p>\n</li>\n<li><p><em>(The key thing I missed)</em> The dialect registration had to occur <strong>on every worker</strong>, so I replaced</p>\n<pre class=\"lang-java prettyprint-override\"><code>JdbcDialects.registerDialect(new MemSQL5Dialect());\n</code></pre>\n<p>with</p>\n<pre class=\"lang-java prettyprint-override\"><code>new JavaSparkContext(sparkSession.sparkContext())\n    .parallelize(List.of(1))\n    .foreachPartition((VoidFunction&lt;Iterator&lt;Integer&gt;&gt;) integerIterator -&gt; {\n        JdbcDialects.registerDialect(new MemSQL5Dialect());\n    });\n</code></pre>\n</li>\n</ol>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 29353125,
+      "reputation" : 63,
+      "user_id" : 22489763,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/aa2a3dcf25f6997558e9df5649d04281?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Illia Chtchoma",
+      "link" : "https://stackoverflow.com/users/22489763/illia-chtchoma"
+    },
+    "creation_date" : 1743696209,
+    "last_activity_date" : 1743696209,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : { }
+}

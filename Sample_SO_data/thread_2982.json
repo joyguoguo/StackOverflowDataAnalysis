@@ -1,0 +1,277 @@
+{
+  "question" : {
+    "question_id" : 79580612,
+    "title" : "java classpath add a common file is no meaning?",
+    "body" : "<p>My Java program relies on a third-party configuration directory as part of its classpath. Initially, I directly appended the entire directory to the classpath using <code>-cp /a/b/c:</code>.</p>\n<p>However, I later discovered that some of the configuration files in this directory have an unintended impact on my application. In reality, I only need 4 specific configuration files out of the 8 total files present in their directory.</p>\n<p>I attempted to modify the classpath by explicitly specifying only the required files, like this:</p>\n\n<pre><code>-cp /a/b/c/1.xml:/a/b/c/2.xml\n</code></pre>\n<p>However, this approach did not work as expected. After reviewing the Java SE documentation, I learned that:</p>\n<ul>\n<li>Appending a directory (e.g., /a/b/c/) to the classpath will load class files and resource files from that directory.</li>\n<li>Appending a directory with a wildcard (e.g., /a/b/c/*) will load all JAR files from that directory.</li>\n</ul>\n<p>This raises the following questions:</p>\n<ol>\n<li>What happens when you append individual files (e.g., /a/b/c/1.xml) to the classpath? Are these files ignored?</li>\n<li>How can I configure my application to use only the 4 specific configuration files I need from the third-party directory, while excluding the other 4 files?</li>\n</ol>\n<hr />\n<p>update 2025-04-21</p>\n<p>Thanks to everyone's help. Let me provide more details about the specific scenario of my problem.\nI maintain a very old Java program that uses <code>guice-4.1.0</code>, and guice depends on the <code>commons-logging</code> package.\nIn my program, I use <code>slf4j-1.7.36</code> + <code>logback-1.2.12</code> to output logs. That is to say, my service includes <code>slf4j + logback + commons-logging</code>.</p>\n<p>Then, my program operates on the Hadoop cluster through the Hadoop client. And my program depends on the Hadoop configuration directory maintained by colleagues in other departments, but this directory contains a <code>commons-logging.properties</code> file.</p>\n<pre><code>-rwxr-xr-x 1 yarn yarn  1020 Sep 13  2024 commons-logging.properties\n-rwxr-xr-x 1 yarn yarn  7017 Sep 13  2024 core-site.xml\n-rwxr-xr-x 1 yarn yarn  1697 Sep 13  2024 hadoop-env.sh\n-rwxr-xr-x 1 yarn yarn  1015 Sep 19  2024 hadoop-metrics2.properties\n-rwxr-xr-x 1 yarn yarn 16926 Sep 13  2024 hdfs-site.xml\n-rwxr-xr-x 1 yarn yarn  1602 Sep 13  2024 health_check\n-rwxr-xr-x 1 yarn yarn 10640 Sep 13  2024 log4j.properties\n-rwxr-xr-x 1 yarn yarn   783 Sep 13  2024 mapred-env.sh\n-rwxr-xr-x 1 yarn yarn  7764 Sep 13  2024 mapred-site.xml\n-rwxr-xr-x 1 yarn yarn   967 Sep 13  2024 taskcontroller.cfg\n-rwxr-xr-x 1 yarn yarn  2406 Sep 13  2024 task-log4j.properties\n-rwxr-xr-x 1 yarn yarn  3615 Sep 13  2024 yarn-env.sh\n-rwxr-xr-x 1 yarn yarn 22970 Sep 13  2024 yarn-site.xml\n</code></pre>\n<p>In this <code>commons-logging.properties</code>, there is a configuration:</p>\n<pre><code>org.apache.commons.logging.Log = org.apache.commons.logging.impl.Log4JLogger\n\n</code></pre>\n<p>Our usage method is to add <code>hadoop-client-api-3.3.6</code> and <code>hadoop-client-runtime-3.3.6</code> to the dependencies, and then concatenate their Hadoop conf dir in the classpath.</p>\n<p>However, the additional commons-logging configuration item in their Hadoop conf dir causes my program to report an error, as it can't find the Log4j implementation class.\nI want to filter out other files that affect us by only concatenating several configuration files we use, such as <code>/conf/core-site.xml:/conf/hdfs-site.xml:/conf/yarn-site.xml</code>. Then, through testing, I found that adding ordinary files to the classpath is meaningless.</p>\n<p>Since this configuration directory is maintained by colleagues in other departments and is shared by many components, we can't directly modify their configuration. If we copy their configuration files to our configuration directory, there will be a problem that they may forget to notify us when they update the configuration.</p>\n<p>So, I hope there is an elegant way to solve this problem.\nCurrently, my solution is not to add their configuration directory to our classpath. When creating a new Configuration in the Hadoop client, change it to the <code>loadDefaults = false</code>, and add the specific path of <code>core-site.xml</code> <code>yarn-site.xml</code> <code>hdfs-site.xml</code> to the Configuration.\nThat is, it needs to be implemented by modifying the code, and many places need to be changed, including <code>UserGroupInformation.setConfiguration()</code>.</p>\n<pre><code>        Configuration configuration = new Configuration(false);\n        configuration.addResource(new Path(coreSiteXml));\n        configuration.addResource(new Path(hdfsSiteXml));\n\n</code></pre>\n",
+    "tags" : [ "java", "hadoop", "classpath" ],
+    "owner" : {
+      "account_id" : 3761893,
+      "reputation" : 417,
+      "user_id" : 3126580,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/864efafb116d05ccef8a4c7b4cc1f7db?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "hehe",
+      "link" : "https://stackoverflow.com/users/3126580/hehe"
+    },
+    "is_answered" : false,
+    "view_count" : 92,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1745204197,
+    "creation_date" : 1744961900,
+    "link" : "https://stackoverflow.com/questions/79580612/java-classpath-add-a-common-file-is-no-meaning",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79581117,
+    "question_id" : 79580612,
+    "body" : "<blockquote>\n<ol>\n<li>What happens when you append individual files (e.g., /a/b/c/1.xml) to the classpath? Are these files ignored?</li>\n</ol>\n</blockquote>\n<p>If those files are jar files, they are included. Otherwise they are, indeed, ignored. Adding an XML file to the classpath like this thus does absolutely nothing, unless it happens to be a valid jar file, which, presumably, they are not.</p>\n<blockquote>\n<p>How can I configure my application to use only the 4 specific configuration files I need from the third-party directory, while excluding the other 4 files?</p>\n</blockquote>\n<p><strong>There is no way to do this with the <code>-cp</code> parameter at all.</strong></p>\n<p>Some obvious options are:</p>\n<ol>\n<li><p>Make a classloader (as in, write some java code), which is a rather complex affair that requires quite a bit of java knowledge.</p>\n</li>\n<li><p>Make a new directory and copy only the 4 files you want, leaving out the 4 files you do not want. Then put that on the classpath.</p>\n</li>\n<li><p>Find out how to configure whatever is reading these files. Java itself doesn't read XML files from the classpath, you're using some library or application written <em>in</em> java that has the functionality &quot;I can read my config files from XML files I find in the classpath&quot;. Maybe it has a way to configure that behaviour. If so, that's a third option. If not, you're stuck with one of the above two choices.</p>\n</li>\n</ol>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 401843,
+      "reputation" : 107186,
+      "user_id" : 768644,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+      "display_name" : "rzwitserloot",
+      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+    },
+    "creation_date" : 1744982644,
+    "last_activity_date" : 1744982644,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140348179,
+    "post_id" : 79580612,
+    "body" : "Instead of using the classpath for this, which can have resource collisions, why not pass that directory as a system property, as in <code>java -Dthirdparty.configdir=&#47;a&#47;b&#47;c&#47;</code>?  Then you can pick and choose which files you will read from it, without relying on the classpath.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2053598,
+      "reputation" : 44936,
+      "user_id" : 1831987,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/38b1c37530189ec4471a43a618e33f67?s=256&d=identicon&r=PG",
+      "display_name" : "VGR",
+      "link" : "https://stackoverflow.com/users/1831987/vgr"
+    },
+    "creation_date" : 1744986558,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140347877,
+    "post_id" : 79580612,
+    "body" : "<i>Sounds like resources are being packaged incorrectly</i> In fact there&#39;s no doubt about it actually. If 3rd party software is requiring an actual file system <i>folder</i> to be present in order to work, then its resources are packaged incorrectly. You should probably correct that for them",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 22124137,
+      "reputation" : 4243,
+      "user_id" : 16376827,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/1ImPw.png?s=256",
+      "display_name" : "g00se",
+      "link" : "https://stackoverflow.com/users/16376827/g00se"
+    },
+    "creation_date" : 1744980519,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140347833,
+    "post_id" : 79580612,
+    "body" : "So resources won&#39;t magically become loaded in your application by virtue of being on/in the classpath.  It&#39;s just a directory/container to search when looking for things.  Your program has to request a resource to be loaded.  So you may want to be specific about how these errant are being loaded by your program.  If you only need W,X,Y,Z then you should only request those resources to load.  Your program must be asking for these other 4 files to be loaded for some reason.  And that&#39;s really important detail to explain in order to help you better.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 51881,
+      "reputation" : 39410,
+      "user_id" : 155020,
+      "user_type" : "registered",
+      "accept_rate" : 80,
+      "profile_image" : "https://i.sstatic.net/fEqVo.png?s=256",
+      "display_name" : "chubbsondubs",
+      "link" : "https://stackoverflow.com/users/155020/chubbsondubs"
+    },
+    "creation_date" : 1744978975,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140347328,
+    "post_id" : 79580612,
+    "body" : "<i>have an unintended impact on my application.</i> That&#39;s rather cryptic. What is it? Sounds like resources are being packaged incorrectly",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 22124137,
+      "reputation" : 4243,
+      "user_id" : 16376827,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/1ImPw.png?s=256",
+      "display_name" : "g00se",
+      "link" : "https://stackoverflow.com/users/16376827/g00se"
+    },
+    "creation_date" : 1744965615,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140347286,
+    "post_id" : 79580612,
+    "body" : "you can also use a single JAR as source for all resources/classes, from the (same) <a href=\"https://docs.oracle.com/en/java/javase/24/docs/specs/man/java.html#synopsis\" rel=\"nofollow noreferrer\">documentation</a>: &quot;<code>-jar</code> ... When you use <code>-jar</code>, the specified JAR file is the source of all user classes, and other class path settings are ignored.&quot;",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 31180,
+      "reputation" : 29752,
+      "user_id" : 85421,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/kKvXH.gif?s=256",
+      "display_name" : "user85421",
+      "link" : "https://stackoverflow.com/users/85421/user85421"
+    },
+    "creation_date" : 1744963974,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140347258,
+    "post_id" : 79580612,
+    "body" : "But ... anyway ... you can&#39;t add just a file to the classpath unless you change your application launcher to use a special custom classloader.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 47283,
+      "reputation" : 723428,
+      "user_id" : 139985,
+      "user_type" : "registered",
+      "accept_rate" : 69,
+      "profile_image" : "https://www.gravatar.com/avatar/147c5a9cc1feec049c50da791ac7d144?s=256&d=identicon&r=PG",
+      "display_name" : "Stephen C",
+      "link" : "https://stackoverflow.com/users/139985/stephen-c"
+    },
+    "creation_date" : 1744963161,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140347242,
+    "post_id" : 79580612,
+    "body" : "It seems like your real problem is your decision to load customer-defined config files via the classpath.  The class path is designed for loading (primarily) classes as the name implies, a (secondarily) other resources associated with the codebase.",
+    "score" : 6,
+    "owner" : {
+      "account_id" : 47283,
+      "reputation" : 723428,
+      "user_id" : 139985,
+      "user_type" : "registered",
+      "accept_rate" : 69,
+      "profile_image" : "https://www.gravatar.com/avatar/147c5a9cc1feec049c50da791ac7d144?s=256&d=identicon&r=PG",
+      "display_name" : "Stephen C",
+      "link" : "https://stackoverflow.com/users/139985/stephen-c"
+    },
+    "creation_date" : 1744962797,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140347241,
+    "post_id" : 79580612,
+    "body" : "If &quot;the configuration files in this directory have an unintended impact on my application&quot;, shouldn&#39;t you be fixing your application, instead of removing those files? It doesn&#39;t sound like a good application if having <i>extra</i> files makes it behave undesirably.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 6651855,
+      "reputation" : 292025,
+      "user_id" : 5133585,
+      "user_type" : "registered",
+      "accept_rate" : 96,
+      "profile_image" : "https://i.sstatic.net/dfqcw.png?s=256",
+      "display_name" : "Sweeper",
+      "link" : "https://stackoverflow.com/users/5133585/sweeper"
+    },
+    "creation_date" : 1744962770,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140347222,
+    "post_id" : 79580612,
+    "body" : "Why not just move the files you need to a separate directory, and use that directory as the class path?",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 6651855,
+      "reputation" : 292025,
+      "user_id" : 5133585,
+      "user_type" : "registered",
+      "accept_rate" : 96,
+      "profile_image" : "https://i.sstatic.net/dfqcw.png?s=256",
+      "display_name" : "Sweeper",
+      "link" : "https://stackoverflow.com/users/5133585/sweeper"
+    },
+    "creation_date" : 1744962374,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140347214,
+    "post_id" : 79580612,
+    "body" : "from the <a href=\"https://docs.oracle.com/en/java/javase/24/docs/specs/man/java.html#standard-options-for-java\" rel=\"nofollow noreferrer\">documentation</a>: &quot;<code>--class-path classpath</code>, <code>-classpath classpath</code>, or <code>-cp classpath</code> Specifies a list of <b>directories</b>, <b>JAR files</b>, and <b>ZIP archives</b> ...&quot;, that is, only <b>containers</b> of resources are expected, not the resources itself --- BTW, &quot;<i>will load class files and resource files from that directory.</i>&quot; is more like &quot;will <b>search</b>  ... in that directory&quot;",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 31180,
+      "reputation" : 29752,
+      "user_id" : 85421,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/kKvXH.gif?s=256",
+      "display_name" : "user85421",
+      "link" : "https://stackoverflow.com/users/85421/user85421"
+    },
+    "creation_date" : 1744962166,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79581117" : [ {
+      "comment_id" : 140348356,
+      "post_id" : 79581117,
+      "body" : "@user85421 Ah, of course, rereading that, it can be a confusing statement. Thanks for noticing!",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 401843,
+        "reputation" : 107186,
+        "user_id" : 768644,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+        "display_name" : "rzwitserloot",
+        "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+      },
+      "creation_date" : 1744990438,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140348337,
+      "post_id" : 79581117,
+      "body" : "my point was that &quot;<i>If those files are jar files, they are included.</i>&quot; can be interpreted that ONLY jar files are included",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 31180,
+        "reputation" : 29752,
+        "user_id" : 85421,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/kKvXH.gif?s=256",
+        "display_name" : "user85421",
+        "link" : "https://stackoverflow.com/users/85421/user85421"
+      },
+      "creation_date" : 1744989935,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140348076,
+      "post_id" : 79581117,
+      "body" : "That&#39;s misleading, user85421; jar files <i>are</i> zip files. <i>possibly</i> in an effort to shore up security, the extension of a filename is checked prior to the JVM deciding what to do with it, and thus there is a feature that only looks at files ending in <code>.zip</code> or <code>.jar</code>. (in the sense that misleading behaviour can be a way to unwittingly create security lapses, and thus one should err on the side of doing less when faced with confusing situations instead of doing more, and having a file named <code>foo.xml</code> that happens to be a valid zip therefore being on the classpath, is indeed confusing).",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 401843,
+        "reputation" : 107186,
+        "user_id" : 768644,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+        "display_name" : "rzwitserloot",
+        "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+      },
+      "creation_date" : 1744984609,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140348029,
+      "post_id" : 79581117,
+      "body" : "note: according the <a href=\"https://docs.oracle.com/en/java/javase/24/docs/specs/man/java.html#standard-options-for-java\" rel=\"nofollow noreferrer\">documentation</a>, ZIP archives are also included in the classpath",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 31180,
+        "reputation" : 29752,
+        "user_id" : 85421,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/kKvXH.gif?s=256",
+        "display_name" : "user85421",
+        "link" : "https://stackoverflow.com/users/85421/user85421"
+      },
+      "creation_date" : 1744983570,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

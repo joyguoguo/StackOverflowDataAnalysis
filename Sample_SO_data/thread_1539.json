@@ -1,0 +1,155 @@
+{
+  "question" : {
+    "question_id" : 79696963,
+    "title" : "How to configure TLS and cipher suites when using ssl bundles?",
+    "body" : "<p>I'm trying to configure cipher suites to be used in conjunction with Spring Boot SSL bundles. According to ChatGPT, it is supposed to work like this:</p>\n<pre class=\"lang-yaml prettyprint-override\"><code>spring:\n  ssl:\n    bundle:\n      jks:\n        foo:\n          keystore:\n            location: classpath:foo.pfx\n            password: &quot;&quot;\n            type: PKCS12\n          protocols:\n            - TLSv1.3\n          ciphers:\n            - TLS_AES_128_GCM_SHA256\n        bar:\n          keystore:\n            location: classpath:bar.pfx\n            password: &quot;&quot;\n            type: PKCS12\n          protocols:\n            - TLSv1.3\n          ciphers:\n            - TLS_AES_128_GCM_SHA256\n\nserver:\n  ssl:\n    server-name-bundles:\n      - server-name: foo.example.com\n        bundle: foo\n      - server-name: bar.example.net\n        bundle: bar\n\n</code></pre>\n<p>but it doesn't. Clients are still able to use TLSv1.2. Any idea how to get this working? Official documentation doesn't show any hints for specifying cipher suites.</p>\n",
+    "tags" : [ "java", "spring-boot", "ssl" ],
+    "owner" : {
+      "account_id" : 8866868,
+      "reputation" : 572,
+      "user_id" : 6621774,
+      "user_type" : "registered",
+      "accept_rate" : 60,
+      "profile_image" : "https://www.gravatar.com/avatar/6d039a85bf7ed098a60f40b585a18fa7?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Harry Developer",
+      "link" : "https://stackoverflow.com/users/6621774/harry-developer"
+    },
+    "is_answered" : false,
+    "view_count" : 162,
+    "answer_count" : 3,
+    "score" : 0,
+    "last_activity_date" : 1755609217,
+    "creation_date" : 1752145815,
+    "link" : "https://stackoverflow.com/questions/79696963/how-to-configure-tls-and-cipher-suites-when-using-ssl-bundles",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79697329,
+    "question_id" : 79696963,
+    "body" : "<p>According to <a href=\"https://docs.spring.io/spring-boot/appendix/application-properties/index.html\" rel=\"nofollow noreferrer\">https://docs.spring.io/spring-boot/appendix/application-properties/index.html</a>, the name of the property is <code>enabled-protocols</code> not <code>protocols</code>.</p>\n<p>This is confirmed by <a href=\"https://stackoverflow.com/questions/70390374\">How to enable multiple ssl protocol versions in Spring Boot?</a>.</p>\n<p>According to my reading of the code, SSL options can be specified in either a <code>server</code> or a <code>bundle</code>, though this doesn't appear to be stated in the official documentation.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 47283,
+      "reputation" : 723428,
+      "user_id" : 139985,
+      "user_type" : "registered",
+      "accept_rate" : 69,
+      "profile_image" : "https://www.gravatar.com/avatar/147c5a9cc1feec049c50da791ac7d144?s=256&d=identicon&r=PG",
+      "display_name" : "Stephen C",
+      "link" : "https://stackoverflow.com/users/139985/stephen-c"
+    },
+    "creation_date" : 1752163995,
+    "last_activity_date" : 1752165350,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79698172,
+    "question_id" : 79696963,
+    "body" : "<p>As for Spring Boot V3.3.x, none of any possible combination with <code>protocols</code> or <code>enable-protocols</code> will work.  As soon as one uses ssl-bundles in application.yaml, any protocol or cipher setting is ignored.</p>\n<p>However, there is a solution writing a <code>WebServerFactoryCustomizer</code> for Tomcat:</p>\n<pre class=\"lang-java prettyprint-override\"><code>    @Bean\n    public WebServerFactoryCustomizer&lt;TomcatServletWebServerFactory&gt; sslContextCustomizer() {\n        return factory -&gt; factory.addContextCustomizers(context -&gt; {\n            Service service = Container.getService(context.getParent());\n            for (var connector : service.findConnectors()) {\n                for (SSLHostConfig hostConfig : connector.findSslHostConfigs()) {\n                    hostConfig.setProtocols(&quot;TLSv1.3,TLSv1.2&quot;);\n                    hostConfig.setCiphers(String.join(&quot;,&quot;, List.of(\n                            /* TLSv1.3 cihpers */\n                            &quot;TLS_AES_256_GCM_SHA384&quot;,\n                            &quot;TLS_CHACHA20_POLY1305_SHA256&quot;,\n                            &quot;TLS_AES_128_GCM_SHA256 &quot;,\n                            /* TLSv1.2 ciphers */\n                            &quot;TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256&quot;,\n                            &quot;TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384&quot;,\n                            &quot;TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256&quot;\n                    )));\n                }\n            };\n        });\n    }\n</code></pre>\n<p>This code successfully sets protocol versions and ciphers for any configured containers. With a little more effort you can even configure different protocols and ciphers for different connectors. Please keep in mind, that this code may fail if you don't have SSL configured at all.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 8866868,
+      "reputation" : 572,
+      "user_id" : 6621774,
+      "user_type" : "registered",
+      "accept_rate" : 60,
+      "profile_image" : "https://www.gravatar.com/avatar/6d039a85bf7ed098a60f40b585a18fa7?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Harry Developer",
+      "link" : "https://stackoverflow.com/users/6621774/harry-developer"
+    },
+    "creation_date" : 1752229159,
+    "last_activity_date" : 1752229159,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79739947,
+    "question_id" : 79696963,
+    "body" : "<p>Just to add how ciphers can be configured via yaml for tls bundels.  Look at the options keyword inside the yaml below</p>\n<pre><code>spring:\n  ssl:\n    bundle:\n      jks:\n        foo:\n          protocol: TLS\n          options:\n            ciphers: ECDHE-ECDSA-AES128-GCM-SHA256,TLS_AES_256_GCM_SHA384\n            enabled-protocols: TLSv1.3\n</code></pre>\n<p>As a side note don't be surprised if the list of configured ciphers is longer than the cipher list provided by your tool. If you configure only RSA keys the server will no present you with ciphers that contain ECDSA only with RSA cyphers.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 21334535,
+      "reputation" : 13,
+      "user_id" : 15705964,
+      "user_type" : "registered",
+      "profile_image" : "https://lh6.googleusercontent.com/-I17mkyD8f1U/AAAAAAAAAAI/AAAAAAAAAAA/AMZuuckmeC1LF7Wdx75opY9HWgLlKs280g/s96-c/s256-rj/photo.jpg",
+      "display_name" : "Christian Giebel",
+      "link" : "https://stackoverflow.com/users/15705964/christian-giebel"
+    },
+    "creation_date" : 1755609217,
+    "last_activity_date" : 1755609217,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140580314,
+    "post_id" : 79696963,
+    "body" : "According to <a href=\"https://stackoverflow.com/questions/70390374\">stackoverflow.com/questions/70390374</a>, the property name should be <code>enabled-protocols</code> not `protocols.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 47283,
+      "reputation" : 723428,
+      "user_id" : 139985,
+      "user_type" : "registered",
+      "accept_rate" : 69,
+      "profile_image" : "https://www.gravatar.com/avatar/147c5a9cc1feec049c50da791ac7d144?s=256&d=identicon&r=PG",
+      "display_name" : "Stephen C",
+      "link" : "https://stackoverflow.com/users/139985/stephen-c"
+    },
+    "creation_date" : 1752162949,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79697329" : [ {
+      "comment_id" : 140582014,
+      "post_id" : 79697329,
+      "body" : "I won&#39;t downvote this, because I didn&#39;t specify a sprinb boot version, so this might be true for some version. I&#39;m using V3.3.x and it doesn&#39;t work that one. Please see below for a working solution.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 8866868,
+        "reputation" : 572,
+        "user_id" : 6621774,
+        "user_type" : "registered",
+        "accept_rate" : 60,
+        "profile_image" : "https://www.gravatar.com/avatar/6d039a85bf7ed098a60f40b585a18fa7?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Harry Developer",
+        "link" : "https://stackoverflow.com/users/6621774/harry-developer"
+      },
+      "creation_date" : 1752228209,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140581703,
+      "post_id" : 79697329,
+      "body" : "@HarryDeveloper Have you tried debugging it?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 47283,
+        "reputation" : 723428,
+        "user_id" : 139985,
+        "user_type" : "registered",
+        "accept_rate" : 69,
+        "profile_image" : "https://www.gravatar.com/avatar/147c5a9cc1feec049c50da791ac7d144?s=256&d=identicon&r=PG",
+        "display_name" : "Stephen C",
+        "link" : "https://stackoverflow.com/users/139985/stephen-c"
+      },
+      "creation_date" : 1752219323,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140580669,
+      "post_id" : 79697329,
+      "body" : "OK, but that still does not have any effects. Settings are getting ignored.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 8866868,
+        "reputation" : 572,
+        "user_id" : 6621774,
+        "user_type" : "registered",
+        "accept_rate" : 60,
+        "profile_image" : "https://www.gravatar.com/avatar/6d039a85bf7ed098a60f40b585a18fa7?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Harry Developer",
+        "link" : "https://stackoverflow.com/users/6621774/harry-developer"
+      },
+      "creation_date" : 1752172198,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

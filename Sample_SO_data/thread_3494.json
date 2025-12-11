@@ -1,0 +1,195 @@
+{
+  "question" : {
+    "question_id" : 79545999,
+    "title" : "How to access current retry interval value?",
+    "body" : "<p>I am using Spring Retry by creating a <code>RetryTemplate</code> as follows:</p>\n<pre><code>import com.example.MyRetryProperties;\nimport com.example.SomeRetryableException;\nimport lombok.RequiredArgsConstructor;\nimport org.springframework.context.annotation.Bean;\nimport org.springframework.context.annotation.Configuration;\nimport org.springframework.retry.annotation.EnableRetry;\nimport org.springframework.retry.support.RetryTemplate;\n\n@Configuration\n@EnableRetry\n@RequiredArgsConstructor\npublic class RetryConfiguration {\n\n    private final MyRetryProperties retryProperties;\n\n\n    @Bean\n    public RetryTemplate retryTemplate() {\n        return RetryTemplate.builder()\n                .exponentialBackoff(\n                        retryProperties.getInitialInterval(), // 500ms\n                        retryProperties.getMultiplier(), // 2.0\n                        retryProperties.getMaxInterval(),  // 2000ms\n                        false)\n                .withTimeout(retryProperties.getTimeout())\n                .retryOn(MyRetryableException.class)\n                .traversingCauses()\n                .build();\n    }\n}\n</code></pre>\n<p>If a retry is in progress, I know that I can access the current retry count using <code>RetryContext#getRetryCount</code>. Is it possible somehow to access the current interval value without calculating it based on the retry count (e.g. also from the context)?</p>\n<pre><code>import org.springframework.retry.RetryCallback;\nimport org.springframework.retry.RetryContext;\nimport org.springframework.retry.RetryListener;\n\npublic class MyRetryListener implements RetryListener {\n\n    @Override\n    public &lt;T, E extends Throwable&gt; void onError(RetryContext context, RetryCallback&lt;T, E&gt; callback, Throwable throwable) {\n\n        int retryCount = context.getRetryCount();\n        System.out.println(&quot;Current retryCount: &quot; + retryCount); // e.g. 3\n\n\n        int currentRetryInterval = // how?\n        System.out.println(&quot;Current retry interval: &quot; + currentRetryInterval); // e.g. 2000ms for the third retry\n    }\n}\n</code></pre>\n",
+    "tags" : [ "java", "spring", "spring-retry" ],
+    "owner" : {
+      "account_id" : 18586978,
+      "reputation" : 3850,
+      "user_id" : 15000097,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/yFl4M.jpg?s=256",
+      "display_name" : "Georgii Lvov",
+      "link" : "https://stackoverflow.com/users/15000097/georgii-lvov"
+    },
+    "is_answered" : true,
+    "view_count" : 161,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1743509881,
+    "creation_date" : 1743416757,
+    "link" : "https://stackoverflow.com/questions/79545999/how-to-access-current-retry-interval-value",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79546219,
+    "question_id" : 79545999,
+    "body" : "<p>The <code>RetryContext</code> doesn't know anything about the strategy that is being used so the only common denominator you can access is the <code>retryCount</code>. The only way is to do the calculation yourself, which means your listener needs to know which <code>BackOffPolicy</code> is being used.</p>\n<p>You could use the <code>getAttribute</code> from the <code>RetryContext</code> to get the <code>BackOffContext</code>, but trying to cast it to the actual one will probably fail.</p>\n<p>You might need to use reflection to actually get access to the field containing the calculated interval.</p>\n<pre class=\"lang-java prettyprint-override\"><code>import org.springframework.retry.RetryCallback;\nimport org.springframework.retry.RetryContext;\nimport org.springframework.retry.RetryListener;\nimport org.springframework.util.ReflectionUtils;\n\npublic class MyRetrListener implements RetryListener {\n\n    @Override\n    public &lt;T, E extends Throwable&gt; void onError(RetryContext context,\n                                                 RetryCallback&lt;T, E&gt; callback,\n                                                 Throwable throwable) {\n        Object backOffPolicy = context.getAttribute(&quot;backOffContext&quot;);\n\n        var intervalField = ReflectionUtils.findField(backOffPolicy.getClass(), &quot;interval&quot;);\n        var maxIntervalField = ReflectionUtils.findField(backOffPolicy.getClass(), &quot;maxInterval&quot;);\n\n        intervalField.setAccessible(true);\n        maxIntervalField.setAccessible(true);\n\n        long interval = (long) ReflectionUtils.getField(intervalField, backOffPolicy);\n        long maxInterval = (long) ReflectionUtils.getField(maxIntervalField, backOffPolicy);\n\n        long currentRetryInterval = Math.min(interval, maxInterval);\n\n        System.out.println(&quot;Retry count: &quot; + context.getRetryCount());\n        System.out.println(&quot;Current retry interval: &quot; + currentRetryInterval);\n    }\n}\n\n</code></pre>\n<p>Result for 4 retries as expected:</p>\n<pre><code>Retry count: 1\nCurrent retry interval: 500\nRetry count: 2\nCurrent retry interval: 1000\nRetry count: 3\nCurrent retry interval: 2000\nRetry count: 4\nCurrent retry interval: 2000\n\n</code></pre>\n",
+    "score" : 3,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126800,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1743423831,
+    "last_activity_date" : 1743509881,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140287182,
+    "post_id" : 79545999,
+    "body" : "See the logic in the <code>ExponentialBackOffContext.getSleepAndIncrement()</code>. That one is called from the <code>ExponentialBackOffPolicy.backOff(BackOffContext backOffContext)</code>, which, in turn, from the <code>RetryTemplate</code> and already after <code>doOnErrorInterceptors()</code>. So, what you log in your listener&#39;s <code>onError</code> is a previous value for the <code>interval</code> property. Not the one which is going to be used just after that for the current attempt failure sleep.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3273937,
+      "reputation" : 122596,
+      "user_id" : 2756547,
+      "user_type" : "registered",
+      "accept_rate" : 75,
+      "profile_image" : "https://www.gravatar.com/avatar/2158ce6e7c048277890eb64458864c1c?s=256&d=identicon&r=PG",
+      "display_name" : "Artem Bilan",
+      "link" : "https://stackoverflow.com/users/2756547/artem-bilan"
+    },
+    "creation_date" : 1743530154,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140284488,
+    "post_id" : 79545999,
+    "body" : "@ArtemBilan, I think it is, because if I add some counter started with 1 and its log as first line to the main retryable code and change the initial interval to 3s, I see immediately after first time exception thrown the Count in main: 1 Retry count: 1 Current retry interval: 3000, then it waits 3 seconds and so on. I assume that you are considering the RetryListener#onError method as &quot;on error occurring during a retry&quot;, but I consider it as &quot;on error occurring during an execution of the retryable code&quot;. Can be true?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 18586978,
+      "reputation" : 3850,
+      "user_id" : 15000097,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/yFl4M.jpg?s=256",
+      "display_name" : "Georgii Lvov",
+      "link" : "https://stackoverflow.com/users/15000097/georgii-lvov"
+    },
+    "creation_date" : 1743457216,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140284429,
+    "post_id" : 79545999,
+    "body" : "Sure! I see your solution. Good to know that you have managed that via reflection. Although I&#39;m still in doubts that <code>Current retry interval</code> is correct at that point. Since this one is what we had on currently ended retry attempt.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3273937,
+      "reputation" : 122596,
+      "user_id" : 2756547,
+      "user_type" : "registered",
+      "accept_rate" : 75,
+      "profile_image" : "https://www.gravatar.com/avatar/2158ce6e7c048277890eb64458864c1c?s=256&d=identicon&r=PG",
+      "display_name" : "Artem Bilan",
+      "link" : "https://stackoverflow.com/users/2756547/artem-bilan"
+    },
+    "creation_date" : 1743455809,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140284403,
+    "post_id" : 79545999,
+    "body" : "@ArtemBilan, I am getting the desired result, probably because even if <code>backOffPolicy.backOff(backOffContext)</code> is after <code>doOnErrorInterceptors</code>, but the<code>context.setAttribute(&quot;backOffContext&quot;, backOffContext);</code> is before",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 18586978,
+      "reputation" : 3850,
+      "user_id" : 15000097,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/yFl4M.jpg?s=256",
+      "display_name" : "Georgii Lvov",
+      "link" : "https://stackoverflow.com/users/15000097/georgii-lvov"
+    },
+    "creation_date" : 1743455270,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140283164,
+    "post_id" : 79545999,
+    "body" : "See <code>RetryTemplate</code> source code. The <code>doOnErrorInterceptors</code> happens before <code>backOffPolicy.backOff(backOffContext);</code>. So, maximum you can get from your listener callback is an info from the previous retry attempt. So, what you are asking is not possible by design. The currently calculate interval is used immediately in the <code>ExponentialBackOffPolicy</code> for <code>this.sleeper.sleep(sleepTime);</code>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3273937,
+      "reputation" : 122596,
+      "user_id" : 2756547,
+      "user_type" : "registered",
+      "accept_rate" : 75,
+      "profile_image" : "https://www.gravatar.com/avatar/2158ce6e7c048277890eb64458864c1c?s=256&d=identicon&r=PG",
+      "display_name" : "Artem Bilan",
+      "link" : "https://stackoverflow.com/users/2756547/artem-bilan"
+    },
+    "creation_date" : 1743435053,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140282306,
+    "post_id" : 79545999,
+    "body" : "Not sure, it will probably involve some trickery with reflection. But even with that you probably aren&#39;t getting the next interval without affecting the actual execution (at least looking at the code from the policies).",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126800,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1743423144,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140282197,
+    "post_id" : 79545999,
+    "body" : "@M.Deinum, I would also appreciate some tips about how to tell the RetryListener about Backoff policy (in case there are other options except pulling all intervals from application.properties directly). Because I tried to get <code>backOffContext</code> attribute from the context, which is apparently <code>ExponentialBackOffPolicy.ExponentialBackOffContext</code>, but is not public to pull values from there.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 18586978,
+      "reputation" : 3850,
+      "user_id" : 15000097,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/yFl4M.jpg?s=256",
+      "display_name" : "Georgii Lvov",
+      "link" : "https://stackoverflow.com/users/15000097/georgii-lvov"
+    },
+    "creation_date" : 1743421438,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140282102,
+    "post_id" : 79545999,
+    "body" : "No. The <code>RetryContext</code> doesn&#39;t know anything about the strategy that is being used so the only common denominator you can access is the <code>retryCount</code>. So the only way is to do the calculation yourself, which means your listener needs to know which <code>BackOffPolicy</code> is being used.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126800,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1743419977,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79546219" : [ {
+      "comment_id" : 140284352,
+      "post_id" : 79546219,
+      "body" : "I slightly edited your answer after tests, thanks for the help!",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 18586978,
+        "reputation" : 3850,
+        "user_id" : 15000097,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/yFl4M.jpg?s=256",
+        "display_name" : "Georgii Lvov",
+        "link" : "https://stackoverflow.com/users/15000097/georgii-lvov"
+      },
+      "creation_date" : 1743454395,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

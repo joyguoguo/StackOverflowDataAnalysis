@@ -1,0 +1,101 @@
+{
+  "question" : {
+    "question_id" : 79714758,
+    "title" : "Read files from storage account in Spark - Without using keys - Azure",
+    "body" : "<p>I am doing local development. Wish to run spark job locally on my desktop, and access files in storage account from my spark job.</p>\n<p>I don't have an option to use SAS tokens or access-keys for my storage account. Is there a way out.</p>\n",
+    "tags" : [ "java", "azure", "scala", "apache-spark" ],
+    "owner" : {
+      "account_id" : 481006,
+      "reputation" : 31844,
+      "user_id" : 894565,
+      "user_type" : "registered",
+      "accept_rate" : 76,
+      "profile_image" : "https://i.sstatic.net/tcDXH.png?s=256",
+      "display_name" : "Jatin",
+      "link" : "https://stackoverflow.com/users/894565/jatin"
+    },
+    "is_answered" : true,
+    "view_count" : 99,
+    "answer_count" : 2,
+    "score" : 0,
+    "last_activity_date" : 1753528375,
+    "creation_date" : 1753448110,
+    "link" : "https://stackoverflow.com/questions/79714758/read-files-from-storage-account-in-spark-without-using-keys-azure",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79714771,
+    "question_id" : 79714758,
+    "body" : "<p>I am using Java11:</p>\n<pre><code>&lt;dependency&gt;\n    &lt;groupId&gt;org.apache.hadoop&lt;/groupId&gt;\n    &lt;artifactId&gt;hadoop-azure&lt;/artifactId&gt;\n    &lt;version&gt;3.4.1&lt;/version&gt;\n&lt;/dependency&gt;\n&lt;dependency&gt;\n    &lt;groupId&gt;org.apache.hadoop&lt;/groupId&gt;\n    &lt;artifactId&gt;hadoop-client&lt;/artifactId&gt;\n    &lt;version&gt;3.4.1&lt;/version&gt;\n&lt;/dependency&gt;\n</code></pre>\n<p>Need to implement below for custom token provider:</p>\n<pre><code>package com.jp;\n\nimport com.azure.core.credential.AccessToken;\nimport com.azure.core.credential.TokenRequestContext;\nimport com.azure.identity.DefaultAzureCredential;\nimport com.azure.identity.DefaultAzureCredentialBuilder;\nimport org.apache.hadoop.conf.Configuration;\nimport org.slf4j.Logger;\nimport org.slf4j.LoggerFactory;\n\nimport java.time.OffsetDateTime;\nimport java.util.Date;\n\nclass CustomToken implements  org.apache.hadoop.fs.azurebfs.extensions.CustomTokenProviderAdaptee {\n    private Logger log = LoggerFactory.getLogger(getClass());\n    private String accountName;\n    private volatile AccessToken token;\n\n    @Override\n    public void initialize(Configuration configuration, String accountName) {\n        log.info(&quot;Custom Token to be initialized. Config: &quot; + configuration + &quot;. AccountName: &quot; + accountName);\n        this.accountName = accountName;\n    }\n\n    @Override\n    public String getAccessToken() {\n        if (token != null &amp;&amp; OffsetDateTime.now().isBefore(token.getExpiresAt().minusHours(2))) {\n            return token.getToken();\n        } else {\n            log.info(&quot;token has expired or not been set. &quot; +  token);\n            fetchAndSetToken();\n            return token.getToken();\n        }\n    }\n\n    private void fetchAndSetToken() {\n        DefaultAzureCredential creds = new DefaultAzureCredentialBuilder()\n                .build();\n        TokenRequestContext request = new TokenRequestContext();\n        request.addScopes(&quot;https://&quot; + accountName);\n        this.token = creds.getToken(request).block();\n        log.info(&quot;Token has been set. Expires at: &quot; + token.getExpiresAt() + &quot; . &quot; + token.isExpired());\n    }\n\n    @Override\n    public Date getExpiryTime() {\n        return new Date(token.getExpiresAt().toInstant().toEpochMilli());\n    }\n}\n</code></pre>\n<p>Below is the spark code</p>\n<pre><code>import org.apache.spark.sql.SparkSession\n\nobject Main {\n  def main(args: Array[String]): Unit = {\n    val spark = SparkSession.builder()\n      .appName(&quot;ReadFromADLS&quot;)\n      .master(&quot;local[*]&quot;)\n      .getOrCreate()\n\n    spark.conf.set(&quot;fs.azure.account.auth.type&quot;, &quot;Custom&quot;)\n    spark.conf.set(&quot;fs.azure.account.oauth.provider.type&quot;, &quot;com.jp.CustomToken&quot;)\n\n    // Define folder path (ADLS Gen2 syntax)\n    val folderPath = s&quot;abfss://&lt;container&gt;@&lt;storage-account&gt;.dfs.core.windows.net/path/to/folder&quot;\n\n    // Read files recursively\n    val df = spark.read\n      .option(&quot;header&quot;, &quot;true&quot;)\n      .option(&quot;inferSchema&quot;, &quot;true&quot;)\n      .option(&quot;recursiveFileLookup&quot;, &quot;true&quot;)\n      .csv(folderPath)\n\n    // Preview the data\n    df.printSchema()\n    df.show(10)\n  }\n\n}\n</code></pre>\n<p>Need to use below SparkVM args:</p>\n<pre><code>-XX:+IgnoreUnrecognizedVMOptions\n--add-opens=java.base/java.lang=ALL-UNNAMED\n--add-opens=java.base/java.lang.invoke=ALL-UNNAMED\n--add-opens=java.base/java.lang.reflect=ALL-UNNAMED\n--add-opens=java.base/java.io=ALL-UNNAMED\n--add-opens=java.base/java.net=ALL-UNNAMED\n--add-opens=java.base/java.nio=ALL-UNNAMED\n--add-opens=java.base/java.util=ALL-UNNAMED\n--add-opens=java.base/java.util.concurrent=ALL-UNNAMED\n--add-opens=java.base/java.util.concurrent.atomic=ALL-UNNAMED\n--add-opens=java.base/sun.nio.ch=ALL-UNNAMED\n--add-opens=java.base/sun.nio.cs=ALL-UNNAMED\n--add-opens=java.base/sun.security.action=ALL-UNNAMED\n--add-opens=java.base/sun.util.calendar=ALL-UNNAMED\n--add-opens=java.security.jgss/sun.security.krb5=ALL-UNNAMED\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 481006,
+      "reputation" : 31844,
+      "user_id" : 894565,
+      "user_type" : "registered",
+      "accept_rate" : 76,
+      "profile_image" : "https://i.sstatic.net/tcDXH.png?s=256",
+      "display_name" : "Jatin",
+      "link" : "https://stackoverflow.com/users/894565/jatin"
+    },
+    "creation_date" : 1753448828,
+    "last_activity_date" : 1753448828,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79715623,
+    "question_id" : 79714758,
+    "body" : "<p>Use Azurite <a href=\"https://learn.microsoft.com/en-us/azure/storage/common/storage-use-azurite?tabs=visual-studio%2Cblob-storage\" rel=\"nofollow noreferrer\">emulator</a> or a Docker container.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 12987761,
+      "reputation" : 634,
+      "user_id" : 9388056,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/lwIgN.jpg?s=256",
+      "display_name" : "Frank",
+      "link" : "https://stackoverflow.com/users/9388056/frank"
+    },
+    "creation_date" : 1753528375,
+    "last_activity_date" : 1753528375,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79715623" : [ {
+      "comment_id" : 140627653,
+      "post_id" : 79715623,
+      "body" : "@Jatin Azurite has default keys, you can either use with Docker or install t locally.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 12987761,
+        "reputation" : 634,
+        "user_id" : 9388056,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/lwIgN.jpg?s=256",
+        "display_name" : "Frank",
+        "link" : "https://stackoverflow.com/users/9388056/frank"
+      },
+      "creation_date" : 1753810241,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140625910,
+      "post_id" : 79715623,
+      "body" : "How does docker container help. It still wont be able to access from spark directly (without using key)",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 481006,
+        "reputation" : 31844,
+        "user_id" : 894565,
+        "user_type" : "registered",
+        "accept_rate" : 76,
+        "profile_image" : "https://i.sstatic.net/tcDXH.png?s=256",
+        "display_name" : "Jatin",
+        "link" : "https://stackoverflow.com/users/894565/jatin"
+      },
+      "creation_date" : 1753771850,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

@@ -1,0 +1,128 @@
+{
+  "question" : {
+    "question_id" : 79605646,
+    "title" : "Storing thread specific variables using ExecutorService",
+    "body" : "<p>Hi there I have an application that connects to n inboxes of users. Since I don't won't to poll new messages I am using the IMAP idle command and a message count listener to listen to new messages.</p>\n<p>Since imap.idle() blocks the current thread I am creating a thread for each user which then is being blocked.</p>\n<pre class=\"lang-java prettyprint-override\"><code>this.mailboxExecutor = Executors.newCachedThreadPool();\nConcurrentHashMap&lt;Long, Future&lt;?&gt;&gt; mailboxFutures =\n            new ConcurrentHashMap&lt;&gt;();\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>private void startMailboxListenerForUser(User user) {\n    Future&lt;?&gt; future =\n                mailboxExecutor.submit(\n                        () -&gt; {\n                            Thread.currentThread().setName(&quot;MailboxService-User-&quot; + user.getId());\n\n                            LOG.debug(&quot;Started new thread: {}&quot;, Thread.currentThread().getName());\n\n                            mailboxConnectionHandler.listenToMailbox(user);\n                });\n\n    mailboxFutures.put(user.getId(), future);\n}\n</code></pre>\n<p><strong>MailboxConnectionHandler</strong></p>\n<pre class=\"lang-java prettyprint-override\"><code> void listenToMailbox(User user) throws MessagingException {\n        Settings settings = user.getSettings();\n        Properties properties = getProperties(settings);\n\n        Store store = createStoreSession(properties, user);\n        IMAPFolder inbox = openInbox(store);\n\n        addMessageCountListener(inbox, user);\n\n        LOG.debug(&quot;Issuing IMAP idle command for mailbox of user {}.&quot;, user.getId());\n\n        inbox.idle();\n    }\n</code></pre>\n<h2>My thoughts</h2>\n<p>After reading some posts on <a href=\"https://stackoverflow.com/questions/1326014/how-can-i-interrupt-imaps-idle\">stack overflow</a> and the <a href=\"https://datatracker.ietf.org/doc/html/rfc2177.html\" rel=\"nofollow noreferrer\">IMAP Idle RFC</a> I need to be able to close the inbox of a user in order to break the idle command therefore I want to store the <code>IMAPFolder inbox</code> of each user to be able to do that.</p>\n<p>I thought of using <code>private static final ThreadLocal&lt;IMAPFolder&gt; inboxThreadLocal = new ThreadLocal&lt;&gt;(); </code> to set it but since I am using an executor service I think is is unsafe because it's a thread pool and threads are being reused therefore I am concerned about a thread using a &quot;wrong / old&quot; inbox.</p>\n<h2>My question</h2>\n<p>What is the correct way to store thread specific variables when using an executor service as I described it?</p>\n<p>One approach I thought of was using ConcurrentHashMap&lt;Long, IMAPFolder&gt; with the user Id being the key.</p>\n",
+    "tags" : [ "java", "multithreading", "jakarta-mail", "imap", "executorservice" ],
+    "owner" : {
+      "account_id" : 26002845,
+      "reputation" : 25,
+      "user_id" : 19713056,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/3cd42942602ba9feafb4add7df199789?s=256&d=identicon&r=PG",
+      "display_name" : "GeekChap",
+      "link" : "https://stackoverflow.com/users/19713056/geekchap"
+    },
+    "is_answered" : true,
+    "view_count" : 83,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1746368220,
+    "creation_date" : 1746363812,
+    "link" : "https://stackoverflow.com/questions/79605646/storing-thread-specific-variables-using-executorservice",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79605667,
+    "question_id" : 79605646,
+    "body" : "<blockquote>\n<p>I thought of using <code>private static final ThreadLocal&lt;IMAPFolder&gt; inboxThreadLocal = new ThreadLocal&lt;&gt;();</code> to set it but since I am using an executor service I think is is unsafe because it's a thread pool and threads are being reused therefore I am concerned about a thread using a &quot;wrong / old&quot; inbox.</p>\n</blockquote>\n<p>That's not necessarily unsafe.  If you opened all the folders you were ever going to open before you closed any, then there would be no <em>de facto</em> reuse of those threadlocals.  But that would be clunky, and even if it would be safe now, with your present design, it would be a risk for breaking later. The <code>IMAPFolder</code> data you want to track are task-specific, so if your threads are not (or might not be) also task specific then the threads are the wrong place to keep it.</p>\n<p>At this point, then, you need to recognize that using a lambda to specify the task for a thread is a convenience feature, not a requirement.  You should not feel obliged to do that if it gets in the way.  The generalization is to write a class that implements <code>Runnable</code> or <code>Callable</code> (choose one) to represent the task, and to provide instances of that class to your executor service.  If you make the <code>IMAPFolder</code> for each task an instance variable of the class then you will control its scope and lifetime and make it easily available to the code that needs to access it.</p>\n<p>You can also give the task class whatever constructor(s) and other methods are appropriate, and by keeping track of them separately from the executor service, you could exercise query and control, such as inquiring about numbers of unread messages or instructing them to shut down.</p>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 2792262,
+      "reputation" : 190832,
+      "user_id" : 2402272,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+      "display_name" : "John Bollinger",
+      "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+    },
+    "creation_date" : 1746365917,
+    "last_activity_date" : 1746368220,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140394790,
+    "post_id" : 79605646,
+    "body" : "P.S., Break the <code>static</code> habit! Code that depends on <code>static</code> variables is harder to test, harder to re-use, harder to modify, than code that depends on <a href=\"https://en.wikipedia.org/wiki/Dependency_injection\" rel=\"nofollow noreferrer\"><i>injected</i> objects</a>.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 422870,
+      "reputation" : 27582,
+      "user_id" : 801894,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/67f2ccd17aa6fd622152ad88fc2ae784?s=256&d=identicon&r=PG",
+      "display_name" : "Solomon Slow",
+      "link" : "https://stackoverflow.com/users/801894/solomon-slow"
+    },
+    "creation_date" : 1746375336,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140394783,
+    "post_id" : 79605646,
+    "body" : "TLDR version of what John Bollinger said in an answer (below): If you are using an <code>ExecutorService</code> then you should not be thinking about thread-specific anything. You should be thinking, <i>task</i> specific... One way would be to make the &quot;variables&quot; actually be <i>fields</i> of a <code>Runnable</code> object that you submit to the ExecutorService, and which represents the task. (In your case, &quot;task&quot; means &quot;client connection.&quot;)",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 422870,
+      "reputation" : 27582,
+      "user_id" : 801894,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/67f2ccd17aa6fd622152ad88fc2ae784?s=256&d=identicon&r=PG",
+      "display_name" : "Solomon Slow",
+      "link" : "https://stackoverflow.com/users/801894/solomon-slow"
+    },
+    "creation_date" : 1746374884,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140394465,
+    "post_id" : 79605646,
+    "body" : "Instead of submitting a Runnable to your ExecutorService, you could submit a <code>Callable&lt;Folder&gt;</code> which returns the changed Folder, which the ExecutorService would then make available as a <code>Future&lt;Folder&gt;</code>.  By the way, you might want to make use of <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/util/concurrent/ExecutorCompletionService.html\" rel=\"nofollow noreferrer\">ExecutorCompletionService</a>.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2053598,
+      "reputation" : 44936,
+      "user_id" : 1831987,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/38b1c37530189ec4471a43a618e33f67?s=256&d=identicon&r=PG",
+      "display_name" : "VGR",
+      "link" : "https://stackoverflow.com/users/1831987/vgr"
+    },
+    "creation_date" : 1746364865,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140394464,
+    "post_id" : 79605646,
+    "body" : "Using a <code>ConcurrentHashMap&lt;Long, IMAPFolder&gt;</code> with the user Id being the key provides a thread-safe and semantically correct way to associate each user with their active IMAP inbox when using an executor service. Remember to implement proper mechanisms for stopping listeners, handling errors, and managing resources.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2179728,
+      "reputation" : 81041,
+      "user_id" : 10819573,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/MWKel.jpg?s=256",
+      "display_name" : "Arvind Kumar Avinash",
+      "link" : "https://stackoverflow.com/users/10819573/arvind-kumar-avinash"
+    },
+    "creation_date" : 1746364850,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140394460,
+    "post_id" : 79605646,
+    "body" : "I would wrap the method <code>listenToMailbox(User user)</code> up in a class, add some state check member variables. The <code>ExecutorService</code>&#39;s <i>task</i> is to initialize and run that class. So Thread and class instance are locked to each other. If need be, Inside the class, I&#39;d add <code>this</code> to a global list/map of running/waiting threads, and remove once done. So anytime someone needs to interrupt/end the Thread, he can look up the list, and stop the relevant waiting classes/threads. I am not a fan of <code>ThreadLocal</code>, because that is one more Map lookup (and possible mixup) than needed IMO, regarding generics.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 2182934,
+      "reputation" : 2660,
+      "user_id" : 1932011,
+      "user_type" : "registered",
+      "accept_rate" : 71,
+      "profile_image" : "https://www.gravatar.com/avatar/612163480a1ccb4785fd647a003eefbb?s=256&d=identicon&r=PG",
+      "display_name" : "JayC667",
+      "link" : "https://stackoverflow.com/users/1932011/jayc667"
+    },
+    "creation_date" : 1746364667,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

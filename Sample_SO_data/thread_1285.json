@@ -1,0 +1,76 @@
+{
+  "question" : {
+    "question_id" : 79723065,
+    "title" : "Vaadin 23 Flow session not expiring when Spring Session JDBC session expires",
+    "body" : "<p>I have a multi-project setup with a Spring back-end and a Vaadin 23 Flow front-end. I'm trying to synchronize the session lifecycles so that when the back-end session expires, the Vaadin UI correctly displays the default &quot;Session Expired&quot; screen. However, my VaadinSession seems to be staying alive even after the back-end session has expired.</p>\n<p>My goal is for the Vaadin UI to show the default &quot;Session Expired&quot; overlay after the backend session timeout is reached.</p>\n<p><strong>Project Details</strong></p>\n<p><strong>Back-end project:</strong></p>\n<ul>\n<li>Java: 11</li>\n<li>Spring: 5.3.30</li>\n<li>Session Management: spring-session-jdbc to store sessions in a MySQL database.</li>\n<li>Session Timeout: Configured to 30 seconds.</li>\n</ul>\n<p><strong>Front-end project:</strong></p>\n<ul>\n<li>Java: 11</li>\n<li>Vaadin: 23.3.11</li>\n</ul>\n<p><strong>Problem Description:</strong></p>\n<ul>\n<li><p>I start a session by making a request to my backend's /session/start endpoint from the Vaadin UI.</p>\n</li>\n<li><p>The backend successfully creates a session with a 30-second timeout.</p>\n</li>\n<li><p>I wait for more than 30 seconds without any user interaction.</p>\n</li>\n<li><p>The backend session expires, as confirmed by my SessionEventListener logging a SessionDestroyedEvent and from the database too.</p>\n</li>\n<li><p>After the session expires, I interact with the Vaadin UI (e.g., by clicking a button that performs a Vaadin-side action like VaadinSession.getCurrent().setAttribute).</p>\n</li>\n</ul>\n<p><strong>Example:</strong></p>\n<pre><code>Button pingButton = new Button(&quot;Ping UI&quot;, e -&gt; {\n            UI ui = UI.getCurrent();\n            ui.access(() -&gt; {\n                try {\n                    VaadinSession.getCurrent().setAttribute(&quot;ping&quot;, &quot;pong&quot;);\n                    Notification.show(&quot;Ping successful&quot;);\n                } catch (Exception ex) {\n                    Notification.show(&quot;Session expired&quot;);\n                }\n            });\n        });\n</code></pre>\n<p><strong>Expected behavour</strong></p>\n<p>The Vaadin UI should detect the expired backend session and display the &quot;Session Expired&quot; overlay.</p>\n<p><strong>Actual behavior</strong></p>\n<p>The Vaadin UI continues to function as if the session is still active. My pingButton's code VaadinSession.getCurrent().setAttribute(&quot;ping&quot;, &quot;pong&quot;) executes successfully, and a &quot;Ping successful&quot; notification is shown.</p>\n<p>This indicates that my VaadinSession is not expiring in sync with the spring-session-jdbc managed HttpSession.</p>\n<p><strong>What I've Tried</strong></p>\n<p>I understand that Vaadin's heartbeat mechanism can keep the underlying HTTP session alive. I've tried a few approaches to synchronize the timeouts, but none have worked as expected.</p>\n<p>Attempt 1: Using a custom RequestHandler.</p>\n<p>I created a VaadinServiceInitListener with a RequestHandler that checks for the existence of the HttpSession and manually closes the VaadinSession if it's not found. The RequestHandler is called, but httpRequest.getSession(false) does not seem to return null even after the Spring Session has expired. This leads me to believe the servlet container's session object is still present, or my handler is not executing at the right time.</p>\n<p><strong>My CustomServiceInitListener:</strong></p>\n<pre><code>import com.vaadin.flow.server.*;\nimport javax.servlet.annotation.WebListener;\nimport javax.servlet.http.HttpServletRequest;\nimport javax.servlet.http.HttpSession;\n\n@WebListener\npublic class CustomServiceInitListener implements VaadinServiceInitListener {\n    @Override\n    public void serviceInit(ServiceInitEvent event) {\n        event.addRequestHandler((vaadinSession, request, response) -&gt; {\n            VaadinServletRequest servletRequest = (VaadinServletRequest) request;\n            HttpServletRequest httpRequest = servletRequest.getHttpServletRequest();\n            HttpSession httpSession = httpRequest.getSession(false);\n\n            if (httpSession == null) {\n                vaadinSession.close();\n                return true;\n            }\n            return false;\n        });\n    }\n}\n</code></pre>\n<p>Attempt 2: Configuring Vaadin's session timeout in web.xml.</p>\n<p>I removed the custom RequestHandler and tried to use servlet initialization parameters to control Vaadin's session timeout, aiming to make it shorter than the Spring session timeout.</p>\n<p><strong>My web.xml for the Vaadin project:</strong></p>\n<pre><code>&lt;web-app xmlns=&quot;http://xmlns.jcp.org/xml/ns/javaee&quot; version=&quot;4.0&quot;&gt;\n    &lt;servlet&gt;\n        &lt;servlet-name&gt;vaadin&lt;/servlet-name&gt;\n        &lt;servlet-class&gt;com.vaadin.flow.server.VaadinServlet&lt;/servlet-class&gt;\n        &lt;init-param&gt;\n            &lt;param-name&gt;session-timeout&lt;/param-name&gt;\n            &lt;param-value&gt;25&lt;/param-value&gt;\n        &lt;/init-param&gt;\n        &lt;init-param&gt;\n            &lt;param-name&gt;closeIdleSessions&lt;/param-name&gt;\n            &lt;param-value&gt;true&lt;/param-value&gt;\n        &lt;/init-param&gt;\n        &lt;load-on-startup&gt;1&lt;/load-on-startup&gt;\n    &lt;/servlet&gt;\n    &lt;servlet-mapping&gt;\n        &lt;servlet-name&gt;vaadin&lt;/servlet-name&gt;\n        &lt;url-pattern&gt;/*&lt;/url-pattern&gt;\n    &lt;/servlet-mapping&gt;\n&lt;/web-app&gt;\n</code></pre>\n<p>Even with this configuration, the Vaadin session does not expire after 25 seconds of inactivity.</p>\n<p>I suspect there's a fundamental aspect of how Spring Session and Vaadin's session management interact that I'm missing, especially in a non-Spring-Boot environment using web.xml and spring-session-jdbc.</p>\n<p>How can I correctly configure my Vaadin 23 Flow application to ensure the VaadinSession expires as soon as the spring-session-jdbc session expires, triggering the default &quot;Session Expired&quot; UI?</p>\n",
+    "tags" : [ "java", "spring-session", "vaadin23", "vaadin-session" ],
+    "owner" : {
+      "account_id" : 28712267,
+      "reputation" : 23,
+      "user_id" : 21987550,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/AAcHTtfD5VHQPsJAdYYyrCENDAmfCG2fsqnkXivwuRywOw=k-s256",
+      "display_name" : "K G S Varun Teja",
+      "link" : "https://stackoverflow.com/users/21987550/k-g-s-varun-teja"
+    },
+    "is_answered" : false,
+    "view_count" : 64,
+    "answer_count" : 0,
+    "score" : 0,
+    "last_activity_date" : 1754099290,
+    "creation_date" : 1754099290,
+    "link" : "https://stackoverflow.com/questions/79723065/vaadin-23-flow-session-not-expiring-when-spring-session-jdbc-session-expires",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140721299,
+    "post_id" : 79723065,
+    "body" : "&quot;Yes, I understand but this was the requirement.&quot;, I would recommend to challenge that requirement.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 12280349,
+      "reputation" : 10658,
+      "user_id" : 8962195,
+      "user_type" : "registered",
+      "profile_image" : "https://lh6.googleusercontent.com/-ChBQjQ88R30/AAAAAAAAAAI/AAAAAAAACI0/3U1w_xL02pg/s256-rj/photo.jpg",
+      "display_name" : "Tatu Lund",
+      "link" : "https://stackoverflow.com/users/8962195/tatu-lund"
+    },
+    "creation_date" : 1757318301,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140711295,
+    "post_id" : 79723065,
+    "body" : "Yes, I understand but this was the requirement. I&#39;ll try to use the heartbeat concept.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 28712267,
+      "reputation" : 23,
+      "user_id" : 21987550,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/AAcHTtfD5VHQPsJAdYYyrCENDAmfCG2fsqnkXivwuRywOw=k-s256",
+      "display_name" : "K G S Varun Teja",
+      "link" : "https://stackoverflow.com/users/21987550/k-g-s-varun-teja"
+    },
+    "creation_date" : 1756891373,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140689730,
+    "post_id" : 79723065,
+    "body" : "Why you want to let HttpSession expire by JDBC session in the first place? I find your setup highly unusual. So one solution could be to work it other way round. I think in your case it is Vaadin&#39;s heart beat could interfere the Spring Session JDBC mechanism. You could disable Vaadin&#39;s heart beat. But I am not sure as the heart beat is by default five minutes, i.e. longer than your 30 seconds.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 12280349,
+      "reputation" : 10658,
+      "user_id" : 8962195,
+      "user_type" : "registered",
+      "profile_image" : "https://lh6.googleusercontent.com/-ChBQjQ88R30/AAAAAAAAAAI/AAAAAAAACI0/3U1w_xL02pg/s256-rj/photo.jpg",
+      "display_name" : "Tatu Lund",
+      "link" : "https://stackoverflow.com/users/8962195/tatu-lund"
+    },
+    "creation_date" : 1756102404,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

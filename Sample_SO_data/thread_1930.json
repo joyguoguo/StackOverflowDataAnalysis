@@ -1,0 +1,99 @@
+{
+  "question" : {
+    "question_id" : 79663022,
+    "title" : "NPE after assigning object - Initialization order",
+    "body" : "<h2>Setup</h2>\n<p>I recently stumbled upon an interesting situation on the topic of execution order and behavior on variable assignments. Have a look at the following snippet:</p>\n<pre class=\"lang-java prettyprint-override\"><code>static class Foo {\n  int x = 0;\n  Foo() {}\n}\n    \nstatic Foo foo = null;\n    \npublic static void main(String[] args) {\n  System.out.println(&quot;Before foo: &quot; + foo);\n  foo.x = setupFoo();\n  System.out.println(&quot;After foo.x: &quot; + foo.x);\n}\n\nstatic int setupFoo() {\n  foo = new Foo();\n  foo.x = 1;\n  System.out.println(&quot;Setup foo.x: &quot; + foo.x);\n  return 2;\n}\n</code></pre>\n<p>The output is:</p>\n<pre class=\"lang-java prettyprint-override\"><code>Before foo: null\nSetup foo.x: 1\nException in thread &quot;main&quot; java.lang.NullPointerException:\n  Cannot assign field &quot;x&quot; because &quot;Test.foo&quot; is null\n</code></pre>\n<p><em>(Executed on OpenJDK Temurin-21.0.1+12)</em></p>\n<h2>Observation</h2>\n<p>Now, I would have expected this to either throw immediately at <code>foo.x = setupFoo()</code> already, because <code>foo</code> at that moment is still <code>null</code>, or alternatively that it does not throw at all because <code>setupFoo()</code> does properly setup the instance <code>foo = new Foo()</code>.</p>\n<p>But for some reason it does a mix. It enters the method despite <code>foo</code> being <code>null</code> when <code>foo.x = setupFoo()</code>, then fully goes through <code>setupFoo()</code> that would setup <code>foo</code> properly. But then when coming back to <code>main</code> it crashes, saying that <code>foo</code> is <code>null</code> - which it was originally but is not anymore.</p>\n<h2>Question</h2>\n<p>I would like to understand why it is behaving as observed. Which parts in the JLS come at play here?</p>\n<p>Perhaps someone also knows the reasoning behind this.</p>\n<h2>Details</h2>\n<p>After removing the prints, this is the relevant bytecode (<code>javap -v</code>):</p>\n<pre class=\"lang-java prettyprint-override\"><code>public static void main(java.lang.String[]);\n  descriptor: ([Ljava/lang/String;)V\n  flags: (0x0009) ACC_PUBLIC, ACC_STATIC\n  Code:\n    stack=2, locals=1, args_size=1\n      0: getstatic     #7          // Field foo:LTest$Foo;\n      3: invokestatic  #13         // Method setupFoo:()I\n      6: putfield      #17         // Field Test$Foo.x:I\n      9: return\n    LineNumberTable:\n    line 10: 0\n    line 11: 9\n\nstatic int setupFoo();\n  descriptor: ()I\n  flags: (0x0008) ACC_STATIC\n  Code:\n    stack=2, locals=0, args_size=0\n      0: new           #18         // class Test$Foo\n      3: dup\n      4: invokespecial #23         // Method Test$Foo.&quot;&lt;init&gt;&quot;:()V\n      7: putstatic     #7          // Field foo:LTest$Foo;\n    10: getstatic     #7           // Field foo:LTest$Foo;\n    13: iconst_1\n    14: putfield      #17          // Field Test$Foo.x:I\n    17: iconst_2\n    18: ireturn\n    LineNumberTable:\n    line 14: 0\n    line 15: 10\n    line 16: 17\n</code></pre>\n<p>If I get it right, it appears that the behavior is mostly explained by this bit here:</p>\n<pre class=\"lang-java prettyprint-override\"><code>0: getstatic     #7   // Field foo:LTest$Foo;\n3: invokestatic  #13  // Method setupFoo:()I\n6: putfield      #17  // Field Test$Foo.x:I\n</code></pre>\n<p>which:</p>\n<ol>\n<li>gets a reference to the field <code>foo</code> to assign to (currently <code>null</code>)</li>\n<li>then calls <code>setupFoo()</code> and processes it fully, making <code>foo</code> non-null</li>\n<li>and then trying to do the assignment <code>foo.x</code> but the reference <code>foo</code> was put on the stack before the method call, so it is still <code>null</code> in this context</li>\n</ol>\n",
+    "tags" : [ "java", "nullpointerexception", "initialization-order" ],
+    "owner" : {
+      "account_id" : 2803497,
+      "reputation" : 26330,
+      "user_id" : 2411243,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/W96lW.png?s=256",
+      "display_name" : "Zabuzard",
+      "link" : "https://stackoverflow.com/users/2411243/zabuzard"
+    },
+    "is_answered" : true,
+    "view_count" : 283,
+    "answer_count" : 1,
+    "score" : 10,
+    "last_activity_date" : 1749710566,
+    "creation_date" : 1749709811,
+    "link" : "https://stackoverflow.com/questions/79663022/npe-after-assigning-object-initialization-order",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79663036,
+    "question_id" : 79663022,
+    "body" : "<p>This behaviour is as specified in <a href=\"https://docs.oracle.com/javase/specs/jls/se22/html/jls-15.html#jls-15.26.1\" rel=\"noreferrer\">JLS 15.26.1</a>.</p>\n<blockquote>\n<p>If the left-hand operand expression is a field access expression\n<code>e.f</code>, possibly enclosed in one or more pairs of parentheses, then:</p>\n<ul>\n<li><p>First, the expression <code>e</code> is evaluated. If evaluation of <code>e</code> completes abruptly, the assignment expression completes abruptly for\nthe same reason.</p>\n</li>\n<li><p>Next, the right hand operand is evaluated. If evaluation of the right hand expression completes abruptly, the assignment expression\ncompletes abruptly for the same reason.</p>\n</li>\n<li><p>Then, if the field denoted by <code>e.f</code> is not static and the result of the evaluation of <code>e</code> above is <code>null</code>, then a <code>NullPointerException</code>\nis thrown.</p>\n</li>\n<li><p>[...]</p>\n</li>\n</ul>\n</blockquote>\n<p>Indeed, <code>foo</code> will be evaluated first, then <code>setUpFoo</code>, and only then the null check happens, on the old value of <code>foo</code>.</p>\n",
+    "score" : 13,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 6651855,
+      "reputation" : 292025,
+      "user_id" : 5133585,
+      "user_type" : "registered",
+      "accept_rate" : 96,
+      "profile_image" : "https://i.sstatic.net/dfqcw.png?s=256",
+      "display_name" : "Sweeper",
+      "link" : "https://stackoverflow.com/users/5133585/sweeper"
+    },
+    "creation_date" : 1749710566,
+    "last_activity_date" : 1749710566,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140507559,
+    "post_id" : 79663022,
+    "body" : "The relevant part of the JLS is here <a href=\"https://docs.oracle.com/javase/specs/jls/se23/html/jls-15.html#jls-15.26.1\" rel=\"nofollow noreferrer\">docs.oracle.com/javase/specs/jls/se23/html/&hellip;</a>  If the left-hand operand expression is a field access expression e.f, then: - first, the expression e is evaluated - next, the right hand operand is evaluated - then, if the field denoted by e.f is not static and the result of the evaluation of e above is null, a NullPointerException is thrown - otherwise, the variable denoted by e.f is assigned the value of the right hand operand  But it doesn&#39;t explain <i>why</i> (technical/practical reasons) this is the standard behavior.",
+    "score" : 5,
+    "owner" : {
+      "account_id" : 25382098,
+      "reputation" : 96,
+      "user_id" : 19194333,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2944d1ce4769cce5cdc4af59b10a5c70?s=256&d=identicon&r=PG",
+      "display_name" : "Vexcess",
+      "link" : "https://stackoverflow.com/users/19194333/vexcess"
+    },
+    "creation_date" : 1749710364,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79663036" : [ {
+      "comment_id" : 140514705,
+      "post_id" : 79663036,
+      "body" : "<i>&quot;Would be interesting to know why it is designed like that.&quot;</i>- It is consistent with the (informal) Java rule that operands of an expression are evaluated from left to right.  Also, having the meaning of the LHS of a assignment <i>depend</i> on the RHS expression is 1) weird, and 2) counter the notion that code should be easy to understand.",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 47283,
+        "reputation" : 723428,
+        "user_id" : 139985,
+        "user_type" : "registered",
+        "accept_rate" : 69,
+        "profile_image" : "https://www.gravatar.com/avatar/147c5a9cc1feec049c50da791ac7d144?s=256&d=identicon&r=PG",
+        "display_name" : "Stephen C",
+        "link" : "https://stackoverflow.com/users/139985/stephen-c"
+      },
+      "creation_date" : 1749982532,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140509340,
+      "post_id" : 79663036,
+      "body" : "Maybe one way to think of it is that the assignment notionally gets transformed by the compiler into something like <code>assign_field(e, rhs, FIELD_ID_f)</code> so it first evaluates the argument <code>e</code>, then the argument <code>rhs</code> (and <code>FIELD_ID_f</code> is a placeholder for some JVM index or something which is a constant), and then <code>assign_field</code> checks its first argument for null before performing the assignment.",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 8393429,
+        "reputation" : 3133,
+        "user_id" : 6301420,
+        "user_type" : "registered",
+        "accept_rate" : 80,
+        "profile_image" : "https://www.gravatar.com/avatar/dce0d5c270fb7f85268b07f07f985e9b?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Daniel Schepler",
+        "link" : "https://stackoverflow.com/users/6301420/daniel-schepler"
+      },
+      "creation_date" : 1749749535,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

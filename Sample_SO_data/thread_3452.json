@@ -1,0 +1,60 @@
+{
+  "question" : {
+    "question_id" : 79548672,
+    "title" : "Why Flink States in rocksdb are not retaining from checkpoints after a runtime failure?",
+    "body" : "<p>I am running a Flink job for a use case of joining Adwords info and user events. I need to store those ad specific events in state to join with Adwords data that arrives late.</p>\n<p>After a failure , the states i stored are not retaining . The states are freshly starts and stores events that arrive after checkpoint only. Why this occur am i implementing something wrong . let me know?</p>\n<pre><code>public static void main(String[] args) throws Exception {\n        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();\n        env.getCheckpointConfig().setCheckpointingMode(CheckpointingMode.EXACTLY_ONCE);\n        env.getCheckpointConfig().setMinPauseBetweenCheckpoints(100);\n        env.getCheckpointConfig().setTolerableCheckpointFailureNumber(3);\n        env.getCheckpointConfig().setMaxConcurrentCheckpoints(1);\n        env.getCheckpointConfig().setExternalizedCheckpointCleanup(\n                CheckpointConfig.ExternalizedCheckpointCleanup.RETAIN_ON_CANCELLATION);\n        env.getCheckpointConfig().enableUnalignedCheckpoints();\n        Configuration config = new Configuration();\n        EmbeddedRocksDBStateBackend rocksDB = new EmbeddedRocksDBStateBackend().configure(config,null);\n\n        env.setStateBackend(rocksDB);\n        config.setString(&quot;state.backend.rocksdb.localdir&quot;,&quot;/home/flinkJob/Rockdb&quot;);\n\n        env.getCheckpointConfig().setCheckpointStorage(&quot;file:///home/flinkJob/FlinkCheckpoints&quot;);\n        env.setParallelism(1);\n        env.enableCheckpointing(7500);\n\n        KafkaSource&lt;String&gt; source = KafkaSource.&lt;String&gt;builder()\n                .setBootstrapServers(&quot;localhost:9092&quot;)\n                .setTopics(&quot;Events&quot;)\n                .setGroupId(&quot;my-group&quot;)\n                .setStartingOffsets(OffsetsInitializer.committedOffsets(OffsetResetStrategy.EARLIEST))\n                .setValueOnlyDeserializer(new SimpleStringSchema())\n                .setProperty(&quot;commit.offsets.on.checkpoint&quot;, &quot;true&quot;)\n                .build();\n\n        final OutputTag&lt;JSONObject&gt; gclidTag = new OutputTag&lt;&gt;(&quot;gclid-events&quot;){};\n\n        SingleOutputStreamOperator&lt;JSONObject&gt; kafkaStream = env.fromSource(source, WatermarkStrategy.noWatermarks(), &quot;Kafka Source&quot;).slotSharingGroup(&quot;Slot1&quot;)\n                .process(new StringToJson()).slotSharingGroup(&quot;Slot1&quot;);\n\n        SingleOutputStreamOperator&lt;JSONObject&gt; eventStream = kafkaStream\n                .process(new SplitEvents());\n\n        DataStream&lt;JSONObject&gt; gclidStream = eventStream.getSideOutput(gclidTag);\n\n\n        DataStreamSink&lt;JSONObject&gt; nonGclidStream = eventStream\n                .addSink(new fileWrite());\n\n        DataStream&lt;JSONObject&gt; adwordsStream = env.fromData(\n                        createAdwordsEntry(&quot;123456&quot;, &quot;Campaign A&quot;, &quot;Ad 1&quot;, &quot;AccountIdA&quot;),\n                        createAdwordsEntry(&quot;24567&quot;, &quot;Campaign B&quot;, &quot;Ad 2&quot;, &quot;AccountIdB&quot;),\n                        createAdwordsEntry(&quot;789789&quot;, &quot;Campaign C&quot;, &quot;Ad 3&quot;, &quot;AccountIdC&quot;),\n                        createAdwordsEntry(&quot;123456&quot;, &quot;Campaign A&quot;, &quot;Ad 1&quot;, &quot;AccountIdA&quot;),\n                        createAdwordsEntry(&quot;24567&quot;, &quot;Campaign B&quot;, &quot;Ad 2&quot;, &quot;AccountIdB&quot;),\n                        createAdwordsEntry(&quot;789789&quot;, &quot;Campaign C&quot;, &quot;Ad 3&quot;, &quot;AccountIdC&quot;),\n                        createAdwordsEntry(&quot;123456&quot;, &quot;Campaign A&quot;, &quot;Ad 1&quot;, &quot;AccountIdA&quot;)\n                ).map(new MapFunction&lt;JSONObject, JSONObject&gt;(){\n                    @Override\n                    public JSONObject map(JSONObject value) throws Exception {\n                        Thread.sleep(5000);\n                        return value;\n                    }\n                })\n                .keyBy(event -&gt; event.getString(&quot;gclid&quot;));\n\n        DataStreamSink&lt;JSONObject&gt; joinedStream = gclidStream\n                .keyBy(data -&gt; data.getString(&quot;gclid&quot;))\n                .connect(adwordsStream.keyBy(data -&gt; data.getString(&quot;gclid&quot;)))\n                .process(new JoinFunction()).slotSharingGroup(&quot;Slot6&quot;)\n                .addSink(new fileWrite()).slotSharingGroup(&quot;Slot6&quot;);\n\n        env.execute(&quot;Flink 1&quot;);\n    }\n</code></pre>\n<p>This is the join operator that handles the joining and storing of states</p>\n<pre><code>public class JoinFunction extends KeyedCoProcessFunction&lt;String, JSONObject, JSONObject, JSONObject&gt; {\n    private transient MapState&lt;String, JSONObject&gt; gclidState;\n\n\n    @Override\n    public void open(Configuration parameters) {\n        MapStateDescriptor&lt;String, JSONObject&gt; descriptor =\n                new MapStateDescriptor&lt;&gt;(\n                        &quot;gclidState&quot;,\n                        Types.STRING,\n                        Types.GENERIC(JSONObject.class)\n                );\n        gclidState = getRuntimeContext().getMapState(descriptor);\n    }\n\n    @Override\n    public void processElement1(JSONObject event, Context ctx, Collector&lt;JSONObject&gt; out) throws Exception {\n\n        String gclid = event.getString(&quot;gclid&quot;);\n        gclidState.put(gclid, event);\n        long midnightTimestamp = getMidnightTimestamp();\n\n        try (FileWriter writer = new FileWriter(&quot;states.txt&quot;, true)) {\n            for (Map.Entry&lt;String, JSONObject&gt; entry : gclidState.entries()) {\n                writer.write(&quot;\\n\\n&quot; + entry.getKey() + entry.getValue());\n            }\n        } catch (IOException e) {\n            throw new RuntimeException(e);\n        }\n    }\n\n    @Override\n    public void processElement2(JSONObject event, Context ctx, Collector&lt;JSONObject&gt; out) throws Exception {\n\n        String gclid = event.getString(&quot;gclid&quot;);\n        JSONObject gclidEvent = gclidState.get(gclid);\n\n\n        if (gclidEvent != null) {\n            formatJoinedData(gclidEvent, event, out);\n            gclidState.remove(gclid);\n        }\n    }\n</code></pre>\n<p>I need what i have to change in the implementation to make the task to retain past states which are stored before failure</p>\n",
+    "tags" : [ "java", "apache-flink", "streaming", "rocksdb" ],
+    "owner" : {
+      "account_id" : 22231009,
+      "reputation" : 1,
+      "user_id" : 16467185,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/AATXAJyhGCeFVJxD7BUHAfmselYdV02ujWkO7QJXoll_=k-s256",
+      "display_name" : "Venkatesh K",
+      "link" : "https://stackoverflow.com/users/16467185/venkatesh-k"
+    },
+    "is_answered" : false,
+    "view_count" : 68,
+    "answer_count" : 0,
+    "score" : 0,
+    "last_activity_date" : 1743511451,
+    "creation_date" : 1743511451,
+    "link" : "https://stackoverflow.com/questions/79548672/why-flink-states-in-rocksdb-are-not-retaining-from-checkpoints-after-a-runtime-f",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140290467,
+    "post_id" : 79548672,
+    "body" : "I am sending an event (after some events) that will produce runtime error. By that failure occurs and job restarts.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 22231009,
+      "reputation" : 1,
+      "user_id" : 16467185,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/AATXAJyhGCeFVJxD7BUHAfmselYdV02ujWkO7QJXoll_=k-s256",
+      "display_name" : "Venkatesh K",
+      "link" : "https://stackoverflow.com/users/16467185/venkatesh-k"
+    },
+    "creation_date" : 1743598058,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140289481,
+    "post_id" : 79548672,
+    "body" : "How are you testing that the state is missing? Are you stopping the job, and then restarting from the checkpoint? Or are you starting fresh?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2274094,
+      "reputation" : 44287,
+      "user_id" : 2000823,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/BHxCqzuW.jpg?s=256",
+      "display_name" : "David Anderson",
+      "link" : "https://stackoverflow.com/users/2000823/david-anderson"
+    },
+    "creation_date" : 1743583639,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

@@ -1,0 +1,61 @@
+{
+  "question" : {
+    "question_id" : 79535791,
+    "title" : "SecurityContextHolder getAuthentication always return AnonymousUser",
+    "body" : "<p>I have a problem with my SpringBoot app where I cannot obtain userDetails from web authentication.</p>\n<p>I created custom AuthenticationProvider which executes login using external service.</p>\n<pre><code>public class CustomAuthenticationProvider implements AuthenticationProvider {\n\n        private final WebAppXSession webAppXSession;\n\n        @Override\n        public Authentication authenticate(Authentication authentication) throws AuthenticationException {\n                log.info(&quot;Authenticating user: {}&quot;, authentication);\n                final String username = authentication.getName();\n                final String password = authentication.getCredentials().toString();\n\n                try {\n                        User user = webAppXSession.login(username, password);\n                        UsernamePasswordAuthenticationToken token =  new UsernamePasswordAuthenticationToken(user.getUid(), null, List.of( new SimpleGrantedAuthority(&quot;ROLE_USER&quot;)));\n                        token.setDetails(user);\n                        return token;\n                } catch (InvalidCredentialsException e) {\n                        throw new BadCredentialsException(&quot;Invalid username or password&quot;, e);\n                } catch (Exception e) {\n                        throw new AuthenticationServiceException(&quot;Authentication failed: &quot; + e.getMessage(), e);\n                }\n        }\n\n}\n</code></pre>\n<p>I added this provider to my AuthenticationManager bean and it works just fine. The problem occurs when I try to fetch authentication from SecurityContextHolder.getContext() in my session validation endpoint, because Authentication object always contains anonymousUser.</p>\n<p>I tried using static securityContextHolder in my controller but it gave no effect.</p>\n<p>Here is my login endpoint</p>\n<pre><code>@PostMapping(&quot;/login&quot;)\n        public ResponseEntity&lt;?&gt; login(@RequestBody UserCredentials credentials) {\n                try {\n                        UsernamePasswordAuthenticationToken authToken =\n                                new UsernamePasswordAuthenticationToken(\n                                        credentials.getUsername(),\n                                        credentials.getPassword()\n                                );\n\n                        Authentication authentication = authenticationManager.authenticate(authToken);\n                        SecurityContextHolder.getContext().setAuthentication(authentication);\n                        return ResponseEntity.ok(response);\n                } catch (Exception e) {\n                        return ResponseEntity\n                                .status(HttpStatus.UNAUTHORIZED)\n                                .body(Map.of(&quot;error&quot;, &quot;Authentication failed&quot;, &quot;message&quot;, e.getMessage()));\n                }\n        }\n</code></pre>\n<p>And session check</p>\n<pre><code>@GetMapping(&quot;/session&quot;)\n        public ResponseEntity&lt;?&gt; checkSession() {\n                Authentication authentication = SecurityContextHolder.getContext().getAuthentication();\n\n            \n                if (authentication != null &amp;&amp; authentication.isAuthenticated()){\n                        Map&lt;String, Object&gt; response = new HashMap&lt;&gt;();\n                        response.put(&quot;principal&quot;, authentication.getPrincipal());\n                        response.put(&quot;authenticated&quot;, true);\n                        return ResponseEntity.ok(response);\n                }\n\n                return ResponseEntity\n                        .status(HttpStatus.UNAUTHORIZED)\n                        .body(Map.of(&quot;authenticated&quot;, false));\n        }\n</code></pre>\n<p>What's weird is that when I check the session it indicates that it's valid but as a anonymousUser.</p>\n<p>Here is output of authentication object from login method</p>\n<blockquote>\n<p>Authentication: UsernamePasswordAuthenticationToken [Principal=AsAAAAALJjE3dC, Credentials=[PROTECTED], Authenticated=true, Details=AsAAAAALJjE3dC, Granted Authorities=[ROLE_USER]]</p>\n</blockquote>\n<p>And here is output of authentication from session check</p>\n<blockquote>\n<p>Authentication: AnonymousAuthenticationToken [Principal=anonymousUser, Credentials=[PROTECTED], Authenticated=true, Details=WebAuthenticationDetails [RemoteIpAddress=0:0:0:0:0:0:0:1, SessionId=cd74f829-05cb-4ec7-85bf-1e225c97b1a1], Granted Authorities=[ROLE_ANONYMOUS]]</p>\n</blockquote>\n<p>I also tried using diffrent browsers, postman and curl but each gave the same output</p>\n<p>For context I am using JdbcHttpSession with Postgresql, Java 21, Spring 3.4.4 and here is also my filterChain</p>\n<pre><code>@Bean\n        public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {\n                return http\n                        .cors(cors -&gt; cors.configurationSource(corsConfigurationSource()))\n                        .requestCache(RequestCacheConfigurer::disable)\n                        .csrf(csrf -&gt; csrf\n                                .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())\n                                .ignoringRequestMatchers(&quot;/api/auth/login&quot;, &quot;/api/auth/logout&quot;)\n                        )\n                        .authorizeHttpRequests(request -&gt; request\n                                .requestMatchers(&quot;/api/auth/login&quot;, &quot;/api/auth/session&quot;, &quot;/api/auth/logout&quot;, &quot;/api/auth/test-auth&quot;).permitAll()\n                                .anyRequest().authenticated()\n                        )\n                        .sessionManagement(session -&gt; session\n                                .sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED)\n                        )\n                        .securityContext(securityContext -&gt; securityContext\n                                .securityContextRepository(securityContextRepository())\n                        )\n                        .exceptionHandling(exceptions -&gt; exceptions\n                                .authenticationEntryPoint((request, response, authException) -&gt; {\n                                        response.setStatus(401);\n                                        response.getWriter().write(&quot;Unauthorized: &quot; + authException.getMessage());\n                                })\n                        )\n                        .logout(logout -&gt; logout\n                                .logoutRequestMatcher(new AntPathRequestMatcher(&quot;/api/auth/logout&quot;, &quot;POST&quot;))\n                                .logoutSuccessHandler((request, response, authentication) -&gt; {\n                                        response.setStatus(200);\n                                        response.getWriter().write(&quot;{\\&quot;message\\&quot;:\\&quot;Logged out successfully\\&quot;}&quot;);\n                                })\n                                .invalidateHttpSession(true)\n                                .clearAuthentication(true)\n                        )\n                        .build();\n        }\n</code></pre>\n<p>I cannot find the issue in my code so I hope that someone here can help me with it.</p>\n",
+    "tags" : [ "java", "spring-mvc", "spring-security" ],
+    "owner" : {
+      "account_id" : 19526279,
+      "reputation" : 53,
+      "user_id" : 14287068,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/9d5164c3b900de35ab30d725f108506d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Yanosik",
+      "link" : "https://stackoverflow.com/users/14287068/yanosik"
+    },
+    "is_answered" : false,
+    "view_count" : 59,
+    "answer_count" : 0,
+    "score" : 0,
+    "last_activity_date" : 1742977442,
+    "creation_date" : 1742977442,
+    "link" : "https://stackoverflow.com/questions/79535791/securitycontextholder-getauthentication-always-return-anonymoususer",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140269984,
+    "post_id" : 79535791,
+    "body" : "Because the session cookie is httponly and my frontend needs to ask for it on the backend. How else should i secure this session endpoint?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 19526279,
+      "reputation" : 53,
+      "user_id" : 14287068,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/9d5164c3b900de35ab30d725f108506d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Yanosik",
+      "link" : "https://stackoverflow.com/users/14287068/yanosik"
+    },
+    "creation_date" : 1743085559,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140266596,
+    "post_id" : 79535791,
+    "body" : "You have done ”permitAll on the session endpoint, why would it check the session then?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2064278,
+      "reputation" : 15073,
+      "user_id" : 1840146,
+      "user_type" : "registered",
+      "accept_rate" : 86,
+      "profile_image" : "https://i.sstatic.net/JXdxm.png?s=256",
+      "display_name" : "Toerktumlare",
+      "link" : "https://stackoverflow.com/users/1840146/toerktumlare"
+    },
+    "creation_date" : 1743017526,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

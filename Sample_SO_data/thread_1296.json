@@ -1,0 +1,147 @@
+{
+  "question" : {
+    "question_id" : 79721823,
+    "title" : "Does the JNI provide direct access to _Atomic values for the respective Java Atomic classes?",
+    "body" : "<p>When working with JNI, can the native side obtain an <code>_Atomic int32_t*</code> given a Java <code>AtomicInteger</code> reference, and run C atomic functions on it (e.g. <code>atomic_fetch_add</code>)?</p>\n<p>We could call Java's methods (e.g. <code>AtomicInteger.getAndAdd</code>) from JNI, but I'm pretty sure that JNI calls require atomic operations themselves, and maybe even locking on occasions. Being able to directly modify an atomic value would be a huge performance improvement.</p>\n",
+    "tags" : [ "java", "java-native-interface", "java.util.concurrent" ],
+    "owner" : {
+      "account_id" : 7286131,
+      "reputation" : 697,
+      "user_id" : 5554145,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/971ac7285892e30b3cedb0608e6884db?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "anon",
+      "link" : "https://stackoverflow.com/users/5554145/anon"
+    },
+    "is_answered" : true,
+    "view_count" : 138,
+    "answer_count" : 1,
+    "score" : 2,
+    "last_activity_date" : 1754414574,
+    "creation_date" : 1753994448,
+    "link" : "https://stackoverflow.com/questions/79721823/does-the-jni-provide-direct-access-to-atomic-values-for-the-respective-java-ato",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79726452,
+    "question_id" : 79721823,
+    "body" : "<p>The FFM APIs mentioned by <a href=\"https://stackoverflow.com/questions/79721823/does-the-jni-provide-direct-access-to-atomic-values-for-the-respective-java-ato#comment140636258_79721823\">@LouisWasserman</a> are not stable yet. But I did more research and found that the <a href=\"https://docs.oracle.com/javase/9/docs/api/java/lang/invoke/VarHandle.html\" rel=\"nofollow noreferrer\">VarHandle</a> API lets us perform atomic store/loads/ops with any memory order of our choice on any Java value: fields, array elements, bytebuffer elements and more.</p>\n<p>Note: it's extremely hard to test the correctness of concurrent code, I'm not 100% sure that my answer is memory-safe.</p>\n<p>For the sake of simplicity, I'll focus on a release-acquire scenario, but I don't see any reason why <code>atomic_fetch_add</code> wouldn't work. My idea is to share a ByteBuffer between C and Java, since they're made specifically for that. Then you can write all the data you want in the ByteBuffer, and in my specific case about Java-to-C transfer, you can do an atomic release-store to make sure that all data written prior to the atomic store will be visible to anyone acquire-loading the changed &quot;ready&quot; flag. For some reason, using a byte for the flag rather than an int throws an <code>UnsupportedOperationException</code>. The C code can treat the ByteBuffer's backing memory as whatever it wants (such as volatile fields in a struct) and load them using usual atomic functions.</p>\n<p>I'm assuming that a good JVM should easily be able to optimise hot ByteBuffer read/stores into simple instructions (not involving method calls), so this approach should definitely be faster than doing JNI calls on AtomicIntegers from the C side. As a final note, atomics are hard to do right, and you should definitely use them only if the performance gain is measurable.</p>\n<h3>Appendix — sample Java and C code</h3>\n<p><em>I don't think StackOverflow supports collapsible sections, sorry for the visual noise.</em></p>\n<p>This example uses a memory map to have shared memory between Java and C, but JNI should work just as well. If using JNI, you should use <code>env-&gt;GetDirectBufferAddress</code> to obtain the <code>void*</code> address of a <strong>direct</strong> ByteBuffer instance's internal buffer.</p>\n<p>How to use: Run the Java program first. When it tells you to, run the C program. Go back to the Java console, enter some text and press enter. The C code will print it and exit.</p>\n<pre class=\"lang-java prettyprint-override\"><code>import java.io.IOException;\nimport java.lang.invoke.MethodHandles;\nimport java.lang.invoke.VarHandle;\nimport java.nio.ByteBuffer;\nimport java.nio.ByteOrder;\nimport java.nio.channels.FileChannel;\nimport java.nio.charset.StandardCharsets;\nimport java.nio.file.Path;\nimport java.nio.file.StandardOpenOption;\nimport java.util.Scanner;\n\npublic class Main {\n    private static final int MMAP_SIZE = 256;\n    private static final VarHandle BYTE_BUFFER_INT_HANDLE = MethodHandles.byteBufferViewVarHandle(int[].class, ByteOrder.BIG_ENDIAN);\n\n    public static void main(String[] args) throws IOException {\n        try (var mmapFile = FileChannel.open(Path.of(&quot;mmap&quot;), StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.READ, StandardOpenOption.TRUNCATE_EXISTING)) {\n            assert mmapFile.write(ByteBuffer.wrap(new byte[0]), MMAP_SIZE) == MMAP_SIZE;\n            var bb = mmapFile.map(FileChannel.MapMode.READ_WRITE, 0, MMAP_SIZE);\n\n            // Fill the byte buffer with zeros\n            for (int i = 0; i &lt; MMAP_SIZE; i++) {\n                bb.put((byte) 0);\n            }\n            bb.force();\n\n            System.out.println(&quot;You can start the C program now&quot;);\n            // Write the user-inputted string after the first int (which corresponds to the &quot;ready&quot; flag)\n            System.out.print(&quot;&gt; &quot;);\n            String input = new Scanner(System.in).nextLine();\n            bb.position(4);\n            bb.put(StandardCharsets.UTF_8.encode(input));\n\n            // When the text has been written to the buffer, release the text by setting the &quot;ready&quot; flag to 1\n            BYTE_BUFFER_INT_HANDLE.setRelease(bb, 0, 1);\n        }\n    }\n}\n</code></pre>\n<pre class=\"lang-c prettyprint-override\"><code>#include &lt;sys/mman.h&gt;\n#include &lt;stdint.h&gt;\n#include &lt;unistd.h&gt;\n#include &lt;fcntl.h&gt;\n#include &lt;stdio.h&gt;\n#include &lt;stdatomic.h&gt;\n\n#define MMAP_SIZE 256\n#define PAYLOAD_MAX_SIZE (MMAP_SIZE - 4)\n\ntypedef struct {\n  volatile int32_t ready;\n  char payload[PAYLOAD_MAX_SIZE];\n} shared_memory;\n\nint main() {\n  int mapFile = open(&quot;mmap&quot;, O_RDONLY);\n  if (mapFile == -1) {\n    perror(&quot;Error opening mmap file, the Java program should be running right now&quot;);\n    return 1;\n  }\n\n  shared_memory* map = (shared_memory*) mmap(NULL, MMAP_SIZE, PROT_READ, MAP_SHARED, mapFile, 0);\n  if (map == MAP_FAILED) {\n    perror(&quot;mmap failed&quot;);\n    close(mapFile);\n    return 1;\n  }\n\n  int ready;\n  while (!(ready = atomic_load_explicit(&amp;map-&gt;ready, memory_order_acquire))) {\n    sleep(1);\n  }\n\n  printf(&quot;Received: %.*s&quot;, PAYLOAD_MAX_SIZE, map-&gt;payload);\n}\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 7286131,
+      "reputation" : 697,
+      "user_id" : 5554145,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/971ac7285892e30b3cedb0608e6884db?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "anon",
+      "link" : "https://stackoverflow.com/users/5554145/anon"
+    },
+    "creation_date" : 1754414574,
+    "last_activity_date" : 1754414574,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140636258,
+    "post_id" : 79721823,
+    "body" : "JNI doesn&#39;t have any special handling for Java Atomic* types, but the new FFM APIs could allow you to have a mutually shared atomically modifiable value.",
+    "score" : 4,
+    "owner" : {
+      "account_id" : 465573,
+      "reputation" : 200423,
+      "user_id" : 869736,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/ae7bb06b9a23a4dd7eea69e853d47d12?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Louis Wasserman",
+      "link" : "https://stackoverflow.com/users/869736/louis-wasserman"
+    },
+    "creation_date" : 1754072446,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79726452" : [ {
+      "comment_id" : 140797292,
+      "post_id" : 79726452,
+      "body" : "The line <code>assert mmapFile.write(ByteBuffer.wrap(new byte[0]), MMAP_SIZE) == MMAP_SIZE;</code> makes no sense. Apparently, you want to force the file to have the size <code>MMAP_SIZE</code> but if you want to <i>enforce</i> something, it shouldn’t be inside an assertion <i>which can be turned off</i>. Further, writing an empty buffer is not guaranteed to have any effect. It should have at least one byte. Then, <code>write</code> returns the number of bytes written, which is zero here, so the comparison with <code>MMAP_SIZE</code> will always fail. If you did not get an <code>AssertionError</code>, it’s because you ran this code with assertions disabled.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 3211603,
+        "reputation" : 300981,
+        "user_id" : 2711488,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+        "display_name" : "Holger",
+        "link" : "https://stackoverflow.com/users/2711488/holger"
+      },
+      "creation_date" : 1760536168,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140654031,
+      "post_id" : 79726452,
+      "body" : "@pveentjer Also useful to let different processes on the same machine communicate with each other.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 292208,
+        "reputation" : 11569,
+        "user_id" : 2245707,
+        "user_type" : "registered",
+        "accept_rate" : 17,
+        "profile_image" : "https://i.sstatic.net/Klcqr.gif?s=256",
+        "display_name" : "pveentjer",
+        "link" : "https://stackoverflow.com/users/2245707/pveentjer"
+      },
+      "creation_date" : 1754751110,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140653984,
+      "post_id" : 79726452,
+      "body" : "Agrona relies on the above approach to share memory between Java and e.g. C.    <a href=\"https://github.com/aeron-io/agrona/blob/master/agrona/src/main/java/org/agrona/concurrent/AtomicBuffer.java\" rel=\"nofollow noreferrer\">github.com/aeron-io/agrona/blob/master/agrona/src/main/java/&zwnj;&#8203;org/&hellip;</a>",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 292208,
+        "reputation" : 11569,
+        "user_id" : 2245707,
+        "user_type" : "registered",
+        "accept_rate" : 17,
+        "profile_image" : "https://i.sstatic.net/Klcqr.gif?s=256",
+        "display_name" : "pveentjer",
+        "link" : "https://stackoverflow.com/users/2245707/pveentjer"
+      },
+      "creation_date" : 1754748789,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140644273,
+      "post_id" : 79726452,
+      "body" : "@DuncG Basically, you can substitude the AtomicInteger for a large-enough ByteBuffer and have the desired behavior of sharing the atomic value (with more control over the memory order). If you need a single AtomicInteger, just use a ByteBuffer with a size of 4. As for the FFM API, all my google search results seem to indicate that it&#39;s a preview feature subject to change... I may be misunderstanding something. But it does look like it would be another working approach to what I&#39;m doing.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 7286131,
+        "reputation" : 697,
+        "user_id" : 5554145,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/971ac7285892e30b3cedb0608e6884db?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "anon",
+        "link" : "https://stackoverflow.com/users/5554145/anon"
+      },
+      "creation_date" : 1754415267,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140644263,
+      "post_id" : 79726452,
+      "body" : "Its good that you have found an answer to your problem but it is hard to see how this answer relates to your question as it does not use a reference to <code>AtomicInteger</code>. Foreign Function and Memory API is final in current JDK too - what is not stable?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 5998820,
+        "reputation" : 16283,
+        "user_id" : 4712734,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/f6e922a2cb7e2da59286f27b162aaca5?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "DuncG",
+        "link" : "https://stackoverflow.com/users/4712734/duncg"
+      },
+      "creation_date" : 1754415005,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

@@ -1,0 +1,82 @@
+{
+  "question" : {
+    "question_id" : 79558517,
+    "title" : "How to get the inbound request in a ExchangeFilterFunction in SpringFramework?",
+    "body" : "<p>I have a <code>TokenFilter</code> class with a method returning a <code>ExchangeFilterFunction</code> in my api that uses SpringFramework.  In the method contains a <code>request</code> variable for the outbound request where I inject a OAuth2 acccess-token into a Authorization header.  However, I would like to access the inbound web request that came in before I triggered another webclient call which has now called this filter.</p>\n<p>I am not sure how to get the inbound request.  The following is a sample of my token filter:</p>\n<pre><code>@Service\npublic class TokenFilter {\n    public TokenFilter(WebClient.Builder webClientBuilder, RequestCache requestCache) {\n        this.webClientBuilder = webClientBuilder;\n        this.requestCache = requestCache;\n    }\n\n public ExchangeFilterFunction renewTokenFilter() {\n        return (request, next) -&gt; {\n\n            LOG.info(&quot;outbound request path: {}&quot;, request.url().getPath());\n            // I do some processing here.  What is the way to get the inbound request?\n            \n            return processTokenFilter(request, next);\n           \n        };\n    }\n}\n\n</code></pre>\n<p>The class is wired with a webclient builder as follows:</p>\n<pre><code>@Configuration\npublic class WebClientFilterConfig {\n    private static final Logger LOG = LoggerFactory.getLogger(WebClientFilterConfig.class);\n\n    @Autowired\n    private WebClient.Builder webClientBuilder;\n\n    @Autowired\n    private TokenFilter tokenFilter;\n\n    @PostConstruct\n    public void addFilterToWebClient() {\n        LOG.info(&quot;configure the renewTokenFilter only once in this config&quot;);\n        webClientBuilder.filter(tokenFilter.renewTokenFilter()).build();\n    }\n}\n</code></pre>\n<p>The TokenFilter's <code>renewTokenFilter()</code> is engaged when I call my <code>UserWebClient</code> class <code>getUserId()</code> method as following::</p>\n<pre><code>public class UserWebClient {\n    private static final Logger LOG = LoggerFactory.getLogger(UserWebClient.class);\n\n    private final WebClient.Builder webClientBuilder;\n\n    private final String userByAuthIdEp;\n\n    public UserWebClient(WebClient.Builder webClientBuilder,\n                         String userByAuthIdEp) {\n        this.webClientBuilder = webClientBuilder;\n        this.userByAuthIdEp = userByAuthIdEp;\n    }\n\n   public Mono&lt;UUID&gt; getUserId(String authenticationId) {\n        StringBuilder userByAuthId = new StringBuilder(userByAuthIdEp.replace(&quot;{authenticationId}&quot;,\n                authenticationId));\n\n        LOG.info(&quot;make user call out to endpoint: {}&quot;, userByAuthId);\n\n        WebClient.ResponseSpec responseSpec = webClientBuilder.build().get().uri(userByAuthId.toString())\n                .retrieve();\n\n        //throws exception on authentication not found return with 401 http status\n        return responseSpec.bodyToMono(Map.class).map(map -&gt; {\n            LOG.info(&quot;user found: {}&quot;, map);\n            return UUID.fromString(map.get(&quot;id&quot;).toString());\n        })\n</code></pre>\n<p>This is how the flow looks like in my app:</p>\n<ol>\n<li>Gets a inbound Rest call</li>\n<li>My app makes a webClient call to another service</li>\n<li>The TokenFilter#renewTokenFilter() is called because it is set as filter in the WebClientFilterConfig class.</li>\n</ol>\n<p>I want to get the #1 inbound request object in the #3 TokenFilter#renewTokenFilter.</p>\n<p>I did have the following configuration as well but when I retrieve the context it is null in my modified renewTokenFilter\n<code>public ExchangeFilterFunction headerFilter() { LOG.info(&quot;in headerFilter()&quot;); return (request, next) -&gt; ReactiveRequestContextHolder.getRequest().flatMap(r -&gt; </code></p>\n<pre><code>@Configuration\n@ConditionalOnWebApplication(type = ConditionalOnWebApplication.Type.ANY)\n\npublic class ReactiveRequestContextFilter implements WebFilter {\n    private static final Logger LOG = LoggerFactory.getLogger(ReactiveRequestContextFilter.class);\n\n    @Override\n    public Mono&lt;Void&gt; filter(ServerWebExchange exchange, WebFilterChain chain) {\n        ServerHttpRequest request = exchange.getRequest();\n        LOG.error(&quot;reactive request: {}&quot;, request.getPath());\n\n        return chain.filter(exchange).contextWrite(context -&gt; context.put(TokenFilter.CONTEXT_KEY, request));\n    }\n}\n</code></pre>\n",
+    "tags" : [ "java", "spring" ],
+    "owner" : {
+      "account_id" : 5853055,
+      "reputation" : 1418,
+      "user_id" : 4611186,
+      "user_type" : "registered",
+      "accept_rate" : 62,
+      "profile_image" : "https://www.gravatar.com/avatar/fba12753cbcfbb676147bda36a5b5b31?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Katlock",
+      "link" : "https://stackoverflow.com/users/4611186/katlock"
+    },
+    "is_answered" : false,
+    "view_count" : 41,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1744031633,
+    "creation_date" : 1743960606,
+    "link" : "https://stackoverflow.com/questions/79558517/how-to-get-the-inbound-request-in-a-exchangefilterfunction-in-springframework",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79558891,
+    "question_id" : 79558517,
+    "body" : "<p>So in your Controller that is receiving the inbound request that triggers the logic to initiate the webClient you'll want do this:</p>\n<pre><code>@GetMapping(&quot;/your/api/endpoint&quot;)\npublic String sendWebRequest(HttpServletRequest request) {\n    String token = request.getHeader(....);\n    return webClient.sendRequest( token );\n}\n</code></pre>\n<p>You'll have to pass it down through the layers from the controller to where your <code>renewTokenFilter</code> is called.  I see you are setting up the web client during start up, and that will be a problem if you want runtime information (i.e. request headers) from an incoming request.</p>\n<p>So you'll need to setup things every time a request is made.  Then you can pass the token down through the layer to reach your <code>renewTokenFilter</code>.</p>\n<pre><code>public ExchangeFilterFunction renewTokenFilter(String token) {\n    return (request, next) -&gt; {\n        LOG.info(&quot;outbound request path: {}&quot;, request.url().getPath());\n        // todo You would do some processing here with the token\n    \n        return processTokenFilter(request, next);\n    });\n}\n</code></pre>\n<p>It's best NOT to inject requests deep inside layers like this so that it's easier to test things, and instead pass the information that is needed rather than the full request.  This is more declarative about what exactly is the dependency as opposed to a large nebulous interface like <code>HttpServletRequest</code> which could be anything.  So it's easier to write unit test and reuse code.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 51881,
+      "reputation" : 39410,
+      "user_id" : 155020,
+      "user_type" : "registered",
+      "accept_rate" : 80,
+      "profile_image" : "https://i.sstatic.net/fEqVo.png?s=256",
+      "display_name" : "chubbsondubs",
+      "link" : "https://stackoverflow.com/users/155020/chubbsondubs"
+    },
+    "creation_date" : 1743986074,
+    "last_activity_date" : 1744031633,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140305989,
+    "post_id" : 79558517,
+    "body" : "The outbound request is triggered by service which is a result of call that came in from another webrequest.  I want to get that ServerHttpRequest object in the tokenFilter.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 5853055,
+      "reputation" : 1418,
+      "user_id" : 4611186,
+      "user_type" : "registered",
+      "accept_rate" : 62,
+      "profile_image" : "https://www.gravatar.com/avatar/fba12753cbcfbb676147bda36a5b5b31?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Katlock",
+      "link" : "https://stackoverflow.com/users/4611186/katlock"
+    },
+    "creation_date" : 1743984270,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140305701,
+    "post_id" : 79558517,
+    "body" : "Where is the outbound web request being trigger from?  A Controller, another Service, a Filter?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 51881,
+      "reputation" : 39410,
+      "user_id" : 155020,
+      "user_type" : "registered",
+      "accept_rate" : 80,
+      "profile_image" : "https://i.sstatic.net/fEqVo.png?s=256",
+      "display_name" : "chubbsondubs",
+      "link" : "https://stackoverflow.com/users/155020/chubbsondubs"
+    },
+    "creation_date" : 1743974036,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

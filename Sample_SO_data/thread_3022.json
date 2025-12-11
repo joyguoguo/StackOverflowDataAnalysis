@@ -1,0 +1,241 @@
+{
+  "question" : {
+    "question_id" : 79577761,
+    "title" : "Java iterator of regex matches from large source",
+    "body" : "<p>The basic problem is that I need to output all matches of a regex within a file, but there's a few properties that make a solution tricky:</p>\n<ol>\n<li>The file could be very large, so the whole file cannot be brought into memory and scanned all at once.</li>\n<li>The regex is user-provided, so there is no estimation of how large a match could be</li>\n<li>The regex can be multiline, making possible matches even longer, and scanning per-line could cause a match that crosses lines to be missed.</li>\n<li>Every match should be returned with its position in the whole file.</li>\n<li>Matches should be evaluated lazily (no need to find all matches in the file at once)</li>\n</ol>\n<p>As an example for 3, this algorithm</p>\n<pre><code>while (not end of file):\n  line = file.readNextLine()\n  for (each match in regex.find(line)):\n    results.append(match)\nreturn results\n</code></pre>\n<p>breaks in the case of</p>\n<pre><code>// inline modifier to turn on DOTALL\nregex = &quot;(?s)start.*end&quot;\ncontent = &quot;start\nend&quot;\n</code></pre>\n<p>because <code>start</code> then <code>end</code> would be presented individually, when the dot can match a newline character.</p>\n<p>My current idea is to implement <code>Iterator&lt;MatchResult&gt;</code>, and read into a <code>CharBuffer</code> as a sliding window. <code>java.util.regex.Matcher</code> also has <code>hitEnd()</code>, which can signal if more input would have changed the result of the last <code>find()</code> operation (if the regex is &quot;foobar&quot; and the matcher was evaluated on &quot;foo&quot;, <code>hitEnd()</code> would return true. If the matcher was evaluated on &quot;bar&quot; instead, it returns false). If the buffer is full and more input could find a match, the size of the buffer is doubled until a match is found. I could implement <code>Spliterator</code> instead, but I can't tell if that's more or less complicated.</p>\n<p>So far I have this basic structure (exception handling omitted for brevity):</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class RegexStreamIterator implements Iterator&lt;MatchResult&gt; {\n  private static final int MIN_BUFFER_SIZE_BYTES = 8192;\n  private static final int MAX_BUFFER_EXPANSIONS = 4;\n  private static final int MAX_BUFFER_SIZE_BYTES = (int) Math.pow(2, MAX_BUFFER_EXPANSIONS) * MIN_BUFFER_SIZE_BYTES;\n\n  private final Reader reader;\n  private final Pattern pattern;\n\n  private int readerIndex = 0;\n  private Matcher matcher;\n  private CharBuffer buffer = CharBuffer.allocate(MIN_BUFFER_SIZE_BYTES);\n  private MatchResult currentMatch;\n\n  public RegexStreamIterator(Reader reader, Pattern pattern) {\n    this.reader = reader;\n    this.pattern = pattern;\n  }\n\n  public boolean hasNext() {\n    if (currentMatch != null) return true;\n    advance();\n    return currentMatch != null;\n  }\n\n  public MatchResult next() {\n    if (currentMatch == null)\n      advance();\n    if (currentMatch == null)\n      throw new NoSuchElementException();\n\n    MatchResult ret = currentMatch;\n    currentMatch = null;\n    return ret;\n  }\n\n  private void advance() {\n    // pseudocode while I'm stuck on actual implementation\n    if matcher is null\n      fill buffer\n      if buffer is null\n        return\n      matcher = pattern.matcher(buffer)\n    \n    while not end of file:\n      if matcher found result and not matcher.hitEnd() // match found and won't grow or get rejected with more input\n        this.currentMatch = match\n        advance matcher to next match\n        return\n\n      if matcher.hitEnd()\n        if no match was found in buffer (matcher start index at 0)\n          double buffer size \n            if new size bigger than max size, throw exception\n          fill from file \n          reset matcher\n        else (part of buffer consumed)\n          move remaining buffer to new buffer \n          fill from file\n          reset matcher\n      else\n        clear buffer (resetting size)\n        fill from file\n        reset matcher\n  }\n}\n</code></pre>\n<p>I'm very stuck on problems like null handling and making a loop that can both seek to the next match and is stable between multiple calls to <code>advance()</code>. This absolutely seems like a problem that has been solved before as well, if common libraries like Apache or Guava have something that cover this that would be fantastic.</p>\n",
+    "tags" : [ "java", "regex", "iterator" ],
+    "owner" : {
+      "account_id" : 26384984,
+      "reputation" : 418,
+      "user_id" : 20037647,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/9nb18CcK.png?s=256",
+      "display_name" : "EarthTurtle",
+      "link" : "https://stackoverflow.com/users/20037647/earthturtle"
+    },
+    "is_answered" : true,
+    "view_count" : 104,
+    "answer_count" : 1,
+    "score" : 4,
+    "last_activity_date" : 1744834821,
+    "creation_date" : 1744823666,
+    "link" : "https://stackoverflow.com/questions/79577761/java-iterator-of-regex-matches-from-large-source",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79578043,
+    "question_id" : 79577761,
+    "body" : "<p>The <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/util/Scanner.html#findAll(java.lang.String)\" rel=\"noreferrer\">findAll method of Scanner</a> can do this.  It will look for regular expression matches in any character stream, without loading all of the content into memory.</p>\n",
+    "score" : 5,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 2053598,
+      "reputation" : 44936,
+      "user_id" : 1831987,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/38b1c37530189ec4471a43a618e33f67?s=256&d=identicon&r=PG",
+      "display_name" : "VGR",
+      "link" : "https://stackoverflow.com/users/1831987/vgr"
+    },
+    "creation_date" : 1744834821,
+    "last_activity_date" : 1744834821,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140377306,
+    "post_id" : 79577761,
+    "body" : "@sln unfortunately, the user-provided regex is a project requirement from management, and this is trying to be as memory-light as possible as users are paying attention to how much memory the application uses.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 26384984,
+      "reputation" : 418,
+      "user_id" : 20037647,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/9nb18CcK.png?s=256",
+      "display_name" : "EarthTurtle",
+      "link" : "https://stackoverflow.com/users/20037647/earthturtle"
+    },
+    "creation_date" : 1745858700,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140342356,
+    "post_id" : 79577761,
+    "body" : "You can have dynamic regex entered into your app. You can compile it and run it. However this requires having a bed of exception handlers. You wouldn&#39;t want to try it without that. Another red flag, you state that you can&#39;t load the file/string into memory and the regex may span lines. These two ideas are directly opposite, counter to each other. In modern times up to &gt; 64 GB of ram are installed on machines. Shouldn&#39;t be a problem to slurp a file in.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 268704,
+      "reputation" : 3643,
+      "user_id" : 15577665,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/22b015407c4f216f37fb10bccb8debaf?s=256&d=identicon&r=PG",
+      "display_name" : "sln",
+      "link" : "https://stackoverflow.com/users/15577665/sln"
+    },
+    "creation_date" : 1744836103,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140342077,
+    "post_id" : 79577761,
+    "body" : "Note well that even if you ignore the possibility of malicious interference, if you allow arbitrary user-defined patterns then you have to expect that from time to time, a user will provide a pattern that matches a large proportion of the input in one go.  Possibly by mistake. If the input is large then this could put heavy memory pressure on the application, possibly enough to cause an <code>OutOfMemoryError</code>.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2792262,
+      "reputation" : 190832,
+      "user_id" : 2402272,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+      "display_name" : "John Bollinger",
+      "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+    },
+    "creation_date" : 1744830989,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140341984,
+    "post_id" : 79577761,
+    "body" : "@VGR your solution is what I needed, thank you! Please add it as an answer if you can.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 26384984,
+      "reputation" : 418,
+      "user_id" : 20037647,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/9nb18CcK.png?s=256",
+      "display_name" : "EarthTurtle",
+      "link" : "https://stackoverflow.com/users/20037647/earthturtle"
+    },
+    "creation_date" : 1744828988,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140341977,
+    "post_id" : 79577761,
+    "body" : "@user85421 yes, that&#39;s why checking <code>hitEnd()</code> is needed. If the sliding window presents &quot;a1b&quot; to the matcher, it will return that it found a match and <code>hitEnd()</code> returns true indicating that more input could change the most recent match result. In this case, it&#39;s because the <code>.*</code> could change the match from &quot;a1b&quot; to &quot;a1ba2b&quot;.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 26384984,
+      "reputation" : 418,
+      "user_id" : 20037647,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/9nb18CcK.png?s=256",
+      "display_name" : "EarthTurtle",
+      "link" : "https://stackoverflow.com/users/20037647/earthturtle"
+    },
+    "creation_date" : 1744828896,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140341924,
+    "post_id" : 79577761,
+    "body" : "sidenote(?) : you are aware that, for example, searching a string like  <code>&quot;a1ba2b&quot;</code> for a regular expression like <code>&quot;a.*b&quot;</code> will find only one occurrence, in this case the whole string (since <code>.*</code> is matching as much as possible)",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 31180,
+      "reputation" : 29752,
+      "user_id" : 85421,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/kKvXH.gif?s=256",
+      "display_name" : "user85421",
+      "link" : "https://stackoverflow.com/users/85421/user85421"
+    },
+    "creation_date" : 1744827641,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140341903,
+    "post_id" : 79577761,
+    "body" : "That merely means that the scanner will not start scanning (reading) until a terminal operator is called, just like a <code>Stream</code> from a list will not do anything until a terminal operator is called. It doesn&#39;t mean that the entire contents are stored in memory.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 1211967,
+      "reputation" : 9964,
+      "user_id" : 1180351,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/pKB8y.png?s=256",
+      "display_name" : "Rob Spoor",
+      "link" : "https://stackoverflow.com/users/1180351/rob-spoor"
+    },
+    "creation_date" : 1744827238,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140341775,
+    "post_id" : 79577761,
+    "body" : "Good find! Having it return a stream might cause all matches to be found at once (since the doc says scanning runs through once a terminal operator is called), but that might still be within acceptable resource bounds. I&#39;ll poke around with it and see if I can place controls on match size and number.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 26384984,
+      "reputation" : 418,
+      "user_id" : 20037647,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/9nb18CcK.png?s=256",
+      "display_name" : "EarthTurtle",
+      "link" : "https://stackoverflow.com/users/20037647/earthturtle"
+    },
+    "creation_date" : 1744824426,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140341754,
+    "post_id" : 79577761,
+    "body" : "This sounds like a good fit for <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/util/Scanner.html#findAll(java.util.regex.Pattern)\" rel=\"nofollow noreferrer\">Scanner.findAll</a>, which can find regex matches in a character stream.  Of course, if you’re using a user-supplied regex, there will always be the possibility of a denial of service attack by supplying a very demanding regex.",
+    "score" : 4,
+    "owner" : {
+      "account_id" : 2053598,
+      "reputation" : 44936,
+      "user_id" : 1831987,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/38b1c37530189ec4471a43a618e33f67?s=256&d=identicon&r=PG",
+      "display_name" : "VGR",
+      "link" : "https://stackoverflow.com/users/1831987/vgr"
+    },
+    "creation_date" : 1744824109,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79578043" : [ {
+      "comment_id" : 140352927,
+      "post_id" : 79578043,
+      "body" : "Any function that presumes to match regex within a rolling buffer all make the same assumptions as stated.  I base my conclusions on my experience designing regex.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 268704,
+        "reputation" : 3643,
+        "user_id" : 15577665,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/22b015407c4f216f37fb10bccb8debaf?s=256&d=identicon&r=PG",
+        "display_name" : "sln",
+        "link" : "https://stackoverflow.com/users/15577665/sln"
+      },
+      "creation_date" : 1745178524,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140352892,
+      "post_id" : 79578043,
+      "body" : "@sln I don’t know what you mean by “function definition,” but as I said in a comment above, malicious or irresponsible regular expressions can result in a denial of service attack.  That’s not a problem with Scanner or with Java; that’s a problem with blindly accepting a user-supplied regex.  Every API will have the same problem.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2053598,
+        "reputation" : 44936,
+        "user_id" : 1831987,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/38b1c37530189ec4471a43a618e33f67?s=256&d=identicon&r=PG",
+        "display_name" : "VGR",
+        "link" : "https://stackoverflow.com/users/1831987/vgr"
+      },
+      "creation_date" : 1745177135,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140352783,
+      "post_id" : 79578043,
+      "body" : "This function definition has all the right words in it. Assumes a rolling buffer stream, yet it has to retain, or buffer the current <i>possible match</i> pending. Has to backtrack. In essence read the whole file into memory storage equal to the file size, on a lot more regex than you think. In that regard it&#39;s not generally useful, even much less effecient.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 268704,
+        "reputation" : 3643,
+        "user_id" : 15577665,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/22b015407c4f216f37fb10bccb8debaf?s=256&d=identicon&r=PG",
+        "display_name" : "sln",
+        "link" : "https://stackoverflow.com/users/15577665/sln"
+      },
+      "creation_date" : 1745173484,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

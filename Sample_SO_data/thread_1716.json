@@ -1,0 +1,46 @@
+{
+  "question" : {
+    "question_id" : 79680647,
+    "title" : "Kafka last commited offset increases even if the consumer does not process",
+    "body" : "<p>I have a @KafkaListener function which consumes messages. The listener has the properties set in application.yml:</p>\n<ul>\n<li>one topic</li>\n<li>ack-mode: manual_immediate</li>\n<li>enable-auto-commit: false</li>\n<li>max-poll-records: 1</li>\n<li>auto-offset-reset: earliest</li>\n</ul>\n<p>So i want to process one message at a time, acknowledging it if everything works fine.\nIf i loose db connection then i should stop processing the messages and the last commited offset stops increasing as it should.\nFor example:</p>\n<ul>\n<li>Current offset: 16, Latest offset: {testkafka-0=OffsetAndMetadata{offset=10, leaderEpoch=null, metadata=''}}</li>\n</ul>\n<p>After db connection up and i produce a new message, the last-committed-offset suddenly jumps to 17, but the listener function is not called to process previous 10-16 messages:</p>\n<ul>\n<li>Current offset: 17, Latest offset: {testkafka-0=OffsetAndMetadata{offset=17, leaderEpoch=null, metadata=''}}</li>\n</ul>\n<p>Can you help me why this can happen? I thought it will automatically run the function n-times.</p>\n<pre><code>@KafkaListener(topics = {TOPIC}, groupId = &quot;mxsmart-center&quot;)\npublic void handle(ConsumerRecord&lt;String, RoomMessage&gt; record, Consumer&lt;String, RoomMessage&gt; consumer, Acknowledgment ack) {\n    log.info(&quot;listener started&quot; + record.value().getCreatedAt());\n    TopicPartition partition = new TopicPartition(record.topic(), record.partition());\n    // Fetch end offset (the next offset to be written)\n    Map&lt;TopicPartition, OffsetAndMetadata&gt; endOffsets = consumer.committed(Collections.singleton(partition));\n    log.info(&quot;Current offset: {}, Latest offset: {}&quot;, record.offset(), endOffsets);\n\n    if (isDBUp() &amp;&amp; isMessageValid(record.value())) {\n        try {\n            ack.acknowledge();\n            log.info(&quot;Acknowledged&quot;);\n        } catch (Exception e) {\n            lastKnownState = ConnectionState.DOWN;\n            log.error(&quot;Error while processing message: &quot;, e);\n            throw e;\n        }\n    } else {\n        throw new RuntimeException(&quot;DB is not in UP state, skipping message&quot;);\n    }\n}\n</code></pre>\n",
+    "tags" : [ "java", "spring-kafka" ],
+    "owner" : {
+      "account_id" : 9518280,
+      "reputation" : 3,
+      "user_id" : 7073905,
+      "user_type" : "registered",
+      "profile_image" : "https://graph.facebook.com/1316839161659778/picture?type=large",
+      "display_name" : "Johnbor",
+      "link" : "https://stackoverflow.com/users/7073905/johnbor"
+    },
+    "is_answered" : true,
+    "view_count" : 64,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1750947231,
+    "creation_date" : 1750946870,
+    "link" : "https://stackoverflow.com/questions/79680647/kafka-last-commited-offset-increases-even-if-the-consumer-does-not-process",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79680657,
+    "question_id" : 79680647,
+    "body" : "<h3>Solution</h3>\n<h4>1. <strong>Disable <code>commitOnError</code></strong></h4>\n<p>Set this property explicitly to avoid committing on failures:</p>\n<pre><code>yaml \n</code></pre>\n<pre><code>spring:\n  kafka:\n    listener:\n      ack-mode: manual_immediate\n      ack-on-error: false\n</code></pre>\n<p><strong>In Java config:</strong></p>\n<p><code>containerFactory.getContainerProperties().setAckOnError(false);</code></p>\n<h4>2. <strong>Use an Error Handler That Doesn’t Commit</strong></h4>\n<p>Set a <code>SeekToCurrentErrorHandler</code> or <code>DefaultErrorHandler</code> that <strong>seeks the offset back</strong> instead of committing or skipping:</p>\n<pre><code>@Bean\npublic DefaultErrorHandler errorHandler() {\n    return new DefaultErrorHandler(\n        (record, exception) -&gt; {\n            // Handle error logging etc.\n        },\n        new FixedBackOff(0L, 0)); // immediate retry disabled\n}\n</code></pre>\n<blockquote>\n<p>Ensure the error handler is <strong>set in the container factory</strong>:</p>\n</blockquote>\n<p><code>factory.setCommonErrorHandler(errorHandler());</code></p>\n<p>This prevents Spring from committing offsets when your handler throws errors (like on DB down).</p>\n<h4>3. <strong>Set <code>AckMode</code> Carefully</strong></h4>\n<p>You're using <code>manual_immediate</code> which is good — it ensures offsets are committed <strong>only when <code>ack.acknowledge()</code> is called</strong>. So don't change this, but <strong>ensure no implicit commits happen via error handlers or rebalancing</strong>.</p>\n<h3>Additional: Restart Behavior</h3>\n<p>Since you use <code>auto-offset-reset: earliest</code>, if offsets <strong>were never committed</strong>, Kafka would start from the beginning. But once offset 17 is committed (e.g., due to rebalance), Kafka will <strong>not go back</strong> to earlier messages.</p>\n",
+    "score" : 0,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 42739797,
+      "reputation" : 16,
+      "user_id" : 30900181,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/55acd37ce6e6e38eeeaac5e0080dfecf?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Sourik Das",
+      "link" : "https://stackoverflow.com/users/30900181/sourik-das"
+    },
+    "creation_date" : 1750947231,
+    "last_activity_date" : 1750947231,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : { }
+}

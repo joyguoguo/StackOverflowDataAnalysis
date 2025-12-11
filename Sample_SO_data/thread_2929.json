@@ -1,0 +1,110 @@
+{
+  "question" : {
+    "question_id" : 79585229,
+    "title" : "How can I determine if my service uses a DB connection?",
+    "body" : "<p>I have a Spring Boot app using Hibernate and Spring Data JPA. In order to manage DB transactions, I use the <code>org.springframework.transaction.annotation.Transactional</code> annotation around services.</p>\n<p>In some services I have methods where they should use a DB transaction, and other methods where they do not need a DB transaction, and I want to make sure they are not taking DB connections from the pool.</p>\n<pre><code>@Service\n@Transactional(readOnly = true)\npublic class UserService {\n\n  // Needs a DB transaction and definitely gets one\n  public Page&lt;User&gt; getUsers(Pageable pageable) {\n    ...\n  }\n\n  // Should not use a DB transaction\n  @Transactional(propagation = Propagation.NEVER)\n  public WhoAmI whoAmI() {\n    ...\n  }\n}\n</code></pre>\n<p><code>UserService</code> is only called directly from a controller. It is not called by another service that is already in a transaction (which should be enforced by <code>Propagation.NEVER</code>).</p>\n<p>Based on some stack traces I saw, it seems like my <code>whoAmI</code> method might be waiting on a DB connection even though it should never use one.</p>\n<ol>\n<li>Is <code>@Transactional(propagation = Propagation.NEVER)</code> equivalent to running the method in a class that is not annotated with <code>@Transactional</code>? And would that mean that it does never attempts to acquire a DB connection?</li>\n<li>How can I verify that <code>whoAmI</code> does not acquire a DB connection at any point while it is being called?</li>\n</ol>\n",
+    "tags" : [ "java", "spring", "spring-boot", "hibernate", "spring-data-jpa" ],
+    "owner" : {
+      "account_id" : 24111,
+      "reputation" : 1861,
+      "user_id" : 61104,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/de357816d5d57debab13abc5999ab068?s=256&d=identicon&r=PG",
+      "display_name" : "Kevin",
+      "link" : "https://stackoverflow.com/users/61104/kevin"
+    },
+    "is_answered" : false,
+    "view_count" : 99,
+    "answer_count" : 2,
+    "score" : 0,
+    "last_activity_date" : 1748454984,
+    "creation_date" : 1745265092,
+    "link" : "https://stackoverflow.com/questions/79585229/how-can-i-determine-if-my-service-uses-a-db-connection",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79641182,
+    "question_id" : 79585229,
+    "body" : "<p>Regarding the <strong><code>NEVER</code></strong> propagation: based on the documentation, its behavior is different. It will throw an exception if it runs within an existing transaction. However, your case is different—you want to ensure that no new transaction is started, and consequently, that no connection is fetched from the pool. In this scenario, <strong><code>SUPPORTED</code></strong> is more appropriate. It will run regardless of whether a transaction is active or not.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "user_type" : "does_not_exist",
+      "display_name" : "user18179479"
+    },
+    "creation_date" : 1748379472,
+    "last_activity_date" : 1748379472,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79642766,
+    "question_id" : 79585229,
+    "body" : "<p>Not a great idea to use <code>NEVER</code> .</p>\n<p>A method annotated with <code>@Transactional(propagation = Propagation.NEVER)</code> explicitly throws an exception if a transaction already exists. It ensures that no transaction is active, which is a stronger contract.</p>\n<p>For separation of concerns, split your services:</p>\n<pre><code>@Service\n@Transactional(readOnly = true)\npublic class UserDbService {\n    public Page&lt;User&gt; getUsers(Pageable pageable) { ... }\n}\n\n@Service\npublic class UserLogicService {\n    public WhoAmI whoAmI() { ... }\n}\n\n</code></pre>\n<blockquote>\n<p>Avoid <strong>Propagation.NEVER</strong> unless you're doing something very strict like audit logging or calling an external service that must not be the part of a transaction.</p>\n</blockquote>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 17043956,
+      "reputation" : 1140,
+      "user_id" : 12331220,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/5S9Wo.gif?s=256",
+      "display_name" : "Anupam Haldkar",
+      "link" : "https://stackoverflow.com/users/12331220/anupam-haldkar"
+    },
+    "creation_date" : 1748454984,
+    "last_activity_date" : 1748454984,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140355768,
+    "post_id" : 79585229,
+    "body" : "How can I validate: if you just leave the annotation off of methods that don&#39;t need transactions you&#39;ll be fine, if there&#39;s already one it&#39;s OK and if there is not it won&#39;t start one",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 24111,
+      "reputation" : 1861,
+      "user_id" : 61104,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/de357816d5d57debab13abc5999ab068?s=256&d=identicon&r=PG",
+      "display_name" : "Kevin",
+      "link" : "https://stackoverflow.com/users/61104/kevin"
+    },
+    "creation_date" : 1745268780,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140355761,
+    "post_id" : 79585229,
+    "body" : "Transactions are not the same thing as connections. If you need a connection, you&#39;re using a connection. The transactional annotation is there to BEGIN a transaction based on what its setting is (or throw if there&#39;s one open in the case of NEVER). I think if you just leave the annotation off of methods that don&#39;t need transactions you&#39;ll be fine, if there&#39;s already one it&#39;s OK and if there is not it won&#39;t start one.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1009321,
+      "reputation" : 11523,
+      "user_id" : 1022260,
+      "user_type" : "registered",
+      "accept_rate" : 53,
+      "profile_image" : "https://www.gravatar.com/avatar/3c76c653b051fc5594b5eeb66624d3ec?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "mikeb",
+      "link" : "https://stackoverflow.com/users/1022260/mikeb"
+    },
+    "creation_date" : 1745268576,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140355672,
+    "post_id" : 79585229,
+    "body" : "The <code>@Transactional(readOnly = true)</code> on the class level probably needs to be moved to the <code>getUsers</code> method, so that it will only apply to that method.  But... the method level annotation is supposed to take precedence.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 8909811,
+      "reputation" : 2861,
+      "user_id" : 6650475,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/fe85994d05ad7aaaa1c47d638b37bc45?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Andrew S",
+      "link" : "https://stackoverflow.com/users/6650475/andrew-s"
+    },
+    "creation_date" : 1745266444,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

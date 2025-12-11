@@ -1,0 +1,215 @@
+{
+  "question" : {
+    "question_id" : 79701818,
+    "title" : "Int range in Spring Boot Batch",
+    "body" : "<p>I have a Spring Batch application, where I transfer data from one database to another (the target DB is PostgreSQL, with enough space).</p>\n<p>I'm executing the following query:</p>\n<pre><code>SELECT s.name, s.brand  \nFROM shop s  \nORDER BY s.name, s.brand;\n</code></pre>\n<p>I'm using JdbcCursorItemReader.</p>\n<p>The size of my source data is larger than the Java int range.</p>\n<p>When I check the results in the target database, it turns out that there are only records up to the int limit.</p>\n<p>I don't see any error messages in the logs.</p>\n<p><strong>My questions</strong>:</p>\n<p>Does Spring Batch internally impose any int-based limit?</p>\n<p>Does anyone know whether JdbcPagingItemReader is able to handle a fixed dataset where the number of rows exceeds the int range?</p>\n<pre><code>@Configuration\n</code></pre>\n<p>public class DataToGroupInitialFlowConfig {</p>\n<pre><code>public final String INIT_READ_DATATOGROUP_TO_DATE_SQL = &quot;select dg.groupid, dg.datagroupid from WI_DATATOGROUP_BKP dg order by dg.groupid, dg.datagroupid&quot;;\n\npublic final String WRITE_DATATOGROUP_SQL = &quot;INSERT INTO \\&quot;DATATOGROUP\\&quot; (\\&quot;groupid\\&quot;, \\&quot;datagroupid\\&quot;) VALUES (:groupid, :datagroupid)&quot;;\n\n@Autowired\n@Qualifier(&quot;dataSource&quot;)\nprivate DataSource postgresqlDatasource;\n\n@Autowired\n@Qualifier(&quot;oracleDataSource&quot;)\nprivate DataSource oracleDataSource;\n\n@Autowired\nprivate JobRepository jobRepository;\n\n@Autowired\nprivate PlatformTransactionManager transactionManager;\n\n@Bean\npublic Flow getDataToGroupInitialFlow() {\n    log.info(&quot;Is new group flow&quot;);\n    return new FlowBuilder&lt;SimpleFlow&gt;(&quot;getDataInitialToGroup&quot;)\n            .start(getDataToGroupInitStep())\n            .on(&quot;COMPLETED&quot;).end()\n            .on(&quot;FAILED&quot;).fail()\n            .build();\n}\n\n@Bean\npublic Step getDataToGroupInitStep() {\n    return new StepBuilder(&quot;getDataToGroupInitStep&quot;, jobRepository)\n            .&lt;DataToGroup, DataToGroup&gt;chunk(300_000, transactionManager)\n            .listener(new ItemWriteListener&lt;&gt;() {\n                @Override\n                public void onWriteError(Exception ex, Chunk&lt;? extends DataToGroup&gt; items) {\n                    log.error(&quot;Error during writing data to group - chunk level: {} &quot;,\n                            items.getItems().stream().map(DataToGroup::toString)\n                                    .collect(Collectors.joining(&quot;|&quot;)));\n                    log.error(&quot;Error during writing data to group - chunk level - exception: &quot;, ex);\n                    ItemWriteListener.super.onWriteError(ex, items);\n                }\n            })\n            .listener(new ItemReadListener&lt;&gt;() {\n                @Override\n                public void onReadError(Exception ex) {\n                    log.error(&quot;Error during reading data to group - chunk level - exception: &quot;, ex);\n                    ItemReadListener.super.onReadError(ex);\n                }\n            })\n            .listener(new RetryListener() {\n                @Override\n                public &lt;T, E extends Throwable&gt; void close(RetryContext context, RetryCallback&lt;T, E&gt; callback, Throwable throwable) {\n                    log.error(&quot;Occurred error during last retry: &quot;, throwable);\n                    RetryListener.super.close(context, callback, throwable);\n                }\n\n                @Override\n                public &lt;T, E extends Throwable&gt; void onError(RetryContext context, RetryCallback&lt;T, E&gt; callback, Throwable throwable) {\n                    log.error(&quot;Occurred error during retry: &quot;, throwable);\n                    RetryListener.super.onError(context, callback, throwable);\n                }\n            })\n            .reader(getDataToGroupInitialReader())\n            .writer(getDataToGroupInitialWriter())\n            .build();\n}\n\n@Bean\n@StepScope\npublic JdbcCursorItemReader&lt;DataToGroup&gt; getDataToGroupInitialReader() {\n    JdbcCursorItemReader&lt;DataToGroup&gt; reader = new LoggingJdbcCursorItemReader&lt;&gt;();\n    reader.setSql(INIT_READ_DATATOGROUP_TO_DATE_SQL);\n    reader.setDataSource(oracleDataSource);\n    reader.setRowMapper((ResultSet rs, int rowNum) -&gt; DataToGroup.builder()\n            .groupid(rs.getString(&quot;groupid&quot;))\n            .datagroupid(rs.getString(&quot;datagroupid&quot;))\n            .build());\n    return reader;\n}\n\n@Bean\npublic JdbcBatchItemWriter&lt;DataToGroup&gt; getDataToGroupInitialWriter() {\n    JdbcBatchItemWriter&lt;DataToGroup&gt; writer = new JdbcBatchItemWriter&lt;&gt;();\n    writer.setDataSource(postgresqlDatasource);\n    writer.setSql(WRITE_DATATOGROUP_SQL);\n    writer.setItemSqlParameterSourceProvider(new BeanPropertyItemSqlParameterSourceProvider&lt;&gt;());\n    return writer;\n}\n</code></pre>\n",
+    "tags" : [ "java", "spring", "spring-batch", "batch-processing", "spring-jdbc" ],
+    "owner" : {
+      "account_id" : 4587976,
+      "reputation" : 141,
+      "user_id" : 3722099,
+      "user_type" : "registered",
+      "accept_rate" : 33,
+      "profile_image" : "https://www.gravatar.com/avatar/635478b4ee070d99924b47dcb7c6842c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "RafalQA",
+      "link" : "https://stackoverflow.com/users/3722099/rafalqa"
+    },
+    "is_answered" : true,
+    "view_count" : 118,
+    "answer_count" : 2,
+    "score" : 1,
+    "last_activity_date" : 1753079570,
+    "creation_date" : 1752571103,
+    "link" : "https://stackoverflow.com/questions/79701818/int-range-in-spring-boot-batch",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79701988,
+    "question_id" : 79701818,
+    "body" : "<p>You are using the <a href=\"https://docs.spring.io/spring-batch/docs/current/api/org/springframework/batch/item/database/JdbcCursorItemReader.html\" rel=\"nofollow noreferrer\"><code>JdbcCursorItemReader</code></a> which ultimately extends the <a href=\"https://docs.spring.io/spring-batch/docs/current/api/org/springframework/batch/item/support/AbstractItemCountingItemStreamItemReader.html\" rel=\"nofollow noreferrer\"><code>AbstractItemCountingItemStreamItemReader</code></a>. Which counts the items <strong>and</strong> has a <code>maxItemCount</code> which is limited to the max of an <code>int</code>. The <a href=\"https://github.com/spring-projects/spring-batch/blob/main/spring-batch-infrastructure/src/main/java/org/springframework/batch/item/support/AbstractItemCountingItemStreamItemReader.java#L89-L91\" rel=\"nofollow noreferrer\">reading stops as soon as the max is reached</a>.</p>\n<p>So the limit is due to the counting that is done, not so much due to limits in JDBC. What you could do is create your own <code>JdbcCursorItemReader</code> which doesn't do the counting, but only does the reading.</p>\n",
+    "score" : 2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126800,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1752578997,
+    "last_activity_date" : 1752578997,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79701837,
+    "question_id" : 79701818,
+    "body" : "<p>The issue might be anywhere, and even if you can find the exact cause of this particular error message in your particular stack, it won't help. There are probably multiple places where this will go wrong.</p>\n<p>Javas arrays can only handle INT_MAX elements. All Collections built on top of a single array (which is all the usual ones) will inherit this limitation. Since all of the java ecosystem uses standard collections without caring much about this limitation, the only safe way to process more than INT_MAX elements in Java is paging and chunking at a high level.</p>\n<p>So you would have to read your data using offset &amp; limit and put them into the target database one after another.</p>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 9842376,
+      "reputation" : 2313,
+      "user_id" : 7465516,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/5e167bc0e9829e026d8c9a4bad92e94b?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "julaine",
+      "link" : "https://stackoverflow.com/users/7465516/julaine"
+    },
+    "creation_date" : 1752571920,
+    "last_activity_date" : 1753079570,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140590497,
+    "post_id" : 79701818,
+    "body" : "@M.Deinum I have edited my post. i have changed &quot;names&quot; stuff only.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 4587976,
+      "reputation" : 141,
+      "user_id" : 3722099,
+      "user_type" : "registered",
+      "accept_rate" : 33,
+      "profile_image" : "https://www.gravatar.com/avatar/635478b4ee070d99924b47dcb7c6842c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "RafalQA",
+      "link" : "https://stackoverflow.com/users/3722099/rafalqa"
+    },
+    "creation_date" : 1752573833,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140590483,
+    "post_id" : 79701818,
+    "body" : "Thank you @julaine, I got your point - you have right. Also I&#39;m trying figure it out that JdbcPagingItemReader will check size of all records in source db, our maybe it use only page size, and number of last fetched records. So maybe then it will no problem with int range when i set page size like half of my size of my source table ?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 4587976,
+      "reputation" : 141,
+      "user_id" : 3722099,
+      "user_type" : "registered",
+      "accept_rate" : 33,
+      "profile_image" : "https://www.gravatar.com/avatar/635478b4ee070d99924b47dcb7c6842c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "RafalQA",
+      "link" : "https://stackoverflow.com/users/3722099/rafalqa"
+    },
+    "creation_date" : 1752573508,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140590424,
+    "post_id" : 79701818,
+    "body" : "Only posting the query won&#39;t help. Without seeing what you are actually doing (how the reading / writing is done, configuration) this will be impossible to answer.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126800,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1752572083,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140590398,
+    "post_id" : 79701818,
+    "body" : "But given that Javas Collections are everywhere in the Java ecosystem and anything naively built on top of java-arrays will have this limitation, the problem may be anywhere in any library, possibly even multiple versions of the problem. Only safe way to handle this is probably to handle less data at once, even though it will make your code slower and more complicated.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 9842376,
+      "reputation" : 2313,
+      "user_id" : 7465516,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/5e167bc0e9829e026d8c9a4bad92e94b?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "julaine",
+      "link" : "https://stackoverflow.com/users/7465516/julaine"
+    },
+    "creation_date" : 1752571490,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140590391,
+    "post_id" : 79701818,
+    "body" : "with data sizes larger than int_max you will run into problems with Java, because that is the maximum size of most standard collections. Not sure what happens here specifically, seems like spring-batch saves you from hard errors but drops items that are too many.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 9842376,
+      "reputation" : 2313,
+      "user_id" : 7465516,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/5e167bc0e9829e026d8c9a4bad92e94b?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "julaine",
+      "link" : "https://stackoverflow.com/users/7465516/julaine"
+    },
+    "creation_date" : 1752571336,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79701988" : [ {
+      "comment_id" : 140593289,
+      "post_id" : 79701988,
+      "body" : "@RafalQA Not sure if that works as it still is an <code>AbstractItemCountingItemStreamItemReader</code> and with that certain expectations are done. What you proposed is (at least as I understood it) to add multiple steps each reading a portion of the data. You might be able to solve this with <a href=\"https://docs.spring.io/spring-batch/reference/scalability.html#partitioning\" rel=\"nofollow noreferrer\">partioning</a>, that way you can have multiple partitions of your data, each will execute its own step but only read the designated rows.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 3192259,
+        "reputation" : 126800,
+        "user_id" : 2696260,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+        "display_name" : "M. Deinum",
+        "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+      },
+      "creation_date" : 1752655838,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140593254,
+      "post_id" : 79701988,
+      "body" : "If i understand it right, you say that I should just overwrite and leave only: \t\tT item = doRead(); Correct ?  But it will not broken something, brings something unpredictable  ? for some reason it is there.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 4587976,
+        "reputation" : 141,
+        "user_id" : 3722099,
+        "user_type" : "registered",
+        "accept_rate" : 33,
+        "profile_image" : "https://www.gravatar.com/avatar/635478b4ee070d99924b47dcb7c6842c?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "RafalQA",
+        "link" : "https://stackoverflow.com/users/3722099/rafalqa"
+      },
+      "creation_date" : 1752655368,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140591158,
+      "post_id" : 79701988,
+      "body" : "@RafalQA You don&#39;t need the paging item reader for that, you can do the same with the cursor based one.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 3192259,
+        "reputation" : 126800,
+        "user_id" : 2696260,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+        "display_name" : "M. Deinum",
+        "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+      },
+      "creation_date" : 1752587971,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140591123,
+      "post_id" : 79701988,
+      "body" : "Thank you for very details answer. I&#39;m wondering if I have fixed dataset, and when I set one page as half of my dataset size - it will be far away from this int range limit-  , then JdbcPagingItemReader  should not stop reading even extends AbstractItemCountingItemStreamItemReader - for Oracle. Correct ?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 4587976,
+        "reputation" : 141,
+        "user_id" : 3722099,
+        "user_type" : "registered",
+        "accept_rate" : 33,
+        "profile_image" : "https://www.gravatar.com/avatar/635478b4ee070d99924b47dcb7c6842c?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "RafalQA",
+        "link" : "https://stackoverflow.com/users/3722099/rafalqa"
+      },
+      "creation_date" : 1752587328,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

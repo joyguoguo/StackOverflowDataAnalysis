@@ -1,0 +1,98 @@
+{
+  "question" : {
+    "question_id" : 79534653,
+    "title" : "ActiveMQ multicast topic does round-robin instead",
+    "body" : "<p>I'm trying to implement a pub-sub with embedded ActiveMQ Artemis 2.40.0.  I create the address and write messages to it, but I receive the messages on different clients in a round-robin fashion.</p>\n<p>My <code>broker.xml</code>:</p>\n<pre class=\"lang-xml prettyprint-override\"><code>&lt;configuration xmlns:xsi=&quot;http://www.w3.org/2001/XMLSchema-instance&quot; xmlns=&quot;urn:activemq&quot; xsi:schemaLocation=&quot;urn:activemq /schema/artemis-server.xsd&quot;&gt;\n    &lt;core xmlns=&quot;urn:activemq:core&quot;&gt;\n        &lt;persistence-enabled&gt;false&lt;/persistence-enabled&gt;\n        &lt;security-enabled&gt;false&lt;/security-enabled&gt;\n        &lt;acceptors&gt;\n            &lt;acceptor name=&quot;in-vm&quot;&gt;vm://0&lt;/acceptor&gt;\n        &lt;/acceptors&gt;\n\n        &lt;addresses&gt;\n            &lt;address name=&quot;address1&quot;&gt;\n                &lt;multicast&gt;\n                    &lt;queue name=&quot;q1&quot; max-consumers=&quot;99&quot;&gt;\n                        &lt;durable&gt;false&lt;/durable&gt;\n                    &lt;/queue&gt;\n                &lt;/multicast&gt;\n            &lt;/address&gt;\n        &lt;/addresses&gt;\n    &lt;/core&gt;\n&lt;/configuration&gt;\n</code></pre>\n<p>My code:</p>\n<pre class=\"lang-java prettyprint-override\"><code>import com.shorcan.log.LogUtil;\nimport com.shorcan.util.SleepUtil;\nimport org.apache.activemq.artemis.api.core.ActiveMQException;\nimport org.apache.activemq.artemis.api.core.client.*;\nimport org.apache.activemq.artemis.core.server.embedded.EmbeddedActiveMQ;\nimport org.slf4j.Logger;\nimport org.slf4j.LoggerFactory;\n\nimport java.util.Timer;\nimport java.util.TimerTask;\n\npublic class Example {\n    private static final Logger log_ = LoggerFactory.getLogger(Example.class);\n\n    public Example() throws Exception {\n        EmbeddedActiveMQ broker = new EmbeddedActiveMQ();\n        broker.setConfigResourcePath(&quot;file:cfg/broker.xml&quot;);\n        broker.start();\n    }\n\n     public void createProducer() throws Exception {\n        ServerLocator locator = ActiveMQClient.createServerLocator(&quot;vm://0&quot;);\n        ClientSessionFactory factory = locator.createSessionFactory();\n        ClientSession session = factory.createSession();\n        session.start();\n\n        ClientProducer producer = session.createProducer(&quot;address1&quot;);\n\n        TimerTask task = new TimerTask() {\n            public void run() {\n                log_.info(&quot;Sending message...&quot;);\n                ClientMessage message = session.createMessage(false);\n                message.getBodyBuffer().writeString(&quot;Hi, There&quot;);\n                try {\n                    producer.send(message);\n                } catch (ActiveMQException e) {\n                    log_.warn(&quot;Error sending message: &quot; + e.getMessage());\n                }\n            }\n        };\n        Timer timer = new Timer();\n        timer.scheduleAtFixedRate(task, 5000, 5000);\n    }\n\n    public void createConsumer(int id) throws Exception {\n        ServerLocator locator = ActiveMQClient.createServerLocator(&quot;vm://0&quot;);\n        ClientSessionFactory factory = locator.createSessionFactory();\n        ClientSession session = factory.createSession();\n        session.start();\n        ClientConsumer consumer = session.createConsumer(&quot;q1&quot;);\n        consumer.setMessageHandler(new MessageHandler() {\n            @Override\n            public void onMessage(ClientMessage clientMessage) {\n                log_.info(&quot;&gt;&gt;&gt; consumer {} received {}&quot;, id, clientMessage);\n            }\n        });\n    }\n\n    public static void main(String[] args) throws Exception {\n        LogUtil.initFrom(&quot;cfg/logging.properties&quot;);\n        Example example = new Example();\n\n        SleepUtil.waitFor(5);\n        example.createProducer();\n\n        example.createConsumer(0);\n        example.createConsumer(1);\n        example.createConsumer(2);\n    }\n}\n</code></pre>\n<p>When I run this, I get a message on a different consumer every 5s (0, 1, 2, 0, 1, 2, etc)</p>\n<p>Can anyone point out where I've gone wrong?</p>\n",
+    "tags" : [ "java", "activemq-artemis" ],
+    "owner" : {
+      "account_id" : 16122418,
+      "reputation" : 31,
+      "user_id" : 11638068,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/72f53776d3351ec86500f997dc56e4b9?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Gord",
+      "link" : "https://stackoverflow.com/users/11638068/gord"
+    },
+    "is_answered" : true,
+    "view_count" : 76,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1743173840,
+    "creation_date" : 1742930296,
+    "link" : "https://stackoverflow.com/questions/79534653/activemq-multicast-topic-does-round-robin-instead",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79535247,
+    "question_id" : 79534653,
+    "body" : "<p>Correct me if I'm wrong, but you are using a multicast address and defining a singular queue <code>q1</code> under that. This unfortunately would put you into a competing consumer situation.</p>\n<p>Update your <code>broker.xml</code> thusly (note <code>&lt;multicast /&gt;</code> with no defined queue)</p>\n<pre class=\"lang-xml prettyprint-override\"><code>&lt;configuration xmlns:xsi=&quot;http://www.w3.org/2001/XMLSchema-instance&quot; xmlns=&quot;urn:activemq&quot; xsi:schemaLocation=&quot;urn:activemq /schema/artemis-server.xsd&quot;&gt;\n    &lt;core xmlns=&quot;urn:activemq:core&quot;&gt;\n        &lt;persistence-enabled&gt;false&lt;/persistence-enabled&gt;\n        &lt;security-enabled&gt;false&lt;/security-enabled&gt;\n        &lt;acceptors&gt;\n            &lt;acceptor name=&quot;in-vm&quot;&gt;vm://0&lt;/acceptor&gt;\n        &lt;/acceptors&gt;\n\n        &lt;addresses&gt;\n            &lt;address name=&quot;address1&quot;&gt;\n                &lt;multicast /&gt;\n            &lt;/address&gt;\n        &lt;/addresses&gt;\n    &lt;/core&gt;\n&lt;/configuration&gt;\n</code></pre>\n<p>In your create client segment you have to do a little bit of trickery like this:</p>\n<pre class=\"lang-java prettyprint-override\"><code>import java.util.UUID;\n\npublic class Example {\n    public void createConsumer(int id) throws Exception {\n        ServerLocator locator = ActiveMQClient.createServerLocator(&quot;vm://0&quot;);\n        ClientSessionFactory factory = locator.createSessionFactory();\n        ClientSession session = factory.createSession();\n        session.start();\n\n        String consumerQueueName = &quot;address1-&quot;+UUID.randomUUID();\n        QueueConfiguration topicQueueConfiguration =\n            QueueConfiguration.of(consumerQueueName)\n                                .setAddress(&quot;address1&quot;)\n                                .setDurable(false)\n                                .setTransient(true)\n                                .setRoutingType(RoutingType.MULTICAST);\n        session.createQueue(topicQueueConfiguration);\n                                \n\n        ClientConsumer consumer = session.createConsumer(consumerQueueName);\n        consumer.setMessageHandler(new MessageHandler() {\n            @Override\n            public void onMessage(ClientMessage clientMessage) {\n                log_.info(&quot;&gt;&gt;&gt; consumer {} received {}&quot;, id, clientMessage);\n            }\n        });\n    }\n}\n\n</code></pre>\n<p>It has been a hot minute since I last did this, however you have to dynamically create an ANYCAST queue attached to the address that is transient and will represent a specific client listening. It should auto-delete upon closure of the client session.</p>\n<p>The addressing used by artemis is more or less this:</p>\n<p>You have an address which is a destination that you can send messages to. You have the option of routing out as ANYCAST (traditional point-to-point) or MULTICAST (traditional pub-sub).</p>\n<p>Each client that wants to get a DISTINCT message must have a DISTINCT message queue to receive on. That is why I had to define the <code>QueueConfiguration</code> with a UUID and that SHOULD solve your issue.</p>\n<p>If you are doing this in a production targeted application, you will need to do some more work on ensuring deletion of the queue associated with the consumer on termination, otherwise the queue will persist as a multicast member which may degrade performance over time.</p>\n<p>Hopefully this will address your situation.</p>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 109278,
+      "reputation" : 9822,
+      "user_id" : 289625,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/29216bdb4bb69d3621cb0ef55f70cb90?s=256&d=identicon&r=PG",
+      "display_name" : "Dave G",
+      "link" : "https://stackoverflow.com/users/289625/dave-g"
+    },
+    "creation_date" : 1742954399,
+    "last_activity_date" : 1743173778,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79535247" : [ {
+      "comment_id" : 140273500,
+      "post_id" : 79535247,
+      "body" : "@JustinBertram - thank you VERY much for the reference to that documentation. I think the bigger thing to convey here is that the semantics of how the addressing &amp; routing work. The address is more or less the point at which the message is sent, the reception side of things (anycast/multicast) is typically implemented using per-consumer queues.  Additionally, your statements regarding AMPQ/MQTT/STOMP/JMS <i>on top of</i> Core embody those semantics.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 109278,
+        "reputation" : 9822,
+        "user_id" : 289625,
+        "user_type" : "registered",
+        "accept_rate" : 100,
+        "profile_image" : "https://www.gravatar.com/avatar/29216bdb4bb69d3621cb0ef55f70cb90?s=256&d=identicon&r=PG",
+        "display_name" : "Dave G",
+        "link" : "https://stackoverflow.com/users/289625/dave-g"
+      },
+      "creation_date" : 1743161779,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140272253,
+      "post_id" : 79535247,
+      "body" : "@Gord, auto-creation works out-of-the-box for clients using any AMQP, MQTT, &amp; STOMP client as well as JMS clients using the Core, AMQP, &amp; OpenWire protocols. The <i>only</i> client for which auto-creation doesn&#39;t work is bare Core which is noted in <a href=\"https://activemq.apache.org/components/artemis/documentation/latest/address-settings.html#address-settings\" rel=\"nofollow noreferrer\">the documentation</a> which states, &quot;Automatic queue creation does <i>not</i> work for the core client. The core API is a low-level API and is not meant to have such automation.&quot;",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 11434008,
+        "reputation" : 36282,
+        "user_id" : 8381946,
+        "user_type" : "registered",
+        "profile_image" : "https://lh3.googleusercontent.com/-ORs8fPNVzDU/AAAAAAAAAAI/AAAAAAAADBs/F3IsdsProVY/s256-rj/photo.jpg",
+        "display_name" : "Justin Bertram",
+        "link" : "https://stackoverflow.com/users/8381946/justin-bertram"
+      },
+      "creation_date" : 1743134324,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140266338,
+      "post_id" : 79535247,
+      "body" : "Thanks, Dave. I guess I was distracted by the docs, which say <code>Define &lt;multicast&#47;&gt; with no queues and the broker will automatically create queues for each subscription when the consumers connect to address.foo</code>.  I guess this only applies to JMS clients",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 16122418,
+        "reputation" : 31,
+        "user_id" : 11638068,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/72f53776d3351ec86500f997dc56e4b9?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Gord",
+        "link" : "https://stackoverflow.com/users/11638068/gord"
+      },
+      "creation_date" : 1743012938,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

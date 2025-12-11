@@ -1,0 +1,101 @@
+{
+  "question" : {
+    "question_id" : 79622501,
+    "title" : "Testcontainer for Kubernetes and Argo Workflows",
+    "body" : "<p>I want to do some integration testing + setup local dev environment for a Java/Spring Boot application that interacts with Kubernetes via Argo Workflows.  I don't see a Kubernetes test container (probably because K8s is not just one container) but I did notice the K3 container which is supposedly a lightweight distro for kubernetes.</p>\n<p>I usually use a locally installed Minikube instance to achieve this but Testcontainers are very cool and I'm already using them for my DB and a Kafka queue, would be nice to have one solution for everything.</p>\n<p>Is there a way to use Testcontainers to test an app that interacts with Kubernetes via Argo Wofkflows?</p>\n",
+    "tags" : [ "java", "kubernetes", "junit5", "testcontainers", "argo-workflows" ],
+    "owner" : {
+      "account_id" : 33887,
+      "reputation" : 4600,
+      "user_id" : 95242,
+      "user_type" : "registered",
+      "accept_rate" : 62,
+      "profile_image" : "https://i.sstatic.net/mzfoi.jpg?s=256",
+      "display_name" : "Michael Dausmann",
+      "link" : "https://stackoverflow.com/users/95242/michael-dausmann"
+    },
+    "is_answered" : true,
+    "view_count" : 179,
+    "answer_count" : 2,
+    "score" : 2,
+    "last_activity_date" : 1749095251,
+    "creation_date" : 1747272968,
+    "link" : "https://stackoverflow.com/questions/79622501/testcontainer-for-kubernetes-and-argo-workflows",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79622717,
+    "question_id" : 79622501,
+    "body" : "<p>I am currently experimenting with this. Testcontainers provides a K3s module (<a href=\"https://testcontainers.com/modules/k3s/\" rel=\"nofollow noreferrer\">https://testcontainers.com/modules/k3s/</a>), and since K3s starts faster than Minikube, it seems promising.</p>\n<p>With this fairly simple setup, I can get K3s with Argo Workflows running using the K3s built-in Helm controller. The only problem is that it is quite slow.</p>\n<p>I am considering preloading the container images for Argo and the Helm controller, which take a while to pull and start, or using a local image registry.</p>\n<p>I have yet to resolve how to get my own app images running. Preloading or using a local image registry seem to be the available options.</p>\n<pre><code>from asyncio import sleep\nfrom typing import AsyncGenerator, Literal\n\nimport pytest\nimport yaml\nfrom kubernetes_asyncio.client import (\n    CoreV1Api,\n    CustomObjectsApi,\n    AppsV1Api,\n    V1Deployment,\n)\nfrom kubernetes_asyncio.client import Configuration, ApiClient\nfrom kubernetes_asyncio.config import load_kube_config_from_dict\nfrom testcontainers.k3s import K3SContainer\n\n\n@pytest.fixture\ndef anyio_backend() -&gt; Literal[&quot;asyncio&quot;]:\n    return &quot;asyncio&quot;\n\n\n@pytest.fixture\ndef k3s_container():\n    with K3SContainer() as k3s:\n        yield k3s\n\n\n@pytest.fixture\nasync def k3s_client(k3s_container, anyio_backend) -&gt; AsyncGenerator[ApiClient]:\n    config = k3s_container.config_yaml()\n    client_configuration = Configuration()\n    await load_kube_config_from_dict(\n        config_dict=yaml.load(config, Loader=yaml.SafeLoader),\n        client_configuration=client_configuration,\n    )\n    async with ApiClient(configuration=client_configuration) as client:\n        yield client\n\n\nasync def testwf(k3s_client, anyio_backend):\n\n    namespace_body = {\n        &quot;apiVersion&quot;: &quot;v1&quot;,\n        &quot;kind&quot;: &quot;Namespace&quot;,\n        &quot;metadata&quot;: {&quot;name&quot;: &quot;argo-workflows&quot;},\n    }\n    await CoreV1Api(k3s_client).create_namespace(body=namespace_body)\n\n    helm_chart_manifest = {\n        &quot;apiVersion&quot;: &quot;helm.cattle.io/v1&quot;,\n        &quot;kind&quot;: &quot;HelmChart&quot;,\n        &quot;metadata&quot;: {\n            &quot;name&quot;: &quot;argo-workflows&quot;,\n        },\n        &quot;spec&quot;: {\n            &quot;chart&quot;: &quot;argo-workflows&quot;,\n            &quot;repo&quot;: &quot;https://argoproj.github.io/argo-helm&quot;,\n            &quot;targetNamespace&quot;: &quot;argo-workflows&quot;,\n            &quot;valuesContent&quot;: yaml.dump(\n                {\n                    &quot;controller&quot;: {&quot;workflowNamespaces&quot;: [&quot;network-automation&quot;]},\n                    &quot;server&quot;: {&quot;enabled&quot;: True},\n                    &quot;singleNamespace&quot;: True,\n                }\n            ),\n        },\n    }\n\n    await CustomObjectsApi(k3s_client).create_namespaced_custom_object(\n        group=&quot;helm.cattle.io&quot;,\n        version=&quot;v1&quot;,\n        namespace=&quot;kube-system&quot;,\n        plural=&quot;helmcharts&quot;,\n        body=helm_chart_manifest,\n    )\n\n    while True:\n        deps = await AppsV1Api(k3s_client).list_namespaced_deployment(\n            namespace=&quot;argo-workflows&quot;\n        )\n        for d in deps.items:\n            assert isinstance(d, V1Deployment)\n            print(f&quot;{d.metadata.name=} {d.status.replicas=} {d.status.ready_replicas=}&quot;)\n        if not deps.items:\n            print(&quot;No deployments found&quot;)\n        await sleep(2)\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 6617371,
+      "reputation" : 121,
+      "user_id" : 5110153,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f31bd00d74dad2d8aac3ae10a94e48f3?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "svinther",
+      "link" : "https://stackoverflow.com/users/5110153/svinther"
+    },
+    "creation_date" : 1747289345,
+    "last_activity_date" : 1747289345,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79653758,
+    "question_id" : 79622501,
+    "body" : "<p>This worked eventually for me.. also see discussion here (<a href=\"https://github.com/spring-projects/spring-boot/issues/45717\" rel=\"nofollow noreferrer\">https://github.com/spring-projects/spring-boot/issues/45717</a>)</p>\n<pre><code>   @Bean\n    K3sContainer k3s() {\n        K3sContainer k3sContainer = new K3sContainer(DockerImageName.parse(&quot;rancher/k3s:v1.21.3-k3s1&quot;))\n                .withCommand(&quot;server&quot;, &quot;--disable&quot;, &quot;metrics-server&quot;) // we don't need metrics\n                .withLogConsumer(new Slf4jLogConsumer(logger)\n                );\n\n        // don't normally need to start the container in these @Bean methods but can't get the config unless its started\n        k3sContainer.start();\n\n        String kubeConfigYaml = k3sContainer.getKubeConfigYaml();\n        Config config = Config.fromKubeconfig(kubeConfigYaml);  // requires io.fabric8:kubernetes-client:5.11.0 or higher\n\n        // in the absence of @ServiceConnection integration for this testcontainer, Jack the test container URL into properties so it's picked up when I create a client in main app\n        System.setProperty(Config.KUBERNETES_MASTER_SYSTEM_PROPERTY, config.getMasterUrl());\n        System.setProperty(Config.KUBERNETES_CA_CERTIFICATE_DATA_SYSTEM_PROPERTY, config.getCaCertData());\n        System.setProperty(Config.KUBERNETES_CLIENT_CERTIFICATE_DATA_SYSTEM_PROPERTY, config.getClientCertData());\n        System.setProperty(Config.KUBERNETES_CLIENT_KEY_DATA_SYSTEM_PROPERTY, config.getClientKeyData());\n        System.setProperty(Config.KUBERNETES_TRUST_CERT_SYSTEM_PROPERTY, &quot;true&quot;);\n\n        return k3sContainer;\n    }\n\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 33887,
+      "reputation" : 4600,
+      "user_id" : 95242,
+      "user_type" : "registered",
+      "accept_rate" : 62,
+      "profile_image" : "https://i.sstatic.net/mzfoi.jpg?s=256",
+      "display_name" : "Michael Dausmann",
+      "link" : "https://stackoverflow.com/users/95242/michael-dausmann"
+    },
+    "creation_date" : 1749094390,
+    "last_activity_date" : 1749094390,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140489256,
+    "post_id" : 79622501,
+    "body" : "Could you pls share, which things can be tested with the k8s test container? I cannot figure out the use case of it, only smth like testing stuff from spring cloud kubernetes, e.g. leader election or smth like that",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 18586978,
+      "reputation" : 3850,
+      "user_id" : 15000097,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/yFl4M.jpg?s=256",
+      "display_name" : "Georgii Lvov",
+      "link" : "https://stackoverflow.com/users/15000097/georgii-lvov"
+    },
+    "creation_date" : 1749107788,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79622717" : [ {
+      "comment_id" : 140488864,
+      "post_id" : 79622717,
+      "body" : "thanks @svinther looks like a good option for python",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 33887,
+        "reputation" : 4600,
+        "user_id" : 95242,
+        "user_type" : "registered",
+        "accept_rate" : 62,
+        "profile_image" : "https://i.sstatic.net/mzfoi.jpg?s=256",
+        "display_name" : "Michael Dausmann",
+        "link" : "https://stackoverflow.com/users/95242/michael-dausmann"
+      },
+      "creation_date" : 1749094473,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

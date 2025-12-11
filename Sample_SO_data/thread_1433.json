@@ -1,0 +1,85 @@
+{
+  "question" : {
+    "question_id" : 79706211,
+    "title" : "How to set SNIMatcher when using Spring Boot, correctly?",
+    "body" : "<p>I'm using Spring Boot 3.3.4 with Tomcat and came across this code inside <code>ServerNameExtension.java</code>:</p>\n<pre><code>            // Does the server match the server name request?\n        SNIServerName sni = null;\n        if (!shc.sslConfig.sniMatchers.isEmpty()) {\n            sni = chooseSni(shc.sslConfig.sniMatchers, spec.serverNames);\n            if (sni != null) {\n                if (SSLLogger.isOn &amp;&amp; SSLLogger.isOn(&quot;ssl,handshake&quot;)) {\n                    SSLLogger.fine(\n                            &quot;server name indication (&quot; +\n                            sni + &quot;) is accepted&quot;);\n                }\n            } else {\n                // We do not reject client without SNI extension currently.\n                throw shc.conContext.fatal(Alert.UNRECOGNIZED_NAME,\n                        &quot;Unrecognized server name indication&quot;);\n            }\n</code></pre>\n<p>This would reflect the behaviour I'd like to have, exactly. However, it relies on having <code>sniMatchers</code> set, which is done by using <code>SSLParameters</code>. Unfortunatelly, I don't find any possible place to do so. I've tried using TomcatServletWebServerFactory, but SSLParameters got ignored.</p>\n<p>This was my most promising approach, but it won't work like documented in the code:</p>\n<pre><code>@Bean\npublic WebServerFactoryCustomizer&lt;TomcatServletWebServerFactory&gt; sslContextCustomizer(final SslServerConfiguration sslServerConfiguration) {\n    return factory -&gt; factory.addContextCustomizers(context -&gt; {\n        for (var connector : Container.getService(context.getParent()).findConnectors()) {\n            for (SSLHostConfig hostConfig : connector.findSslHostConfigs()) {\n                for (SSLHostConfigCertificate certificate : hostConfig.getCertificates()) {\n                    // could be set here, but .getSupportedSSLParameters() is always null\n                    // and setting it with new SSLParameters is getting ignored:\n                    //certificate.getSslContext().getSupportedSSLParameters().setSNIMatchers();\n                }\n            }\n        };\n    });\n}\n</code></pre>\n<p>I would appreciate any hint how to set SNIMatchers.</p>\n",
+    "tags" : [ "java", "spring-boot", "ssl", "sni" ],
+    "owner" : {
+      "account_id" : 8866868,
+      "reputation" : 572,
+      "user_id" : 6621774,
+      "user_type" : "registered",
+      "accept_rate" : 60,
+      "profile_image" : "https://www.gravatar.com/avatar/6d039a85bf7ed098a60f40b585a18fa7?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Harry Developer",
+      "link" : "https://stackoverflow.com/users/6621774/harry-developer"
+    },
+    "is_answered" : false,
+    "view_count" : 88,
+    "answer_count" : 2,
+    "score" : 2,
+    "last_activity_date" : 1753173051,
+    "creation_date" : 1752843841,
+    "link" : "https://stackoverflow.com/questions/79706211/how-to-set-snimatcher-when-using-spring-boot-correctly",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79707615,
+    "question_id" : 79706211,
+    "body" : "<p>Spring Boot has built-in support for SNI with embedded Tomcat, as shown in the <a href=\"https://docs.spring.io/spring-boot/3.3/how-to/webserver.html#howto.webserver.configure-ssl.sni\" rel=\"nofollow noreferrer\">Spring Boot documentation</a>.</p>\n<p>First, you configure one or more SSL bundles to specify the trust material for the connections, then you configure the server names and the SSL bundle to use for each.</p>\n<p>Here's an example using <code>application.yml</code>:</p>\n<pre><code>spring:\n  ssl:\n    bundle:\n      jks:\n        web:\n          key:\n            alias: &quot;application&quot;\n          keystore:\n            location: &quot;classpath:web.p12&quot;\n            password: &quot;secret&quot;\n            type: &quot;PKCS12&quot;\n        web-alt:\n          key:\n            alias: &quot;application&quot;\n          keystore:\n            location: &quot;classpath:web-alt.p12&quot;\n            password: &quot;secret&quot;\n            type: &quot;PKCS12&quot;\n\nserver:\n  port: 8443\n  ssl:\n    bundle: &quot;web&quot;\n    server-name-bundles:\n      - server-name: &quot;alt1.example.com&quot;\n        bundle: &quot;web-alt1&quot;\n</code></pre>\n<p>You can configure SSL bundles using either Java keystore (JKS) files or PEM-encoded files.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 1362416,
+      "reputation" : 5399,
+      "user_id" : 1299533,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/5fecafb1f46cd05cd8caaa6e9a4b9cad?s=256&d=identicon&r=PG",
+      "display_name" : "Scott Frederick",
+      "link" : "https://stackoverflow.com/users/1299533/scott-frederick"
+    },
+    "creation_date" : 1752967281,
+    "last_activity_date" : 1752967281,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79708736,
+    "question_id" : 79706211,
+    "body" : "<p>I think I found the problem inside <code>AbstractJsseEndpoint</code>:</p>\n<pre><code>            SSLEngine engine = sslContext.createSSLEngine();\n            engine.setUseClientMode(false);\n            engine.setEnabledCipherSuites(sslHostConfig.getEnabledCiphers());\n            engine.setEnabledProtocols(sslHostConfig.getEnabledProtocols());\n            SSLParameters sslParameters = engine.getSSLParameters();\n            sslParameters.setUseCipherSuitesOrder(sslHostConfig.getHonorCipherOrder());\n            if (clientRequestedApplicationProtocols != null &amp;&amp; clientRequestedApplicationProtocols.size() &gt; 0 &amp;&amp; this.negotiableProtocols.size() &gt; 0) {\n                List&lt;String&gt; commonProtocols = new ArrayList(this.negotiableProtocols);\n                commonProtocols.retainAll(clientRequestedApplicationProtocols);\n                if (commonProtocols.size() &gt; 0) {\n                    String[] commonProtocolsArray = (String[])commonProtocols.toArray(new String[0]);\n                    sslParameters.setApplicationProtocols(commonProtocolsArray);\n                }\n            }\n\n            switch (sslHostConfig.getCertificateVerification()) {\n                case NONE:\n                    sslParameters.setNeedClientAuth(false);\n                    sslParameters.setWantClientAuth(false);\n                    break;\n                case OPTIONAL:\n                case OPTIONAL_NO_CA:\n                    sslParameters.setWantClientAuth(true);\n                    break;\n                case REQUIRED:\n                    sslParameters.setNeedClientAuth(true);\n            }\n\n            engine.setSSLParameters(sslParameters);\n</code></pre>\n<p>This piece of code creates an empty <code>SSLEngine</code> and sets some <code>SSLParameter</code> values. <code>SSLParameter</code>s are later on used by cloning <code>SSLConfiguration</code> in <code>HandshakeContext</code>:</p>\n<p><code>this.sslConfig = (SSLConfiguration)conContext.sslConfig.clone();</code></p>\n<p>Hence, <code>sniMatchers</code> inside <code>sslConfig</code> are never been set and this code inside <code>ServerNameExtension</code>:</p>\n<pre><code>            if (!shc.sslConfig.sniMatchers.isEmpty()) {\n                sni = chooseSni(shc.sslConfig.sniMatchers, spec.serverNames);\n                if (sni != null) {\n                    if (SSLLogger.isOn &amp;&amp; SSLLogger.isOn(&quot;ssl,handshake&quot;)) {\n                        SSLLogger.fine(\n                                &quot;server name indication (&quot; +\n                                sni + &quot;) is accepted&quot;);\n                    }\n                } else {\n                    // We do not reject client without SNI extension currently.\n                    throw shc.conContext.fatal(Alert.UNRECOGNIZED_NAME,\n                            &quot;Unrecognized server name indication&quot;);\n                }\n            }\n</code></pre>\n<p>is never been executed, because <code>sniMatchers</code> are always empty.</p>\n<p>I will file this as a bug.</p>\n<p><strong>-----------UPDATE----------</strong></p>\n<p>Comment to the <a href=\"https://github.com/spring-projects/spring-boot/issues/46471\" rel=\"nofollow noreferrer\">bug</a> brought me on another track: Since the problem is inside <code>AbstractJsseEndpoint</code>, it is caused by tomcat, not by spring boot. By doing massive debugging, I digged up that this can be influenced by using a custom protocol handler. Hence, here is a demo implementation of a protocol hander, which always breaks TLS handshake with unrecognized name alert:</p>\n<pre><code>public class SniHttp11NioProtocol extends Http11NioProtocol {\n\n    public SniHttp11NioProtocol() {\n        super(new NioEndpoint() {\n            @Override\n            protected SSLEngine createSSLEngine(String sniHostName, List&lt;Cipher&gt; clientRequestedCiphers, List&lt;String&gt; clientRequestedApplicationProtocols) {\n                SSLHostConfig sslHostConfig = this.getSSLHostConfig(sniHostName);\n                SSLHostConfigCertificate certificate = this.selectCertificate(sslHostConfig, clientRequestedCiphers);\n                SSLContext sslContext = certificate.getSslContext();\n                if (sslContext == null) {\n                    throw new IllegalStateException(sm.getString(&quot;endpoint.jsse.noSslContext&quot;, new Object[]{sniHostName}));\n                } else {\n                    SSLEngine engine = sslContext.createSSLEngine();\n                    engine.setUseClientMode(false);\n                    engine.setEnabledCipherSuites(sslHostConfig.getEnabledCiphers());\n                    engine.setEnabledProtocols(sslHostConfig.getEnabledProtocols());\n                    SSLParameters sslParameters = engine.getSSLParameters();\n                    sslParameters.setUseCipherSuitesOrder(sslHostConfig.getHonorCipherOrder());\n                    if (clientRequestedApplicationProtocols != null &amp;&amp; clientRequestedApplicationProtocols.size() &gt; 0 &amp;&amp; this.negotiableProtocols.size() &gt; 0) {\n                        List&lt;String&gt; commonProtocols = new ArrayList(this.negotiableProtocols);\n                        commonProtocols.retainAll(clientRequestedApplicationProtocols);\n                        if (commonProtocols.size() &gt; 0) {\n                            String[] commonProtocolsArray = (String[]) commonProtocols.toArray(new String[0]);\n                            sslParameters.setApplicationProtocols(commonProtocolsArray);\n                        }\n                    }\n\n                    switch (sslHostConfig.getCertificateVerification()) {\n                        case NONE:\n                            sslParameters.setNeedClientAuth(false);\n                            sslParameters.setWantClientAuth(false);\n                            break;\n                        case OPTIONAL:\n                        case OPTIONAL_NO_CA:\n                            sslParameters.setWantClientAuth(true);\n                            break;\n                        case REQUIRED:\n                            sslParameters.setNeedClientAuth(true);\n                    }\n                    /*\n                     * This is just a test to force unrecognized name alert.\n                     * Implement your matchers to your needs.\n                     */\n                    SNIMatcher sniMatcher = new SNIMatcher(0) {\n                        @Override\n                        public boolean matches(SNIServerName serverName) {\n                            return false;\n                        }\n                    };\n                    sslParameters.setSNIMatchers(List.of(sniMatcher));\n                    engine.setSSLParameters(sslParameters);\n                    return engine;\n                }\n            }\n\n            private SSLHostConfigCertificate selectCertificate(SSLHostConfig sslHostConfig, List&lt;Cipher&gt; clientCiphers) {\n                Set&lt;SSLHostConfigCertificate&gt; certificates = sslHostConfig.getCertificates(true);\n                if (certificates.size() == 1) {\n                    return (SSLHostConfigCertificate)certificates.iterator().next();\n                } else {\n                    LinkedHashSet&lt;Cipher&gt; serverCiphers = sslHostConfig.getCipherList();\n                    List&lt;Cipher&gt; candidateCiphers = new ArrayList();\n                    if (sslHostConfig.getHonorCipherOrder()) {\n                        candidateCiphers.addAll(serverCiphers);\n                        candidateCiphers.retainAll(clientCiphers);\n                    } else {\n                        candidateCiphers.addAll(clientCiphers);\n                        candidateCiphers.retainAll(serverCiphers);\n                    }\n\n                    for(Cipher candidate : candidateCiphers) {\n                        for(SSLHostConfigCertificate certificate : certificates) {\n                            if (certificate.getType().isCompatibleWith(candidate.getAu())) {\n                                return certificate;\n                            }\n                        }\n                    }\n\n                    return (SSLHostConfigCertificate)certificates.iterator().next();\n                }\n            }\n        });\n    }\n}\n</code></pre>\n<p>Code is used from <code>AbstractsJsseEndpoint</code>, except that it does set SNIMatchers. Register this code with a customizer:</p>\n<pre><code>@Configuration\npublic class TomcatProtocolCustomizer {\n\n    @Bean\n    public WebServerFactoryCustomizer&lt;TomcatServletWebServerFactory&gt; protocolCustomizer() {\n        return factory -&gt; {\n            factory.setProtocol(SniHttp11NioProtocol.class.getName());\n        };\n    }\n}\n</code></pre>\n<p>Please keep in mind, that this uses tomcat 10.x. When upgrading to 11.x, it probably won't work any longer. AFAIK, tomcat 11.x does not use AbstractJsseEndpoint.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 8866868,
+      "reputation" : 572,
+      "user_id" : 6621774,
+      "user_type" : "registered",
+      "accept_rate" : 60,
+      "profile_image" : "https://www.gravatar.com/avatar/6d039a85bf7ed098a60f40b585a18fa7?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Harry Developer",
+      "link" : "https://stackoverflow.com/users/6621774/harry-developer"
+    },
+    "creation_date" : 1753084696,
+    "last_activity_date" : 1753173051,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79707615" : [ {
+      "comment_id" : 140605085,
+      "post_id" : 79707615,
+      "body" : "Yes, I knew that one, thanks. But it will not populate SNIMatchers, which are referenced inside sun.security.ssl.ServerNameExtension and lead to Alert.UNRECOGNIZED_NAME during TLS handshake, like I woule expect.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 8866868,
+        "reputation" : 572,
+        "user_id" : 6621774,
+        "user_type" : "registered",
+        "accept_rate" : 60,
+        "profile_image" : "https://www.gravatar.com/avatar/6d039a85bf7ed098a60f40b585a18fa7?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Harry Developer",
+        "link" : "https://stackoverflow.com/users/6621774/harry-developer"
+      },
+      "creation_date" : 1753079378,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

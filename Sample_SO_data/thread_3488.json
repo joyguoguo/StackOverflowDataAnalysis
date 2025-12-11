@@ -1,0 +1,146 @@
+{
+  "question" : {
+    "question_id" : 79546376,
+    "title" : "@RabbitListener with MessageConverter and @Payload Object payload",
+    "body" : "<p>I'm looking for a way to use the same method to receive messages converted by <code>myMessageConverter</code> to an object depending on <code>__TypeId__</code> header.</p>\n<p><strong>WHY?</strong>\nWe are migrating from <strong>IBM MQ</strong> to <strong>RabbitMQ</strong>. Currently, it works\nlike that:</p>\n<pre><code>@JmsListener(destination = &quot;${jms.topic})\npublic void receiveMessage(@NonNull Message&lt;Object&gt; message) {\n    Object payload = message.getPayload();&gt;     \n    processByType(payload); \n}  \n</code></pre>\n<p>I'd like to have that something like that:</p>\n<pre><code> @RabbitListener(queues = &quot;${queue-name}&quot;, messageConverter = &quot;myMessageConverter&quot;)\n public void receiveMessage(@Payload Object payload) { \n    // use existing logic \n    processByType(payload);\n}\n</code></pre>\n<p>But in the case from above, it passes the object of type <code>Message</code> with all its details.\n<a href=\"https://i.sstatic.net/0Tc6NICY.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/0Tc6NICY.png\" alt=\"enter image description here\" /></a></p>\n<p>I found information that the method should have one parameter of a certain type (e.g.: <code>MyPayload</code>). and it works.</p>\n<pre><code> @RabbitListener(queues = &quot;${queue-name}&quot;, messageConverter = &quot;myMessageConverter&quot;)\n public void receiveMessage(@Payload MyPayload payload) { ... }\n</code></pre>\n<p>It even works for message types inherited from a common interface, e.g., MyInboundPayload.</p>\n<pre><code> @RabbitListener(queues = &quot;${queue-name}&quot;, messageConverter = &quot;myMessageConverter&quot;)\n public void receiveMessage(@Payload MyInboundPayload payload) { ... }\n</code></pre>\n<p>And I'd go with this option, but half of the payload types are library classes imported from other services. And I'm unable to make them <code>implement MyInboundPayload</code>.</p>\n<hr />\n<p>So, does anyone know how to force it to pass an already converted message to the method?\nIs that possible?</p>\n<pre><code>public void receiveMessage(@Payload Object payload)\n</code></pre>\n<p>Thanks!</p>\n<hr />\n<p><strong>Current configuration:</strong></p>\n<pre><code>    @Bean\n    public MessageConverter myMessageConverter() {\n        ObjectMapper objectMapper = new ObjectMapper()\n                .registerModule(new JavaTimeModule())\n                .registerModule(new ParanamerModule())\n                .registerModule(new SingleArgConstructorModule(&quot;com.xyz.api&quot;))\n                .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);\n        return new Jackson2JsonMessageConverter(objectMapper);\n    }\n</code></pre>\n<hr />\n<p>p.s. I know that I can process <code>Message</code> and then get type and manually convert to a type. But I wonder if there is a way to make with <code>@RabbitListener</code> capabilities.</p>\n",
+    "tags" : [ "java", "spring-boot", "rabbitmq", "spring-amqp", "spring-rabbit" ],
+    "owner" : {
+      "account_id" : 13535472,
+      "reputation" : 23,
+      "user_id" : 9764764,
+      "user_type" : "registered",
+      "profile_image" : "https://graph.facebook.com/2134414033251669/picture?type=large",
+      "display_name" : "PavloK",
+      "link" : "https://stackoverflow.com/users/9764764/pavlok"
+    },
+    "is_answered" : true,
+    "view_count" : 58,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1743444041,
+    "creation_date" : 1743428523,
+    "link" : "https://stackoverflow.com/questions/79546376/rabbitlistener-with-messageconverter-and-payload-object-payload",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79546530,
+    "question_id" : 79546376,
+    "body" : "<p>Configure your <code>Jackson2JsonMessageConverter</code> to use the header to determine the type instead of the default to look at the method signature. See <a href=\"https://docs.spring.io/spring-amqp/api/org/springframework/amqp/support/converter/AbstractJackson2MessageConverter.html#setTypePrecedence(org.springframework.amqp.support.converter.Jackson2JavaTypeMapper.TypePrecedence)\" rel=\"nofollow noreferrer\">the javadoc</a> for more information.</p>\n<p>That being said your configuration is almost there, you are just missing the setting of the <code>typePrecedence</code> property. Default it points to <code>INFERRED</code> which means look at the method argument, but you can set it to <code>TYPE_ID</code> to force it to use the header.</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Bean\npublic MessageConverter myMessageConverter() {\n  ObjectMapper objectMapper = new ObjectMapper()\n    .registerModule(new JavaTimeModule())\n    .registerModule(new ParanamerModule())\n    .registerModule(new SingleArgConstructorModule(&quot;com.xyz.api&quot;))\n    .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);\n  var converter = new Jackson2JsonMessageConverter(objectMapper);\n  converter.setTypePrecedence(TypePrecedence.TYPE_ID);\n  return converter;\n}\n</code></pre>\n<p>This configuration change will make it look at the header before looking at the type. So now you should be able to specify <code>@Payload Object</code> and get the actual type.</p>\n<p>See comment from Artem Bilan about the security restrictions (<a href=\"https://spring.io/security/cve-2017-4995\" rel=\"nofollow noreferrer\">CVE-2017-4995</a>).</p>\n<p>You would need to pass the possible packages to the configuration as well.</p>\n<pre class=\"lang-java prettyprint-override\"><code>var converter = new Jackson2JsonMessageConverter(objectMapper);\nconverter.setTypePrecedence(TypePrecedence.TYPE_ID);\nconverter.setTrustedPackages(&quot;com.yourpackage.sub1&quot;, &quot;com.yourpackage.sub2&quot;); \nreturn converter;\n</code></pre>\n<p>If you don't do this you will get an exception from Jackson about the class not being allowed.</p>\n",
+    "score" : 2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126800,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1743432159,
+    "last_activity_date" : 1743444041,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140282871,
+    "post_id" : 79546376,
+    "body" : "@M.Deinum Thanks for your question, I added &quot;Current configuration&quot;. It is Jackson2JsonMessageConverter with some settings, similarly to what was used for JmsListener.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 13535472,
+      "reputation" : 23,
+      "user_id" : 9764764,
+      "user_type" : "registered",
+      "profile_image" : "https://graph.facebook.com/2134414033251669/picture?type=large",
+      "display_name" : "PavloK",
+      "link" : "https://stackoverflow.com/users/9764764/pavlok"
+    },
+    "creation_date" : 1743431050,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140282780,
+    "post_id" : 79546376,
+    "body" : "What does your configuration look like? What does your <code>myMessageConverter</code> do compared to the default ones? The default one you can &quot;enforce&quot; to use the <code>__TYPE_ID__</code> header to do the deserialization, but without knowing what your <code>myMessageConverter</code> is that is going to be impossible to determine if that is feasible.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126800,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1743429691,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79546530" : [ {
+      "comment_id" : 140310276,
+      "post_id" : 79546530,
+      "body" : "In theory it should work, as I have used a similar setup in some projects. So there must be something in your configuration that fails to either pickup this converter or you have multiple others. But there is too little information in your question to determine that.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 3192259,
+        "reputation" : 126800,
+        "user_id" : 2696260,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+        "display_name" : "M. Deinum",
+        "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+      },
+      "creation_date" : 1744089539,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140309551,
+      "post_id" : 79546530,
+      "body" : "If you use <code>ObjectMapper</code> , manually, consider to use a <code>byte[]</code> as a method param and don&#39;t set a <code>MessageConverter</code> into a <code>@RabbitListener</code>.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 3273937,
+        "reputation" : 122596,
+        "user_id" : 2756547,
+        "user_type" : "registered",
+        "accept_rate" : 75,
+        "profile_image" : "https://www.gravatar.com/avatar/2158ce6e7c048277890eb64458864c1c?s=256&d=identicon&r=PG",
+        "display_name" : "Artem Bilan",
+        "link" : "https://stackoverflow.com/users/2756547/artem-bilan"
+      },
+      "creation_date" : 1744060858,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140309491,
+      "post_id" : 79546530,
+      "body" : "First of all, thank you both @m-deinum and @artem-bilan for your replies. Sorry, I was in a rush with the task and didn&#39;t get here to reply.  I played with that solution mentioned, but it didn&#39;t work for me.  I didn&#39;t have time to deeply investigate, so I pushed version with manually using ObjectMapper in my receiver.  But what I found is that, converter itself converts message, but <code>org.springframework.amqp.rabbit.listener.adapter.MessagingMe&zwnj;&#8203;ssageListenerAdapter&zwnj;&#8203;#invokeHandlerAndPro&zwnj;&#8203;cessResult</code> does not choose the correct one when invokes the method (I have spring-amqp:3.0.2)",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 13535472,
+        "reputation" : 23,
+        "user_id" : 9764764,
+        "user_type" : "registered",
+        "profile_image" : "https://graph.facebook.com/2134414033251669/picture?type=large",
+        "display_name" : "PavloK",
+        "link" : "https://stackoverflow.com/users/9764764/pavlok"
+      },
+      "creation_date" : 1744059507,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140283189,
+      "post_id" : 79546530,
+      "body" : "That&#39;s correct. Also see security restrictions (<code>Jackson2JsonMessageConverter.trustedPackages</code>) for external types: <a href=\"https://spring.io/security/cve-2017-4995\" rel=\"nofollow noreferrer\">spring.io/security/cve-2017-4995</a>",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 3273937,
+        "reputation" : 122596,
+        "user_id" : 2756547,
+        "user_type" : "registered",
+        "accept_rate" : 75,
+        "profile_image" : "https://www.gravatar.com/avatar/2158ce6e7c048277890eb64458864c1c?s=256&d=identicon&r=PG",
+        "display_name" : "Artem Bilan",
+        "link" : "https://stackoverflow.com/users/2756547/artem-bilan"
+      },
+      "creation_date" : 1743435355,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

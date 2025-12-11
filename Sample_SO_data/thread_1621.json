@@ -1,0 +1,110 @@
+{
+  "question" : {
+    "question_id" : 79689893,
+    "title" : "Is it possible to route Logback logging to SLF4J in a Log4j2-based project",
+    "body" : "<p>My project uses SLF4J with Log4j2, but recently I introduced a dependency that uses Logback for logging and <strong>DOES NOT</strong> use SLF4J. The dependency's code includes the following import:</p>\n<pre class=\"lang-java prettyprint-override\"><code>import ch.qos.logback.classic.Logger;\n</code></pre>\n<p>When I start my project, I get the following error:</p>\n<p><code>Caused by: java.lang.NoClassDefFoundError: ch/qos/logback/core/Context</code></p>\n<p>However, I <strong>DO NOT</strong> want my project to directly include Logback as a dependency. Is there a way to bridge Logback to SLF4J, similar to how Log4j can be bridged to SLF4J?</p>\n<hr />\n<p>Update:</p>\n<p>Below is my pom.xml where I have made equivalent replacements:</p>\n<pre class=\"lang-xml prettyprint-override\"><code>&lt;!-- SLF4J API --&gt;\n&lt;dependency&gt;\n  &lt;groupId&gt;org.slf4j&lt;/groupId&gt;\n  &lt;artifactId&gt;slf4j-api&lt;/artifactId&gt;\n  &lt;version&gt;1.7.36&lt;/version&gt;\n&lt;/dependency&gt;\n\n\n&lt;!-- spring log4j2 starter --&gt;\n&lt;dependency&gt;\n  &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;\n  &lt;artifactId&gt;spring-boot-starter-log4j2&lt;/artifactId&gt;\n  &lt;version&gt;2.5.12&lt;/version&gt;\n&lt;/dependency&gt;\n\n&lt;!-- our company inner dependency --&gt;\n&lt;dependency&gt;\n  &lt;groupId&gt;our.company.inner.project&lt;/groupId&gt;\n  &lt;artifactId&gt;some-jar&lt;/artifactId&gt;\n  &lt;version&gt;1.0&lt;/version&gt;\n  &lt;!-- I don't want to include any transitive dependencies --&gt;\n  &lt;exclusions&gt;\n    &lt;exclusion&gt;\n      &lt;groupId&gt;*&lt;/groupId&gt;\n      &lt;artifactId&gt;*&lt;/artifactId&gt;\n    &lt;/exclusion&gt;\n  &lt;/exclusions&gt;\n&lt;/dependency&gt;\n</code></pre>\n<p>The <code>some-jar</code> dependency includes Logback, and I must use this jar to fulfill my business requirements. However, I do not want multiple logging implementations in my system, so I manually excluded the Logback dependency. Despite this, I still encounter errors at runtime.</p>\n",
+    "tags" : [ "java", "logging", "log4j2", "logback", "slf4j" ],
+    "owner" : {
+      "account_id" : 13263731,
+      "reputation" : 163,
+      "user_id" : 9577357,
+      "user_type" : "registered",
+      "profile_image" : "https://lh6.googleusercontent.com/-zqp8phCeF6A/AAAAAAAAAAI/AAAAAAAAAAo/LqqlVsCQbdw/s256-rj/photo.jpg",
+      "display_name" : "chenlangping",
+      "link" : "https://stackoverflow.com/users/9577357/chenlangping"
+    },
+    "is_answered" : true,
+    "view_count" : 148,
+    "answer_count" : 1,
+    "score" : 5,
+    "last_activity_date" : 1751873021,
+    "creation_date" : 1751618336,
+    "link" : "https://stackoverflow.com/questions/79689893/is-it-possible-to-route-logback-logging-to-slf4j-in-a-log4j2-based-project",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79692442,
+    "question_id" : 79689893,
+    "body" : "<p><strong>TL;DR</strong>: The best solution is to fix the library so it doesn’t depend directly on Logback.</p>\n<p>Modern logging frameworks are <strong>intentionally modular</strong>, separating <strong>API</strong> from <strong>implementation</strong>. This design is meant to promote flexibility and decoupling:</p>\n<ul>\n<li><strong>QOS.ch</strong> provides an API (<a href=\"https://slf4j.org/\" rel=\"nofollow noreferrer\">SLF4J</a>) and an implementation (<a href=\"https://logback.qos.ch/\" rel=\"nofollow noreferrer\">Logback</a>).</li>\n<li>The <strong>Log4j Project</strong> similarly separates its <a href=\"https://logging.apache.org/log4j/2.x/manual/api.html\" rel=\"nofollow noreferrer\">Log4j API</a> and <a href=\"https://logging.apache.org/log4j/2.x/manual/implementation.html\" rel=\"nofollow noreferrer\">Log4j Core implementation</a>.</li>\n<li>See the <a href=\"https://logging.apache.org/log4j/2.x/manual/installation.html#concepts\" rel=\"nofollow noreferrer\">Log4j 2 Installation Guide</a> for a good overview of these concepts.</li>\n</ul>\n<p>Bridging <strong>between APIs</strong> (e.g. SLF4J → Log4j API or vice versa) is relatively straightforward. But bridging <strong>from an implementation back to an API</strong> (e.g. Logback → Log4j API or Log4j Core → SLF4J) is fundamentally flawed: it violates the abstraction and can’t be done cleanly.</p>\n<h3>Possible solutions</h3>\n<p>There are several possible solutions to your problem. I mention three of them in order of preference:</p>\n<h4>1. Fix or isolate the Logback dependency (Recommended)</h4>\n<p>The ideal solution is to eliminate the hard dependency on Logback.</p>\n<p>Direct use of <code>ch.qos.logback.*</code> classes usually points to one of two things:</p>\n<ul>\n<li><strong>(a)</strong> Programmatic configuration (e.g. <a href=\"https://stackoverflow.com/questions/3837801/how-to-change-root-logging-level-programmatically-for-logback\">setting levels</a>, appenders).</li>\n<li><strong>(b)</strong> Wrong import statements (trivial to fix).</li>\n</ul>\n<p>Ask your colleagues: <em>“Is logging configuration part of this library’s business logic?”</em></p>\n<ul>\n<li><p>If <strong>yes</strong>, then they should:</p>\n<ul>\n<li>Abstract the implementation-specific code (e.g. use reflection or check the implementation class names).</li>\n<li>Provide equivalent support for other logging backends (like Log4j 2 Core).</li>\n<li>Look at how <a href=\"https://docs.spring.io/spring-boot/api/java/org/springframework/boot/logging/LoggingSystem.html\" rel=\"nofollow noreferrer\">Spring Boot's <code>LoggingSystem</code></a> supports multiple implementations via abstraction.</li>\n</ul>\n</li>\n<li><p>If <strong>no</strong>, then the library should use SLF4J or another API <em>only</em> — and let the application decide the backend (Logback, Log4j 2 Core, etc.).</p>\n</li>\n</ul>\n<p><strong>Small note</strong>: We're currently developing the <a href=\"https://github.com/apache/logging-admin\" rel=\"nofollow noreferrer\">Apache Logging Admin API</a>, which will allow users to modify logging levels at runtime in an implementation-independent way. The initial release has been delayed as we focus on other priorities and gather community feedback.</p>\n<h4>2. Replace Logback with a &quot;mock&quot; implementation</h4>\n<p>Create a drop-in replacement for <code>logback-classic</code> that mimics its API but internally forwards to the Log4j 2 API. This is similar to how:</p>\n<ul>\n<li><a href=\"https://www.slf4j.org/legacy.html#log4j-over-slf4j\" rel=\"nofollow noreferrer\"><code>log4j-over-slf4j</code></a> redirects Log4j 1.x calls to SLF4J.</li>\n<li><a href=\"https://logging.apache.org/log4j/2.x/migrate-from-log4j1.html#option-1-use-the-log4j-1-x-bridge-log4j-1-2-api\" rel=\"nofollow noreferrer\"><code>log4j-1.2-api</code></a> redirects Log4j 1.x calls to Log4j API and has a limited support for Log4j Core reconfiguration through the Log4j 1.x methods.</li>\n</ul>\n<p>However, this can be <strong>fragile and difficult to maintain</strong>, especially if the original code uses deep Logback features.</p>\n<h4>3. Use a Logback Appender to forward logs to Log4j</h4>\n<p>As <a href=\"https://stackoverflow.com/questions/79689893/is-it-possible-to-route-logback-logging-to-slf4j-in-a-log4j2-based-project#comment140566365_79689893\">@Slaw suggested</a>, you can write a <strong>Logback appender</strong> that forwards events to the Log4j 2 API.</p>\n<p>This works, but comes with serious downsides:</p>\n<ul>\n<li>Logback still <strong>processes every event</strong>, even for disabled loggers.</li>\n<li>You pay the cost of formatting and filtering <em>twice</em> — first in Logback, then in Log4j Core.</li>\n<li>This adds unnecessary overhead and complexity.</li>\n</ul>\n<p>Use this only as a <strong>last resort</strong>. In practice, this approach is primarily used for <code>java.util.logging</code> (JUL), whose classes <strong>cannot be replaced</strong>. Examples include <a href=\"https://logging.apache.org/log4j/2.x/log4j-jul.html#bridge-handler\" rel=\"nofollow noreferrer\"><code>Log4jBridgeHandler</code></a> and <a href=\"https://www.slf4j.org/api/org/slf4j/bridge/SLF4JBridgeHandler.html\" rel=\"nofollow noreferrer\"><code>SLF4JBridgeHandler</code></a>, which forward JUL events to other logging systems. These handlers are tightly coupled to their respective implementations (Log4j Core, Logback) to ensure disabled loggers are fast and efficient—something that's difficult to replicate with a generic forwarding appender.</p>\n<h3>Summary</h3>\n<p>There’s no “bridge” from Logback to Log4j API that works correctly because you’re starting from the implementation, not the API. Logging frameworks are designed to route top-down: from API to implementation, not the other way around.</p>\n",
+    "score" : 2,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 16269349,
+      "reputation" : 16729,
+      "user_id" : 11748454,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qyBNp.jpg?s=256",
+      "display_name" : "Piotr P. Karwasz",
+      "link" : "https://stackoverflow.com/users/11748454/piotr-p-karwasz"
+    },
+    "creation_date" : 1751873021,
+    "last_activity_date" : 1751873021,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140569505,
+    "post_id" : 79689893,
+    "body" : "@life888888   Thank you for your response. I have attached the pom file of my project. Could you please help me check if there are any configuration issues, or suggest ways to avoid introducing the logback dependency, or how to bridge logback logging to slf4j? Thanks a lot!",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 13263731,
+      "reputation" : 163,
+      "user_id" : 9577357,
+      "user_type" : "registered",
+      "profile_image" : "https://lh6.googleusercontent.com/-zqp8phCeF6A/AAAAAAAAAAI/AAAAAAAAAAo/LqqlVsCQbdw/s256-rj/photo.jpg",
+      "display_name" : "chenlangping",
+      "link" : "https://stackoverflow.com/users/9577357/chenlangping"
+    },
+    "creation_date" : 1751855437,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140566420,
+    "post_id" : 79689893,
+    "body" : "Can you provide a link to the dependency? You can bridge only logging APIs, by implementing one in terms of the other (from Log4j API to SLF4J and viceversa). Logging backends, such as Logback or Log4j Core, can not be easily redirected. Logback will register itself as SLF4J implementation and conflict with the <code>log4j-slf4j2-impl</code> implementation.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 16269349,
+      "reputation" : 16729,
+      "user_id" : 11748454,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qyBNp.jpg?s=256",
+      "display_name" : "Piotr P. Karwasz",
+      "link" : "https://stackoverflow.com/users/11748454/piotr-p-karwasz"
+    },
+    "creation_date" : 1751695889,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140566365,
+    "post_id" : 79689893,
+    "body" : "Logback is an implementation of SLF4J, so it may be a little confusing to bridge it to another SLF4J implementation. However, you could <i>maybe</i> write a custom Logback appender that forwards the log events to a different SLF4J logger. Whether you would be able to preserve all the logging information, such as the timestamp, I&#39;m not sure.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 8532578,
+      "reputation" : 49884,
+      "user_id" : 6395627,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Slaw",
+      "link" : "https://stackoverflow.com/users/6395627/slaw"
+    },
+    "creation_date" : 1751690034,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140564485,
+    "post_id" : 79689893,
+    "body" : "please provide your pom.xml.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 26698569,
+      "reputation" : 4070,
+      "user_id" : 20306007,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/98bbc403493aee3681b71dae7abef66e?s=256&d=identicon&r=PG",
+      "display_name" : "life888888",
+      "link" : "https://stackoverflow.com/users/20306007/life888888"
+    },
+    "creation_date" : 1751619990,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

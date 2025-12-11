@@ -1,0 +1,128 @@
+{
+  "question" : {
+    "question_id" : 79562433,
+    "title" : "I&#39;m writing repeated string values to a string column in an ORC file using Java and while reading the ORC file back, encounter a NullPointerException",
+    "body" : "<p>When I am trying to write same value for each row for string column in orc file, only first row is returning the written value, while reading remaining rows, facing null pointer issue. In some cases, we might face this issue, so looking for solution to this problem.</p>\n<p>ORC Writer logic:</p>\n<pre><code>import org.apache.hadoop.conf.Configuration;\nimport org.apache.hadoop.fs.Path;\nimport org.apache.hadoop.hive.ql.exec.vector.BytesColumnVector;\nimport org.apache.hadoop.hive.ql.exec.vector.LongColumnVector;\nimport org.apache.hadoop.hive.ql.exec.vector.VectorizedRowBatch;\nimport org.apache.orc.CompressionKind;\nimport org.apache.orc.OrcFile;\nimport org.apache.orc.TypeDescription;\nimport org.apache.orc.impl.WriterImpl;\n\nimport java.io.IOException;\nimport java.nio.charset.StandardCharsets;\n\npublic class ORCWriter {\n\n    public static void main(String[] args) throws IOException {\n        // Define the schema\n        TypeDescription schema = TypeDescription.createStruct()\n                .addField(&quot;value&quot;, TypeDescription.createString())\n                .addField(&quot;quality&quot;, TypeDescription.createLong());\n\n        // Create a configuration object\n        Configuration conf = new Configuration();\n\n        // Create a WriterImpl instance\n        WriterImpl writer = (WriterImpl) OrcFile.createWriter(new Path(&quot;testString.orc&quot;),\n                OrcFile.writerOptions(conf).setSchema(schema).stripeSize(1024).compress(CompressionKind.SNAPPY));\n\n        // Create a batch to hold the data\n        VectorizedRowBatch batch = schema.createRowBatch();\n        BytesColumnVector value = (BytesColumnVector)batch.cols[0];\n        LongColumnVector quality = (LongColumnVector)batch.cols[1];\n\n        int start = 0;\n        int end = 100;\n        while (start &lt; end) {\n            int row = batch.size++;\n            value.setVal(row, (&quot;value&quot;).getBytes(StandardCharsets.UTF_8));\n            quality.vector[row] = start;\n\n            start += 1;\n            if (batch.size == batch.getMaxSize()) {\n                writer.addRowBatch(batch);\n                batch.reset();\n            }\n        }\n        if (batch.size != 0) {\n            writer.addRowBatch(batch);\n            batch.reset();\n        }\n        writer.close();\n    }\n}\n</code></pre>\n<p>ORC reader logic:</p>\n<pre><code>import org.apache.hadoop.conf.Configuration;\nimport org.apache.hadoop.fs.Path;\nimport org.apache.hadoop.hive.ql.exec.vector.BytesColumnVector;\nimport org.apache.hadoop.hive.ql.exec.vector.VectorizedRowBatch;\nimport org.apache.orc.OrcFile;\nimport org.apache.orc.Reader;\nimport org.apache.orc.RecordReader;\nimport org.apache.orc.TypeDescription;\n\npublic class ORCReader {\n\n    public static void main(String[] args) throws Exception {\n        // Create a configuration object\n        Configuration conf = new Configuration();\n\n        // Create a Reader instance\n        Reader reader = OrcFile.createReader(new Path(&quot;testString.orc&quot;),\n                OrcFile.readerOptions(conf));\n\n        // Get the schema of the ORC file\n        TypeDescription schema = reader.getSchema();\n\n        // Create a batch to hold the data\n        VectorizedRowBatch batch = schema.createRowBatch();\n\n        // Create a RecordReader to read the data\n        RecordReader rows = reader.rows();\n        int rowcount = 1;\n        long startTime = System.currentTimeMillis();\n        // Read the data\n        while (rows.nextBatch(batch)) {\n            BytesColumnVector value = (BytesColumnVector) batch.cols[0];\n\n            for (int r = 0; r &lt; batch.size; ++r) {\n                String valueStr = new String(value.vector[r], value.start[r], value.length[r]);\n                System.out.println(&quot;Row &quot; + rowcount + &quot;  value: &quot; + valueStr);\n                rowcount++;\n            }\n        }\n        System.out.println(&quot;Total time :: &quot;+(System.currentTimeMillis() - startTime));\n\n        // Close the RecordReader\n        rows.close();\n    }\n}\n</code></pre>\n<p>Exception details when trying to read the orc file: Able to read value from value column without any issues for the first row and seeing null pointer issue from second row</p>\n<blockquote>\n<p>Row 1  value: value</p>\n</blockquote>\n<p>Exception in thread &quot;main&quot; java.lang.NullPointerException: Cannot read the array length because &quot;bytes&quot; is null\nat java.base/java.lang.String.(String.java:1455)\nat com.ge.ORCReader.main(ORCReader.java:37)</p>\n",
+    "tags" : [ "java", "orc" ],
+    "owner" : {
+      "account_id" : 2122435,
+      "reputation" : 41,
+      "user_id" : 1885418,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/509b2ec6c15d4321d26ddb49f3541d17?s=256&d=identicon&r=PG",
+      "display_name" : "user1885418",
+      "link" : "https://stackoverflow.com/users/1885418/user1885418"
+    },
+    "is_answered" : false,
+    "view_count" : 52,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1744270269,
+    "creation_date" : 1744124932,
+    "link" : "https://stackoverflow.com/questions/79562433/im-writing-repeated-string-values-to-a-string-column-in-an-orc-file-using-java",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79565994,
+    "question_id" : 79562433,
+    "body" : "<p>org.apache.orc.impl.TreeReaderFactory.BytesColumnVectorUtil#readOrcByteArrays</p>\n<p><a href=\"https://github.com/apache/orc/blob/main/java/core/src/java/org/apache/orc/impl/TreeReaderFactory.java#L2086-L2089\" rel=\"nofollow noreferrer\">https://github.com/apache/orc/blob/main/java/core/src/java/org/apache/orc/impl/TreeReaderFactory.java#L2086-L2089</a></p>\n<p>OR use flatten api</p>\n<pre><code>BytesColumnVector value = (BytesColumnVector) batch.cols[0];\nvalue.flatten(false, batch.selected, batch.size); \n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 2122435,
+      "reputation" : 41,
+      "user_id" : 1885418,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/509b2ec6c15d4321d26ddb49f3541d17?s=256&d=identicon&r=PG",
+      "display_name" : "user1885418",
+      "link" : "https://stackoverflow.com/users/1885418/user1885418"
+    },
+    "creation_date" : 1744270269,
+    "last_activity_date" : 1744270269,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140318623,
+    "post_id" : 79562433,
+    "body" : "yes, we are getting null value while reading the data from ORC. If you observe the writer logic, I am not inserting any null value in values column. Some how, nulls are getting saved. If I am storing non repeated value, then I am able to retrieve the value from values column without any issues.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2122435,
+      "reputation" : 41,
+      "user_id" : 1885418,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/509b2ec6c15d4321d26ddb49f3541d17?s=256&d=identicon&r=PG",
+      "display_name" : "user1885418",
+      "link" : "https://stackoverflow.com/users/1885418/user1885418"
+    },
+    "creation_date" : 1744251394,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140316511,
+    "post_id" : 79562433,
+    "body" : "You have passed <code>null</code> to the <code>new String(byte[]....</code> constructor. So probably <code>value.vector[r]</code> is null. Sort out why that is.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3159259,
+      "reputation" : 111552,
+      "user_id" : 2670892,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/4iPV5.png?s=256",
+      "display_name" : "greg-449",
+      "link" : "https://stackoverflow.com/users/2670892/greg-449"
+    },
+    "creation_date" : 1744208461,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140316371,
+    "post_id" : 79562433,
+    "body" : "Row 1  value: value. (is the first row from the stripe), when code trying to read next row getting below exception) Exception in thread &quot;main&quot; java.lang.NullPointerException: Cannot read the array length because &quot;bytes&quot; is null \tat java.base/java.lang.String.&lt;init&gt;(String.java:1455) \tat com.ge.ORCReader.main(ORCReader.java:38)",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2122435,
+      "reputation" : 41,
+      "user_id" : 1885418,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/509b2ec6c15d4321d26ddb49f3541d17?s=256&d=identicon&r=PG",
+      "display_name" : "user1885418",
+      "link" : "https://stackoverflow.com/users/1885418/user1885418"
+    },
+    "creation_date" : 1744206821,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140312614,
+    "post_id" : 79562433,
+    "body" : "Show is the exception stack trace",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 3159259,
+      "reputation" : 111552,
+      "user_id" : 2670892,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/4iPV5.png?s=256",
+      "display_name" : "greg-449",
+      "link" : "https://stackoverflow.com/users/2670892/greg-449"
+    },
+    "creation_date" : 1744128007,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79565994" : [ {
+      "comment_id" : 140319288,
+      "post_id" : 79565994,
+      "body" : "Your answer could be improved with additional supporting information. Please <a href=\"https://stackoverflow.com/posts/79565994/edit\">edit</a> to add further details, such as citations or documentation, so that others can confirm that your answer is correct. You can find more information on how to write good answers <a href=\"/help/how-to-answer\">in the help center</a>.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : -1,
+        "reputation" : 1,
+        "user_id" : -1,
+        "user_type" : "moderator",
+        "profile_image" : "https://www.gravatar.com/avatar/a007be5a61f6aa8f3e85ae2fc18dd66e?s=256&d=identicon&r=PG",
+        "display_name" : "Community",
+        "link" : "https://stackoverflow.com/users/-1/community"
+      },
+      "creation_date" : 1744270698,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

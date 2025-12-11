@@ -1,0 +1,82 @@
+{
+  "question" : {
+    "question_id" : 79723677,
+    "title" : "Repetitive ownership checks for nested resources in Spring Boot with JWT authentication",
+    "body" : "<p>I'm building a Spring Boot backend API with JWT authentication. The domain model is:</p>\n<ul>\n<li><code>Project</code> owned by a <code>User</code></li>\n<li>Each <code>Project</code> has many <code>Exams</code></li>\n<li>Each <code>Exam</code> has many <code>Questions</code></li>\n</ul>\n<p>Authentication is working, but authorization/ownership checks are becoming repetitive and error-prone when I go down into nested endpoints. Examples:</p>\n<ul>\n<li><code>GET /projects</code> filters projects by the authenticated user.</li>\n<li><code>GET /projects/{projectId}/exams</code> checks that the project belongs to the user before returning exams.</li>\n<li><code>DELETE /projects/{projectId}/exams/{examId}</code> could be abused if someone supplies a random <code>examId</code> unless I verify ownership again.</li>\n</ul>\n<p>Right now I end up manually passing the <code>User</code> everywhere and doing checks like <code>findAllByOwnerAndId(user, projectId)</code> for example. This repetition is spreading across controllers and services. Is there a cleaner, centralized pattern to handle ownership/authorization for nested resources so I don't have to litter every handler with the same logic?</p>\n<p><em>ProjectController:</em></p>\n<pre class=\"lang-java prettyprint-override\"><code>@RestController\n@RequestMapping(&quot;/projects&quot;)\npublic class ProjectController {\n    private final ProjectService projectService;\n\n    public ProjectController(ProjectService projectService) {\n        this.projectService = projectService;\n    }\n\n    @GetMapping\n    public ResponseEntity&lt;Iterable&lt;ProjectDTO&gt;&gt; getAll(@AuthenticationPrincipal UserPrincipal principal) {\n        return ResponseEntity.ok(projectService.getAllByUser(principal.getUser()));\n    }\n\n    @DeleteMapping(&quot;/{projectId}&quot;)\n    public ResponseEntity&lt;?&gt; delete(@PathVariable Integer projectId, @AuthenticationPrincipal UserPrincipal principal) {\n        projectService.delete(projectId, principal.getUser());\n        return ResponseEntity.ok().build();\n    }\n}\n</code></pre>\n<p><em>ExamController:</em></p>\n<pre class=\"lang-java prettyprint-override\"><code>@RestController\n@RequestMapping(&quot;/projects/{projectId}/exams&quot;)\npublic class ExamController {\n    private final ExamService examService;\n    public ExamController(ExamService examService) {\n        this.examService = examService;\n    }\n\n    @GetMapping\n    public ResponseEntity&lt;Iterable&lt;Exam&gt;&gt; getAll(\n        @PathVariable Integer projectId,\n        @AuthenticationPrincipal UserPrincipal principal\n    ) {\n        return ResponseEntity.ok(examService.getAllByProject(projectId, principal.getUser()));\n    }\n\n    @DeleteMapping(&quot;/{examId}&quot;)\n    public ResponseEntity&lt;?&gt; delete(@PathVariable Integer examId) {\n        examService.delete(examId);\n        return ResponseEntity.ok().build();\n    }\n}\n</code></pre>\n<p><em>ExamService (ownership check inside):</em>\nThis ownership check feels very awkward.</p>\n<pre class=\"lang-java prettyprint-override\"><code>public Iterable&lt;Exam&gt; getAllByProject(Integer projectId, User user) {\n    Optional&lt;Project&gt; project = projectRepository.findAllByOwnerAndId(user, projectId);\n    if (project.isEmpty()) {\n        throw new ProjectNotFoundException(projectId);\n    }\n    return project.get().getExams();\n}\n</code></pre>\n<p>Is there a better architectural or Spring idiomatic way to centralize or eliminate these repetitive ownership checks for nested resources (project → exam → question)?</p>\n",
+    "tags" : [ "java", "spring", "spring-boot" ],
+    "owner" : {
+      "account_id" : 9482055,
+      "reputation" : 50,
+      "user_id" : 16876561,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/257d1e932865db1480a68c2ef2804561?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Jelles",
+      "link" : "https://stackoverflow.com/users/16876561/jelles"
+    },
+    "is_answered" : true,
+    "view_count" : 104,
+    "answer_count" : 3,
+    "score" : 1,
+    "last_activity_date" : 1754208163,
+    "creation_date" : 1754172262,
+    "link" : "https://stackoverflow.com/questions/79723677/repetitive-ownership-checks-for-nested-resources-in-spring-boot-with-jwt-authent",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79723863,
+    "question_id" : 79723677,
+    "body" : "<p>Create <strong><code>@CheckOwnership</code></strong> annotation to mark methods needing verification. try AOP to intercept calls and validate resource ownership automatically.<br />\nCentralize checks in an <strong><code>AuthorizationService</code></strong> and inject this service wherever needed</p>\n<pre><code>validateProjectOwnership(projectId, user)  \nvalidateExamOwnership(examId, user)\n</code></pre>\n<p>Also prevalidate ownership using <strong><code>@ModelAttribute</code></strong> methods in a <strong><code>@ControllerAdvice</code></strong> so controllers can safely use the prevalidated resources:</p>\n<pre><code>@RestController\n@RequestMapping(&quot;/projects/{projectId}/exams&quot;)\npublic class ExamController {\n    private final ExamService examService;\n    \n    @GetMapping\n    public ResponseEntity&lt;Iterable&lt;Exam&gt;&gt; getAll(@ModelAttribute(&quot;project&quot;) Project project) {\n        return ResponseEntity.ok(examService.getAllByProject(project));\n    }\n    \n    @DeleteMapping(&quot;/{examId}&quot;)\n    public ResponseEntity&lt;?&gt; delete(@ModelAttribute(&quot;exam&quot;) Exam exam) {\n        examService.delete(exam);\n        return ResponseEntity.ok().build();\n    }\n}\n</code></pre>\n",
+    "score" : 2,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 6097406,
+      "reputation" : 316,
+      "user_id" : 4757784,
+      "user_type" : "registered",
+      "profile_image" : "https://lh6.googleusercontent.com/-5jsrL-7bG8I/AAAAAAAAAAI/AAAAAAAAABM/JMj0SpS1J1o/s256-rj/photo.jpg",
+      "display_name" : "Emre Zorlu",
+      "link" : "https://stackoverflow.com/users/4757784/emre-zorlu"
+    },
+    "creation_date" : 1754207805,
+    "last_activity_date" : 1754207805,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79723760,
+    "question_id" : 79723677,
+    "body" : "<p>My suggestion is to take away the authorization check outside of the exampleService, so the function getAllByProject() by examService will only take one argument, which is the project object (like the name).</p>\n<p>This is only my personal opinion, and there might be a better approach for this.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 39036781,
+      "reputation" : 1,
+      "user_id" : 29074344,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2dd939c34107e9a25b29224b3611eb31?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Jun",
+      "link" : "https://stackoverflow.com/users/29074344/jun"
+    },
+    "creation_date" : 1754192079,
+    "last_activity_date" : 1754192079,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79723867,
+    "question_id" : 79723677,
+    "body" : "<p>You can use an validation layer inside the service layer and do all the checking and throwing of exceptions there and you can also use aspects and custom annotations to handling authorization to the call.<br />\nHere is my suggested structure:</p>\n<ul>\n<li><p>Controller</p>\n</li>\n<li><p>Service</p>\n</li>\n<li><p>Validation</p>\n</li>\n<li><p>Repository</p>\n</li>\n<li><p>Authorization by AOP</p>\n</li>\n</ul>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 6233026,
+      "reputation" : 93,
+      "user_id" : 4849128,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/eN0WJ.jpg?s=256",
+      "display_name" : "Mohammad Taghi Ahadi",
+      "link" : "https://stackoverflow.com/users/4849128/mohammad-taghi-ahadi"
+    },
+    "creation_date" : 1754208163,
+    "last_activity_date" : 1754208163,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : { }
+}

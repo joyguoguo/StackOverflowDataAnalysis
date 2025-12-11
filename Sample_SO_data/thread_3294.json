@@ -1,0 +1,48 @@
+{
+  "question" : {
+    "question_id" : 79558558,
+    "title" : "AspectJ staticInitialization changes the method context on the code in the clinit when doing @Around",
+    "body" : "<p>This question is a follow up to the question here\n<a href=\"https://stackoverflow.com/questions/79557444/aspectj-around-a-static-initializer/79557755?noredirect=1#comment140304066_79557755\">AspectJ @around a static initializer</a></p>\n<p>I accepted that answer because it did apply the aspect to the code, but i hadn't actually run it yet to see there were still problems...</p>\n<p>I have this aspect</p>\n<pre class=\"lang-java prettyprint-override\"><code>package com.acme.aspects.exceptions;\n\nimport org.aspectj.lang.ProceedingJoinPoint;\nimport org.aspectj.lang.annotation.Around;\nimport org.aspectj.lang.annotation.Aspect;\nimport org.slf4j.Logger;\nimport org.slf4j.LoggerFactory;\n\n@Aspect\npublic class StaticInitializerExceptions {\n\n    private static final Logger LOGGER = LoggerFactory.getLogger(StaticInitializerExceptions.class);\n\n    @Around(&quot;staticinitialization(!is(InterfaceType)) &amp;&amp; !within(MyAspect) &amp;&amp; !within(com.acme.aspects.exceptions.StaticInitializerExceptions)&quot;)\n    public Object logStaticInitializerException(ProceedingJoinPoint joinPoint) throws Throwable {\n        try {\n            return joinPoint.proceed();\n        } catch (Throwable t) {\n            LOGGER.error(&quot;STATIC INITIALIZER EXCEPTION CAUGHT&quot;, t);\n            throw t;\n        }\n    }\n}\n</code></pre>\n<p>In an attempt to find the source of a mysterious NoClassDefFoundError in an initializer.</p>\n<p>It seemed to weave ok, however now practically ever static initializer in the program throws, because the method context from which the target clinit is run is from the aspect, it appears.</p>\n<p>So say i have a class, such as</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class AcmeContextListener implements ServletContextListener {\n\n    private static final Logger LOGGER = LoggerFactory.getLogger(AcmeContextListener.class);\n\n    ....\n}\n</code></pre>\n<p>Then it's clinit will get weaved in such a way that where the\nLOGGER = LoggerFactory.getLogger(AcmeContextListener.class);</p>\n<p>isn't called from the clinit, but from an aspect generated method.</p>\n<p>Giving this error</p>\n<pre class=\"lang-none prettyprint-override\"><code>&lt;ri &gt; &lt;an &gt; - STATIC INITIALIZER EXCEPTION CAUGHT\n    at com.acme.listener.AcmeContextListener.clinit$_aroundBody0(AcmeContextListener.java:20) ~[_servlets.jar:25.6.0.0]\n    at com.acme.listener.AcmeContextListener.clinit$_aroundBody1$advice(AcmeContextListener.java:17) ~[_servlets.jar:25.6.0.0]\n    java.lang.IllegalAccessError: Update to static final field com.acme.listener.AcmeContextListener.LOGGER attempted from a different method (clinit$_aroundBody0) than the initializer method &lt;clinit&gt; \n    at com.acme.listener.AcmeContextListener.&lt;clinit&gt;(AcmeContextListener.java:1) ~[_servlets.jar:25.6.0.0]\n</code></pre>\n<p>Is there anything that can be done here?</p>\n",
+    "tags" : [ "java", "static", "annotations", "aspectj", "initializer" ],
+    "owner" : {
+      "account_id" : 35502,
+      "reputation" : 28679,
+      "user_id" : 100565,
+      "user_type" : "registered",
+      "accept_rate" : 59,
+      "profile_image" : "https://www.gravatar.com/avatar/c35777e0d2751654391d03ccdf67edc4?s=256&d=identicon&r=PG",
+      "display_name" : "MeBigFatGuy",
+      "link" : "https://stackoverflow.com/users/100565/mebigfatguy"
+    },
+    "is_answered" : true,
+    "view_count" : 50,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1743990712,
+    "creation_date" : 1743963344,
+    "link" : "https://stackoverflow.com/questions/79558558/aspectj-staticinitialization-changes-the-method-context-on-the-code-in-the-clini",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79558951,
+    "question_id" : 79558558,
+    "body" : "<p>This is a special case. The around advice is not inlined but compiled into a helper method, and that one cannot set a final field, hence the error.</p>\n<p>The solution is simple: Just do not use an <code>@Around</code> advice. In your sample code, you do nothing before calling <code>proceed()</code> anyway, so an <code>@After</code> advice is sufficient, more exactly <code>@AfterThrowing</code>, because you are only interested in joinpoints throwing exceptions. This also simplifies the advice code:</p>\n<pre class=\"lang-java prettyprint-override\"><code>import org.aspectj.lang.JoinPoint;\nimport org.aspectj.lang.annotation.AfterThrowing;\nimport org.aspectj.lang.annotation.Aspect;\nimport org.slf4j.Logger;\nimport org.slf4j.LoggerFactory;\n\n@Aspect\npublic class StaticInitializerExceptions {\n  private static final Logger LOGGER = LoggerFactory.getLogger(StaticInitializerExceptions.class);\n\n  @AfterThrowing(pointcut = &quot;staticinitialization(!is(InterfaceType)) &amp;&amp; !within(StaticInitializerExceptions)&quot;, throwing = &quot;t&quot;)\n  public void myAdvice(JoinPoint joinPoint, Throwable t) {\n    LOGGER.error(&quot;STATIC INITIALIZER EXCEPTION CAUGHT&quot;, t);\n  }\n}\n</code></pre>\n<p>BTW, if you need to do something before joinpoint execution, simply add a <code>@Before</code> advice. If you need to carry state from before to after advice, probably you need something like a thread-local field in the aspect.</p>\n",
+    "score" : 0,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 1087271,
+      "reputation" : 68569,
+      "user_id" : 1082681,
+      "user_type" : "registered",
+      "accept_rate" : 90,
+      "profile_image" : "https://i.sstatic.net/lDK9h.png?s=256",
+      "display_name" : "kriegaex",
+      "link" : "https://stackoverflow.com/users/1082681/kriegaex"
+    },
+    "creation_date" : 1743990663,
+    "last_activity_date" : 1743990663,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : { }
+}

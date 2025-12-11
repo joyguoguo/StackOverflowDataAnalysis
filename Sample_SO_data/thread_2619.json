@@ -1,0 +1,84 @@
+{
+  "question" : {
+    "question_id" : 79608533,
+    "title" : "external pdf signing with pdfbox 2.0.34 - The document has been altered or corrupted since the Signature was applied",
+    "body" : "<p>I am using pdfbox 2.0.34, and i am trying to sign a pdf using an external api that returns the signature in der format.</p>\n<p>here is my code:</p>\n<pre><code>private static String signPdf(String inputPdfPath, String outputPdfPath, String reason, String location,\n        SignatureDetails signatureDetails, String sessionId)\n        throws IOException, GeneralSecurityException, Exception {\n\n    File inputFile = new File(inputPdfPath);\n    File outputFile = new File(outputPdfPath);\n\n    X509Certificate signerCertificate;\n    try {\n        if (signatureDetails == null || signatureDetails.getCertificate() == null\n                || signatureDetails.getCertificate().isEmpty()) {\n            throw new GeneralSecurityException(&quot;Signer certificate details missing from the first API response.&quot;);\n        }\n        byte[] certBytes = Base64.decodeBase64(signatureDetails.getCertificate());\n        CertificateFactory certFactory = CertificateFactory.getInstance(&quot;X.509&quot;,\n                BouncyCastleProvider.PROVIDER_NAME);\n        try (InputStream certInputStream = new ByteArrayInputStream(certBytes)) {\n            signerCertificate = (X509Certificate) certFactory.generateCertificate(certInputStream);\n        }\n\n        signerCertificate.checkValidity();\n\n        System.out.println(&quot;  Successfully loaded signer certificate provided by API.&quot;);\n        System.out.println(&quot;    Cert Subject: &quot; + signerCertificate.getSubjectX500Principal());\n        System.out.println(&quot;    Cert Issuer: &quot; + signerCertificate.getIssuerX500Principal());\n        System.out.println(&quot;    Cert Valid Until: &quot; + signerCertificate.getNotAfter());\n\n    } catch (CertificateException | IllegalArgumentException e) {\n        System.err.println(&quot;  Error decoding/parsing signer certificate from API details: &quot; + e.getMessage());\n        throw new GeneralSecurityException(&quot;Failed to process signer certificate from API.&quot;, e);\n    }\n\n    System.out.println(&quot;  Loading base PDF document for signing: &quot; + inputFile.getAbsolutePath());\n\n    try (PDDocument document = PDDocument.load(inputFile);\n            ByteArrayOutputStream baos = new ByteArrayOutputStream()) {\n        System.out.println(&quot;  Base PDF loaded.&quot;);\n\n        PDSignature signatureDict = new PDSignature();\n        signatureDict.setFilter(PDSignature.FILTER_ADOBE_PPKLITE);\n        signatureDict.setSubFilter(PDSignature.SUBFILTER_ADBE_PKCS7_DETACHED);\n        signatureDict.setName(&quot;Ahmad Bin Abu&quot;);\n        signatureDict.setLocation(location);\n        signatureDict.setReason(reason);\n        signatureDict.setSignDate(Calendar.getInstance());\n\n        System.out.println(&quot;  Adding signature dictionary structure to the document...&quot;);\n        document.addSignature(signatureDict);\n\n        System.out.println(&quot;  Saving signed document incrementally (this triggers the actual signing call)...&quot;);\n        ExternalSigningSupport externalSigning = document.saveIncrementalForExternalSigning(baos);\n\n        InputStream content = externalSigning.getContent();\n        byte[] contentBytes = IOUtils.toByteArray(content);\n\n        String hashHex = DigestUtils.sha256Hex(contentBytes);\n\n        String signedData2 = signExternal(sessionId, hashHex);\n\n        System.out.println(&quot;signedData2:&quot; + signedData2);\n\n        byte[] derSignature = Base64.decodeBase64(signedData2);\n\n        ContentSigner contentSigner2 = new ContentSigner() {\n            private final ByteArrayOutputStream outputStream = new ByteArrayOutputStream();\n\n            @Override\n            public OutputStream getOutputStream() {\n                return outputStream;\n            }\n\n            @Override\n            public byte[] getSignature() {\n                return derSignature;\n            }\n\n            @Override\n            public AlgorithmIdentifier getAlgorithmIdentifier() {\n                return new DefaultSignatureAlgorithmIdentifierFinder().find(&quot;SHA256withECDSA&quot;);\n            }\n        };\n\n        CMSSignedDataGenerator gen = new CMSSignedDataGenerator();\n        JcaCertStore certStore = new JcaCertStore(Collections.singletonList(signerCertificate));\n        gen.addCertificates(certStore);\n\n        DigestCalculatorProvider digestProvider = new JcaDigestCalculatorProviderBuilder()\n                .setProvider(new BouncyCastleProvider()).build();\n\n        JcaX509CertificateHolder jcaX509CertificateHolder = new JcaX509CertificateHolder(signerCertificate);\n\n        SignerInfoGenerator signerInfoGen = new JcaSignerInfoGeneratorBuilder(digestProvider).build(contentSigner2,\n                jcaX509CertificateHolder);\n\n        gen.addSignerInfoGenerator(signerInfoGen);\n\n        CMSTypedData msg = new CMSProcessableByteArray(contentBytes);\n        CMSSignedData signedData = gen.generate(msg, false);\n\n        externalSigning.setSignature(signedData.getEncoded());\n\n        try (FileOutputStream fos = new FileOutputStream(outputFile)) {\n            baos.writeTo(fos);\n        }\n\n        return outputPdfPath;\n    }\n}\n</code></pre>\n<p>when i open the pdf inside adobe reader, the signature is invalid and the error message is &quot;The document has been altered or corrupted since the Signature was applied. &quot;. Somehow, the certificate appears to be correctly inserted, and I suspect the hash of the document is invalid.</p>\n<p>[<img src=\"https://i.sstatic.net/6x2l7iBM.png\" alt=\"pdf-error1\" /></p>\n<p>I tried to refer to <a href=\"https://github.com/apache/pdfbox/blob/trunk/examples/src/main/java/org/apache/pdfbox/examples/signature/CreateSignatureBase.java#L134\" rel=\"nofollow noreferrer\">https://github.com/apache/pdfbox/blob/trunk/examples/src/main/java/org/apache/pdfbox/examples/signature/CreateSignatureBase.java#L134</a> but it looks like their ContentSigner requires a private key, which I do not store.</p>\n<p>In this scenario, signExternal() returns a base-64 encoded, DER-encoded ECDSA signature (example: MEUCIQDHBX5csJBX1pD618QA7kv/5uHJ2Tzxq2RMBKYCsqrbdQIgI6louYnhajZsUaRoh+GHhVLpAa5sq9a9SpmLFynat7I=)</p>\n<p>Here is the sample <a href=\"https://drive.google.com/file/d/1zv5C--1qTKkctY8EB7HhdoI-PAo8gBz1/view?usp=sharing\" rel=\"nofollow noreferrer\">pdf</a>.</p>\n<p>Would be greatly appreciated if anyone could point me in the right direction. Thanks in advance!</p>\n",
+    "tags" : [ "java", "pdf", "pdfbox", "digital-signature" ],
+    "owner" : {
+      "account_id" : 774916,
+      "reputation" : 347,
+      "user_id" : 545800,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/143d5e9f9b1121dbc4f574ce6215bce9?s=256&d=identicon&r=PG",
+      "display_name" : "bluebloodedboy",
+      "link" : "https://stackoverflow.com/users/545800/bluebloodedboy"
+    },
+    "is_answered" : true,
+    "view_count" : 104,
+    "answer_count" : 2,
+    "score" : 0,
+    "last_activity_date" : 1746679264,
+    "creation_date" : 1746528656,
+    "link" : "https://stackoverflow.com/questions/79608533/external-pdf-signing-with-pdfbox-2-0-34-the-document-has-been-altered-or-corru",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79609027,
+    "question_id" : 79608533,
+    "body" : "<p>You sign the wrong piece of data with your <code>signExternal</code> call: You sign the PDF contents directly with it but you force the resulting <code>derSignature</code> bytes into a CMS signature container SignerInfo with signed attributes. Thus, you should have applied your <code>signExternal</code> call to the signed attributes instead.</p>\n<hr />\n<p>In detail:</p>\n<p>You create a <code>ContentSigner contentSigner2</code> in which you completely ignore the data to sign (the <code>ByteArrayOutputStream outputStream</code> contents) and statically return <code>derSignature</code> as signature:</p>\n<pre><code>ContentSigner contentSigner2 = new ContentSigner() {\n    private final ByteArrayOutputStream outputStream = new ByteArrayOutputStream();\n\n    @Override\n    public OutputStream getOutputStream() {\n        return outputStream;\n    }\n\n    @Override\n    public byte[] getSignature() {\n        return derSignature;\n    }\n\n    @Override\n    public AlgorithmIdentifier getAlgorithmIdentifier() {\n        return new DefaultSignatureAlgorithmIdentifierFinder().find(&quot;SHA256withECDSA&quot;);\n    }\n};\n</code></pre>\n<p>You should consider signing the <code>ByteArrayOutputStream outputStream</code> contents instead here, e.g. like this:</p>\n<pre><code>ContentSigner contentSigner2 = new ContentSigner() {\n    private final ByteArrayOutputStream outputStream = new ByteArrayOutputStream();\n\n    @Override\n    public OutputStream getOutputStream() {\n        return outputStream;\n    }\n\n    @Override\n    public byte[] getSignature() {\n        String hashHex = DigestUtils.sha256Hex(outputStream.toByteArray());\n        String signedData2 = signExternal(sessionId, hashHex);\n        System.out.println(&quot;signedData2:&quot; + signedData2);\n        byte[] derSignature = Base64.decodeBase64(signedData2);\n        return derSignature;\n    }\n\n    @Override\n    public AlgorithmIdentifier getAlgorithmIdentifier() {\n        return new DefaultSignatureAlgorithmIdentifierFinder().find(&quot;SHA256withECDSA&quot;);\n    }\n};\n</code></pre>\n<p>(I don't know the details of your <code>signExternal</code> methods, so some adaptions may be necessary.)</p>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 1916831,
+      "reputation" : 97003,
+      "user_id" : 1729265,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/VMMeP.jpg?s=256",
+      "display_name" : "mkl",
+      "link" : "https://stackoverflow.com/users/1729265/mkl"
+    },
+    "creation_date" : 1746545419,
+    "last_activity_date" : 1746545419,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79611730,
+    "question_id" : 79608533,
+    "body" : "<p>After changing the code to mkl's suggestion, I then found out another issue was due to converting the contents into a hex string, when I should have used base64 instead:</p>\n<pre><code> @Override\n        public byte[] getSignature() {\n            byte[] byteArray = stream.toByteArray();\n            String sha256B64 = Base64.encodeBase64String(byteArray);\n            String signExternal = signExternal(sessionId, sha256B64);\n            byte[] decodeBase64 = Base64.decodeBase64(signExternal);\n            return decodeBase64;\n        }\n</code></pre>\n<p>After that, the PDF generated did not have the error anymore. However, I also tried using saveIncremental() with a SignatureInterface instead of saveIncrementalForExternalSigning() and it worked the same. Am still trying to figure out the differences between the two, when it comes to embedding a digital signature from an external source.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 774916,
+      "reputation" : 347,
+      "user_id" : 545800,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/143d5e9f9b1121dbc4f574ce6215bce9?s=256&d=identicon&r=PG",
+      "display_name" : "bluebloodedboy",
+      "link" : "https://stackoverflow.com/users/545800/bluebloodedboy"
+    },
+    "creation_date" : 1746679264,
+    "last_activity_date" : 1746679264,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79611730" : [ {
+      "comment_id" : 140406439,
+      "post_id" : 79611730,
+      "body" : "<code>saveIncremental</code> with a SignatureInterface vs. <code>saveIncrementalForExternalSigning</code> <i>&quot;Am still trying to figure out the differences between the two&quot;</i> - the difference mostly is about preferred programming style, the former is for people preferring callbacks, the latter for people who don&#39;t. If you can retrieve the signature quickly, the former may feel more natural. If retrieving the signature takes considerable preparation and time, the latter may.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 1916831,
+        "reputation" : 97003,
+        "user_id" : 1729265,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/VMMeP.jpg?s=256",
+        "display_name" : "mkl",
+        "link" : "https://stackoverflow.com/users/1729265/mkl"
+      },
+      "creation_date" : 1746682121,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

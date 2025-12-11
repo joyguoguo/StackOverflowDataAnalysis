@@ -1,0 +1,162 @@
+{
+  "question" : {
+    "question_id" : 79675037,
+    "title" : "How to use a cached Kerberos TGS ticket with GSS API in Java?",
+    "body" : "<p>I am trying to get a Kerberos TGS ticket from the cache (without contacting the KDC).\nI create a TGT ticket using kinit and a TGS ticket, using kvno cifs/.\nTo ensure I have cached the tickets, I use klist and get the following result:</p>\n<pre><code>Ticket cache: FILE:/tmp/krb5cc_0\nDefault principal: Administrator@PROXYREALM.TEST\n\nValid starting     Expires            Service principal\n22/06/25 12:48:10  22/06/25 22:48:10  krbtgt/PROXYREALM.TEST@PROXYREALM.TEST\n    renew until 29/06/25 12:48:06\n22/06/25 12:49:02  22/06/25 22:48:10  cifs/DC1.proxyrealm.test@PROXYREALM.TEST\n    renew until 29/06/25 12:48:06\n</code></pre>\n<p>But when I try to use the Java GSS API to load the tickets from the cache and use them. The only ticket found is the TGT:</p>\n<pre><code>Java config name: null\nNative config name: /etc/krb5.conf\nLoading config file from /etc/krb5.conf\nLoading krb5 profile at /etc/krb5.conf\nlogging = {\n}\nlibdefaults = {\ndefault_realm = PROXYREALM.TEST\ndns_lookup_kdc = false\ndns_lookup_realm = false\nticket_lifetime = 24h\nrenew_lifetime = 7d\nforwardable = true\n}\nrealms = {\nPROXYREALM.TEST = {\ndefault_domain = PROXYREALM.TEST\nkdc = https://kdcproxy.proxyrealm.test/KdcProxy\nadmin_server = kdcproxy.proxyrealm.test\nhttp_anchors = FILE:/etc/ssl/certs/ca-certificates.crt\n}\n}\ndomain_realm = {\n.PROXYREALM.TEST = PROXYREALM.TEST\nPROXYREALM.TEST = PROXYREALM.TEST\n.proxyrealm.test = PROXYREALM.TEST\nproxyrealm.test = PROXYREALM.TEST\n}\nappdefaults = {\npam = {\ndebug = false\nticket_lifetime = 36000\nrenew_lifetime = 36000\nforwardable = true\nkrb4_convert = false\n}\n}\nLoaded from native config\n&gt;&gt;&gt;KinitOptions cache name is /tmp/krb5cc_0\n&gt;&gt;&gt;DEBUG &lt;CCacheInputStream&gt;  client principal is Administrator@PROXYREALM.TEST\n&gt;&gt;&gt;DEBUG &lt;CCacheInputStream&gt; server principal is krbtgt/PROXYREALM.TEST@PROXYREALM.TEST\n&gt;&gt;&gt;DEBUG &lt;CCacheInputStream&gt; key type: 18\n&gt;&gt;&gt;DEBUG &lt;CCacheInputStream&gt; auth time: Sun Jun 22 12:48:10 IDT 2025\n&gt;&gt;&gt;DEBUG &lt;CCacheInputStream&gt; start time: Sun Jun 22 12:48:10 IDT 2025\n&gt;&gt;&gt;DEBUG &lt;CCacheInputStream&gt; end time: Sun Jun 22 22:48:10 IDT 2025\n&gt;&gt;&gt;DEBUG &lt;CCacheInputStream&gt; renew_till time: Sun Jun 29 12:48:06 IDT 2025\n&gt;&gt;&gt; CCacheInputStream: readFlags()  FORWARDABLE; RENEWABLE; INITIAL; PRE_AUTH;\n&gt;&gt;&gt;DEBUG &lt;CCacheInputStream&gt;  client principal is Administrator@PROXYREALM.TEST\n&gt;&gt;&gt;DEBUG &lt;CCacheInputStream&gt; server principal is krb5_ccache_conf_data/pa_type/krbtgt/PROXYREALM.TEST\\@PROXYREALM.TEST@X-CACHECONF:\n&gt;&gt;&gt;DEBUG &lt;CCacheInputStream&gt; key type: 0\n&gt;&gt;&gt;DEBUG &lt;CCacheInputStream&gt; auth time: Thu Jan 01 02:00:00 IST 1970\n&gt;&gt;&gt;DEBUG &lt;CCacheInputStream&gt; start time: null\n&gt;&gt;&gt;DEBUG &lt;CCacheInputStream&gt; end time: Thu Jan 01 02:00:00 IST 1970\n&gt;&gt;&gt;DEBUG &lt;CCacheInputStream&gt; renew_till time: null\n&gt;&gt;&gt; CCacheInputStream: readFlags() \n&gt;&gt;&gt;DEBUG &lt;CCacheInputStream&gt;  client principal is Administrator@PROXYREALM.TEST\n&gt;&gt;&gt;DEBUG &lt;CCacheInputStream&gt; server principal is cifs/DC1.proxyrealm.test@PROXYREALM.TEST\n&gt;&gt;&gt;DEBUG &lt;CCacheInputStream&gt; key type: 18\n&gt;&gt;&gt;DEBUG &lt;CCacheInputStream&gt; auth time: Sun Jun 22 12:48:10 IDT 2025\n&gt;&gt;&gt;DEBUG &lt;CCacheInputStream&gt; start time: Sun Jun 22 12:49:02 IDT 2025\n&gt;&gt;&gt;DEBUG &lt;CCacheInputStream&gt; end time: Sun Jun 22 22:48:10 IDT 2025\n&gt;&gt;&gt;DEBUG &lt;CCacheInputStream&gt; renew_till time: Sun Jun 29 12:48:06 IDT 2025\n&gt;&gt;&gt; CCacheInputStream: readFlags()  FORWARDABLE; RENEWABLE; PRE_AUTH;\nget normal credential\nFound ticket for Administrator@PROXYREALM.TEST to go to krbtgt/PROXYREALM.TEST@PROXYREALM.TEST expiring on Sun Jun 22 22:48:10 IDT 2025\nEntered Krb5Context.initSecContext with state=STATE_NEW\nService ticket not found in the subject\n</code></pre>\n<p>I tried using the following class to authenticate with the cached Kerberos tickets:</p>\n<pre><code>public class GSSKdcProxyClient {\n\n  public static final Oid KRB5_MECH_OID;\n    static {\n        try {\n            KRB5_MECH_OID = new Oid(&quot;1.2.840.113554.1.2.2&quot;); // Kerberos V5 OID\n        } catch (Exception e) {\n            throw new RuntimeException(&quot;Failed to initialize Kerberos OID&quot;, e);\n        }\n    }\n    \npublic static void main(String[] args) throws GSSException {\n     System.setProperty(&quot;javax.security.auth.useSubjectCredsOnly&quot;,&quot;false&quot;);\n     System.setProperty(&quot;sun.security.krb5.debug&quot;, &quot;true&quot;); \n    try {\n        \n      GSSManager manager = GSSManager.getInstance();\n      \n       GSSName serverName = manager.createName(&quot;cifs/DC1.proxyrealm.test@PROXYREALM.TEST&quot;,GSSName.NT_HOSTBASED_SERVICE);\n       // Acquire credentials and create context\n       GSSContext context = manager.createContext(serverName,KRB5_MECH_OID, null, GSSContext.DEFAULT_LIFETIME);\n       context.requestMutualAuth(false);\n       context.initSecContext(new byte[0], 0, 0);\n     \n     if (context.isEstablished()) {\n         System.out.println(&quot;GSS context established with: &quot; + context.getSrcName());\n     }\n     context.dispose();\n        \n\n    } catch (Exception e) {\n        e.printStackTrace();\n    }\n}\n</code></pre>\n<p>I Also tried a different name convention with:</p>\n<pre><code>GSSName serverName = manager.createName(&quot;DC1.proxyrealm.test&quot;,KRB5_PRINCIPAL_NT);\n</code></pre>\n<p>I tried to use many different configurations, but always got the same result: &quot;Service ticket not found in the subject&quot;.</p>\n",
+    "tags" : [ "java", "kerberos", "gssapi" ],
+    "owner" : {
+      "account_id" : 40679980,
+      "reputation" : 31,
+      "user_id" : 29899930,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f0515dfaa58bfbc4c61dc4c4737eb593?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Tal Dulberg",
+      "link" : "https://stackoverflow.com/users/29899930/tal-dulberg"
+    },
+    "is_answered" : true,
+    "view_count" : 120,
+    "answer_count" : 2,
+    "score" : 1,
+    "last_activity_date" : 1751813107,
+    "creation_date" : 1750584656,
+    "link" : "https://stackoverflow.com/questions/79675037/how-to-use-a-cached-kerberos-tgs-ticket-with-gss-api-in-java",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79691793,
+    "question_id" : 79675037,
+    "body" : "<p>Eventually I used the workaround mentioned here: <a href=\"https://stackoverflow.com\">https://bugs.java.com/bugdatabase/view_bug.do?bug_id=JDK-8180144</a>\nIf you manually create a TGT, using <code>kinit &lt;user_name&gt;</code> and then a TGS using<code>kvno cifs/&lt;fQDN_of_the host&gt;</code>, the following method works, but only when I used Oracle JDK:</p>\n<pre class=\"lang-java prettyprint-override\"><code>private String getGSSwJAASServiceTicket()  {\n    \n    byte[] ticket = null;\n    String encodedTicket = null;\n    LoginContext loginContext = null;\n    Subject mySubject =  null;\n    \n    try {\n      TextCallbackHandler cbHandler = new TextCallbackHandler();\n      loginContext = new LoginContext(&quot;wSOXClientGSSJAASLogin&quot;, cbHandler);\n      loginContext.login();\n      mySubject = loginContext.getSubject();\n      \n      // assumes 1 TGT and 1 SGT exist in credentials cache (added using python py-curl + GSS)\n      // Demos that if SGTs are stored in the subject's privateCredentials, they can be accessed during context.initSecContext() below, without a call to the KDC.\n      sun.security.krb5.internal.ccache.CredentialsCache ccache = sun.security.krb5.internal.ccache.CredentialsCache.getInstance(&quot;/tmp/krb5cc_9337&quot;);\n      sun.security.krb5.internal.ccache.Credentials[] creds = ccache.getCredsList();    \n      mySubject.getPrivateCredentials().add(sun.security.jgss.krb5.Krb5Util.credsToTicket(creds[0].setKrbCreds()));\n      mySubject.getPrivateCredentials().add(sun.security.jgss.krb5.Krb5Util.credsToTicket(creds[1].setKrbCreds()));\n    \n      GSSManager manager = GSSManager.getInstance();\n      \n      GSSName serverName = manager.createName(&quot;HTTP/app-srv.acme.com@ACME.COM&quot;, null);\n      Oid krb5Oid = new Oid(&quot;1.2.840.113554.1.2.2&quot;);\n      \n     \n      ticket = Subject.doAs(mySubject, new PrivilegedAction&lt;byte[]&gt;(){\n        public byte[] run(){\n          try{\n            \n            System.setProperty(&quot;javax.security.auth.useSubjectCredsOnly&quot;,&quot;true&quot;);\n            GSSContext context = manager.createContext(serverName,\n                krb5Oid,\n                null,\n                GSSContext.DEFAULT_LIFETIME);\n            \n            context.requestMutualAuth(false);\n            context.requestConf(false);\n            context.requestInteg(true);\n            \n            byte[] token = new byte[0];     \n            return context.initSecContext(token, 0, token.length);\n            \n          }\n          catch(Exception e){\n            Log.log(Log.ERROR, e);\n            throw new otms.util.OTMSRuntimeException(&quot;Start wSOXclient (privileged) failed, cause: &quot; + e.getMessage());\n          }\n        }\n      });\n    } catch (LoginException e) {\n      // TODO Auto-generated catch block\n      e.printStackTrace();\n    } catch (GSSException e1) {\n      // TODO Auto-generated catch block\n      e1.printStackTrace();\n    }\n    encodedTicket = Base64.getEncoder().encodeToString(ticket);\n    return encodedTicket;\n  }\n</code></pre>\n",
+    "score" : 2,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 40679980,
+      "reputation" : 31,
+      "user_id" : 29899930,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f0515dfaa58bfbc4c61dc4c4737eb593?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Tal Dulberg",
+      "link" : "https://stackoverflow.com/users/29899930/tal-dulberg"
+    },
+    "creation_date" : 1751809234,
+    "last_activity_date" : 1751813107,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79675170,
+    "question_id" : 79675037,
+    "body" : "<blockquote>\n<p>always got the same result: &quot;Service ticket not found in the subject&quot;.</p>\n</blockquote>\n<p>This seems to be normal, as your code never creates a JAAS &quot;Subject&quot;, and indeed it's why you're using <code>useSubjectCredsOnly=false</code> anyway.</p>\n<p>However, your code is confusing two service name types:</p>\n<ul>\n<li><p>Kerberos principal name <code>GSS_KRB5_NT_PRINCIPAL_NAME</code> in the format:</p>\n<pre class=\"lang-none prettyprint-override\"><code>service/fqdn@REALM\n</code></pre>\n<p>This has its own OID:</p>\n<pre class=\"lang-java prettyprint-override\"><code>Oid krb5NameOid = new Oid(&quot;1.2.840.113554.1.2.2.1&quot;);\n\nmanager.createName(&quot;cifs/DC1.proxyrealm.test@PROXYREALM.TEST&quot;, krb5NameOid);\n</code></pre>\n<p>This is a Kerberos-specific GSSAPI &quot;extension&quot;, and Java doesn't seem to have a constant for the OID. (Note that the Kerberos name type OID is slightly different from the mechanism OID.)</p>\n\n</li>\n<li><p>GSSAPI host-based service name <code>GSS_C_NT_HOSTBASED_SERVICE</code> in the format:</p>\n<pre class=\"lang-none prettyprint-override\"><code>service@fqdn\n</code></pre>\n<p>This would look like:</p>\n<pre class=\"lang-java prettyprint-override\"><code>manager.createName(&quot;cifs@DC1.proxyrealm.test&quot;, GSSName.NT_HOSTBASED_SERVICE);\n</code></pre>\n<p>This is a mechanism-agnostic name type, so the Kerberos-specific realm is not specified here; it is determined automatically when GSSAPI translates the name to a Kerberos principal on demand.</p>\n<p>(In theory, calling <code>name.canonicalize(krb5MechOid)</code> should return the translated name – in case you want to do it manually for some reason – but although this works with MIT Kerberos libgssapi, it doesn't seem to work with Java GSSAPI.)</p>\n</li>\n</ul>\n<p>Since GSSAPI host-based names have a different syntax and are automatically converted to Kerberos principals by the mechanism, trying to pass a Kerberos principal as a host-based name would result in <em>double</em> conversion, causing GSSAPI to look for a principal like <code>service/fqdn/realm@REALM</code>. (Which may work by accident in certain AD situations, as AD actually has three-component principals for specific services, but is generally incorrect for most services.)</p>\n<p>But aside from this, unfortunately as far as I can tell, the OpenJDK JGSS Kerberos implementation <em>never looks</em> in the Kerberos ccache for the service ticket at all – the <code>sun.security.krb5.internal.ccache.CredentialsCache</code> class is only instantiated to find the initial TGT, and nothing in the Java source code ever calls its <code>.getCreds(PrincipalName)</code> method as far as I can see, so it will <em>have to</em> contact the KDC every time. (For that matter, it also never stores the obtained service ticket in the ccache, either.)</p>\n<p>So it might be that it's impossible to achieve this with only public Java APIs. <a href=\"https://github.com/apache/directory-kerby\" rel=\"nofollow noreferrer\">Apache Kerby</a> or <a href=\"https://github.com/pythongssapi/python-gssapi\" rel=\"nofollow noreferrer\">python-gssapi</a> might work better.</p>\n<p>(It also strikes me as a very odd requirement, though. Since when are Kerberos KDCs made inaccessible to clients?)</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 20740,
+      "reputation" : 20136,
+      "user_id" : 49849,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/e10f1fb3760601f575b7b359d5618166?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "grawity",
+      "link" : "https://stackoverflow.com/users/49849/grawity"
+    },
+    "creation_date" : 1750600003,
+    "last_activity_date" : 1750601174,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140538119,
+    "post_id" : 79675037,
+    "body" : "@grawity This is for trying to use KDC proxy. Since GSS-API doesn&#39;t support the usage of a KDC proxy address to get the tickets, I tried to create the TGS manually and then load it.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 40679980,
+      "reputation" : 31,
+      "user_id" : 29899930,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f0515dfaa58bfbc4c61dc4c4737eb593?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Tal Dulberg",
+      "link" : "https://stackoverflow.com/users/29899930/tal-dulberg"
+    },
+    "creation_date" : 1750766925,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140532919,
+    "post_id" : 79675037,
+    "body" : "If I may ask, where does the original requirement come from? Is it for test purposes, or is the network admin deliberately restricting access to the KDC? (If so, that&#39;s a particularly odd and self-contradictory kind of paranoia...)",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 20740,
+      "reputation" : 20136,
+      "user_id" : 49849,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/e10f1fb3760601f575b7b359d5618166?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "grawity",
+      "link" : "https://stackoverflow.com/users/49849/grawity"
+    },
+    "creation_date" : 1750596174,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79675170" : [ {
+      "comment_id" : 140540216,
+      "post_id" : 79675170,
+      "body" : "That&#39;s an interesting solution; I&#39;ll try to implement it.  Thank you for all of the explanations and help. This issue is really frustrating.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 40679980,
+        "reputation" : 31,
+        "user_id" : 29899930,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/f0515dfaa58bfbc4c61dc4c4737eb593?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Tal Dulberg",
+        "link" : "https://stackoverflow.com/users/29899930/tal-dulberg"
+      },
+      "creation_date" : 1750833469,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140538217,
+      "post_id" : 79675170,
+      "body" : "Another plan would be to create a &quot;reverse&quot; KDC proxy which listens on localhost:88 UDP and forwards the requests from Java over HTTPS, then define <code>java.security.krb5.kdc=localhost</code>. (This could be done in Java, just a UDP listener and a HTTP client.)",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 20740,
+        "reputation" : 20136,
+        "user_id" : 49849,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/e10f1fb3760601f575b7b359d5618166?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "grawity",
+        "link" : "https://stackoverflow.com/users/49849/grawity"
+      },
+      "creation_date" : 1750768687,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140538206,
+      "post_id" : 79675170,
+      "body" : "Ah, okay. Is Java a requirement for the project overall? The MIT GSS-API implementation used by other languages does support using a KDC proxy. I tested the createName variants myself, and even though they won&#39;t help here (because Java GSS-API literally doesn&#39;t implement using cached service tickets) the point was that this is the syntax that should be used <i>in general</i> with the respective name types. I also had a thought about storing the tickets in a Java <code>Subject</code> and then using <code>useSubjectCredsOnly=true</code> (as Java will use cached ones in the Subject) but that seems to be internal APIs too.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 20740,
+        "reputation" : 20136,
+        "user_id" : 49849,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/e10f1fb3760601f575b7b359d5618166?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "grawity",
+        "link" : "https://stackoverflow.com/users/49849/grawity"
+      },
+      "creation_date" : 1750768465,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140538157,
+      "post_id" : 79675170,
+      "body" : "This is for trying to use KDC proxy. Since GSS-API doesn&#39;t support the usage of a KDC proxy address to get the tickets, I tried to create the TGS manually and then load it.  Unfortunately I tried manager.createName(&quot;cifs@DC1.proxyrealm.test&quot;, GSSName.NT_HOSTBASED_SERVICE); and it didn&#39;t work too.  I recently found this enhancement request for Oracle: <a href=\"https://bugs.java.com/bugdatabase/view_bug.do?bug_id=JDK-8180144\" rel=\"nofollow noreferrer\">bugs.java.com/bugdatabase/view_bug.do?bug_id=JDK-8180144</a>  So it might be, as you said,  impossible to achieve with public Java APIs.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 40679980,
+        "reputation" : 31,
+        "user_id" : 29899930,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/f0515dfaa58bfbc4c61dc4c4737eb593?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Tal Dulberg",
+        "link" : "https://stackoverflow.com/users/29899930/tal-dulberg"
+      },
+      "creation_date" : 1750767459,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

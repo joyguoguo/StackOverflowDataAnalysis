@@ -1,0 +1,181 @@
+{
+  "question" : {
+    "question_id" : 79588393,
+    "title" : "SqlHelper missing during DataSource set up",
+    "body" : "<p>I am creating a spring data source manually because of retrieving a password from a vault.</p>\n<pre><code>@Bean\nDataSource dataSource() {\n    var password = getSecret(secretName);\n    final var dataSource = new SQLServerDataSource();\n    dataSource.setURL(dataSourceProperties.getUrl());\n    dataSource.setUser(dataSourceProperties.getUsername());\n    dataSource.setPassword(password);\n    return dataSource;\n}\n</code></pre>\n<p>This works well, but I am fine tuning JDBC URL parameters and the connection fails at org.hibernate.resource.transaction.backend.jdbc.internal.JdbcIsolationDelegate#delegateWork. That's fine, the trouble is that I dont get the actual error but NPE because sqlExceptioNHelper is null</p>\n<pre><code>java.lang.NullPointerException: Cannot invoke &quot;org.hibernate.engine.jdbc.spi.SqlExceptionHelper.convert(java.sql.SQLException, String)&quot; because the return value of &quot;org.hibernate.resource.transaction.backend.jdbc.internal.JdbcIsolationDelegate.sqlExceptionHelper()&quot; is null\n    at org.hibernate.resource.transaction.backend.jdbc.internal.JdbcIsolationDelegate.delegateWork(JdbcIsolationDelegate.java:116) ~[hibernate-core-6.5.2.Final.jar:6.5.2.Final]\n    at org.hibernate.engine.jdbc.env.internal.JdbcEnvironmentInitiator.getJdbcEnvironmentUsingJdbcMetadata(JdbcEnvironmentInitiator.java:290) ~[hibernate-core-6.5.2.Final.jar:6.5.2.Final]\n</code></pre>\n<p>This is caused by a constructor receiving <code>transactionCoordinatorOwner.jdbcServices</code> having <code>jdbcEnvironment</code> set to null.</p>\n<p>My question is how to initialize <code>jdbcEnvironment</code> properly? Spring Boot 3.2.x &amp; MS SQL JDBC driver 10.2.x.</p>\n<p>To be concrete, the bean is created without an error and there is no issue with <code>getSecret()</code>. The only difference is in JDBC URL.</p>\n<ul>\n<li>When I set the URL to trust the host certificate, the applications\nworks.</li>\n<li>When I remove that parameter and the trust store is not set\nup correctly, the spring will fail moments later after the bean is\ncreated during data source introspection.</li>\n</ul>\n<p>The problem I want to solve is the NPE thrown when the real cause SQLException should be logged. I want to solve <code>jdbcEnvironment == null</code>.</p>\n",
+    "tags" : [ "java", "sql-server", "spring-boot", "hibernate" ],
+    "owner" : {
+      "account_id" : 1801257,
+      "reputation" : 9460,
+      "user_id" : 1639556,
+      "user_type" : "registered",
+      "accept_rate" : 79,
+      "profile_image" : "https://i.sstatic.net/MDuWh.jpg?s=256",
+      "display_name" : "Leos Literak",
+      "link" : "https://stackoverflow.com/users/1639556/leos-literak"
+    },
+    "is_answered" : true,
+    "view_count" : 84,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1745736481,
+    "creation_date" : 1745404376,
+    "link" : "https://stackoverflow.com/questions/79588393/sqlhelper-missing-during-datasource-set-up",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79590064,
+    "question_id" : 79588393,
+    "body" : "<pre><code>when the real cause SQLException should be logged\n</code></pre>\n<p>I updated <a href=\"https://github.com/Hdvlp/SpringBootConnectsToMssqlDynamically/blob/main/src/main/java/com/springbootconnectstomssqldynamically/demo/service/DataService.java\" rel=\"nofollow noreferrer\">my example</a> to include the following for more debugging:</p>\n<pre class=\"lang-java prettyprint-override\"><code>//...\n            System.out.println(String.format(&quot;getClientCertificate(): %s&quot;, dataSource.getClientCertificate()));\n            System.out.println(String.format(&quot;getClientKey(): %s&quot;, dataSource.getClientKey()));\n            System.out.println(String.format(&quot;getConnection(): %s&quot;, dataSource.getConnection()));\n            System.out.println(String.format(&quot;getDatabaseName(): %s&quot;, dataSource.getDatabaseName()));\n//...\n\n</code></pre>\n<p>You might want <a href=\"https://github.com/Hdvlp/SpringBootConnectsToMssqlDynamically/blob/main/src/main/java/com/springbootconnectstomssqldynamically/demo/config/Db.java\" rel=\"nofollow noreferrer\">to set</a>:</p>\n<pre class=\"lang-java prettyprint-override\"><code>\nSQLServerDataSource dataSource()\n</code></pre>\n<p>instead of</p>\n<pre class=\"lang-java prettyprint-override\"><code>DataSource dataSource()\n</code></pre>\n<p>to set more parameters if you believe it was missing the necessary parameters. I don't have a certificate to test. I just used the default self-signed SQL Server 2022 certificate to test.</p>\n<p>I also shortened the network waiting time simulation for faster debugging.</p>\n<p>To test whether my example worked, I <a href=\"https://github.com/Hdvlp/SpringBootConnectsToMssqlDynamically/blob/main/src/main/resources/mssql_preparation_for_using_azure_sql_database.txt\" rel=\"nofollow noreferrer\">set up Azure SQL Database</a>. I got the expected inserted data in my example.</p>\n<p>For debugging:</p>\n<pre><code>An example is like this:\n\nI connected to Azure SQL Database.\n\n\nDebugging\n____\ngetApplicationName(): Microsoft JDBC Driver for SQL Server\ngetAuthentication(): NotSpecified\ngetApplicationIntent(): readwrite\ngetCancelQueryTimeout(): -1\ngetClass(): class com.microsoft.sqlserver.jdbc.SQLServerDataSource\ngetClientCertificate():\ngetClientKey():\ngetConnection(): ConnectionID:3 ClientConnectionId: e4b7247b-9d73-464e-bfbc-9af3dc7e61c1\ngetDatabaseName(): null\ngetDomain():\ngetFIPS(): false\ngetHostNameInCertificate(): null\ngetIPAddressPreference(): IPv4First\ngetInstanceName(): null\ngetKeyStoreLocation():\ngetKeyStorePrincipalId():\ngetKeyVaultProviderClientId():\ngetServerCertificate(): null\ngetTrustServerCertificate(): false\ngetTrustStore(): null\ngetTrustStoreType(): JKS\ngetURL(): jdbc:sqlserver://randservlrbvlvuaffgiitgyvgag.database.windows.net:1433;database=randmdjnkpwbvlgfuuxtepvv;user=randqypaqptsfjmvwrlfpsgi@randservlrbvlvuaffgiitgyvgag;password=kLO2S2dnROU9uo365j6R;encrypt=true;trustServerCertificate=false;hostNameInCertificate=*.database.windows.net;loginTimeout=30;  \ngetEncrypt(): True\ngetSSLProtocol(): TLS\ngetUser(): randqypaqptsfjmvwrlfpsgi\ngetPacketSize(): 8000\ngetDescription(): null\ngetPortNumber(): 1433\ngetConnectRetryCount(): 1\ngetConnectRetryInterval(): 10\ngetServerSpn(): null\n____\n\n\n</code></pre>\n<p><em>Previous research</em>:</p>\n<pre><code>My question is how to initialize jdbcEnvironment properly?\n</code></pre>\n<p>You might want to provide more sample code to make the issue more reproducible. <code>but I am fine tuning JDBC URL parameters</code> could receive more helpful answers if more relevant code is provided to let people reproduce the exact issue.</p>\n<p><a href=\"https://docs.spring.io/spring-framework/reference/data-access/jdbc/initializing-datasource.html\" rel=\"nofollow noreferrer\">The documentation</a> says,</p>\n<pre><code>Ensuring that the database initializer is initialized first can also be easy. Some suggestions on how to implement this include:\n\nRely on the default behavior of the Spring BeanFactory, which is that beans are initialized in registration order.\n</code></pre>\n<p>I produced <a href=\"https://github.com/Hdvlp/SpringBootConnectsToMssqlDynamically/blob/main/src/main/java/com/springbootconnectstomssqldynamically/demo/config/DbConnectionSetUp.java\" rel=\"nofollow noreferrer\">an example</a> which I tested to behave in the order of handling the DataSource first. I added the waiting time of 10 seconds intentionally to simulate the network waiting time or decryption processing time:</p>\n<pre class=\"lang-java prettyprint-override\"><code>    public static String getPassword(){\n        String passwordAfterWaitingSimulation = &quot;&quot;;\n        try{\n            System.out.println(&quot;Start waiting.&quot;);\n            for (int i = 0; i &lt; 10; i++){\n                Thread.sleep(1000);\n                System.out.println(&quot;Waiting for &quot; + i + &quot; second(s).&quot;);\n            }\n            System.out.println(&quot;Stop waiting.&quot;);\n            passwordAfterWaitingSimulation = &quot;YourPassword&quot;;\n        } catch (Exception e){}\n        \n        return passwordAfterWaitingSimulation;\n    }\n</code></pre>\n<p>The <a href=\"https://github.com/Hdvlp/SpringBootConnectsToMssqlDynamically/blob/main/src/main/java/com/springbootconnectstomssqldynamically/demo/config/Db.java\" rel=\"nofollow noreferrer\">SQLServerDataSource</a>:</p>\n<pre class=\"lang-java prettyprint-override\"><code>    @Bean\n    DataSource dataSource() {\n        final SQLServerDataSource dataSource = new SQLServerDataSource();\n        String url = DbConnectionSetUp.getURL();\n        String user = DbConnectionSetUp.getUser();\n        String password = DbConnectionSetUp.getPassword();\n        dataSource.setURL(url);\n        dataSource.setUser(user);\n        dataSource.setPassword(password);\n\n        // clearing after use\n        url = null;\n        user = null;\n        password = null;\n        return dataSource;\n    }\n</code></pre>\n<p>I used <a href=\"https://docs.spring.io/spring-framework/reference/7.0/core/beans/dependencies/factory-collaborators.html#beans-constructor-injection\" rel=\"nofollow noreferrer\">dependency injection</a> which essentially created the order of handling <code>DataSource dataSource</code> first in <a href=\"https://github.com/Hdvlp/SpringBootConnectsToMssqlDynamically/blob/main/src/main/java/com/springbootconnectstomssqldynamically/demo/service/DataService.java\" rel=\"nofollow noreferrer\">the code</a>:</p>\n<pre><code>    public DataService(DataSource dataSource){\n        this.dataSource = dataSource;\n    }\n</code></pre>\n<p>After <code>.\\mvnw spring-boot:run</code>, when I opened <code>http://localhost:8080/</code> in the browser, I saw the expected results of the inserted data, e.g.</p>\n<pre><code>1\nuser ä ö ü 0\n2\nuser ä ö ü 1\n3\nuser ä ö ü 2\n4\nuser ä ö ü 3\n5\nuser ä ö ü 4\n6\nuser ä ö ü 5\n7\nuser ä ö ü 6\n8\nuser ä ö ü 7\n9\nuser ä ö ü 8\n10\nuser ä ö ü 9\n</code></pre>\n<p>The repository of this example is <a href=\"https://github.com/Hdvlp/SpringBootConnectsToMssqlDynamically\" rel=\"nofollow noreferrer\">here</a>.</p>\n",
+    "score" : 2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 41072977,
+      "reputation" : 96,
+      "user_id" : 30106291,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/LRapA3Kd.jpg?s=256",
+      "display_name" : "Hdvlp",
+      "link" : "https://stackoverflow.com/users/30106291/hdvlp"
+    },
+    "creation_date" : 1745481054,
+    "last_activity_date" : 1745736481,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79590064" : [ {
+      "comment_id" : 140374509,
+      "post_id" : 79590064,
+      "body" : "In my case, the problem appeared when I enabled encryption and the fix was to trust the server certificate. Maybe, try to set an incorrect password. I can try tomorrow, when I am at the computer.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1801257,
+        "reputation" : 9460,
+        "user_id" : 1639556,
+        "user_type" : "registered",
+        "accept_rate" : 79,
+        "profile_image" : "https://i.sstatic.net/MDuWh.jpg?s=256",
+        "display_name" : "Leos Literak",
+        "link" : "https://stackoverflow.com/users/1639556/leos-literak"
+      },
+      "creation_date" : 1745786443,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140373876,
+      "post_id" : 79590064,
+      "body" : "<code>My code is working unless I give an incorrect URL parameter.</code> You appeared to be very sure that you had an incorrect URL parameter. I was not able to produce the exact NullPointerException (providing a wrong password, for example, did not give me NullPointerException). Could you give the exact incorrect URL for further research? (hiding sensitive domain names or user names or passwords, for example)",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 41072977,
+        "reputation" : 96,
+        "user_id" : 30106291,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/LRapA3Kd.jpg?s=256",
+        "display_name" : "Hdvlp",
+        "link" : "https://stackoverflow.com/users/30106291/hdvlp"
+      },
+      "creation_date" : 1745764501,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140373527,
+      "post_id" : 79590064,
+      "body" : "I think You misunderstood. My code is working unless I give an incorrect URL parameter. Then the connection expectably fails but with incorrect NullPointerException. If you reproduce my question, then JdbcIsolationDelegate.delegateWork() must throw an exception, which will fail.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1801257,
+        "reputation" : 9460,
+        "user_id" : 1639556,
+        "user_type" : "registered",
+        "accept_rate" : 79,
+        "profile_image" : "https://i.sstatic.net/MDuWh.jpg?s=256",
+        "display_name" : "Leos Literak",
+        "link" : "https://stackoverflow.com/users/1639556/leos-literak"
+      },
+      "creation_date" : 1745753001,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140373103,
+      "post_id" : 79590064,
+      "body" : "I also set up Azure SQL Database and tested. My example worked.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 41072977,
+        "reputation" : 96,
+        "user_id" : 30106291,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/LRapA3Kd.jpg?s=256",
+        "display_name" : "Hdvlp",
+        "link" : "https://stackoverflow.com/users/30106291/hdvlp"
+      },
+      "creation_date" : 1745733418,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140372206,
+      "post_id" : 79590064,
+      "body" : "This <a href=\"https://javadoc.io/doc/com.microsoft.sqlserver/mssql-jdbc/latest/com.microsoft.sqlserver.jdbc/com/microsoft/sqlserver/jdbc/ISQLServerDataSource.html\" rel=\"nofollow noreferrer\">Microsoft documentation</a> could help you debug with more confidence. I also amended my example for <a href=\"https://github.com/Hdvlp/SpringBootConnectsToMssqlDynamically/blob/main/src/main/java/com/springbootconnectstomssqldynamically/demo/service/DataService.java\" rel=\"nofollow noreferrer\">easier debugging</a>.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 41072977,
+        "reputation" : 96,
+        "user_id" : 30106291,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/LRapA3Kd.jpg?s=256",
+        "display_name" : "Hdvlp",
+        "link" : "https://stackoverflow.com/users/30106291/hdvlp"
+      },
+      "creation_date" : 1745687553,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140366994,
+      "post_id" : 79590064,
+      "body" : "It was a trust store issue. But I strongly doubt that JDBC URL is the reason why it is not initialized. It is clearly expected to be initialized. So I assume we miss some step in the DataSource bean setup.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1801257,
+        "reputation" : 9460,
+        "user_id" : 1639556,
+        "user_type" : "registered",
+        "accept_rate" : 79,
+        "profile_image" : "https://i.sstatic.net/MDuWh.jpg?s=256",
+        "display_name" : "Leos Literak",
+        "link" : "https://stackoverflow.com/users/1639556/leos-literak"
+      },
+      "creation_date" : 1745524253,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140366309,
+      "post_id" : 79590064,
+      "body" : "Microsoft listed some <a href=\"https://learn.microsoft.com/en-us/sql/connect/jdbc/understanding-ssl-support?view=sql-server-ver16\" rel=\"nofollow noreferrer\">property settings</a> and behavior in a table. Which property settings were used to result in <code>jdbcEnvironment == null</code>?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 41072977,
+        "reputation" : 96,
+        "user_id" : 30106291,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/LRapA3Kd.jpg?s=256",
+        "display_name" : "Hdvlp",
+        "link" : "https://stackoverflow.com/users/30106291/hdvlp"
+      },
+      "creation_date" : 1745511729,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140364583,
+      "post_id" : 79590064,
+      "body" : "Upvoted for your efforts.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1801257,
+        "reputation" : 9460,
+        "user_id" : 1639556,
+        "user_type" : "registered",
+        "accept_rate" : 79,
+        "profile_image" : "https://i.sstatic.net/MDuWh.jpg?s=256",
+        "display_name" : "Leos Literak",
+        "link" : "https://stackoverflow.com/users/1639556/leos-literak"
+      },
+      "creation_date" : 1745486700,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

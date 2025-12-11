@@ -1,0 +1,208 @@
+{
+  "question" : {
+    "question_id" : 79740056,
+    "title" : "JPA repository method with native query containing &#39;&amp;&amp;&#39; works with Long[] but not Collection&lt;Long&gt;",
+    "body" : "<p>In one of my Spring Data JPA repositories I have this native query (PostgreSQL):</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Query(value = &quot;SELECT * FROM ballots b WHERE b.companies &amp;&amp; :companyIds and b.meeting_id in :meetingIds&quot;, nativeQuery = true)\nList&lt;Ballot&gt; findByIds(Long[] companyIds, Long[] meetingIds);\n</code></pre>\n<p>Here's my entity:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Table(name=&quot;ballots&quot;)\npublic class Ballot {\n    @Id\n    private long id;\n\n    @Column\n    private long meetingId;\n\n    @Type(ListArrayType.class)\n    @Column(name = &quot;companies&quot;,columnDefinition = &quot;bigint[]&quot;)\n    private List&lt;Long&gt; companies = new ArrayList&lt;&gt;();\n}\n</code></pre>\n<p>Here's how I call the method:</p>\n<pre class=\"lang-java prettyprint-override\"><code>private final BallotRepository ballotRepo;\n\n  public void findBallots(Set&lt;Long&gt; companyIds, Set&lt;Long&gt; companyMeetingIds) {\n    List&lt;Ballot&gt; ballots = ballotRepository.findByIds(companyIds, companyMeetingIds);\n    // the rest of the code\n  }\n}\n</code></pre>\n<p>Method signature with</p>\n<ul>\n<li><code>Long[] companyIds, Long[] meetingIds</code> works fine</li>\n<li><code>Long[] companyIds, Collection&lt;Long&gt; meetingIds</code> works fine</li>\n<li><code>Collection&lt;Long&gt; companyIds, Collection&lt;Long&gt; meetingIds</code> fails:</li>\n</ul>\n<pre class=\"lang-none prettyprint-override\"><code>org.springframework.dao.InvalidDataAccessResourceUsageException: JDBC exception executing SQL [SELECT * FROM ballots b WHERE b.companies &amp;&amp; (?) and b.meeting_id in (?,?)] [ERROR: operator does not exist: bigint[] &amp;&amp; bigint\n  Hint: No operator matches the given name and argument types. You might need to add explicit type casts.\n  Position: 42] [n/a]; SQL [n/a]\n</code></pre>\n<p>How should I modify the query to make it work?</p>\n",
+    "tags" : [ "java", "postgresql", "jpa", "orm", "nativequery" ],
+    "owner" : {
+      "account_id" : 17228781,
+      "reputation" : 4612,
+      "user_id" : 12473843,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/HkCxn.jpg?s=256",
+      "display_name" : "Sergey Tsypanov",
+      "link" : "https://stackoverflow.com/users/12473843/sergey-tsypanov"
+    },
+    "is_answered" : true,
+    "view_count" : 155,
+    "answer_count" : 1,
+    "score" : 2,
+    "last_activity_date" : 1755639466,
+    "creation_date" : 1755613745,
+    "link" : "https://stackoverflow.com/questions/79740056/jpa-repository-method-with-native-query-containing-works-with-long-but-no",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79740282,
+    "question_id" : 79740056,
+    "body" : "<p>If these parentheses:</p>\n<pre class=\"lang-sql prettyprint-override\"><code>WHERE b.companies &amp;&amp; (?) and b.meeting_id in (?,?)\n</code></pre>\n<p>Are the result of you actually doing this (as suggested by <a href=\"https://www.baeldung.com/jpa-query-parameters#Collection-Valued-Named-Parameters\" rel=\"nofollow noreferrer\">some JPA manuals</a>):</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Query(value = &quot;&quot;&quot;SELECT * FROM ballots b \n                  WHERE b.companies &amp;&amp; (:companyIds)\n                    AND b.meeting_id IN (:meetingIds)\n               &quot;&quot;&quot;,nativeQuery = true)\nList&lt;Ballot&gt; findByIds(Long[] companyIds, Long[] meetingIds);\n</code></pre>\n<p>Then swap out the first pair for a SQL array constructor:</p>\n<pre class=\"lang-sql prettyprint-override\"><code>SELECT * FROM ballots b \n WHERE b.companies &amp;&amp; array[:companyIds]\n   AND b.meeting_id IN (:meetingIds)\n</code></pre>\n<p>Otherwise, cast/convert to make sure <code>:companyIds</code> gets a <code>Long[]</code>, not a <code>Collection</code>. You <em>could</em> handle that SQL-side, but it's ugly and needlessly complicates things:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Query(value = &quot;&quot;&quot;SELECT * FROM ballots b\n                   WHERE b.companies &amp;&amp; ARRAY(SELECT (jsonb_each(jsonb_build_array(:companyIds)-&gt;0)).value::bigint)\n                     AND b.meeting_id IN :meetingIds\n               &quot;&quot;&quot;,nativeQuery = true)\nList&lt;Ballot&gt; findByIds(Long[] companyIds, Long[] meetingIds);\n</code></pre>\n<p>It's using a variadic <a href=\"https://www.postgresql.org/docs/current/functions-json.html#FUNCTIONS-JSON-CREATION-TABLE\" rel=\"nofollow noreferrer\"><code>jsonb_build_array()</code></a> to pack the parenthesized value list as an array, then unpack its resulting <code>jsonb</code> array into a regular SQL array in a <a href=\"https://www.postgresql.org/docs/current/sql-expressions.html#SQL-SYNTAX-ARRAY-CONSTRUCTORS\" rel=\"nofollow noreferrer\">subquery <code>ARRAY()</code> constructor</a>. All to just work around a pair of parentheses you're placing there yourself, with your ORM.</p>\n<p>You could also lean even more on the <code>IN</code> construct:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Query(value = &quot;&quot;&quot;SELECT * FROM ballots b \n                  WHERE EXISTS(SELECT FROM unnest(b.companies) AS u(x)\n                               WHERE x IN :companyIds)\n                    AND b.meeting_id IN :meetingIds\n               &quot;&quot;&quot;,nativeQuery = true)\nList&lt;Ballot&gt; findByIds(Long[] companyIds, Long[] meetingIds);\n</code></pre>\n<p>The former wastes time transforming the incoming arguments, the latter needlessly unpacking the array and also wasting an index, if you have a <a href=\"https://www.postgresql.org/docs/current/gin.html#GIN-BUILTIN-OPCLASSES\" rel=\"nofollow noreferrer\">GIN on <code>b.companies</code></a> that normally speeds up the <code>&amp;&amp;</code> lookup.</p>\n<hr />\n<p>It seems that your <code>Long[]</code> gets mapped like this:</p>\n<pre class=\"lang-sql prettyprint-override\"><code>SELECT * FROM ballots b \nWHERE b.companies &amp;&amp; array[1234567890]\n</code></pre>\n<p>Which is valid syntax. Then <code>Collection&lt;Long&gt;</code> maps like this, breaking it:</p>\n<pre class=\"lang-sql prettyprint-override\"><code>SELECT * FROM ballots b \nWHERE b.companies &amp;&amp; (1234567890)\n</code></pre>\n<p>Unless it's you adding those parentheses in, my other guess is <code>IN</code> gets special treatment as a SQL-standard construct, gets detected and guides parameter expansion to transform a Java-side array to SQL-side parenthesized value list - otherwise your initial <code>Long[] companyIds, Long[] meetingIds</code> example should fail on an attempt like this:</p>\n<pre class=\"lang-sql prettyprint-override\"><code>SELECT * FROM ballots b \nWHERE b.meeting_id in array[54321,76543]\n</code></pre>\n<p>Which wouldn't work because there's no <code>IN</code> variant directly accepting a plain array on the right.</p>\n<p>The <a href=\"https://www.postgresql.org/docs/current/functions-array.html#ARRAY-OPERATORS-TABLE\" rel=\"nofollow noreferrer\"><code>&amp;&amp;</code></a> is just an RDBMS-specific operator so the <code>Collection</code>-type param gets a default expansion to parenthesized value list <code>(?)</code>, <code>(?,?)</code>, with no adjustment to what the operator expects <code>bigint[?]</code>, <code>array[?]::bigint[]</code>, etc.</p>\n<p>An array longer than a single element would probably get you some other error, but a single-element <code>(?)</code> gets treated as a plain parenthesised expression with a scalar in it, leading to the <code>bigint[] &amp;&amp; bigint</code> attempt.</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 6897470,
+      "reputation" : 30091,
+      "user_id" : 5298879,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Qv2LD.png?s=256",
+      "display_name" : "Zegarek",
+      "link" : "https://stackoverflow.com/users/5298879/zegarek"
+    },
+    "creation_date" : 1755628108,
+    "last_activity_date" : 1755639466,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140677198,
+    "post_id" : 79740056,
+    "body" : "@Turo it fails either with <code>ERROR: function unnest(bigint) does not exist</code>. For some reason Spring Data treats <code>Collection&lt;Long&gt;</code> as a single <code>bigint</code> unlike <code>Long[]</code>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 17228781,
+      "reputation" : 4612,
+      "user_id" : 12473843,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/HkCxn.jpg?s=256",
+      "display_name" : "Sergey Tsypanov",
+      "link" : "https://stackoverflow.com/users/12473843/sergey-tsypanov"
+    },
+    "creation_date" : 1755626560,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140677070,
+    "post_id" : 79740056,
+    "body" : "You could try to use unnest on the collection, something like <code>b.companies &amp;&amp;  function(&#39;unnest&#39;, :companyIds)</code>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 8026267,
+      "reputation" : 5044,
+      "user_id" : 6053084,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/616306286f1da49445d0f5f944440c2d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Turo",
+      "link" : "https://stackoverflow.com/users/6053084/turo"
+    },
+    "creation_date" : 1755623255,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140677022,
+    "post_id" : 79740056,
+    "body" : "@AdrianKlaver I tried <code>in</code> clause, still no luck",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 17228781,
+      "reputation" : 4612,
+      "user_id" : 12473843,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/HkCxn.jpg?s=256",
+      "display_name" : "Sergey Tsypanov",
+      "link" : "https://stackoverflow.com/users/12473843/sergey-tsypanov"
+    },
+    "creation_date" : 1755622212,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140677015,
+    "post_id" : 79740056,
+    "body" : "It&#39;s not my decision, I work with the codebase as it is",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 17228781,
+      "reputation" : 4612,
+      "user_id" : 12473843,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/HkCxn.jpg?s=256",
+      "display_name" : "Sergey Tsypanov",
+      "link" : "https://stackoverflow.com/users/12473843/sergey-tsypanov"
+    },
+    "creation_date" : 1755622067,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140676858,
+    "post_id" : 79740056,
+    "body" : "Slightly off-topic, but why did you use an array for <code>b.companies</code> ? I love arrays, but not as a data type in a table. I would normalize this data; this would also solve your problem with the array in your application code.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 101001,
+      "reputation" : 129316,
+      "user_id" : 271959,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/H3bQRCRO.png?s=256",
+      "display_name" : "Frank Heikens",
+      "link" : "https://stackoverflow.com/users/271959/frank-heikens"
+    },
+    "creation_date" : 1755618879,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140676828,
+    "post_id" : 79740056,
+    "body" : "The issue on my end is, I don&#39;t use Spring JPA so I am not really sure what I am looking at. What seems to obvious is that going from <code>Long[] companyIds</code> to <code>Collection&lt;Long&gt; companyIds</code> changes the output from <code>bigint[]</code> to <code>bigint</code>l The fact that <code>b.meeting_id in :meetingIds&quot;</code> and <code>Collection&lt;Long&gt; meetingIds</code> still works, to me, looks like you need to explore <a href=\"https://www.postgresql.org/docs/current/functions-comparisons.html#FUNCTIONS-COMPARISONS-IN-SCALAR\" rel=\"nofollow noreferrer\">IN</a> and whether you need that for both cases.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 9513375,
+      "reputation" : 20363,
+      "user_id" : 7070613,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/iZQNZ.jpg?s=256",
+      "display_name" : "Adrian Klaver",
+      "link" : "https://stackoverflow.com/users/7070613/adrian-klaver"
+    },
+    "creation_date" : 1755618291,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140676704,
+    "post_id" : 79740056,
+    "body" : "@AdrianKlaver updated the question",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 17228781,
+      "reputation" : 4612,
+      "user_id" : 12473843,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/HkCxn.jpg?s=256",
+      "display_name" : "Sergey Tsypanov",
+      "link" : "https://stackoverflow.com/users/12473843/sergey-tsypanov"
+    },
+    "creation_date" : 1755615685,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140676684,
+    "post_id" : 79740056,
+    "body" : "The error is <code>operator does not exist: bigint[] &amp;&amp; bigint</code> which to me implies that <code>Collection&lt;Long&gt; companyIds</code> is returning a single <code>bigint</code> not an <code>bigint[]</code>. Since I don&#39;t where <code>companyIds</code> is coming from I can&#39;t be of more help.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 9513375,
+      "reputation" : 20363,
+      "user_id" : 7070613,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/iZQNZ.jpg?s=256",
+      "display_name" : "Adrian Klaver",
+      "link" : "https://stackoverflow.com/users/7070613/adrian-klaver"
+    },
+    "creation_date" : 1755615397,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79740282" : [ {
+      "comment_id" : 140681957,
+      "post_id" : 79740282,
+      "body" : "@SergeyTsypanov Thanks for the follow-up. The <code>WHERE b.companies &amp;&amp; ? and b.meeting_id in ?</code> resulting in an <code>[ERROR: syntax error at or near &quot;$2&quot;</code> does look like something they should definitely fix, at least from the error-reporting side. How about the workarounds in the first section of my answer, did you give those a go? Also, did you maybe try to intercept the actual queries that get sent from your app, to see what exactly the db&#39;s getting in each case? You should be able to observe them in <code>pg_stat_activity</code> system view on the db, or you may also find them in the db log.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 6897470,
+        "reputation" : 30091,
+        "user_id" : 5298879,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/Qv2LD.png?s=256",
+        "display_name" : "Zegarek",
+        "link" : "https://stackoverflow.com/users/5298879/zegarek"
+      },
+      "creation_date" : 1755779325,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140681814,
+      "post_id" : 79740282,
+      "body" : "Thanks for such a broad explanation, I&#39;ve voted up. To me this is likely to be Spring Data/Hibernate issue, I&#39;ve filed one here: <a href=\"https://github.com/spring-projects/spring-data-jpa/issues/3981\" rel=\"nofollow noreferrer\">github.com/spring-projects/spring-data-jpa/issues/3981</a>",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 17228781,
+        "reputation" : 4612,
+        "user_id" : 12473843,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/HkCxn.jpg?s=256",
+        "display_name" : "Sergey Tsypanov",
+        "link" : "https://stackoverflow.com/users/12473843/sergey-tsypanov"
+      },
+      "creation_date" : 1755776045,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

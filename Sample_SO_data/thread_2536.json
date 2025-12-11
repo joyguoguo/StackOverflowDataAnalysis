@@ -1,0 +1,182 @@
+{
+  "question" : {
+    "question_id" : 79614120,
+    "title" : "Why do the stax and the dom api write xml attributes with newlines differently?",
+    "body" : "<p>I'm writing an xml file using the stax and the dom api.\nThe stax api writes the newline unchanged.\nThe dom api escapes the newline in the attribute to <code>&amp;#10;</code>.\nWhy is there a difference? How do I force stax to also escape the newline?</p>\n<pre class=\"lang-java prettyprint-override\"><code>import org.w3c.dom.Document;\nimport org.w3c.dom.Element;\n\nimport javax.xml.parsers.DocumentBuilder;\nimport javax.xml.parsers.DocumentBuilderFactory;\nimport javax.xml.stream.XMLInputFactory;\nimport javax.xml.stream.XMLOutputFactory;\nimport javax.xml.stream.XMLStreamReader;\nimport javax.xml.stream.XMLStreamWriter;\nimport javax.xml.transform.Transformer;\nimport javax.xml.transform.TransformerFactory;\nimport javax.xml.transform.dom.DOMSource;\nimport javax.xml.transform.stream.StreamResult;\nimport java.io.InputStream;\nimport java.io.OutputStream;\nimport java.nio.file.Files;\nimport java.nio.file.Path;\n\npublic class WriteXml {\n\n    public static void main(String[] args) throws Exception {\n\n        // returns &quot;foo SPACE bar&quot; because writeWithStax literally writes the newline\n        Path staxFile = writeWithStax(&quot;foo\\nbar&quot;);\n        System.out.println(&quot;staxFile = &quot; + Files.readString(staxFile));\n        System.out.println(&quot;attribute read with stax = &quot; + readWithStax(staxFile));\n        System.out.println(&quot;attribute read with dom = &quot; + readWithDom(staxFile));\n        System.out.println();\n\n        // returns &quot;foo NEWLINE bar&quot; because writeWithDom escapes the newline to &quot;&amp;#10;&quot;\n        Path domFile = writeWithDom(&quot;foo\\nbar&quot;);\n        System.out.println(&quot;domFile = &quot; + Files.readString(domFile));\n        System.out.println(&quot;attribute read with stax = &quot; + readWithStax(domFile));\n        System.out.println(&quot;attribute read with dom = &quot; + readWithDom(domFile));\n        System.out.println();\n\n    }\n\n    private static Path writeWithStax(String text) throws Exception {\n        Path file = Files.createTempFile(&quot;stax&quot;, &quot;.xml&quot;);\n        try (OutputStream out = Files.newOutputStream(file)) {\n            XMLOutputFactory factory = XMLOutputFactory.newInstance();\n            XMLStreamWriter writer = factory.createXMLStreamWriter(out);\n            writer.writeStartDocument();\n            writer.writeStartElement(&quot;element&quot;);\n            writer.writeAttribute(&quot;attribute&quot;, text);\n            writer.writeEndElement();\n            writer.writeEndDocument();\n            writer.flush();\n            writer.close();\n        }\n        return file;\n    }\n\n    private static Path writeWithDom(String text) throws Exception {\n        Path file = Files.createTempFile(&quot;dom&quot;, &quot;.xml&quot;);\n        try (OutputStream out = Files.newOutputStream(file)) {\n            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();\n            DocumentBuilder builder = factory.newDocumentBuilder();\n            Document document = builder.newDocument();\n            Element warningElement = document.createElement(&quot;element&quot;);\n            warningElement.setAttribute(&quot;attribute&quot;, text);\n            document.appendChild(warningElement);\n            TransformerFactory transformerFactory = TransformerFactory.newInstance();\n            Transformer transformer = transformerFactory.newTransformer();\n            transformer.transform(new DOMSource(document), new StreamResult(out));\n        }\n        return file;\n    }\n\n    private static String readWithStax(Path file) throws Exception {\n        try (InputStream in = Files.newInputStream(file)) {\n            XMLInputFactory factory = XMLInputFactory.newInstance();\n            XMLStreamReader reader = factory.createXMLStreamReader(in);\n            while (reader.hasNext()) {\n                int event = reader.next();\n                if (event == XMLStreamReader.START_ELEMENT\n                        &amp;&amp; &quot;element&quot;.equals(reader.getLocalName())) {\n                    return reader.getAttributeValue(null, &quot;attribute&quot;);\n                }\n            }\n        }\n        return null;\n    }\n\n    private static String readWithDom(Path file) throws Exception {\n        try (InputStream in = Files.newInputStream(file)) {\n            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();\n            DocumentBuilder builder = factory.newDocumentBuilder();\n            Document document = builder.parse(in);\n            return document.getDocumentElement().getAttribute(&quot;attribute&quot;);\n        }\n    }\n\n}\n\n</code></pre>\n<p>Based on the first answer I have now written this workaround.\nThis feels like a hack, but I guess it works.</p>\n<pre class=\"lang-java prettyprint-override\"><code>private static Path writeWithStax(String text) throws Exception {\n    Path file = Files.createTempFile(&quot;stax&quot;, &quot;.xml&quot;);\n    try (Writer out = Files.newBufferedWriter(file, UTF_8)) {\n        XMLOutputFactory factory = XMLOutputFactory.newInstance();\n        XMLStreamWriter writer = factory.createXMLStreamWriter(out);\n        writer.writeStartDocument();\n        writer.writeStartElement(&quot;element&quot;);\n\n        // hack to preserve whitespace\n        writeAttributePreservingWhitespace(out, writer, &quot;attribute&quot;, text);\n\n        writer.writeEndElement();\n        writer.writeEndDocument();\n        writer.flush();\n        writer.close();\n    }\n    return file;\n}\n\nprivate static void writeAttributePreservingWhitespace(Writer out, XMLStreamWriter writer, String name, String value) throws XMLStreamException, IOException {\n    // see https://www.w3.org/TR/xml/#AVNormalize\n    if (value.contains(&quot;\\t&quot;) || value.contains(&quot;\\n&quot;) || value.contains(&quot;\\r&quot;)) {\n        writer.flush();\n        out.write(&quot; &quot;);\n        writeXMLContent(out, name);\n        out.write(&quot;=\\&quot;&quot;);\n        writeXMLContent(out, value);\n        out.write(&quot;\\&quot;&quot;);\n    } else {\n        writer.writeAttribute(name, value);\n    }\n}\n\nprivate static void writeXMLContent(Writer out, String text) throws IOException {\n    for (char ch : text.toCharArray()) {\n        switch (ch) {\n            case '&lt;' -&gt; out.write(&quot;&amp;lt;&quot;);\n            case '&amp;' -&gt; out.write(&quot;&amp;amp;&quot;);\n            case '&gt;' -&gt; out.write(&quot;&amp;gt;&quot;);\n            case '&quot;' -&gt; out.write(&quot;&amp;quot;&quot;);\n            case '\\t' -&gt; out.write(&quot;&amp;#x9;&quot;);\n            case '\\n' -&gt; out.write(&quot;&amp;#xA;&quot;);\n            case '\\r' -&gt; out.write(&quot;&amp;#xD;&quot;);\n            default -&gt; out.write(ch);\n        }\n    }\n}\n</code></pre>\n",
+    "tags" : [ "java", "xml", "dom", "stax" ],
+    "owner" : {
+      "account_id" : 6734,
+      "reputation" : 4213,
+      "user_id" : 11451,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/ad917cae8ce92bbd69332f8d5735e54a?s=256&d=identicon&r=PG",
+      "display_name" : "Kristof Neirynck",
+      "link" : "https://stackoverflow.com/users/11451/kristof-neirynck"
+    },
+    "is_answered" : true,
+    "view_count" : 75,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1746978468,
+    "creation_date" : 1746793948,
+    "link" : "https://stackoverflow.com/questions/79614120/why-do-the-stax-and-the-dom-api-write-xml-attributes-with-newlines-differently",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79614410,
+    "question_id" : 79614120,
+    "body" : "<p>New lines would have to be manually escaped as <a href=\"https://docs.oracle.com/javase/8/docs/api/javax/xml/stream/XMLStreamWriter.html\" rel=\"nofollow noreferrer\">XMLStreamWriter</a> will not do that</p>\n<blockquote>\n<p>The XMLStreamWriter does not perform well formedness checking on its input. However the writeCharacters method is required to escape &amp; , &lt; and &gt; <strong>For attribute values the writeAttribute method</strong> will escape the above characters plus &quot; to ensure that all character content and attribute values are well formed.</p>\n</blockquote>\n<p>New lines are not listed for escaping.</p>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 3377022,
+      "reputation" : 14393,
+      "user_id" : 2834978,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/ff9af10001f37bc0de566ca2caf2f558?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "LMC",
+      "link" : "https://stackoverflow.com/users/2834978/lmc"
+    },
+    "creation_date" : 1746803478,
+    "last_activity_date" : 1746803478,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140441018,
+    "post_id" : 79614120,
+    "body" : "Why is there a difference? Because two designers have guessed your requirements differently: both a literal newline and an escaped <code>&amp;#xa;</code> are legal in XML attributes, but XML parsers treat them differently.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 529122,
+      "reputation" : 164963,
+      "user_id" : 415448,
+      "user_type" : "registered",
+      "accept_rate" : 33,
+      "profile_image" : "https://i.sstatic.net/P2vVZ.png?s=256",
+      "display_name" : "Michael Kay",
+      "link" : "https://stackoverflow.com/users/415448/michael-kay"
+    },
+    "creation_date" : 1747696530,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140414210,
+    "post_id" : 79614120,
+    "body" : "I too assumed the way the file is written is irrelevant, but when the new line is encoded as ‘&amp;#10;’ then it is preserved. That is why I care.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 6734,
+      "reputation" : 4213,
+      "user_id" : 11451,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/ad917cae8ce92bbd69332f8d5735e54a?s=256&d=identicon&r=PG",
+      "display_name" : "Kristof Neirynck",
+      "link" : "https://stackoverflow.com/users/11451/kristof-neirynck"
+    },
+    "creation_date" : 1746906834,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140413825,
+    "post_id" : 79614120,
+    "body" : "Why bother? When returning an attribute&#39;s value, a conforming XML processor should replace each newline with a space.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 116746,
+      "reputation" : 12898,
+      "user_id" : 306030,
+      "user_type" : "registered",
+      "accept_rate" : 70,
+      "profile_image" : "https://i.sstatic.net/y053l.jpg?s=256",
+      "display_name" : "forty-two",
+      "link" : "https://stackoverflow.com/users/306030/forty-two"
+    },
+    "creation_date" : 1746891915,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140412565,
+    "post_id" : 79614120,
+    "body" : "According to <a href=\"https://www.w3.org/TR/REC-xml/#AVNormalize\" rel=\"nofollow noreferrer\">the XML Specification</a>, newlines are not allowed in attribute values, and each must be converted to a space.  So the DOM is doing exactly what it should be doing.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2053598,
+      "reputation" : 44936,
+      "user_id" : 1831987,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/38b1c37530189ec4471a43a618e33f67?s=256&d=identicon&r=PG",
+      "display_name" : "VGR",
+      "link" : "https://stackoverflow.com/users/1831987/vgr"
+    },
+    "creation_date" : 1746828676,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140411229,
+    "post_id" : 79614120,
+    "body" : "Stax writes the attribute as <code>attribute=&quot;foo{newline}bar&quot;</code> and Dom writes <code>attribute=&quot;foo&amp;#10;bar&quot;</code>.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 6734,
+      "reputation" : 4213,
+      "user_id" : 11451,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/ad917cae8ce92bbd69332f8d5735e54a?s=256&d=identicon&r=PG",
+      "display_name" : "Kristof Neirynck",
+      "link" : "https://stackoverflow.com/users/11451/kristof-neirynck"
+    },
+    "creation_date" : 1746799577,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140411046,
+    "post_id" : 79614120,
+    "body" : "What is effectively written to both files? May be it&#39;s a read issue, not a write one.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3377022,
+      "reputation" : 14393,
+      "user_id" : 2834978,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/ff9af10001f37bc0de566ca2caf2f558?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "LMC",
+      "link" : "https://stackoverflow.com/users/2834978/lmc"
+    },
+    "creation_date" : 1746796402,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79614410" : [ {
+      "comment_id" : 140411706,
+      "post_id" : 79614410,
+      "body" : "I&#39;m saying <code>\\n</code> needs to be manually converted. Something like <code>writer.writeAttribute(&quot;attribute&quot;, text.replace(&quot;\\n&quot;, &quot;&amp;#10;&quot;);</code> But won&#39;t probably work as it could be written as <code>&amp;amp;#10;</code> so there&#39;s no easy way to make stax do that I believe.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 3377022,
+        "reputation" : 14393,
+        "user_id" : 2834978,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/ff9af10001f37bc0de566ca2caf2f558?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "LMC",
+        "link" : "https://stackoverflow.com/users/2834978/lmc"
+      },
+      "creation_date" : 1746807746,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140411678,
+      "post_id" : 79614410,
+      "body" : "So ... you&#39;re telling me to use StAX I should wrap my <code>XMLStreamWriter</code> around a <code>Writer</code> and for each attribute that contains a newline flush the <code>XMLStreamWriter</code> and write the attribute directly to the underlying <code>Writer</code> myself? Feels ... dirty.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 6734,
+        "reputation" : 4213,
+        "user_id" : 11451,
+        "user_type" : "registered",
+        "accept_rate" : 82,
+        "profile_image" : "https://www.gravatar.com/avatar/ad917cae8ce92bbd69332f8d5735e54a?s=256&d=identicon&r=PG",
+        "display_name" : "Kristof Neirynck",
+        "link" : "https://stackoverflow.com/users/11451/kristof-neirynck"
+      },
+      "creation_date" : 1746807242,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

@@ -1,0 +1,80 @@
+{
+  "question" : {
+    "question_id" : 79699939,
+    "title" : "Kafka load test on Gatling",
+    "body" : "<p>Gatling as maven dependencies:</p>\n<pre class=\"lang-xml prettyprint-override\"><code>&lt;plugin&gt;\n&lt;groupId&gt;io.gatling&lt;/groupId&gt;\n&lt;artifactId&gt;gatling-maven-plugin&lt;/artifactId&gt;\n&lt;version&gt;4.19.1&lt;/version&gt;\n&lt;/plugin&gt;\n\n&lt;dependencies&gt;\n    &lt;dependency&gt;\n      &lt;groupId&gt;io.gatling.highcharts&lt;/groupId&gt;\n      &lt;artifactId&gt;gatling-charts-highcharts&lt;/artifactId&gt;\n      &lt;version&gt;3.14.3&lt;/version&gt;\n      &lt;scope&gt;test&lt;/scope&gt;\n    &lt;/dependency&gt;\n    &lt;!-- https://mvnrepository.com/artifact/org.apache.kafka/kafka-clients --&gt;\n    &lt;dependency&gt;\n        &lt;groupId&gt;org.apache.kafka&lt;/groupId&gt;\n        &lt;artifactId&gt;kafka-clients&lt;/artifactId&gt;\n        &lt;version&gt;4.0.0&lt;/version&gt;\n    &lt;/dependency&gt;\n&lt;/dependencies&gt;\n</code></pre>\n<p>I have created load test:</p>\n<pre><code>import io.gatling.javaapi.core.*;\nimport org.apache.kafka.clients.producer.*;\n\nimport java.util.Properties;\nimport java.util.concurrent.TimeUnit;\n\nimport static io.gatling.javaapi.core.CoreDsl.*;\n\npublic class KafkaLoadTesting extends Simulation {\n    private static final String TOPIC = &quot;likes-bucket&quot;;\n    private static final String BOOTSTRAP_SERVERS = &quot;localhost:9092&quot;;\n\n\n    private static void sendKafkaMessage(String message) {\n        Properties props = new Properties();\n        props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, BOOTSTRAP_SERVERS);\n        props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, &quot;org.apache.kafka.common.serialization.StringSerializer&quot;);\n        props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, &quot;org.apache.kafka.common.serialization.StringSerializer&quot;);\n\n        Producer&lt;String, String&gt; producer = new KafkaProducer&lt;&gt;(props);\n        ProducerRecord&lt;String, String&gt; record = new ProducerRecord&lt;&gt;(TOPIC, message);\n        producer.send(record);\n        producer.close();\n    }\n\n    ChainBuilder kafkaAction = exec(session -&gt; {\n        String payload = &quot;{\\&quot;talkName\\&quot;:\\&quot;Spring best practice\\&quot;,\\&quot;likes\\&quot;:1}&quot;;\n        sendKafkaMessage(payload);\n        return session;\n    });\n\n    {\n        setUp(\n                scenario(&quot;Kafka Load Test&quot;)\n                        .exec(kafkaAction)\n                        .pause(1, TimeUnit.SECONDS.ordinal())\n                        .repeat(100).on(kafkaAction)\n                        .injectOpen(atOnceUsers(10))\n        ).protocols();\n    }\n}\n</code></pre>\n<p>I run the test ./mvnw clean gatling:test\nMy java version: java 23.0.2 2025-01-21\nI dont see any messages in kafka but i got loop. What i do wrong and what is correct way to send message to broker? i dont see any error on console.</p>\n<p><a href=\"https://i.sstatic.net/EDWyoHgZ.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/EDWyoHgZ.png\" alt=\"enter image description here\" /></a></p>\n",
+    "tags" : [ "java", "apache-kafka", "gatling" ],
+    "owner" : {
+      "account_id" : 33343618,
+      "reputation" : 35,
+      "user_id" : 25816162,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/adba765a4a3e802439edc3ae5e8da378?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Roman Chumak",
+      "link" : "https://stackoverflow.com/users/25816162/roman-chumak"
+    },
+    "is_answered" : true,
+    "view_count" : 242,
+    "answer_count" : 1,
+    "score" : 2,
+    "last_activity_date" : 1752652940,
+    "creation_date" : 1752407653,
+    "link" : "https://stackoverflow.com/questions/79699939/kafka-load-test-on-gatling",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79703101,
+    "question_id" : 79699939,
+    "body" : "<p>I recommend using a ready-made plugin to load Kafka — creating everything from scratch can be quite tough.<br />\nI'm the author of this plugin: <a href=\"https://github.com/Amerousful/gatling-kafka\" rel=\"nofollow noreferrer\">https://github.com/Amerousful/gatling-kafka</a> — feel free to check it out.<br />\nIt’s supported up to Gatling 3.9.5. The plugin provides various ways to load Kafka: you can just send a message, send and wait for a reply, or even only wait for replies.\\</p>\n<p>For instance, this is a common way just to send a message:</p>\n<pre class=\"lang-scala prettyprint-override\"><code>.exec(\n    kafka(&quot;Kafka: fire and forget&quot;)\n        .send()\n        .topic(&quot;input_topic&quot;)\n        .payload(&quot;#{payload}&quot;)\n        .key(&quot;#{key}&quot;)\n        .header(&quot;k1&quot;, &quot;v1&quot;)\n        .headers(Collections.singletonMap(&quot;key&quot;, &quot;value&quot;))\n     )\n</code></pre>\n<p>Protocol part:</p>\n<pre class=\"lang-scala prettyprint-override\"><code>KafkaProtocolBuilder kafkaProtocol = kafka\n            .broker(KafkaBroker(&quot;kafka.us-east-1.amazonaws.com&quot;, 9096))\n            .brokers(\n                    KafkaBroker(&quot;kafka.us-east-2.amazonaws.com&quot;, 9096),\n                    KafkaBroker(&quot;kafka.us-east-3.amazonaws.com&quot;, 9096)\n            )\n            .acks(&quot;1&quot;)\n            .producerIdenticalSerializer(&quot;org.apache.kafka.common.serialization.StringSerializer&quot;)\n            .consumerIdenticalDeserializer(&quot;org.apache.kafka.common.serialization.StringDeserializer&quot;)\n            .addProducerProperty(&quot;retries&quot;, &quot;3&quot;)\n            .addConsumerProperty(&quot;heartbeat.interval.ms&quot;, &quot;3000&quot;)\n            .credentials(&quot;admin&quot;, &quot;password&quot;, true, SaslMechanism.plain())\n            .replyTimeout(10)\n            .matchByKey()\n            .matchByValue()\n            .messageMatcher(customMatcher)\n            .replyConsumerName(&quot;gatling-test-consumer&quot;);\n</code></pre>\n<hr />\n<p>There’s also another plugin:\n<a href=\"https://github.com/galax-io/gatling-kafka-plugin\" rel=\"nofollow noreferrer\">https://github.com/galax-io/gatling-kafka-plugin</a>\nThe main advantage is that it supports newer Gatling versions, so it might be a better fit for you since you're using version 3.14.3.</p>\n<p>One more point — supported serializations: this plugin supports Avro, while mine supports Protobuf.</p>\n",
+    "score" : 2,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 10172293,
+      "reputation" : 2600,
+      "user_id" : 7512201,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/8a9bd3907d4198dc3ffb3d69e12ed1d3?s=256&d=identicon&r=PG",
+      "display_name" : "Amerousful",
+      "link" : "https://stackoverflow.com/users/7512201/amerousful"
+    },
+    "creation_date" : 1752652940,
+    "last_activity_date" : 1752652940,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79703101" : [ {
+      "comment_id" : 140626432,
+      "post_id" : 79703101,
+      "body" : "Could you be so polite and help me build and run the kafka load test because i stak. I attached link to my experimental repository. bitbucket.org/rvchumak/gatling-loadtest-plugin-amerousful/sr&zwnj;&#8203;c/… I dont know what version of this plugin gatling-maven-plugin.version. (4.20.0 its latest) What java version and maven version to use? My try was failed and i stuck.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 33343618,
+        "reputation" : 35,
+        "user_id" : 25816162,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/adba765a4a3e802439edc3ae5e8da378?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Roman Chumak",
+        "link" : "https://stackoverflow.com/users/25816162/roman-chumak"
+      },
+      "creation_date" : 1753785754,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140606347,
+      "post_id" : 79703101,
+      "body" : "@RomanChumak Try this plugin <a href=\"https://github.com/galax-io/gatling-kafka-plugin\" rel=\"nofollow noreferrer\">github.com/galax-io/gatling-kafka-plugin</a>. For your POM - <a href=\"https://mvnrepository.com/artifact/org.galaxio/gatling-kafka-plugin_2.13/0.15.1\" rel=\"nofollow noreferrer\">mvnrepository.com/artifact/org.galaxio/&hellip;</a> and some example <a href=\"https://github.com/galax-io/gatling-kafka-plugin/blob/main/src/test/scala/org/galaxio/gatling/kafka/examples/BasicSimulation.scala\" rel=\"nofollow noreferrer\">github.com/galax-io/gatling-kafka-plugin/blob/main/src/test/&zwnj;&#8203;&hellip;</a>",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10172293,
+        "reputation" : 2600,
+        "user_id" : 7512201,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/8a9bd3907d4198dc3ffb3d69e12ed1d3?s=256&d=identicon&r=PG",
+        "display_name" : "Amerousful",
+        "link" : "https://stackoverflow.com/users/7512201/amerousful"
+      },
+      "creation_date" : 1753109863,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

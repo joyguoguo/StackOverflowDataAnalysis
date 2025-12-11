@@ -1,0 +1,193 @@
+{
+  "question" : {
+    "question_id" : 79741597,
+    "title" : "SpringBootTest context with mapstruct.Mapper bean",
+    "body" : "<p>I'm working in an application where I need to map some input to an entity class and I'm using mapstruct like this:</p>\n<pre><code>import org.mapstruct.Mapper;\nimport org.mapstruct.Mapping;\nimport org.mapstruct.MappingConstants;\nimport org.mapstruct.NullValueCheckStrategy;\n\nimport java.math.BigDecimal;\n\n@Mapper(componentModel = MappingConstants.ComponentModel.SPRING,\n        nullValueCheckStrategy = NullValueCheckStrategy.ALWAYS)\npublic interface MyEntityMapper {\n\n    @Mapping(source = &quot;source1&quot;, target = &quot;target1&quot;)\n    @Mapping(source = &quot;source2&quot;, target = &quot;target2&quot;)\n    MyEntity toMyEntity(MyInput input);\n}\n</code></pre>\n<p>And then I'm adding a SpringBoot test to check the mapping is being done as expected</p>\n<pre><code>import org.junit.jupiter.api.DisplayName;\nimport org.junit.jupiter.api.Test;\nimport org.springframework.beans.factory.annotation.Autowired;\nimport org.springframework.boot.test.context.SpringBootTest;\nimport org.springframework.test.context.ActiveProfiles;\n\nimport java.math.BigDecimal;\n\nimport static org.assertj.core.api.Assertions.assertThat;\n\n@SpringBootTest(classes = MyEntityMapper.class)\nclass MyEntityMapperTest {\n\n    @Autowired\n    private MyEntityMapper underTest;\n\n    @Test\n    @DisplayName(&quot;Entity mapped when input provided&quot;)\n    void test_toMyEntity_returnsMappedEntity_whenInputProvided() {\n        MyEntity result = underTest.toMyEntity(MyInputRepository.basicInput());\n        assertThat(result).isNotNull();\n        // more asserts if needed\n    }\n}\n</code></pre>\n<p>But when I run this test I get the following error:</p>\n<pre><code>org.springframework.beans.factory.UnsatisfiedDependencyException: Error creating bean with name 'com.example.mapper.MyEntityMapperTest': Unsatisfied dependency expressed through field 'underTest'; nested exception is org.springframework.beans.factory.NoSuchBeanDefinitionException: No qualifying bean of type 'com.example.mapper.MyEntityMapper' available: expected at least 1 bean which qualifies as autowire candidate. Dependency annotations: {@org.springframework.beans.factory.annotation.Autowired(required=true)}\n    at ...\n</code></pre>\n<p>Checking logs in detail and doing some web research I found it may be a context initialization issue. Seems that SpringBoot uses some listeners to prepare some beans. When Spring is starting I find the following message:</p>\n<pre><code>{\n    &quot;logger_name&quot;: &quot;com.example.mapper.MyEntityMapperTest&quot;,\n    &quot;message&quot;: &quot;Started MyEntityMapperTest in 0.849 seconds (JVM running for 2.076)&quot;,\n    &quot;log_level&quot;: &quot;INFO&quot;,\n    &quot;log_type&quot;: &quot;DEFAULT&quot;,\n    &quot;thread_name&quot;: &quot;main&quot;,\n    &quot;stack_trace&quot;: &quot;-&quot;\n}\n\n\n\n============================\nCONDITIONS EVALUATION REPORT\n============================\n\n\nPositive matches:\n-----------------\n\n    None\n\n\nNegative matches:\n-----------------\n\n    None\n\n\nExclusions:\n-----------\n\n    None\n\n\nUnconditional classes:\n----------------------\n\n    None\n\n\n\n{\n    &quot;logger_name&quot;: &quot;org.springframework.test.context.TestContextManager&quot;,\n    &quot;message&quot;: &quot;Caught exception while allowing TestExecutionListener [org.springframework.boot.test.autoconfigure.SpringBootDependencyInjectionTestExecutionListener@1852a3ff] to prepare test instance [com.example.mapper.MyEntityMapperTest@3ce53f6a]&quot;,\n    &quot;log_level&quot;: &quot;ERROR&quot;,\n    &quot;log_type&quot;: &quot;DEFAULT&quot;,\n    &quot;thread_name&quot;: &quot;main&quot;,\n    &quot;stack_trace&quot;: &quot;o.s.b.f.NoSuchBeanDefinitionException: ...&quot;\n}\n</code></pre>\n<p><strong>Note</strong>: formatted log messages in JSON for better readability</p>\n<h2>Workaround</h2>\n<p>I found a way to workaround this by simply loading the complete Spring context. It seems that Spring, in such circumstances, runs correctly all the bootstraping and loads my mapper bean correctly. However, this implies a lot of time to run a simple test and the need to add an innecessary test configuration, like:</p>\n<pre><code>@SpringBootTest\n@ActiveProfiles(&quot;test&quot;)\nclass MyEntityMapperTest {...}\n</code></pre>\n<p>With this my test runs correctly BUT with the disadvantages described before.</p>\n<h2>The question</h2>\n<p>Is there any way to tell Spring to bootstrap such that the mapper bean is ready when instantiating the test class bean?</p>\n<p>Thanks in advance for your answers/comments</p>\n",
+    "tags" : [ "java", "spring-boot", "spring-test", "mapstruct" ],
+    "owner" : {
+      "account_id" : 6916783,
+      "reputation" : 1314,
+      "user_id" : 5310721,
+      "user_type" : "registered",
+      "accept_rate" : 81,
+      "profile_image" : "https://i.sstatic.net/ME0Lv.jpg?s=256",
+      "display_name" : "Alvaro Pedraza",
+      "link" : "https://stackoverflow.com/users/5310721/alvaro-pedraza"
+    },
+    "is_answered" : true,
+    "view_count" : 147,
+    "answer_count" : 1,
+    "score" : 2,
+    "last_activity_date" : 1755766094,
+    "creation_date" : 1755724653,
+    "link" : "https://stackoverflow.com/questions/79741597/springboottest-context-with-mapstruct-mapper-bean",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79742024,
+    "question_id" : 79741597,
+    "body" : "<p>In case we are using <code>componentModel = &quot;spring&quot;</code>:</p>\n<ol>\n<li>If mapper doesn't use other mappers (or any other components), there's no point in starting a Spring context, so the test could look like this:</li>\n</ol>\n<pre><code>import org.junit.jupiter.api.Test;\nimport static org.assertj.core.api.Assertions.assertThat;\nimport com.example.my.mapper.MyMapstructMapper;\nimport com.example.my.mapper.MyMapstructMapperImpl;\n\nclass MyMapstructMapperTest {\n\n    private MyMapstructMapper underTest = new MyMapstructMapperImpl();\n\n\n    @Test\n    void myTest() {\n        MyDto source = ... // create source\n        MyEntity result = underTest.toMyEntity(source);\n        assertThat(result).isNotNull();\n        // more asserts if needed\n    }\n}\n</code></pre>\n<p>If we write a Spring Boot test here with a preconfigured context, as you wanted, it doesn't have any advantage, in fact, quite the opposite, because starting the context here is unnecessary:</p>\n<pre><code>@SpringBootTest(classes = MyMapstructMapperImpl.class) // here must be Impl, not interface\nclass MyMapstructMapperTest {\n    @Autowired\n    private MyMapstructMapper underTest;\n\n}\n</code></pre>\n<ol start=\"2\">\n<li>Further, if our mapper uses other mappers or components, then we must consider whether it still makes sense to write a unit test and instantiate our mapper manually, for example as follows:</li>\n</ol>\n<pre><code>private MyMapstructMapper underTest = new MyMapstructMapperImpl(new OtherMapstructMapperImpl());\n</code></pre>\n<p>In this case, the <code>MyMapstructMapper</code> uses only one other mapper, therefore it is acceptable fmpov to instantiate them manually via constructors using <code>new</code>.</p>\n<ol start=\"3\">\n<li>But it can be the case that the mapper uses, many other mappers or components, such as:</li>\n</ol>\n<pre><code>@Mapper(uses = {\n        BillingAccountMapper.class, // mapstruct mapper\n        CommonMapper.class,\n        NoteMapper.class, // not mapstruct mapper, that uses other components inside\n        OrderPriceMapper.class,\n        RelatedEntityMapper.class,\n        RelatedPartyMapper.class,\n        RelatedPlaceMapper.class,\n        WorkCharacteristicsMapper.class,\n        WorkOrderItemMapper.class,\n})\npublic interface WorkOrderMapper {\n    WorkOrderWFCreate toWorkOrderWf(WorkOrder workOrder);\n}\n</code></pre>\n<p>In this case, creating a mapper manually or via context configuration can be really complex (because the mapper uses other mappers, which use still other mappers, and so on), so I prefer to use a Spring Boot test with lazy bean initialization, which will prevent unused beans from loading during the test:</p>\n<pre><code>import org.junit.jupiter.api.Test;\nimport org.springframework.beans.factory.annotation.Autowired;\nimport org.springframework.boot.test.context.SpringBootTest;\n\n@SpringBootTest(properties = &quot;spring.main.lazy-initialization=true&quot;)\nclass WorkOrderMapperTest {\n\n    @Autowired\n    private WorkOrderMapper workOrderMapper;\n\n\n    @Test\n    void test() {\n         \n    }\n}\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 18586978,
+      "reputation" : 3850,
+      "user_id" : 15000097,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/yFl4M.jpg?s=256",
+      "display_name" : "Georgii Lvov",
+      "link" : "https://stackoverflow.com/users/15000097/georgii-lvov"
+    },
+    "creation_date" : 1755764030,
+    "last_activity_date" : 1755766094,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140681069,
+    "post_id" : 79741597,
+    "body" : "This is a unit test not an integration test. Ditch <code>@SpringBootTest</code> and just use MapStruct to obtain a reference to the mapper and test it. A lot faster as well.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126800,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1755757613,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79742024" : [ {
+      "comment_id" : 140682343,
+      "post_id" : 79742024,
+      "body" : "@M.Deinum, btw, mapstruct will not inject dependencies, if  <code>componentModel = &quot;spring&quot;</code> and we will try to use <code>Mappers.getMapper()</code> in test",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 18586978,
+        "reputation" : 3850,
+        "user_id" : 15000097,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/yFl4M.jpg?s=256",
+        "display_name" : "Georgii Lvov",
+        "link" : "https://stackoverflow.com/users/15000097/georgii-lvov"
+      },
+      "creation_date" : 1755786035,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140682158,
+      "post_id" : 79742024,
+      "body" : "@M.Deinum ok, as I said, we should decide what we can sacrifice. But it is hard to imagine for me the case, where we have more benefits from manual creation of mapper + its 10 dependencies (and dependencies of the dependencies, which can be even some default beans from spring), instead of run spring boot test with lazy init and have a barely noticeable drop in performance or memory",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 18586978,
+        "reputation" : 3850,
+        "user_id" : 15000097,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/yFl4M.jpg?s=256",
+        "display_name" : "Georgii Lvov",
+        "link" : "https://stackoverflow.com/users/15000097/georgii-lvov"
+      },
+      "creation_date" : 1755782717,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140682102,
+      "post_id" : 79742024,
+      "body" : "It is not just that, it will also add overhead which and add additional loading of application contexts due to differences in config (each permutation of <code>@SpringBootTest</code> will bootstrap a <b>new</b> instance leading to memory and performance issues). A simple unit test will run in milliseconds slapping an <code>@SpringBootTest</code> on it will make it slower (if you have many of those it will impact your test throughput and thus feedback cycle).",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 3192259,
+        "reputation" : 126800,
+        "user_id" : 2696260,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+        "display_name" : "M. Deinum",
+        "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+      },
+      "creation_date" : 1755781739,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140682049,
+      "post_id" : 79742024,
+      "body" : "@M.Deinum Fmpov, here it&#39;s opinion-based and we need to see what we are willing to sacrifice. If the Spring Boot test with lazy init will be e.g. slow due to the fact that it inits some initializers/listeners, then we can try to configure context manually. And further decide what is more advantageous for us - to write a big context configuration or to turn a blind eye to the fact that lazy init will raise several beans about which we will not know anything",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 18586978,
+        "reputation" : 3850,
+        "user_id" : 15000097,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/yFl4M.jpg?s=256",
+        "display_name" : "Georgii Lvov",
+        "link" : "https://stackoverflow.com/users/15000097/georgii-lvov"
+      },
+      "creation_date" : 1755781070,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140681827,
+      "post_id" : 79742024,
+      "body" : "If you have listeners, startup beans, customizers etc. it might do more bootstrapping than you think it does.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 3192259,
+        "reputation" : 126800,
+        "user_id" : 2696260,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+        "display_name" : "M. Deinum",
+        "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+      },
+      "creation_date" : 1755776296,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140681819,
+      "post_id" : 79742024,
+      "body" : "@M.Deinum &quot;it might not be as lazy as you think it is&quot;, could you please give an example?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 18586978,
+        "reputation" : 3850,
+        "user_id" : 15000097,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/yFl4M.jpg?s=256",
+        "display_name" : "Georgii Lvov",
+        "link" : "https://stackoverflow.com/users/15000097/georgii-lvov"
+      },
+      "creation_date" : 1755776129,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140681813,
+      "post_id" : 79742024,
+      "body" : "@M.Deinum, &quot;Don&#39;t create it manually use MapStruct&quot;. Why?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 18586978,
+        "reputation" : 3850,
+        "user_id" : 15000097,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/yFl4M.jpg?s=256",
+        "display_name" : "Georgii Lvov",
+        "link" : "https://stackoverflow.com/users/15000097/georgii-lvov"
+      },
+      "creation_date" : 1755776044,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140681547,
+      "post_id" : 79742024,
+      "body" : "Don&#39;t create it manually use MapStruct, which will also inject the dependencies. Even using lazy-init will create unnecessary beans and overhead into running your tests and it might not be as lazy as you think it is.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 3192259,
+        "reputation" : 126800,
+        "user_id" : 2696260,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+        "display_name" : "M. Deinum",
+        "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+      },
+      "creation_date" : 1755769737,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

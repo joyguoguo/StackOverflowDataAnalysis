@@ -1,0 +1,184 @@
+{
+  "question" : {
+    "question_id" : 79533646,
+    "title" : "How to avoid memory allocation in catch block in Java Spring application (string interpolation)?",
+    "body" : "<p>I am writing a Java Spring Boot (servlet) web-API application. There are repository classes in the application. Repository methods are written &quot;from scratch&quot; using Google Cloud Datastore API looking like this:</p>\n<pre class=\"lang-java prettyprint-override\"><code>    @Override\n    public User save(User user) {\n        try {\n            // Datastore specific code to populate the user entity\n            // to then save it into the database\n\n            Entity entity = ...\n\n            datastore.put(entity);\n        } catch (DatastoreException datastoreException) {\n            String errorMessage = messageSource.getMessage(\n                &quot;persistence.datastore.failed_to_save&quot;, \n                new Object[]{User.KIND}, // where User.KIND is &quot;User&quot; string\n                LocaleContextHolder.getLocale());\n            throw new DatastorePersistenceException(errorMessage, datastoreException);\n        }\n        return user;\n    }\n</code></pre>\n<p>I wrap database communication code into <code>try catch</code>. When <code>google.DatastoreException</code> occurs I catch it and then create new project-local <code>DatastorePersistenceException</code> exception, populate it with error message and actual google's exception and then throw this new populatd <code>DatastorePersistenceException</code> further.</p>\n<h2>The problem</h2>\n<p>I want to avoid hardcoded string literals with the exception specific message. Instead I want to utilize <code>messages.properties</code> to get the exact message string by key: <code>persistence.datastore.failed_to_save=Failed to save {} in Datastore</code>. I also want to keep it short and use the same message key and pattern for all <code>DatastorePersistenceException</code>s so I am using string interpolation.</p>\n<p>The problem is that string interpolation requires the following code that <strong>allocates memory</strong> in <code>new Object[]{User.KIND}</code>:</p>\n<pre class=\"lang-java prettyprint-override\"><code>        } catch (DatastoreException datastoreException) {\n            String errorMessage = messageSource.getMessage(\n                &quot;persistence.datastore.failed_to_save&quot;, \n                new Object[]{User.KIND}, \n                LocaleContextHolder.getLocale());\n            throw new DatastorePersistenceException(errorMessage, datastoreException);\n        }\n</code></pre>\n<p>where <code>messageSource</code> is <code>private final MessageSource messageSource;</code>.</p>\n<h2>Why I think this is a problem</h2>\n<ol>\n<li>memory allocations should be avoided in <code>catch</code> blocks as they can lead to memory allocation failures.</li>\n</ol>\n<h2>What am I looking for</h2>\n<ol>\n<li>avoid memory allocation in <code>catch</code> block and still utilize string interpolation.</li>\n</ol>\n<p>P.S. At the same time there is <code>new DatastorePersistenceException...</code> thrown that involves memory allocation in <code>catch</code> block. But this is a working pattern if you want to have higher level of abstraction leaving database vendor's specific exception class incapsulated. Is <code>new DatastorePersistenceException</code> also a &quot;risky&quot; practice in the sense of memory allocation in <code>catch</code> block?</p>\n",
+    "tags" : [ "java", "spring", "exception", "message", "string-interpolation" ],
+    "owner" : {
+      "account_id" : 436097,
+      "reputation" : 3925,
+      "user_id" : 823048,
+      "user_type" : "registered",
+      "accept_rate" : 70,
+      "profile_image" : "https://www.gravatar.com/avatar/7a371762d1cafd216aba9bd068e8f443?s=256&d=identicon&r=PG",
+      "display_name" : "nickolay",
+      "link" : "https://stackoverflow.com/users/823048/nickolay"
+    },
+    "is_answered" : false,
+    "view_count" : 70,
+    "answer_count" : 2,
+    "score" : 1,
+    "last_activity_date" : 1742920138,
+    "creation_date" : 1742905233,
+    "link" : "https://stackoverflow.com/questions/79533646/how-to-avoid-memory-allocation-in-catch-block-in-java-spring-application-string",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79533670,
+    "question_id" : 79533646,
+    "body" : "<p>If you still want to <strong>eliminate the <code>new Object[]</code> allocation</strong>, you could <strong>predefine message arguments</strong> as constants:</p>\n<p>private<code>static final Object[] USER_KIND_ARGS = new Object[] { User.KIND };</code></p>\n<p>But this only works if <code>User.KIND</code> is constant and doesn't change per call.</p>\n<p>Alternatively, you could lazily create the <code>Object[]</code> outside the catch block:</p>\n<p>Object[] kindArgs = <code>new Object[] { User.KIND }; try {     ... } catch (DatastoreException ex) {     String msg = messageSource.getMessage(&quot;persistence.datastore.failed_to_save&quot;, kindArgs, LocaleContextHolder.getLocale());     throw new DatastorePersistenceException(msg, ex); } </code></p>\n<p>However, this just moves the allocation, it doesn’t eliminate it.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 16237564,
+      "reputation" : 1,
+      "user_id" : 11724717,
+      "user_type" : "registered",
+      "profile_image" : "https://lh5.googleusercontent.com/-vKfjSJbNxaQ/AAAAAAAAAAI/AAAAAAAAA8E/ABSj5qe9pTo/s256-rj/photo.jpg",
+      "display_name" : "abdelmalek dakouk",
+      "link" : "https://stackoverflow.com/users/11724717/abdelmalek-dakouk"
+    },
+    "creation_date" : 1742905649,
+    "last_activity_date" : 1742905649,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79533852,
+    "question_id" : 79533646,
+    "body" : "<p>Here is my current solution, that is imperfect but I stuck with it as I don't have better ideas yet.</p>\n<h2>Goal</h2>\n<p>I want to move memory allocation outside of the <code>catch</code> block, so the memory allocation does not happen in <code>catch</code> block.</p>\n<h2>Considered solutions</h2>\n<h3>1. Allocate string interpolation <code>Object[]</code> array in each repository</h3>\n<p>Here is the code:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Repository\npublic class UserRepositoryImpl implements UserRepository {\n\n    private static final Object[] USER_ENTITY_ARG = new Object[]{User.KIND};\n    \n    private final Datastore datastore;\n    private final KeyFactory keyFactory;\n    private final MessageSource messageSource;\n    \n    // Constructor and other methods...\n    \n    @Override\n    public User save(User user) {\n        try {\n            // Existing implementation...\n            datastore.put(entity);\n        } catch (DatastoreException datastoreException) {\n            String errorMessage = messageSource.getMessage(\n                    &quot;persistence.datastore.failed_to_save&quot;,\n                    USER_ENTITY_ARG,\n                    LocaleContextHolder.getLocale());\n            throw new DatastorePersistenceException(errorMessage, datastoreException);\n        }\n        return user;\n    }\n    \n    // Other methods...\n}\n</code></pre>\n<h4>Pros</h4>\n<ol>\n<li>It allocates memory at repository class loading. The goal of avoiding memory allocation in <code>catch</code> block achieved.</li>\n</ol>\n<h4>Cons</h4>\n<p>The code</p>\n<pre class=\"lang-java prettyprint-override\"><code>private static final Object[] USER_ENTITY_ARG = new Object[]{User.KIND};\n</code></pre>\n<ol>\n<li>looks like garbage in repository class breaking the single responsibility principle, adding clutter to code.</li>\n<li>adds burden for developer to follow this &quot;convention&quot; of allocating interpolation strings in each repository.</li>\n</ol>\n<h4>Verdict</h4>\n<p>I do not like it for its' cons.</p>\n<h3>2. <code>MessageHelper</code> class with encapsulated Spring's <code>MessageSource</code> and pre-allocated memory for <code>Object[]</code> string interpolation arrays</h3>\n<p>Here is the helper class:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Service\npublic class MessageHelperImpl implements MessageHelper { // MessageHelper is just my interface you can see @Override's of its methods\n\n    private static final ThreadLocal&lt;Object[]&gt; ARGS1 = ThreadLocal.withInitial(() -&gt; new Object[1]);\n    private static final ThreadLocal&lt;Object[]&gt; ARGS2 = ThreadLocal.withInitial(() -&gt; new Object[2]);\n\n    private final MessageSource messageSource;\n\n    @Autowired\n    public MessageHelperImpl(MessageSource messageSource) {\n        this.messageSource = messageSource;\n    }\n\n    ... \n\n    @Override\n    public String getMessage(String code, Object arg1) {\n        Object[] args = ARGS1.get();\n        args[0] = arg1;\n        return messageSource.getMessage(code, args, LocaleContextHolder.getLocale());\n    }\n\n    @Override\n    public String getMessage(String code, Object arg1, Object arg2) {\n        Object[] args = ARGS2.get();\n        args[0] = arg1;\n        args[1] = arg2;\n        return messageSource.getMessage(code, args, LocaleContextHolder.getLocale());\n    }\n\n    @Override\n    public String getMessage(String code, Object... args) {\n        // For varargs, we use the provided array\n        return messageSource.getMessage(code, args, LocaleContextHolder.getLocale());\n    }\n\n}\n\n</code></pre>\n<p>then the <code>catch</code> block looks like this:</p>\n<pre class=\"lang-java prettyprint-override\"><code>        } catch (DatastoreException datastoreException) {\n            // Using the specialized single-argument method\n            String errorMessage = messageHelper.getMessage(\n                    &quot;persistence.datastore.failed_to_save&quot;, User.KIND); // User.KIND is just a String containing &quot;User&quot;\n            throw new DatastorePersistenceException(errorMessage, datastoreException);\n        }\n</code></pre>\n<h4>Pros</h4>\n<ol>\n<li>encapsulation of message retrieval from <code>messages.properties</code> and string interpolation logic</li>\n<li><strong>possibly</strong> <code>ThreadLocal</code> <code>ARGS1</code> and <code>ARGS2</code> buffers will be allocated before the actual call from the exception. So it does not solve my concern.</li>\n</ol>\n<h4>Cons</h4>\n<ol>\n<li>While <code>ThreadLocal</code> fields itself are created when the <code>MessageHelperImpl</code> class is loaded - <code>Object[]</code> arrays created <strong>lazily</strong>.\n<ul>\n<li>First time a thread calls <code>ARGS1.get()</code> <strong>that call can be right from the exception</strong></li>\n<li>Created by the <code>supplier () -&gt; new Object[1]</code></li>\n<li>Each thread gets its own array instance</li>\n<li>The array is reused for all subsequent calls from the same thread.</li>\n</ul>\n</li>\n</ol>\n<h4>Verdict</h4>\n<p>I do not like this solution as it does not guarantee to solve my concern - not to allocate new memory in <code>catch</code> block.</p>\n<p>I see that potentially I can call the <code>ARGS1.get()</code> for each thread on initialization of the thread but it looks sooo messy like a very poor workaround.</p>\n<h3>3. Servlet filter that forces <code>MessageHelper</code> initialization on per-thread basis</h3>\n<p>For every HTTP request Tomcat allocates a thread from its ThreadPool. So we can utilize Filter Chain for per-thread guaranteed initialization of <code>ThreadLocal</code>s.\nHere is the code that will run on every HTTP request:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Component\npublic class ThreadLocalInitializerFilter implements Filter {\n\n    private final MessageHelper messageHelper;\n\n    @Autowired\n    public ThreadLocalInitializerFilter(MessageHelper messageHelper) {\n        this.messageHelper = messageHelper;\n    }\n\n    @Override\n    public void doFilter(ServletRequest request, ServletResponse response, FilterChain chain) \n            throws IOException, ServletException {\n        // Access messageHelper to initialize ThreadLocal arrays for this thread\n        messageHelper.getMessage(&quot;dummy.key&quot;);\n        \n        chain.doFilter(request, response);\n    }\n}\n</code></pre>\n<h4>Pros</h4>\n<ol>\n<li>Reaches the goal (probably. See cons).</li>\n</ol>\n<h4>Cons</h4>\n<ol>\n<li>I am not sure if this same thread will <strong>always</strong> process the repository code. Please suggest.</li>\n<li>Looks over-engineered - a special filter for two small arrays!</li>\n</ol>\n<h4>Verdict</h4>\n<p>I am not happy with this one either.</p>\n<h2>Conclusion</h2>\n<p>At this moment I do not have working solution that is architecturally nice for the problem of having string interpolation for exception messages.</p>\n<p>Please share your thoughts.</p>\n<p>P.S. And I am still wondered whether this is normal to create a <code>new</code> exception in the <code>catch</code> block - while it is an existing practice of abstracting your app's exception processing from the &quot;vendor-specific&quot; exceptions it still allocates memory in <code>catch</code> block what is considered a bad practice.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 436097,
+      "reputation" : 3925,
+      "user_id" : 823048,
+      "user_type" : "registered",
+      "accept_rate" : 70,
+      "profile_image" : "https://www.gravatar.com/avatar/7a371762d1cafd216aba9bd068e8f443?s=256&d=identicon&r=PG",
+      "display_name" : "nickolay",
+      "link" : "https://stackoverflow.com/users/823048/nickolay"
+    },
+    "creation_date" : 1742909950,
+    "last_activity_date" : 1742911983,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140265609,
+    "post_id" : 79533646,
+    "body" : "Next to what I stated before you are also discrediting the Java compiler here. It will probably detect that your <code>new Object[]{User.KIND}</code> doesn&#39;t change and will make it into a constant anyway (you can check with javap to see the generated code).",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126800,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1742993852,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140262863,
+    "post_id" : 79533646,
+    "body" : "Where did you get the idea that memory allocations should be avoided in catch blocks?  That&#39;s just not true.  And given that, there&#39;s nothing wrong with your original code.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 465573,
+      "reputation" : 200423,
+      "user_id" : 869736,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/ae7bb06b9a23a4dd7eea69e853d47d12?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Louis Wasserman",
+      "link" : "https://stackoverflow.com/users/869736/louis-wasserman"
+    },
+    "creation_date" : 1742936855,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140262849,
+    "post_id" : 79533646,
+    "body" : "@LouisWasserman thank you. Please show me points why the current code is better than the code in &quot;solutions&quot;? I am looking for being convinced by knowledge.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 436097,
+      "reputation" : 3925,
+      "user_id" : 823048,
+      "user_type" : "registered",
+      "accept_rate" : 70,
+      "profile_image" : "https://www.gravatar.com/avatar/7a371762d1cafd216aba9bd068e8f443?s=256&d=identicon&r=PG",
+      "display_name" : "nickolay",
+      "link" : "https://stackoverflow.com/users/823048/nickolay"
+    },
+    "creation_date" : 1742936697,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140262788,
+    "post_id" : 79533646,
+    "body" : "You are overthinking this. There is nothing wrong with creating a new exception in a catch block. Spring, HIbernate and other frameworks don&#39;t do anything else. The memory allocation is short lived it will be freed quite quickly.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126800,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1742935592,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140262558,
+    "post_id" : 79533646,
+    "body" : "Memory allocation in the catch block is <i>much better</i> than any of the solutions you&#39;ve described or any of the solutions that are realistically possible.  Stick with your current code.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 465573,
+      "reputation" : 200423,
+      "user_id" : 869736,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/ae7bb06b9a23a4dd7eea69e853d47d12?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Louis Wasserman",
+      "link" : "https://stackoverflow.com/users/869736/louis-wasserman"
+    },
+    "creation_date" : 1742930613,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140261885,
+    "post_id" : 79533646,
+    "body" : "Frame challenge: allocations in a catch block only matter if you are catching an OutOfMemoryError and even then allocating a single one-element array is unlikely to matter. This seems like serious overthinking to me.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 318670,
+      "reputation" : 16467,
+      "user_id" : 636009,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/IIQJV.jpg?s=256",
+      "display_name" : "David Conrad",
+      "link" : "https://stackoverflow.com/users/636009/david-conrad"
+    },
+    "creation_date" : 1742920730,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79533670" : [ {
+      "comment_id" : 140260962,
+      "post_id" : 79533670,
+      "body" : "&quot;move allocation&quot; is the correct term as my goal is to avoid allocations in <code>catch</code> block. I posted my current solution, that is imperfect but I stuck with it as I don&#39;t have better ideas yet.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 436097,
+        "reputation" : 3925,
+        "user_id" : 823048,
+        "user_type" : "registered",
+        "accept_rate" : 70,
+        "profile_image" : "https://www.gravatar.com/avatar/7a371762d1cafd216aba9bd068e8f443?s=256&d=identicon&r=PG",
+        "display_name" : "nickolay",
+        "link" : "https://stackoverflow.com/users/823048/nickolay"
+      },
+      "creation_date" : 1742908337,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

@@ -1,0 +1,293 @@
+{
+  "question" : {
+    "question_id" : 79538228,
+    "title" : "RSA/ECB/PKCS1PADDING encryption port from java to Python",
+    "body" : "<p>I have a Java code given to me by a vendor where we generate signature of the payload and send the signature along with the payload in the request. The signature is the same for the same payload no matter how many times the code is run. I converted the same to Golang as well.\nThe problem is I am unable to replicate the same in Python.</p>\n<p>Basically the algorithm is:</p>\n<ol>\n<li>Generate SHA-1 digest of the payload</li>\n<li>Base16 encode the generated SHA-1 digest</li>\n<li>Encrypt the encoded digest with RSAPrivateKey</li>\n<li>Base16 encode the encrypted digest</li>\n</ol>\n<p>My java snippet:</p>\n<pre class=\"lang-java prettyprint-override\"><code>private static String encryptDigest(String raw, String privateKeyString) throws UnsupportedEncodingException, BadPaddingException, IllegalBlockSizeException, InvalidKeyException, NoSuchPaddingException, NoSuchAlgorithmException {\n        Key privatekey = null;\n        StringReader reader = new StringReader(privateKeyString);\n        try {\n            PEMReader pemReader = new PEMReader(reader);\n            KeyPair keyPair = (KeyPair) pemReader.readObject();\n            privateKey = keyPair.getPrivate();\n            pemReader.close();\n        } catch (IOException i) {\n            log.error(&quot;Error while initializing Private Key&quot;, i);\n        }\n\n        MessageDigest md = MessageDigest.getInstance(&quot;SHA-1&quot;);\n        byte[] digest =  md.digest(raw.getBytes());\n        byte[] encodedBase16 = Hex.encode(digest);\n        String encodedDigest = new String(encodedBase16);\n        String strEncrypted = &quot;&quot;;\n        Cipher cipher = Cipher.getInstance(&quot;RSA/ECB/PKCS1PADDING&quot;);\n        cipher.init(Cipher.ENCRYPT_MODE, privatekey);\n        byte[] encrypted = cipher.doFinal(encodedDigest);\n        byte[] encoded = Hex.encode(encrypted);\n        strEncrypted = new String(encoded);\n        return strEncrypted;\n    }\n\n</code></pre>\n<p>My Python snippet:</p>\n<pre class=\"lang-py prettyprint-override\"><code>import hashlib\n\nfrom cryptography.hazmat.backends import default_backend\nfrom cryptography.hazmat.primitives import serialization\nfrom cryptography.hazmat.primitives.asymmetric import padding\nfrom cryptography.hazmat.primitives import hashes\nfrom cryptography.hazmat.primitives.asymmetric import rsa\nimport binascii\nimport os\n\nprivate_key_pem = &quot;&quot;&quot;-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----&quot;&quot;&quot;\n\ndef get_signature(payload):\n    &quot;&quot;&quot;Replicates the Go code's signature generation.&quot;&quot;&quot;\n\n    # 1. Load the private key\n    private_key = serialization.load_pem_private_key(\n        private_key_pem.encode(&quot;utf-8&quot;),\n        password=None,\n        backend=default_backend()\n    )\n\n    private_numbers = private_key.private_numbers()\n    public_numbers = private_key.public_key().public_numbers()\n\n    # Print key parameters to compare with OpenSSL &amp; Java\n    print(&quot;Modulus (n):&quot;, hex(public_numbers.n))\n    print(&quot;Private Exponent (d):&quot;, hex(private_numbers.d))\n    print(&quot;Public Exponent (e):&quot;, hex(public_numbers.e)) # Remove '0x' prefix\n\n    # 2. Payload processing\n    escaped_payload = payload.replace(&quot;\\n&quot;, &quot;&quot;).replace(&quot; &quot;, &quot;&quot;).replace('&lt;?xmlversion=&quot;1.0&quot;encoding=&quot;UTF-8&quot;?&gt;', &quot;&quot;)\n\n    # 3. SHA-1 hashing\n    sha1_hash = hashlib.sha1(escaped_payload.encode(&quot;utf-8&quot;)).digest()\n    sha1_hash_hex = binascii.hexlify(sha1_hash).decode(&quot;utf-8&quot;)\n    sha1_hash_bytes = binascii.unhexlify(sha1_hash_hex)\n\n    # 4. RSA signing (crucial part)\n    signature = private_key.sign(\n        sha1_hash_bytes,\n        padding.PKCS1v15(),\n        hashes.SHA1(),\n    )\n\n    # 5. Hex encoding\n    hex_signature = binascii.hexlify(signature).decode(&quot;utf-8&quot;)\n\n    return hex_signature\n\nprint(get_signature('helloworld'))\n</code></pre>\n<p>Debugging Steps taken by me to verify:</p>\n<ol>\n<li>SHA-1 hash is matching in Java and Python</li>\n<li>hex of SHA-1 hash is matching in Java and Python</li>\n<li>the private key is read properly and matching. I have matched the modulus, private and public exponent in Java and Python.</li>\n</ol>\n<p>From what I got from LLM's and the web is there are subtle difference in how PKCS#1 v1.5 padding is appled in Java and Python. But I don't think that is the problem. Can anyone point me where I am going wrong.</p>\n<p>sample private key:</p>\n<pre><code>-----BEGIN RSA PRIVATE KEY-----\nMIIBOQIBAAJAXWRPQyGlEY+SXz8Uslhe+MLjTgWd8lf/nA0hgCm9JFKC1tq1S73c\nQ9naClNXsMqY7pwPt1bSY8jYRqHHbdoUvwIDAQABAkAfJkz1pCwtfkig8iZSEf2j\nVUWBiYgUA9vizdJlsAZBLceLrdk8RZF2YOYCWHrpUtZVea37dzZJe99Dr53K0UZx\nAiEAtyHQBGoCVHfzPM//a+4tv2ba3tx9at+3uzGR86YNMzcCIQCCjWHcLW/+sQTW\nOXeXRrtxqHPp28ir8AVYuNX0nT1+uQIgJm158PMtufvRlpkux78a6mby1oD98Ecx\njp5AOhhF/NECICyHsQN69CJ5mt6/R01wMOt5u9/eubn76rbyhPgk0h7xAiEAjn6m\nEmLwkIYD9VnZfp9+2UoWSh0qZiTIHyNwFpJH78o=\n-----END RSA PRIVATE KEY-----\n</code></pre>\n<p>Signature generated by java</p>\n<pre><code>01540a01e7c372f4d1395221ec90f68a0f4dbc123af9d032b768fd141c0b0a6420e0dcf903739dd2729cfdbf81bcd9512cc39ad4bd26239eab23069fdaf4e6fe\n</code></pre>\n<p>Signature generated by python</p>\n<pre><code>252a29b2d5459f4506ab3bb143f24adc60c41a10afb6d7557a1c98cfc244a002eb1490d84780d40233420ef1bc83e005ab7cdb390809c06a757bd84dd790cb2b\n</code></pre>\n",
+    "tags" : [ "python", "java", "encryption", "rsa" ],
+    "owner" : {
+      "account_id" : 32017052,
+      "reputation" : 1,
+      "user_id" : 24823862,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/80b96654d49df806429d65f13afbb367?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Vineeth George Abraham",
+      "link" : "https://stackoverflow.com/users/24823862/vineeth-george-abraham"
+    },
+    "is_answered" : false,
+    "view_count" : 215,
+    "closed_date" : 1743161570,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1743088017,
+    "creation_date" : 1743063385,
+    "link" : "https://stackoverflow.com/questions/79538228/rsa-ecb-pkcs1padding-encryption-port-from-java-to-python",
+    "closed_reason" : "Duplicate"
+  },
+  "answers" : [ {
+    "answer_id" : 79539268,
+    "question_id" : 79538228,
+    "body" : "<p>I finally got it working by following this comment <a href=\"https://stackoverflow.com/a/43684021/24823862\">https://stackoverflow.com/a/43684021/24823862</a></p>\n<p>below is the code for anyone who wants to use it</p>\n<pre><code>\nfrom M2Crypto import RSA\nimport binascii\nimport hashlib\nimport base64\n# Data to hash\ndata = 'helloworld'\n# Compute SHA-1 hash\nsha1_hash = hashlib.sha1(data.encode('utf-8')).digest()\n# Convert SHA-1 hash to hex string\nsha1_hash_str = binascii.hexlify(sha1_hash).decode('utf-8')\n# Read private key\nprivate_key = RSA.load_key('key.pem')\n# Encrypt the SHA-1 hash string using private key\nciphertext = private_key.private_encrypt(sha1_hash_str.encode('utf-8'), RSA.pkcs1_padding)\n#encrypted_message = str(base64.b64encode(ciphertext), 'utf8')\nencrypted_message = binascii.hexlify(ciphertext).decode('utf-8')\nprint(encrypted_message)\n</code></pre>\n<p>generated hash</p>\n<pre><code>01540a01e7c372f4d1395221ec90f68a0f4dbc123af9d032b768fd141c0b0a6420e0dcf903739dd2729cfdbf81bcd9512cc39ad4bd26239eab23069fdaf4e6fe\n</code></pre>\n<p>I got M2 crypto running in an ubuntu v22.04.3 LTS machine  with python v3.10.12 and followed these instruction</p>\n<p>M2 crypto repo - <a href=\"https://gitlab.com/m2crypto/m2crypto/-/tree/master\" rel=\"nofollow noreferrer\">https://gitlab.com/m2crypto/m2crypto/-/tree/master</a></p>\n<p>instructions to install - <a href=\"https://gitlab.com/m2crypto/m2crypto/-/blob/master/INSTALL.rst\" rel=\"nofollow noreferrer\">https://gitlab.com/m2crypto/m2crypto/-/blob/master/INSTALL.rst</a></p>\n<p>Attaching two useful stackoverflow posts that helped me</p>\n<p><a href=\"https://stackoverflow.com/questions/43664751/python-to-java-encryption-rsa\">Python to Java encryption (RSA)</a></p>\n<p><a href=\"https://stackoverflow.com/questions/59063930/implementing-rsa-pkcs1-padding-in-python-3-x\">Implementing RSA/pkcs1_padding in Python 3.X</a></p>\n",
+    "score" : -2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 32017052,
+      "reputation" : 1,
+      "user_id" : 24823862,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/80b96654d49df806429d65f13afbb367?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Vineeth George Abraham",
+      "link" : "https://stackoverflow.com/users/24823862/vineeth-george-abraham"
+    },
+    "creation_date" : 1743087866,
+    "last_activity_date" : 1743088017,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140278600,
+    "post_id" : 79538228,
+    "body" : "Your key is only 512 bit, this size can be factorized in a relatively short time (s. <a href=\"https://en.wikipedia.org/wiki/Integer_factorization_records#Comparison_to_efforts_by_individuals\" rel=\"nofollow noreferrer\">here</a>). In 2025 (at least) 2048 bit keys should be used.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 12359353,
+      "reputation" : 50593,
+      "user_id" : 9014097,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Y9EVM.jpg?s=256",
+      "display_name" : "Topaco",
+      "link" : "https://stackoverflow.com/users/9014097/topaco"
+    },
+    "creation_date" : 1743319169,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140272390,
+    "post_id" : 79538228,
+    "body" : "acknowledged Maarten Bodewes.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 32017052,
+      "reputation" : 1,
+      "user_id" : 24823862,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/80b96654d49df806429d65f13afbb367?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Vineeth George Abraham",
+      "link" : "https://stackoverflow.com/users/24823862/vineeth-george-abraham"
+    },
+    "creation_date" : 1743140297,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140270227,
+    "post_id" : 79538228,
+    "body" : "4. The hash should not be hex encoded before it is being signed or &quot;encrypted with the private key&quot;. 5. The platform default character encoding should not be used for signatures that are to be verified on other platforms (`        String encodedDigest = new String(encodedBase16);`). 6. You should <b>not</b> update your question significantly nor should you put any &quot;answers&quot; inside your question.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 288696,
+      "reputation" : 94628,
+      "user_id" : 589259,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://i.sstatic.net/vJbKg.jpg?s=256",
+      "display_name" : "Maarten Bodewes",
+      "link" : "https://stackoverflow.com/users/589259/maarten-bodewes"
+    },
+    "creation_date" : 1743088717,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140270210,
+    "post_id" : 79538228,
+    "body" : "Nothing of this is how it should work. 1. you should get the protocol description from your vendor, maybe together with some <i>sample code</i>. 2. Encryption should never be used to create signatures. At most you would want to use a RAW RSA operation to implement a proprietary or deprecated scheme but certainly not PKCS1PADDING, as that will always randomize the result. 3. SHA-1 has collisions and should not be used for signature generation anymore.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 288696,
+      "reputation" : 94628,
+      "user_id" : 589259,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://i.sstatic.net/vJbKg.jpg?s=256",
+      "display_name" : "Maarten Bodewes",
+      "link" : "https://stackoverflow.com/users/589259/maarten-bodewes"
+    },
+    "creation_date" : 1743088580,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140270076,
+    "post_id" : 79538228,
+    "body" : "@Topaco i got it working. have edited my question and added the solution.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 32017052,
+      "reputation" : 1,
+      "user_id" : 24823862,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/80b96654d49df806429d65f13afbb367?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Vineeth George Abraham",
+      "link" : "https://stackoverflow.com/users/24823862/vineeth-george-abraham"
+    },
+    "creation_date" : 1743086852,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140270070,
+    "post_id" : 79538228,
+    "body" : "@Topaco sorry i missed to add that line in the post though it was there in my code.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 32017052,
+      "reputation" : 1,
+      "user_id" : 24823862,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/80b96654d49df806429d65f13afbb367?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Vineeth George Abraham",
+      "link" : "https://stackoverflow.com/users/24823862/vineeth-george-abraham"
+    },
+    "creation_date" : 1743086783,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140270032,
+    "post_id" : 79538228,
+    "body" : "Your post is inconsistent. The signature <code>0x01540a...</code> you posted cannot have been generated with the Java code you posted. The Java code generates the SHA-1 hash and signs it. The hash is <b>not</b> hex encoded before signing. On the other hand, your description states that the hash <b>is</b> hex encoded (step 2), and indeed the signature <code>0x01540a...</code> can only be reproduced with the hex encoded hash. What is correct now?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 12359353,
+      "reputation" : 50593,
+      "user_id" : 9014097,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Y9EVM.jpg?s=256",
+      "display_name" : "Topaco",
+      "link" : "https://stackoverflow.com/users/9014097/topaco"
+    },
+    "creation_date" : 1743086288,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140269850,
+    "post_id" : 79538228,
+    "body" : "@Topaco i have added the private key , message , expected signature is the on in java and the generated signatueres are in the one in python",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 32017052,
+      "reputation" : 1,
+      "user_id" : 24823862,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/80b96654d49df806429d65f13afbb367?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Vineeth George Abraham",
+      "link" : "https://stackoverflow.com/users/24823862/vineeth-george-abraham"
+    },
+    "creation_date" : 1743084058,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140269676,
+    "post_id" : 79538228,
+    "body" : "Adding to @Topaco comments, string encoding handling could be different in both languages. Be sure to compare the hex representation of the bytes before hashing. Usually hashing/encrypting strings can led to differences.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 372682,
+      "reputation" : 26512,
+      "user_id" : 721855,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/vZiox.png?s=256",
+      "display_name" : "aled",
+      "link" : "https://stackoverflow.com/users/721855/aled"
+    },
+    "creation_date" : 1743082127,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140268504,
+    "post_id" : 79538228,
+    "body" : "Another reason for different signatures can be different messages. To rule this out, it is best to compare the hex encoded messages in both codes. These must be <i>completely</i> identical. A single different byte leads to a completely different hash and a completely different signature. Post sample data: Private <b>test</b> key, message, expected signature, generated signature.",
+    "score" : 3,
+    "owner" : {
+      "account_id" : 12359353,
+      "reputation" : 50593,
+      "user_id" : 9014097,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Y9EVM.jpg?s=256",
+      "display_name" : "Topaco",
+      "link" : "https://stackoverflow.com/users/9014097/topaco"
+    },
+    "creation_date" : 1743065433,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140268498,
+    "post_id" : 79538228,
+    "body" : "The Java code performs a low level signing that differs from the RFC8017 standard: Only the message hash is signed, but not the DER encoding of the DigestInfo value. The Python code, on the other hand, signs according to the standard, but hashes twice. This creates different PKCS#1 v1.5 signatures.",
+    "score" : 5,
+    "owner" : {
+      "account_id" : 12359353,
+      "reputation" : 50593,
+      "user_id" : 9014097,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Y9EVM.jpg?s=256",
+      "display_name" : "Topaco",
+      "link" : "https://stackoverflow.com/users/9014097/topaco"
+    },
+    "creation_date" : 1743065347,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79539268" : [ {
+      "comment_id" : 140278602,
+      "post_id" : 79539268,
+      "body" : "Regarding the outdated <i>M2Crypto</i> library: You can also implement the signing logic used in the Java code with the more modern PyCryptodome or pyca/cryptography, see e.g. this PyCryptodome solution with <a href=\"https://stackoverflow.com/a/72703671/9014097\"><code>customizedSign()</code></a>.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 12359353,
+        "reputation" : 50593,
+        "user_id" : 9014097,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/Y9EVM.jpg?s=256",
+        "display_name" : "Topaco",
+        "link" : "https://stackoverflow.com/users/9014097/topaco"
+      },
+      "creation_date" : 1743319241,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140272392,
+      "post_id" : 79539268,
+      "body" : "understood Maarten Bodewes",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 32017052,
+        "reputation" : 1,
+        "user_id" : 24823862,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/80b96654d49df806429d65f13afbb367?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Vineeth George Abraham",
+        "link" : "https://stackoverflow.com/users/24823862/vineeth-george-abraham"
+      },
+      "creation_date" : 1743140344,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140270267,
+      "post_id" : 79539268,
+      "body" : "Note that the Java code may break if any other RSA provider is being used. It requires for the implementation to magically switch to PKCS#1 padding for signature generation which is different from PKCS#1 padding for encryption. So if your application suddenly stops working for you, remember that this code just helped you should you or the next dev in the foot.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 288696,
+        "reputation" : 94628,
+        "user_id" : 589259,
+        "user_type" : "registered",
+        "accept_rate" : 82,
+        "profile_image" : "https://i.sstatic.net/vJbKg.jpg?s=256",
+        "display_name" : "Maarten Bodewes",
+        "link" : "https://stackoverflow.com/users/589259/maarten-bodewes"
+      },
+      "creation_date" : 1743089216,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140270255,
+      "post_id" : 79539268,
+      "body" : "M2 relies on a very old, badly designed C-library that wasn&#39;t maintained for many years. I&#39;m glad you found a solution for your problem, but this code should not be used by <i>anyone</i>.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 288696,
+        "reputation" : 94628,
+        "user_id" : 589259,
+        "user_type" : "registered",
+        "accept_rate" : 82,
+        "profile_image" : "https://i.sstatic.net/vJbKg.jpg?s=256",
+        "display_name" : "Maarten Bodewes",
+        "link" : "https://stackoverflow.com/users/589259/maarten-bodewes"
+      },
+      "creation_date" : 1743088993,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

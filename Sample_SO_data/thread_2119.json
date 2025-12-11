@@ -1,0 +1,208 @@
+{
+  "question" : {
+    "question_id" : 79645089,
+    "title" : "Java Annotation Processor - how to modify AST (access com.sun.tools.javac.tree package)?",
+    "body" : "<p>I am writting an annotation processor as a Proof Of Concept (implemented as a maven project). It detects classes annotated with my custom <code>@FunnyBooleans</code> which swaps all trues to falses and vice versa.</p>\n<p>So, I managed to get access to AST using <code>com.sun.source.util.Trees</code> class and get a <code>com.sun.source.tree.Tree</code>. I was able to traverse through the whole AST hierarchy until I access the <code>LiteralTree</code> instance containing the boolean value.</p>\n<p>My question is, how can I now modify the AST? The AST inferfaces in <code>com.sun.source.tree</code> are read only. On runtime, I can see that the concrete implementations come from <code>com.sun.tools.javac.tree</code> and they indeed define write-operations.</p>\n<p>The problem is that I seem to have no access to this package. Seems like after java 9, the jdk.compiler module <a href=\"https://docs.oracle.com/en/java/javase/11/docs/api/jdk.compiler/module-summary.html\" rel=\"nofollow noreferrer\">explicitly keeps com.sun.tools.javac.tree private</a>.</p>\n<p>I tried reflection too, but of course I got an IllegalAccessException.</p>\n<p>I tried to add add-exports/add-opens in my maven setup. This worked fine for compiling the annotation processor itself, but seems to have no effect when an other module tries so use the annotation processor:</p>\n<pre><code>&lt;!-- In both modules I added: --&gt;\n&lt;plugin&gt;\n            &lt;groupId&gt;org.apache.maven.plugins&lt;/groupId&gt;\n            &lt;artifactId&gt;maven-compiler-plugin&lt;/artifactId&gt;\n            &lt;version&gt;${maven-compiler-plugin.version}&lt;/version&gt;\n            &lt;configuration&gt;\n                &lt;source&gt;17&lt;/source&gt;\n                &lt;target&gt;17&lt;/target&gt;\n                &lt;encoding&gt;UTF-8&lt;/encoding&gt;\n                &lt;compilerArgs&gt;\n                    &lt;arg&gt;--add-opens=jdk.compiler/com.sun.tools.javac.tree=ALL-UNNAMED&lt;/arg&gt;\n                    &lt;arg&gt;--add-exports=jdk.compiler/com.sun.tools.javac.tree=ALL-UNNAMED&lt;/arg&gt;\n                &lt;/compilerArgs&gt;\n            &lt;/configuration&gt;\n        &lt;/plugin&gt;\n        &lt;!-- When compiling the module using the processor, I get:\n        Fatal error compiling: java.lang.RuntimeException: java.lang.IllegalAccessException: class eu.alkismavridis.kea.debug.TreePresenter cannot access class com.sun.tools.javac.tree.JCTree$JCLiteral (in module jdk.compiler) because module jdk.compiler does not export com.sun.tools.javac.tree to unnamed module @6ddee60f --&gt;\n</code></pre>\n<p>I see that there are examples out there using classes from com.sun.tools.javac.tree. <a href=\"https://benjaminhoogterp.medium.com/write-an-annotation-processor-for-java-c9cd6d9cc93f\" rel=\"nofollow noreferrer\">Example</a>. I also checked out lombok and saw that in their source code they also use it, but I fail to pinpoint how (the project is pretty complex). Is there some maven dependency I have to add? Some examples online mention dependency to JDKs <code>lib/tools.jar</code>, but such examples seems to be old since this jar does not exists in modern JDKs.\nFinally, there are examples like in <a href=\"https://www.baeldung.com/java-annotation-processing-builder\" rel=\"nofollow noreferrer\">Baeldung</a> but unfortunatelly, are not helpful since they do not modify the AST, but generate some extra files instead.</p>\n<p>Any help is welcome. Can I access com.sun.tools.javac.tree, or get my hands on AST in some other way?</p>\n",
+    "tags" : [ "java", "abstract-syntax-tree", "annotation-processing" ],
+    "owner" : {
+      "account_id" : 10066191,
+      "reputation" : 1255,
+      "user_id" : 7441319,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/9PaOi.jpg?s=256",
+      "display_name" : "Alkis Mavridis",
+      "link" : "https://stackoverflow.com/users/7441319/alkis-mavridis"
+    },
+    "is_answered" : false,
+    "view_count" : 141,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1748801483,
+    "creation_date" : 1748591776,
+    "link" : "https://stackoverflow.com/questions/79645089/java-annotation-processor-how-to-modify-ast-access-com-sun-tools-javac-tree-p",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79647798,
+    "question_id" : 79645089,
+    "body" : "<p>Not sure this is a clean solution, but at least it is working.</p>\n<p><strong>Step one</strong></p>\n<p>make sure the annotation processing module has access to the <strong>com.sun.tools.javac.tree</strong> package by adding a add-exports command to JDK. In maven this is done by adding the following section in the maven-compiler-plugin config section:</p>\n<pre class=\"lang-xml prettyprint-override\"><code>&lt;compilerArgs&gt;\n   &lt;arg&gt;--add-exports=jdk.compiler/com.sun.tools.javac.tree=ALL-UNNAMED&lt;/arg&gt;\n&lt;/compilerArgs&gt;\n</code></pre>\n<p>If you are using an other build system, you can for sure find a way to pass this parameter to javac.</p>\n<p><strong>Step two</strong></p>\n<p>Make sure that the annotation processor &quot;opens&quot; the neccesary modules on runtime. To do this, I followed the same approach that lombok does <a href=\"https://github.com/projectlombok/lombok/blob/94b01e45ce28cc700eebab0523b5c566fff6e57e/src/core/lombok/javac/apt/LombokProcessor.java#L448\" rel=\"nofollow noreferrer\">here</a>. Please note that I had to also copy much of the <a href=\"https://github.com/projectlombok/lombok/tree/94b01e45ce28cc700eebab0523b5c566fff6e57e/src/utils/lombok/permit\" rel=\"nofollow noreferrer\">permit package</a>.</p>\n<p><strong>Step three</strong></p>\n<p>Once acess to <strong>com.sun.tools.javac.tree</strong> is ensured, you can cast the public interface types from com.sun.source.tree to their actual implementation from com.sun.tools.javac.tree and gain access to the write operations. Strangely, this is not done through setters, but access to public fields. Not super consistent to java standards, but at least it is possible :)</p>\n<p>For example, I casted LiteralTree -&gt; JCTree.JCLiteral and swap my booleans (was the goal of my POC) like that:</p>\n<pre class=\"lang-java prettyprint-override\"><code>if (tree instanceof JCTree.JCLiteral casted &amp;&amp; casted.getKind() == Tree.Kind.BOOLEAN_LITERAL) {\n    casted.value = Objects.equals(casted.value, 1)? 0 : 1;\n}\n</code></pre>\n<p>Huge thanks to @slaw for pointing out the lombok code responsible for opening the packages. You should definately get the credit for this solution. Feel free to copy-paste this in its entirety or parts of it and I will mark it as accepted answer.</p>\n<p><strong>Opinion alert</strong></p>\n<p>Finally, I just wanted to note that am surprised that the public API  &quot;normaly&quot; available to annotation processors do not allow AST modifications. They only provide read-access (probably useful for compile-time validations) and the ability to generate new files, but not to modify existing ones.</p>\n<p>So, heavily hacking java9 modules and gain access to private packages seems to be the only way to go at the moment. This is at least what lombok does, and the only solution I found. I find this sad.</p>\n<p>If AST modifications <strong>should not be allowed</strong> (for security or whatever), then there should be no &quot;backdoor&quot; to do so, and thus, lombok should not exist at all. Of course, this would be a massive hit to java's usability and popularity.</p>\n<p>If on the other hand, AST modifications <strong>should be allowed</strong> (count my vote here), then there should be a clear, open, and documented API to do so. One should not need to hack their way through, by using <strong>sun.misc.Unsafe</strong> to open private packages. This is simply a messy and sad way to do things.</p>\n<p>I already submitted an enhancement request for that in <a href=\"https://bugreport.java.com/\" rel=\"nofollow noreferrer\">bugreport.java</a>. Not sure anything will happen with it - decisions are of course much above my pay grade. But at least I tried :)</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 10066191,
+      "reputation" : 1255,
+      "user_id" : 7441319,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/9PaOi.jpg?s=256",
+      "display_name" : "Alkis Mavridis",
+      "link" : "https://stackoverflow.com/users/7441319/alkis-mavridis"
+    },
+    "creation_date" : 1748800998,
+    "last_activity_date" : 1748801483,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140488584,
+    "post_id" : 79645089,
+    "body" : "And yes, that&#39;s the risk of using Lombok. It can break with newer versions of Java. The problem doesn&#39;t even have to be module access; the entire implementation of javac technically could change without notice and without regards for libraries that rely on said implementation. That&#39;s relatively <i>unlikely</i> to happen though, if only because corporate interests would probably push back. At the very least, I suspect such radical changes would be introduced slowly.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 8532578,
+      "reputation" : 49884,
+      "user_id" : 6395627,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Slaw",
+      "link" : "https://stackoverflow.com/users/6395627/slaw"
+    },
+    "creation_date" : 1749080510,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140488583,
+    "post_id" : 79645089,
+    "body" : "I&#39;m not really sure what they could do other than make the AST <i>implementation</i> immutable. But I suspect it&#39;s not immutable for a reason (e.g., makes it easier to implement, provides performance benefits, some other reason, or some combination thereof). Before Java 9 and JPMS modules, all code could be accessed directly and reflectively (assuming no security manager). But there has always been a distinction between &quot;public&quot; and &quot;private&quot; API and the different guarantees provided by both. At least now you have to explicitly grant access with <code>--add-exports</code> / <code>--add-opens</code>.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 8532578,
+      "reputation" : 49884,
+      "user_id" : 6395627,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Slaw",
+      "link" : "https://stackoverflow.com/users/6395627/slaw"
+    },
+    "creation_date" : 1749080506,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140488322,
+    "post_id" : 79645089,
+    "body" : "I see. Sure, good that they made a conscious decision about this. At least there is a policy :) What I find weird is that this policy can be bypassed, and that the project that bypasses it is the most popular annotation processor in existence, by far. I have no statistics, but I assume it is used by the majority of enterprise Java projects. So, an &quot;illegally behaving&quot; project has been made an integral part of the java ecosystem. I am just negatively surprised to see this - I&quot;m not used to such inconsistencies. In any case, big thanks for your help! You pointed out to the solution that did work",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10066191,
+      "reputation" : 1255,
+      "user_id" : 7441319,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/9PaOi.jpg?s=256",
+      "display_name" : "Alkis Mavridis",
+      "link" : "https://stackoverflow.com/users/7441319/alkis-mavridis"
+    },
+    "creation_date" : 1749071268,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140477455,
+    "post_id" : 79645089,
+    "body" : "&quot;<i>It&#39;s sad, but the annotation processing API is not well designed at the moment. Modifying the AST is possible, but only with hacks like that</i>&quot; -- Just want to mention that this is by design. The annotation processor API explicitly does not provide a way to modify the AST. It&#39;s only designed to allow validations and generating <i>new</i> sources/resources. Doing otherwise would not be a compliant Java compiler (as currently defined, at least). As you say, what Lombok (and similar) does is a <i>hack</i>. It&#39;s <i>unsupported</i>, despite being widely used.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 8532578,
+      "reputation" : 49884,
+      "user_id" : 6395627,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Slaw",
+      "link" : "https://stackoverflow.com/users/6395627/slaw"
+    },
+    "creation_date" : 1748803256,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140477317,
+    "post_id" : 79645089,
+    "body" : "I finally got it working by basically copying the code mentioned above by @Slaw (<a href=\"https://github.com/projectlombok/lombok/blob/94b01e45ce28cc700eebab0523b5c566fff6e57e/src/core/lombok/javac/apt/LombokProcessor.java#L448\" rel=\"nofollow noreferrer\">github.com/projectlombok/lombok/blob/&hellip;</a>) along with the whole &quot;Permits package&quot; <a href=\"https://github.com/projectlombok/lombok/tree/94b01e45ce28cc700eebab0523b5c566fff6e57e/src/utils/lombok/permit\" rel=\"nofollow noreferrer\">github.com/projectlombok/lombok/tree/&hellip;</a>. I then removed the unused classes/methods from the permits package. So I got it working. It&#39;s sad, but the annotation processing API is not well designed at the moment. Modifying the AST is possible, but only with hacks like that",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10066191,
+      "reputation" : 1255,
+      "user_id" : 7441319,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/9PaOi.jpg?s=256",
+      "display_name" : "Alkis Mavridis",
+      "link" : "https://stackoverflow.com/users/7441319/alkis-mavridis"
+    },
+    "creation_date" : 1748799142,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140477307,
+    "post_id" : 79645089,
+    "body" : "No, -J also did not work unfortunately.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10066191,
+      "reputation" : 1255,
+      "user_id" : 7441319,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/9PaOi.jpg?s=256",
+      "display_name" : "Alkis Mavridis",
+      "link" : "https://stackoverflow.com/users/7441319/alkis-mavridis"
+    },
+    "creation_date" : 1748798781,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140474537,
+    "post_id" : 79645089,
+    "body" : "For some reason, add-exports and add-opens works fine only for compiling the annotation-processor module, but fails when a module tries to use the annotation processor. I then get IllegalAccessException: class X cannot access class com.sun.tools.javac.tree.JCTree$JCLiteral (in module jdk.compiler)... I edit my post to include this attempt. In the meantime, I try to &quot;mimic&quot; the programatic open that lombok does with Unsafe (still not successful, but trying)",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10066191,
+      "reputation" : 1255,
+      "user_id" : 7441319,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/9PaOi.jpg?s=256",
+      "display_name" : "Alkis Mavridis",
+      "link" : "https://stackoverflow.com/users/7441319/alkis-mavridis"
+    },
+    "creation_date" : 1748678595,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79647798" : [ {
+      "comment_id" : 140488307,
+      "post_id" : 79647798,
+      "body" : "Not sure if I did something wrong, but for me fork=true also did not work.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10066191,
+        "reputation" : 1255,
+        "user_id" : 7441319,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/9PaOi.jpg?s=256",
+        "display_name" : "Alkis Mavridis",
+        "link" : "https://stackoverflow.com/users/7441319/alkis-mavridis"
+      },
+      "creation_date" : 1749070814,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140477667,
+      "post_id" : 79647798,
+      "body" : "I could get <code>-J--add-exports=jdk.compiler&#47;com.sun.tools.javac.tree=ALL-UN&zwnj;&#8203;NAMED</code> to work via Maven, but I also had to add <code>&lt;fork&gt;true&lt;&#47;fork&gt;</code> to the compiler plugin&#39;s configuration.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 8532578,
+        "reputation" : 49884,
+        "user_id" : 6395627,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Slaw",
+        "link" : "https://stackoverflow.com/users/6395627/slaw"
+      },
+      "creation_date" : 1748811368,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140477470,
+      "post_id" : 79647798,
+      "body" : "Regarding your enhancement request, a <a href=\"https://bugs.openjdk.org/browse/JDK-8265887\" rel=\"nofollow noreferrer\">similar one</a> was created and closed as &quot;won&#39;t fix&quot; back in 2021.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 8532578,
+        "reputation" : 49884,
+        "user_id" : 6395627,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Slaw",
+        "link" : "https://stackoverflow.com/users/6395627/slaw"
+      },
+      "creation_date" : 1748803683,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

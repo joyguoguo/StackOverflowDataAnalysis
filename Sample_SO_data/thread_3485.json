@@ -1,0 +1,108 @@
+{
+  "question" : {
+    "question_id" : 79546576,
+    "title" : "EOFException when sending multiple requests",
+    "body" : "<p>I am encountering an issue with my Spring Boot web service when sending multiple requests at once. Some requests fail, but when debugging, they go through successfully.</p>\n<p>Stack:</p>\n<ul>\n<li><strong>Spring Boot version</strong>: 2.7.4</li>\n<li><strong>Embedded server</strong>: Tomcat 9.0.65</li>\n<li><strong>IDE</strong>: IntelliJ IDEA</li>\n<li><strong>Client</strong>: Postman</li>\n</ul>\n<p>When sending a request, I receive the following errors in my logs:</p>\n<pre><code>2025-03-31 16:22:29.271 DEBUG 16768 --- [nio-8082-exec-1] o.apache.coyote.http11.Http11Processor   : Error parsing HTTP request header\n2025-03-31 16:22:29.272 DEBUG 16768 --- [nio-8082-exec-1] o.apache.coyote.http11.Http11Processor   : Error state [CLOSE_CONNECTION_NOW] reported while processing request\n</code></pre>\n<p>Stack trace:</p>\n<pre><code>java.io.EOFException: null\n    at org.apache.tomcat.util.net.NioEndpoint$NioSocketWrapper.fillReadBuffer(NioEndpoint.java:1340) ~[tomcat-embed-core-9.0.65.jar:9.0.65]\n    at org.apache.tomcat.util.net.NioEndpoint$NioSocketWrapper.read(NioEndpoint.java:1227) ~[tomcat-embed-core-9.0.65.jar:9.0.65]\n    at org.apache.coyote.http11.Http11InputBuffer.fill(Http11InputBuffer.java:805) ~[tomcat-embed-core-9.0.65.jar:9.0.65]\n    at org.apache.coyote.http11.Http11InputBuffer.parseRequestLine(Http11InputBuffer.java:360) ~[tomcat-embed-core-9.0.65.jar:9.0.65]\n    at org.apache.coyote.http11.Http11Processor.service(Http11Processor.java:271) ~[tomcat-embed-core-9.0.65.jar:9.0.65]\n    ...\n</code></pre>\n<p>When I send multiple requests at the same time, some of them fail, but they pass when debugging.</p>\n<h3><strong>Code:</strong></h3>\n<h4><strong>Controller endpoint:</strong></h4>\n<pre><code>@PostMapping(&quot;api/synchro/process&quot;)\npublic ResponseEntity&lt;String&gt; processEntries(@RequestBody List&lt;Synchro&gt; entries) {\n    try {\n        for (Synchro entry : entries) {\n            System.out.println(entry.getId());\n            synchroService.processSynchroEntry(entry);\n        }\n        return ResponseEntity.ok(&quot;PROCESSED&quot;);\n    } catch (Exception e) {\n        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)\n                .body(&quot;Error processing entries: &quot; + e.getMessage());\n    }\n}\n</code></pre>\n<h4><strong>Service method:</strong></h4>\n<pre><code>@Transactional\npublic void processSynchroEntry(Synchro entry) {\n    String eventType = entry.getEventType().toUpperCase();\n    String data = entry.getData();\n    String tableName = entry.getTableName();\n    switch (eventType) {\n        case &quot;INSERT&quot; -&gt; this.handleInsert(tableName, data);\n        case &quot;UPDATE&quot; -&gt; this.handleUpdate(tableName, data);\n        case &quot;DELETE&quot; -&gt; this.handleDelete(tableName, data);\n        default -&gt; throw new IllegalArgumentException(&quot;Unsupported event type: &quot; + eventType);\n    }\n}\n</code></pre>\n<h4><strong>Dynamic Insert Query Execution:</strong></h4>\n<pre><code>protected void handleInsert(String tableName, String data) {\n    try {\n        JsonNode dataNode = this.objectMapper.readTree(data);\n        StringBuilder query = new StringBuilder(&quot;INSERT INTO &quot;);\n        query.append(tableName).append(&quot; (&quot;);\n        MapSqlParameterSource params = new MapSqlParameterSource();\n        StringBuilder columns = new StringBuilder();\n        StringBuilder values = new StringBuilder();\n        Iterator&lt;Map.Entry&lt;String, JsonNode&gt;&gt; it = dataNode.fields();\n\n        while(it.hasNext()) {\n            Map.Entry&lt;String, JsonNode&gt; field = it.next();\n            if (columns.length() &gt; 0) {\n                columns.append(&quot;, &quot;);\n                values.append(&quot;, &quot;);\n            }\n            columns.append(field.getKey());\n            values.append(&quot;:&quot; + field.getKey());\n            params.addValue(field.getKey(), field.getValue().asText());\n        }\n\n        query.append(columns).append(&quot;) VALUES (&quot;).append(values).append(&quot;)&quot;);\n        this.namedParameterJdbcTemplate.update(query.toString(), params);\n    } catch (Exception e) {\n        throw new RuntimeException(&quot;Error processing insert&quot;, e);\n    }\n}\n</code></pre>\n<p><strong>What I've tried</strong>:</p>\n<ul>\n<li>Checked the request format: Requests are sent correctly via Postman.</li>\n<li>Enabled Spring Boot debug logs: Logs confirm that some requests fail with EOFException.</li>\n<li>Tested different concurrency levels: When sending requests one by one, they succeed. When sending them in bulk, some fail.</li>\n<li>Validated JSON payloads: All JSON data sent is properly formatted.</li>\n<li>Tried increasing Tomcat connection settings:</li>\n</ul>\n<pre><code>server.tomcat.max-threads=200\nserver.tomcat.accept-count=100\nserver.connection-timeout=60000\n</code></pre>\n<p>Questions:</p>\n<ul>\n<li>What could be causing these EOFExceptions when sending multiple requests?</li>\n<li>Could this be related to transaction handling or how Tomcat manages connections?</li>\n<li>Are there any known Spring Boot/Tomcat issues that might cause this behavior?</li>\n<li>Any insights or suggestions would be greatly appreciated!</li>\n</ul>\n<hr />\n<pre><code> public class Synchro {\n    @Id\n    @GeneratedValue(\n        strategy = GenerationType.IDENTITY\n    )\n    @Column(\n        name = &quot;id&quot;,\n        unique = true,\n        nullable = false\n    )\n    private @NotNull(\n    message = &quot;Id ne peut pas être null&quot;\n) Integer id;\n    @Column(\n        name = &quot;eventType&quot;,\n        length = 100,\n        nullable = false\n    )\n    private @NotNull(\n    message = &quot;EventType ne peut pas être null&quot;\n) String eventType;\n    @Column(\n        name = &quot;data&quot;,\n        nullable = false\n    )\n    private @NotNull(\n    message = &quot;Data ne peut pas être null&quot;\n) String data;\n    @Temporal(TemporalType.TIMESTAMP)\n    @Column(\n        name = &quot;createdAt&quot;\n    )\n    private @NotNull(\n    message = &quot;CreatedAt ne peut pas être null&quot;\n) Date createdAt;\n    @Temporal(TemporalType.TIMESTAMP)\n    @Column(\n        name = &quot;updatedAt&quot;\n    )\n    private Date updatedAt;\n    @Column(\n        name = &quot;status&quot;,\n        length = 20,\n        nullable = false\n    )\n    private @NotNull(\n    message = &quot;Status ne peut pas être null&quot;\n) String status;\n    @Column(\n        name = &quot;tableName&quot;,\n        length = 100,\n        nullable = false\n    )\n    private @NotNull(\n    message = &quot;TableName ne peut pas être null&quot;\n) String tableName;\n    @Transient\n    private String source;\n</code></pre>\n",
+    "tags" : [ "java", "spring", "spring-boot", "tomcat" ],
+    "owner" : {
+      "account_id" : 27928228,
+      "reputation" : 9,
+      "user_id" : 21326872,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b0ad19cb399c4b718d0d0c5ab0f0c12f?s=256&d=identicon&r=PG",
+      "display_name" : "Wassupppp",
+      "link" : "https://stackoverflow.com/users/21326872/wassupppp"
+    },
+    "is_answered" : false,
+    "view_count" : 96,
+    "answer_count" : 0,
+    "score" : 0,
+    "last_activity_date" : 1743493279,
+    "creation_date" : 1743433297,
+    "link" : "https://stackoverflow.com/questions/79546576/eofexception-when-sending-multiple-requests",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140285697,
+    "post_id" : 79546576,
+    "body" : "For my tests, here is what I send when it generates the error: { &quot;id&quot;: 1693, &quot;eventType&quot;: &quot;INSERT&quot;, &quot;data&quot;: &quot;{\\&quot;C1\\&quot;:\\&quot;8\\&quot;,\\&quot;C3\\&quot;:\\&quot;184\\&quot;,\\&quot;ORDRE\\&quot;:\\&quot;1\\&quot;,\\&quot;C2\\&quot;:\\&quot;test\\&zwnj;&#8203;&quot;}&quot;, &quot;createdAt&quot;: 1742906584100, &quot;updatedAt&quot;: null, &quot;status&quot;: &quot;NEW&quot;, &quot;tableName&quot;: &quot;POMPPDOP&quot;,   &quot;source&quot;: &quot;SV&quot; } Content-Type: application/json   Authorization: Bearer token   User-Agent: PostmanRuntime/7.43.3   Accept: <i>/</i>   Cache-Control: no-cache   Postman-Token: 52b31b42-d945-4b4d-875d-cb06d76c9003   Host: localhost:8082   Accept-Encoding: gzip, deflate, br   Connection: keep-alive   Content-Length: 200",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 27928228,
+      "reputation" : 9,
+      "user_id" : 21326872,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b0ad19cb399c4b718d0d0c5ab0f0c12f?s=256&d=identicon&r=PG",
+      "display_name" : "Wassupppp",
+      "link" : "https://stackoverflow.com/users/21326872/wassupppp"
+    },
+    "creation_date" : 1743492954,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140285470,
+    "post_id" : 79546576,
+    "body" : "For starters I would upgrade to the most recent 2.7 version of Spring Boot (or go 3.x for support). Next please post the full stacktrace and not just a snippet, the fullstacktrace constains valuable debugging details.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126800,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1743488684,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140284634,
+    "post_id" : 79546576,
+    "body" : "Ideally you would not put the processing in the Controller but in a Service class, because then you could trivially test the processing without any Web Controller.  But since this is how your code is written, I suggest you temporarily modify your <code>processEntries()</code> method to not accept a Request Body (and don&#39;t send one), but rather deserialise the <code>Synchro entry</code> from a resource file on the server-side inside the method and then execute the <code>for (Synchro entry : entries)</code> loop.  This will mostly eliminate HTTP and you can see whether you have a concurrency issue with a large request, etc.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2073393,
+      "reputation" : 3675,
+      "user_id" : 1847378,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/e8990d3c34829910b2318ed16b09544d?s=256&d=identicon&r=PG",
+      "display_name" : "AndrewL",
+      "link" : "https://stackoverflow.com/users/1847378/andrewl"
+    },
+    "creation_date" : 1743460919,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140284624,
+    "post_id" : 79546576,
+    "body" : "Please supply <code>Synchro</code> data object structure, and structure of JSON you expect to find in <code>Synchro.data</code>.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2073393,
+      "reputation" : 3675,
+      "user_id" : 1847378,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/e8990d3c34829910b2318ed16b09544d?s=256&d=identicon&r=PG",
+      "display_name" : "AndrewL",
+      "link" : "https://stackoverflow.com/users/1847378/andrewl"
+    },
+    "creation_date" : 1743460611,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140283178,
+    "post_id" : 79546576,
+    "body" : "You should provide your test data, for example using curl it would be something like this: <code>curl -X POST http:&#47;&#47;localhost:8080&#47;api&#47;synchro&#47;process \\   -H &quot;Content-Type: application&#47;json&quot; \\   -d &#39;[{&quot;id&quot;:1, &quot;name&quot;:&quot;Example1&quot;}, {&quot;id&quot;:2, &quot;name&quot;:&quot;Example2&quot;}]&#39;</code>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 26698569,
+      "reputation" : 4070,
+      "user_id" : 20306007,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/98bbc403493aee3681b71dae7abef66e?s=256&d=identicon&r=PG",
+      "display_name" : "life888888",
+      "link" : "https://stackoverflow.com/users/20306007/life888888"
+    },
+    "creation_date" : 1743435247,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

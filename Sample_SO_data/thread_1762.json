@@ -1,0 +1,98 @@
+{
+  "question" : {
+    "question_id" : 79677194,
+    "title" : "How to validate Spring Boot shutdown hook invocation?",
+    "body" : "<p>I work on a library that has (1) its own lifecycle management and (2) a Spring Boot integration. To merge the library's lifecycle management with Spring Boot, I construct <code>SmartLifecycle</code> beans that wrap the library's start-up and shutdown handlers.</p>\n<p>This solution works wonders in practice, but I am hitting a snag during testing.</p>\n<p>Validating that my start-up handlers are invoked in a Spring Boot test works fine. However, validating whether the registered shutdown handlers are invoked is unclear to me.</p>\n<p>The test in question constructs a <code>ApplicationContextRunner</code> to which I register the library's autoconfiguration classes, as well as a test configuration that includes a shutdown handler. I hope that invoking <code>stop()</code> on the <code>AssertableApplicationContext</code> would do the trick, but it does not. To be a bit more concrete, here's a sample of what it looks like:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Test\nvoid lifecycleRegistryIntegratesWithDedicatedSpringLifecycleBeans() {\n    testContext.run(context -&gt; {\n        // We expect beans to be registered for lifecycle handlers.\n        Map&lt;String, SpringLifecycleStartHandler&gt; startHandlers = BeanFactoryUtils.beansOfTypeIncludingAncestors(\n                context, SpringLifecycleStartHandler.class\n        );\n        Map&lt;String, SpringLifecycleShutdownHandler&gt; shutdownHandlers = BeanFactoryUtils.beansOfTypeIncludingAncestors(\n                context, SpringLifecycleShutdownHandler.class\n        );\n\n        for (SpringLifecycleStartHandler startHandler : startHandlers.values()) {\n            assertTrue(startHandler.isRunning());\n        }\n        for (SpringLifecycleShutdownHandler shutdownHandler : shutdownHandlers.values()) {\n            assertTrue(shutdownHandler.isRunning());\n        }\n\n        AtomicBoolean startHandlerInvoked = context.getBean(&quot;startHandlerInvoked&quot;, AtomicBoolean.class);\n        assertTrue(startHandlerInvoked.get());\n        AtomicBoolean shutdownHandlerInvoked = context.getBean(&quot;shutdownHandlerInvoked&quot;, AtomicBoolean.class);\n        assertFalse(shutdownHandlerInvoked.get());\n\n        // I hope that this would invoke the shutdown handler, but it does not\n        context.stop();\n        // Validate the shutdown handler is invoked...\n        await().atMost(Duration.ofSeconds(5))\n               .pollDelay(Duration.ofMillis(25))\n               .until(shutdownHandlerInvoked::get);\n    });\n}\n</code></pre>\n<p>As may become apparent, my test context constructs a single start handler and shutdown handler, which we wrap in a <code>SpringLifecycleStartHandler</code> and <code>SpringLifecycleShutdownHandler</code> (both <code>SmartLifecycle</code> instances). Both the start and shutdown handlers receive an <code>AtomicBoolean</code> which is flipped when the handler is invoked. Through that process, I aim to validate that (1) the start handler is invoked on start-up and (2) the shutdown handler is invoked on shutdown.</p>\n<p>I have a hunch that what I am looking to test is simply impossible with an <code>ApplicationContextRunner</code>, but I figured I'd shoot a question regardless. Thanks for any guidance in this area!</p>\n<h2>Update</h2>\n<p>The reason my original test approach didn't succeed, is because my test suite touched to many points in one go...</p>\n<p>The <code>ApplicationContext#stop</code> invocation did, as you would expect, shutdown the application. And, thus allowed me to validate if the shutdown lifecycle beans were registered.</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Test\nvoid lifecycleRegistryIntegratesWithDedicatedSpringLifecycleBeans() {\n    testContext.run(context -&gt; {\n        // Left out rest for brevity...\n\n        // Simply stop the context, that's it!\n        context.stop();\n        // Validate the shutdown handler is invoked...\n        await().atMost(Duration.ofSeconds(5))\n               .pollDelay(Duration.ofMillis(25))\n               .until(shutdownHandlerInvoked::get);\n    });\n}\n</code></pre>\n",
+    "tags" : [ "java", "spring", "spring-boot", "lifecycle" ],
+    "owner" : {
+      "account_id" : 2552081,
+      "reputation" : 7445,
+      "user_id" : 2215649,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/035084fa9055770efead47147882054c?s=256&d=identicon&r=PG",
+      "display_name" : "Steven",
+      "link" : "https://stackoverflow.com/users/2215649/steven"
+    },
+    "is_answered" : true,
+    "view_count" : 147,
+    "answer_count" : 2,
+    "score" : 1,
+    "last_activity_date" : 1751527204,
+    "creation_date" : 1750751334,
+    "link" : "https://stackoverflow.com/questions/79677194/how-to-validate-spring-boot-shutdown-hook-invocation",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79679014,
+    "question_id" : 79677194,
+    "body" : "<p>To check whether a <code>Lifecycle</code> or <code>SmartLifecycle</code> hook is invoked or not, some key moments should be considered first.</p>\n<h1>Key points</h1>\n<h2>1. Don't introduce additional logic in your hook</h2>\n<p>Your hook should't use any trackers directly in the hook class to check invoke status if you need to only in tests.</p>\n<p>Keep your SmartLifecycle dedicated only to business logic.</p>\n<p>This way you can reduce coupling between hook business logic and status check. Also, you would maintain SRP (Single Responsibility Principle), which is good.</p>\n<h2>2. Use a general wrapper to check status</h2>\n<p>If the main hook itself does not hold the logic of status check, it is possible to write a wrapper (decorator) that does.</p>\n<h1>Code</h1>\n<h2>Your hook</h2>\n<p>Here is an MVP example of a <code>SmartLifecycle</code> hook.</p>\n<p>There is just one key part: disable this component if a specific profile that is used in testing. It is necessary as we will have a wrapper that would be registered instead.</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Component\n@Profile(&quot;!status-check&quot;) // key part\npublic class MyCustomLifecycle implements SmartLifecycle {\n  private boolean isRunning = false;\n\n  @Override\n  public void start() {\n    isRunning = true;\n  }\n\n  @Override\n  public void stop() {\n    isRunning = false;\n  }\n\n  @Override\n  public boolean isRunning() {\n    return isRunning;\n  }\n}\n</code></pre>\n<h2>Wrapper</h2>\n<p>Next, we have a wrapper (decorator) that accepts a hook, and keeps track on status of whether it had been started/stopped before.</p>\n<p>The key moment here is, to track status and make it available via getter later.</p>\n<p>You need to override all needed methods from <code>SmartLifecycle</code> in the custom <code>StatusAwareSmartLifecycleWrapper</code> class that are used by your hook and other hooks to be tested with it. To keep code simple, I am showing only basic methods related to start/stop.</p>\n<p>Notice that this class is not a <code>@Component</code>, as it will be instantiated later manually.</p>\n<p>If you use Maven, it is better to place this class in <code>test</code> folder somewhere, so it will not available in production code from <code>main</code> folder.</p>\n<pre class=\"lang-java prettyprint-override\"><code>@RequiredArgsConstructor\npublic class StatusAwareSmartLifecycleWrapper implements SmartLifecycle {\n  @Getter\n  private final Status status = new Status(); // introduce a status holder\n  private final SmartLifecycle given;\n\n  @Override\n  public void start() {\n    given.start();\n    status.markStart(); // Register start\n  }\n\n  @Override\n  public void stop() {\n    given.stop();\n    status.markShutdown(); // Register stop\n  }\n\n  @Override\n  public boolean isRunning() {\n    return given.isRunning();\n  }\n\n  @Getter\n  public static class Status {\n    private boolean isStartInvoked;\n    private boolean isShutdownInvoked;\n\n    public void markStart() {\n      isStartInvoked = true;\n    }\n\n    public void markShutdown() {\n      isShutdownInvoked = true;\n    }\n  }\n}\n</code></pre>\n<h2>Register wrapper with your hook</h2>\n<p>Below is the bean registration. We do it manually in a <code>@Configuration</code> class, because we need to explicitly set what hook would wrapper use.</p>\n<p>If you use Maven, it is better to place this class in <code>test</code> folder somewhere, so it will not available in production code from <code>main</code> folder.</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Configuration\npublic class MyCustomLifecycleWrapperConfiguration {\n  @Bean\n  public StatusAwareSmartLifecycleWrapper myWrappedLifecycle() {\n    return new StatusAwareSmartLifecycleWrapper(new MyCustomLifecycle());\n  }\n}\n</code></pre>\n<h2>Write a test</h2>\n<p>This test creates and runs a context programatically, then closes it, and checks if hook's <code>stop()</code> was called.</p>\n<p>Notice that <code>application.setAdditionalProfiles(&quot;status-check&quot;)</code> is used to prevent running the hook twice, as the original hook is a <code>@Component</code> and would otherwise be registered by the Spring automatically too.</p>\n<pre class=\"lang-java prettyprint-override\"><code>class ApplicationTests {\n  @Test\n  void givenWrappedMyCustomLifecycle_whenCheckIfIsInvokedOnStop_thenTrue() {\n    var application = new SpringApplication(Application.class);\n    application.setAdditionalProfiles(&quot;status-check&quot;);\n\n    var context = application.run();\n    var statusAwareWrapper = context.getBean(&quot;myWrappedLifecycle&quot;, StatusAwareSmartLifecycleWrapper.class);\n    ApplicationContextTestUtils.closeAll(context);\n\n    assertThat(statusAwareWrapper.getStatus().isShutdownInvoked()).isTrue();\n  }\n}\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 40864244,
+      "reputation" : 632,
+      "user_id" : 30001713,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f59ea01a76709335047f0cee269d788e?s=256&d=identicon&r=PG",
+      "display_name" : "biggujo",
+      "link" : "https://stackoverflow.com/users/30001713/biggujo"
+    },
+    "creation_date" : 1750853165,
+    "last_activity_date" : 1750858178,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79688435,
+    "question_id" : 79677194,
+    "body" : "<p>I had another issue in my test suite that caused the shutdown to not trigger successfully.<br />\nSo, my anticipation that <code>ApplicationContext#stop</code> would shutdown the Spring Application Context was, well, correct.</p>\n<p>I've updated my original question with the appropriate information as well.</p>\n",
+    "score" : 0,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 2552081,
+      "reputation" : 7445,
+      "user_id" : 2215649,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/035084fa9055770efead47147882054c?s=256&d=identicon&r=PG",
+      "display_name" : "Steven",
+      "link" : "https://stackoverflow.com/users/2215649/steven"
+    },
+    "creation_date" : 1751527204,
+    "last_activity_date" : 1751527204,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140561021,
+    "post_id" : 79677194,
+    "body" : "Curious why you&#39;d say that&#39;s not the right method to use, @pebbleunit! The <code>stop()</code> method comes from the <code>Lifecycle</code> interface implemented by the <code>ApplicationContext</code>. Furthermore, I am aiming to influence the lifecycle of the application context to stop. Hence why I picked it. Care to elaborate why <code>Closeable#close()</code> would be better?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2552081,
+      "reputation" : 7445,
+      "user_id" : 2215649,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/035084fa9055770efead47147882054c?s=256&d=identicon&r=PG",
+      "display_name" : "Steven",
+      "link" : "https://stackoverflow.com/users/2215649/steven"
+    },
+    "creation_date" : 1751527396,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79679014" : [ {
+      "comment_id" : 140561002,
+      "post_id" : 79679014,
+      "body" : "Thanks for the detailed response, @biggujo! I ended up doing something similar as in your test eventually. I&#39;ll provide my own answer as well for completeness sake. That will provide viewers of this issue the option to choose!",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2552081,
+        "reputation" : 7445,
+        "user_id" : 2215649,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/035084fa9055770efead47147882054c?s=256&d=identicon&r=PG",
+        "display_name" : "Steven",
+        "link" : "https://stackoverflow.com/users/2215649/steven"
+      },
+      "creation_date" : 1751526940,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

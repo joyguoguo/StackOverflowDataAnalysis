@@ -1,0 +1,198 @@
+{
+  "question" : {
+    "question_id" : 79627750,
+    "title" : "Springboot JPA adding an associated entity to a new entity in a ManytoOne asssociation",
+    "body" : "<p>I have an <code>@ManyToOne</code> relationship between an <code>Employee</code> and <code>Department</code>.\nEvery time I add a new employee to the department, I need to update a counter on the department entity for the total # of employees.</p>\n<p>Whenever a new employee is added, I am retrieving the <code>Department</code> entity from the manager <code>Employee</code> entity, update the counter and then setting the <code>Department</code> entity on the new <code>Employee</code> entity and calling <code>save()</code> on the <code>EmployeeRepository</code> with the new <code>Employee</code> entity. However, this is throwing me a &quot;detached entity passed to persist&quot; error.\nI have the <code>@Cascade</code> set to <code>@Cascade.ALL</code> on the <code>department_id</code> field in the <code>Employee</code> entity which works when the 1st employee is added the <code>Department</code> gets created automatically. The issue happens when i am trying to retrieve the <code>Department</code> entity from an existing employee and attaching it to a new employee and trying to do a save on the new <code>Employee</code> entity.</p>\n<p>Code looks like below:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Entity\n@Table(name = &quot;employee&quot;)\n@Data\n@NoArgsConstructor\n@AllArgsConstructor\npublic class EmployeeEntity implements Serializable {\n    \n    @Id\n    @SequenceGenerator(name = &quot;employee_id_seq&quot;, sequenceName = &quot;employee_id_seq&quot;, allocationSize = 1)\n    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = &quot;employee_id_seq&quot;)\n    @Column(name = &quot;id&quot;, updatable = false)\n    private Integer id;\n\n    @JdbcTypeCode(SqlTypes.Long)\n    @Column(name = &quot;employee_id&quot;)\n    private Long employeeId;\n\n    @ManyToOne\n    @Cascade({CascadeType.ALL})\n    @JoinColumn(name = &quot;department_id&quot;, nullable = false)\n    private DepartmentEntity departmentEntity;\n \n    public EmployeeEntity(Long employeeId, DepartmentEntity departmentEntity) {\n        this.employeeId = employeeId;\n        this.departmentEntity = departmentEntity;\n    }\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>\n@Entity\n@Table(name = &quot;department&quot;)\n@Data\n@NoArgsConstructor\npublic class DepartmentEntity implements Serializable {\n    @Id\n    @SequenceGenerator(name = &quot;department_id_seq&quot;, sequenceName = &quot;department_id_seq&quot;, allocationSize = 1)\n    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = &quot;department_id_seq&quot;)\n    @Column(name = &quot;id&quot;, updatable = false)\n    private Integer id;\n\n    @JdbcTypeCode(SqlTypes.Integer)\n    @Column(name = &quot;num_employees&quot;, nullable = false)\n    private Integer numEmployees;\n\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>// code execution\n@Transactional\npublic void addEmployee(employeeId, managerId) {\n    Employee manager = empRepository.findById(managerId);\n    \n    Department empDept = manager.getDepartmentEntity()\n    empDept.numEmployees++;\n    \n    Employee associate = new EmployeeEntity(employeeId, empDept);\n    \n    empRepository.save(associate); // this throws the exception\n}\n</code></pre>\n<p>Any thoughts on how this can be addressed? Thank you in advance!</p>\n",
+    "tags" : [ "java", "spring", "spring-boot", "hibernate", "spring-data-jpa" ],
+    "owner" : {
+      "account_id" : 18044566,
+      "reputation" : 325,
+      "user_id" : 13115896,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/6d35ea24f31161f110fed75caf9d2d04?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "sg2000",
+      "link" : "https://stackoverflow.com/users/13115896/sg2000"
+    },
+    "is_answered" : true,
+    "view_count" : 131,
+    "answer_count" : 2,
+    "score" : 0,
+    "last_activity_date" : 1763414148,
+    "creation_date" : 1747595375,
+    "link" : "https://stackoverflow.com/questions/79627750/springboot-jpa-adding-an-associated-entity-to-a-new-entity-in-a-manytoone-asssoc",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79627838,
+    "question_id" : 79627750,
+    "body" : "<p>You will get an error only if addEmployee is invoked from the same class that has the method</p>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 42055345,
+      "reputation" : 26,
+      "user_id" : 30572472,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/0b10b60d41fe1598088b4b2f60095da9?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Horacio Gimenez",
+      "link" : "https://stackoverflow.com/users/30572472/horacio-gimenez"
+    },
+    "creation_date" : 1747601665,
+    "last_activity_date" : 1747601665,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79627812,
+    "question_id" : 79627750,
+    "body" : "<p>if the Department entity is retrieved within a transaction then there is no problem.</p>\n<p>If you try to access the Department from a previously loaded Employee outside of a transaction, the Department will likely be in a detached state, and Hibernate will throw Error.</p>\n<p>@transactional must be attached as below and the addEmployee method must not be called inside the class.</p>\n<pre><code>@Transactional\npublic void addEmployee(Long managerId, String employeeName) {\n    Employee manager = employeeRepository.findById(managerId)\n        .orElseThrow(() -&gt; new RuntimeException(&quot;Manager not found&quot;));\n\n    Department dept = manager.getDepartment();\n\n    dept.setEmployeeCount(dept.getEmployeeCount() + 1);\n\n    Employee newEmp = new Employee();\n    newEmp.setName(employeeName);\n    newEmp.setDepartment(dept);\n\n    employeeRepository.save(newEmp); \n}\n</code></pre>\n",
+    "score" : -1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 27846305,
+      "reputation" : 26,
+      "user_id" : 21261682,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/AEdFTp4AY2DhmhQde83hbd8VGRHZ0xN0XFRB8YiywGn1Gw=k-s256",
+      "display_name" : "hyun",
+      "link" : "https://stackoverflow.com/users/21261682/hyun"
+    },
+    "creation_date" : 1747600130,
+    "last_activity_date" : 1747645399,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140439157,
+    "post_id" : 79627750,
+    "body" : "@sg2000 Actually, the problem remains on the way you are defining the <code>@ManyToOne</code> relation, it&#39;s only mapped in the <code>EmplyeeEntity</code> you should alsomap it in the<code>DepartmentEntity</code>, where you should have a list/Set of <code>empolyees</code> annotated with <code>OneToOne</code> annotation, and add the new <code>Emplyee</code> to this list before saving. This should fix the detached entity <code>Exception</code>.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 4514344,
+      "reputation" : 32180,
+      "user_id" : 3669624,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/6bf13a95e307d910fe9cc33b584fe124?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "cнŝdk",
+      "link" : "https://stackoverflow.com/users/3669624/c%d0%bd%c5%9ddk"
+    },
+    "creation_date" : 1747657442,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140439132,
+    "post_id" : 79627750,
+    "body" : "Show the full stacktrace and <b>how</b> is this <code>addEmployee</code> method being called.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126800,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1747657073,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140438161,
+    "post_id" : 79627750,
+    "body" : "and you forgot to add actual exception.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1658807,
+      "reputation" : 32688,
+      "user_id" : 1527544,
+      "user_type" : "registered",
+      "accept_rate" : 54,
+      "profile_image" : "https://www.gravatar.com/avatar/6665878d41d42307eb53e9fae311a471?s=256&d=identicon&r=PG",
+      "display_name" : "Antoniossss",
+      "link" : "https://stackoverflow.com/users/1527544/antoniossss"
+    },
+    "creation_date" : 1747637030,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140437497,
+    "post_id" : 79627750,
+    "body" : "added code as suggested",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 18044566,
+      "reputation" : 325,
+      "user_id" : 13115896,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/6d35ea24f31161f110fed75caf9d2d04?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "sg2000",
+      "link" : "https://stackoverflow.com/users/13115896/sg2000"
+    },
+    "creation_date" : 1747599977,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140437419,
+    "post_id" : 79627750,
+    "body" : "show me the code. Entities, and where/how you are adding new employe.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 1658807,
+      "reputation" : 32688,
+      "user_id" : 1527544,
+      "user_type" : "registered",
+      "accept_rate" : 54,
+      "profile_image" : "https://www.gravatar.com/avatar/6665878d41d42307eb53e9fae311a471?s=256&d=identicon&r=PG",
+      "display_name" : "Antoniossss",
+      "link" : "https://stackoverflow.com/users/1527544/antoniossss"
+    },
+    "creation_date" : 1747597128,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79627838" : [ {
+      "comment_id" : 140437838,
+      "post_id" : 79627838,
+      "body" : "Your answer could be improved with additional supporting information. Please <a href=\"https://stackoverflow.com/posts/79627838/edit\">edit</a> to add further details, such as citations or documentation, so that others can confirm that your answer is correct. You can find more information on how to write good answers <a href=\"/help/how-to-answer\">in the help center</a>.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : -1,
+        "reputation" : 1,
+        "user_id" : -1,
+        "user_type" : "moderator",
+        "profile_image" : "https://www.gravatar.com/avatar/a007be5a61f6aa8f3e85ae2fc18dd66e?s=256&d=identicon&r=PG",
+        "display_name" : "Community",
+        "link" : "https://stackoverflow.com/users/-1/community"
+      },
+      "creation_date" : 1747621642,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79627812" : [ {
+      "comment_id" : 140438554,
+      "post_id" : 79627812,
+      "body" : "@transactional aop is not applied when the addEmployee method is called inside a class.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 27846305,
+        "reputation" : 26,
+        "user_id" : 21261682,
+        "user_type" : "registered",
+        "profile_image" : "https://lh3.googleusercontent.com/a/AEdFTp4AY2DhmhQde83hbd8VGRHZ0xN0XFRB8YiywGn1Gw=k-s256",
+        "display_name" : "hyun",
+        "link" : "https://stackoverflow.com/users/21261682/hyun"
+      },
+      "creation_date" : 1747645265,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140437523,
+      "post_id" : 79627812,
+      "body" : "I have the @Transactional on the method but still get the error..",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 18044566,
+        "reputation" : 325,
+        "user_id" : 13115896,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/6d35ea24f31161f110fed75caf9d2d04?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "sg2000",
+        "link" : "https://stackoverflow.com/users/13115896/sg2000"
+      },
+      "creation_date" : 1747600696,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

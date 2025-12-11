@@ -1,0 +1,92 @@
+{
+  "question" : {
+    "question_id" : 79554442,
+    "title" : "Spring Boot JWT httponly cookie doesn&#39;t work in chrome",
+    "body" : "<p>I have a spring boot application with an authentication controller. If a user successfully logs in a new httponly refresh token cookie is created. In my React front end I can see in chrome the cookie is saved to the browser. If I try and refresh the token the cookie is sent in the request to Firefox just fine and I can get it with request.getCookies(). In chrome however, request.getCookies() returns null. I've spent 2 day trying to figure this out and am completely lost as to what is wrong. Here is the create-refresh-token:</p>\n<pre><code>\n    @GetMapping(&quot;/set-refresh-token/{debtorId}&quot;)\n    public void setRefreshToken(@PathVariable Long debtorId, HttpServletResponse response) {\n        refreshTokenService.deleteIfExists(debtorId);\n        RefreshToken refreshToken = refreshTokenService.createRefreshToken(debtorId);\n        Cookie refreshTokenCookie = new Cookie(&quot;refreshToken&quot;, refreshToken.getToken());\n        refreshTokenCookie.setHttpOnly(true);\n        refreshTokenCookie.setMaxAge(3600); // Cookie expiration time (seconds)\n        refreshTokenCookie.setDomain(&quot;192.168.1.107&quot;);\n        //refreshTokenCookie.\n        refreshTokenCookie.setPath(&quot;/&quot;);\n        refreshTokenCookie.setAttribute(&quot;SameSite&quot;, &quot;None&quot;);\n        response.addCookie(refreshTokenCookie);\n        // Optional settings for production:\n        // cookie.setSecure(true); // Enable if using HTTPS\n        // cookie.setDomain(&quot;yourdomain.com&quot;); // Set your domain\n\n        //response.addCookie(refreshTokenCookie);\n        //return ResponseEntity.ok().build();\n     }\n</code></pre>\n<p>Here is the refresh-token:</p>\n<pre><code>\n    @GetMapping(&quot;/refresh-token&quot;)\n    public ResponseEntity&lt;JwtResponse&gt; refreshToken(HttpServletRequest request) {\n        //public ResponseEntity&lt;JwtResponse&gt; refreshToken(@RequestBody String refreshToken) {\n        //StringBuffer check = request.getRequestURL();\n        Cookie[] cookies = request.getCookies();\n\n         String refreshToken = null;\n        if (cookies != null) {\n            for (Cookie cookie : cookies) {\n                if (&quot;refreshToken&quot;.equals(cookie.getName())) {\n                    refreshToken = cookie.getValue();\n                    break;\n                }\n            }\n        }\n        RefreshToken token = refreshTokenService.findByToken(refreshToken).get();\n        refreshTokenService.verifyExpiration(token);\n        DebtorDto debtorDto = debtorService.findByUserName(token.getDebtor().getUserName());\n        return ResponseEntity.ok(JwtResponse.builder()\n                .name(debtorDto.getFirstName() + &quot; &quot; + debtorDto.getLastName())\n                .uID(debtorDto.getId())\n                .role(debtorDto.getRole())\n                .accessToken(debtorAuthenticationProvider.createToken(debtorDto))\n            .build());\n    }\n</code></pre>\n<p>The call to refresh the token.</p>\n<pre><code>const response = await axios.get(&quot;/account/refresh-token&quot;, {\n      withCredentials: true,\n    });\n</code></pre>\n<p>And finally the securityConfig:</p>\n<pre><code>@Bean\n        public CorsConfigurationSource corsConfigurationSource() {\n                CorsConfiguration configuration = new CorsConfiguration();\n                configuration.setAllowedOrigins(Arrays.asList(&quot;http://localhost:5173&quot;));\n                configuration.setAllowedMethods(Arrays.asList(\n                                HttpMethod.GET.name(),\n                                HttpMethod.POST.name(),\n                                HttpMethod.DELETE.name(),\n                                HttpMethod.PUT.name(),\n                                HttpMethod.OPTIONS.name()));\n                configuration.setAllowedHeaders(Arrays.asList(\n                                HttpHeaders.AUTHORIZATION,\n                                HttpHeaders.CONTENT_TYPE));\n                configuration.setAllowCredentials(true);\n                UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();\n                source.registerCorsConfiguration(&quot;/**&quot;, configuration);\n                return source;\n        }\n\n        private final DebtorAuthenticationProvider debtorAuthenticationProvider;\n\n        @Bean\n        public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {\n                http\n                        .cors(c -&gt; c.configurationSource(corsConfigurationSource()))\n                        .exceptionHandling(customizer -&gt; customizer\n                                        .authenticationEntryPoint(\n                                                        new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))\n                        .addFilterBefore(new JwtAuthenticationFilter(debtorAuthenticationProvider),\n                                        BasicAuthenticationFilter.class)\n                        .csrf(AbstractHttpConfigurer::disable)\n                        .sessionManagement(c -&gt; c.sessionCreationPolicy(SessionCreationPolicy.STATELESS))\n                        .authorizeHttpRequests((requests) -&gt; requests\n                                        .requestMatchers(HttpMethod.POST, &quot;/account/login&quot;, &quot;/account/register&quot;)\n                                        .permitAll()\n                                        .requestMatchers(HttpMethod.GET, &quot;/account/refresh-token&quot;)\n                                        .permitAll()\n                                        .anyRequest().authenticated());\n                return http.build();\n        }\n</code></pre>\n<p>Most of what I tried is commented out. All I'm trying to do is get the refresh token so I can update the access token but it only works in firefox. Not in any other browsers.</p>\n<p>Here are my test step (the refresh token to test functionality is just a test button on the user page):</p>\n<ol>\n<li>Perform login.</li>\n<li>Get refresh token cookie.</li>\n<li>Get user data.</li>\n</ol>\n<pre><code>    const getRevenue = async () =&gt; {\n        try {\n          const response = await axiosPrivate.get(\n            `/account/debtor-revenue/${auth.uid}`,\n            {\n              signal: iController.signal,\n            }\n          );\n          var s = 0;\n          if (iIsMounted) {\n            if (response?.data?.debtorIncomeSourceDtos?.length &gt; 0) {\n              setIncome(response.data.debtorIncomeSourceDtos);\n            } else {\n              setIncome(&quot;There is no income entered&quot;);\n            }\n            if (response?.data?.incomeSourceDtos?.length &gt; 0) {\n              setIncomeSrcLookup(response.data.incomeSourceDtos);\n            }\n          } else {\n            setIncome(&quot;error showing income&quot;);\n          }\n          setIsLoadingInc(false);\n        } catch (err) {\n          iIsMounted = false;\n          setIsLoadingInc(false);\n          navigate(&quot;/loginhome&quot;, { state: { from: location }, replace: true });\n        }\n      };\n</code></pre>\n<p>This gives me the user home page. Click the button to test refresh token. As stated firefox refreshes the token but with chrome stepping into the controller yields a null cookie list.</p>\n",
+    "tags" : [ "java", "reactjs", "spring-boot" ],
+    "owner" : {
+      "account_id" : 41182305,
+      "reputation" : 1,
+      "user_id" : 30162959,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/d2263c301e9ead6224a4401925d8d210?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "user30162959",
+      "link" : "https://stackoverflow.com/users/30162959/user30162959"
+    },
+    "is_answered" : false,
+    "view_count" : 118,
+    "answer_count" : 0,
+    "score" : 0,
+    "last_activity_date" : 1743792718,
+    "creation_date" : 1743739651,
+    "link" : "https://stackoverflow.com/questions/79554442/spring-boot-jwt-httponly-cookie-doesnt-work-in-chrome",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140300862,
+    "post_id" : 79554442,
+    "body" : "so if your authorization server is on a separate domain make sure to use https and set the secure attribute on your refresh cookie.  If it&#39;s same domain just use same-site: strict.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 6077817,
+      "reputation" : 1362,
+      "user_id" : 4744568,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/125cdb7d43927756913b920de016f420?s=256&d=identicon&r=PG",
+      "display_name" : "browsermator",
+      "link" : "https://stackoverflow.com/users/4744568/browsermator"
+    },
+    "creation_date" : 1743795046,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140300842,
+    "post_id" : 79554442,
+    "body" : "I would avoid using setDomain or setPath.  By default it&#39;ll be set to the domain of the backend.   But I think the problem is with samesite = none.  In Chrome you can only set that to none when it&#39;s also set to secure only.  Your requests are not HTTPS.  Also see here: <a href=\"https://developers.google.com/search/blog/2020/01/get-ready-for-new-samesitenone-secure#a-new-model-for-cookie-security-and-transparency\" rel=\"nofollow noreferrer\">developers.google.com/search/blog/2020/01/&hellip;</a>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 6077817,
+      "reputation" : 1362,
+      "user_id" : 4744568,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/125cdb7d43927756913b920de016f420?s=256&d=identicon&r=PG",
+      "display_name" : "browsermator",
+      "link" : "https://stackoverflow.com/users/4744568/browsermator"
+    },
+    "creation_date" : 1743794621,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140300742,
+    "post_id" : 79554442,
+    "body" : "I added an edit of the test steps I&#39;m doing.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 41182305,
+      "reputation" : 1,
+      "user_id" : 30162959,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/d2263c301e9ead6224a4401925d8d210?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "user30162959",
+      "link" : "https://stackoverflow.com/users/30162959/user30162959"
+    },
+    "creation_date" : 1743792774,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140297845,
+    "post_id" : 79554442,
+    "body" : "If you perform queries in browser, could you provide us with query info from dev tools?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3013356,
+      "reputation" : 188,
+      "user_id" : 2556249,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/4150b2df8aab80288670f883a02be72f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "NoisyFlasher",
+      "link" : "https://stackoverflow.com/users/2556249/noisyflasher"
+    },
+    "creation_date" : 1743745811,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

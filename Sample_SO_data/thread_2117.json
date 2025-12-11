@@ -1,0 +1,45 @@
+{
+  "question" : {
+    "question_id" : 79645284,
+    "title" : "Spring Session Redis GraalVM Serialization error",
+    "body" : "<p>I have a simple Spring Boot application, which uses Oauth2 client and Spring Session Redis. It has default setup in application.yml:</p>\n<pre><code>spring:\n  session:\n    store-type: redis\n    redis:\n      namespace: my:namespace\n      timeout: 1h\n  data:\n    redis:\n      host: localhost\n      port: 6379\n      password: redispassword\n  security:\n    oauth2:\n      client:\n        provider:\n          azure:\n            issuer-uri: https://login.microsoftonline.com}/some-tenant-id/v2.0\n        registration:\n          caiman:\n            provider: azure\n            client-id: some-client-id\n            client-secret: some-client-secret\n            scope:\n              - openid\n              - email\n              - profile\n</code></pre>\n<p>I'm trying to migrate my app to GraalVM native image.I've added missing serialization data to the serialization-config.json:</p>\n<pre><code>[\n  {\n    &quot;name&quot;: &quot;org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest&quot;\n  },\n  {\n    &quot;name&quot;: &quot;java.util.Collections$UnmodifiableMap&quot;\n  },\n  {\n    &quot;name&quot;: &quot;java.util.HashMap&quot;\n  },\n  {\n    &quot;name&quot;: &quot;java.util.LinkedHashMap&quot;\n  },\n  {\n    &quot;name&quot;: &quot;java.util.LinkedHashSet&quot;\n  },\n  {\n    &quot;name&quot;: &quot;org.springframework.security.oauth2.core.user.OAuth2UserAuthority&quot;\n  },\n  {\n    &quot;name&quot;: &quot;java.net.URL&quot;\n  },\n  {\n    &quot;name&quot;: &quot;org.springframework.security.oauth2.core.AuthorizationGrantType&quot;,\n    &quot;customTargetConstructorClass&quot;: &quot;java.lang.Object&quot;\n  },\n  {\n    &quot;name&quot;: &quot;java.util.HashSet&quot;,\n    &quot;customTargetConstructorClass&quot;: &quot;java.util.AbstractSet&quot;\n  },\n  {\n    &quot;name&quot;: &quot;org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationResponse&quot;\n  },\n  {\n    &quot;name&quot;: &quot;org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationResponseType&quot;\n  },\n  {\n    &quot;name&quot;: &quot;org.springframework.security.oauth2.core.oidc.user.OidcUserAuthority&quot;\n  },\n  {\n    &quot;name&quot;: &quot;java.util.Date&quot;,\n    &quot;customTargetConstructorClass&quot;: &quot;java.lang.Object&quot;\n  },\n  {\n    &quot;name&quot;: &quot;java.time.Instant&quot;,\n    &quot;customConstructorClass&quot;: &quot;java.lang.Object&quot;\n  },\n  {\n    &quot;name&quot;: &quot;org.springframework.security.oauth2.core.AbstractOAuth2Token&quot;,\n    &quot;customConstructorClass&quot;: &quot;java.lang.Object&quot;\n  },\n  {\n    &quot;name&quot;: &quot;org.springframework.security.oauth2.core.oidc.OidcIdToken&quot;,\n    &quot;customTargetConstructorClass&quot;: &quot;java.lang.Object&quot;\n  },\n  {\n    &quot;name&quot;: &quot;org.springframework.security.oauth2.core.user.DefaultOAuth2User&quot;,\n    &quot;customTargetConstructorClass&quot;: &quot;java.lang.Object&quot;\n  },\n  {\n    &quot;name&quot;: &quot;org.springframework.security.oauth2.core.oidc.user.DefaultOidcUser&quot;,\n    &quot;customTargetConstructorClass&quot;: &quot;java.lang.Object&quot;\n  },\n  {\n    &quot;name&quot;: &quot;jakarta.servlet.http.Cookie&quot;\n  }\n]\n</code></pre>\n<p>And also I wrote such reflect-config.json:</p>\n<pre><code>[\n  {\n    &quot;name&quot;: &quot;jakarta.servlet.http.Cookie&quot;,\n    &quot;allDeclaredFields&quot;: true,\n    &quot;allDeclaredMethods&quot;: true,\n    &quot;allDeclaredConstructors&quot;: true\n  },\n  {\n    &quot;name&quot;: &quot;org.springframework.security.web.savedrequest.DefaultSavedRequest&quot;,\n    &quot;allDeclaredFields&quot;: true,\n    &quot;allDeclaredMethods&quot;: true,\n    &quot;allDeclaredConstructors&quot;: true\n  },\n  {\n    &quot;name&quot;: &quot;org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest&quot;,\n    &quot;allDeclaredFields&quot;: true,\n    &quot;allDeclaredMethods&quot;: true,\n    &quot;allDeclaredConstructors&quot;: true\n  },\n  {\n    &quot;name&quot;: &quot;org.springframework.security.core.context.SecurityContextImpl&quot;,\n    &quot;allDeclaredFields&quot;: true,\n    &quot;allDeclaredMethods&quot;: true,\n    &quot;allDeclaredConstructors&quot;: true\n  },\n  {\n    &quot;name&quot;: &quot;org.springframework.security.oauth2.common.OAuth2AccessToken&quot;,\n    &quot;allDeclaredFields&quot;: true,\n    &quot;allDeclaredMethods&quot;: true,\n    &quot;allDeclaredConstructors&quot;: true\n  }\n]\n</code></pre>\n<p>But then I got following error:</p>\n<pre><code>Cannot serialize at org.springframework.data.redis.serializer.JdkSerializationRedisSerializer.serialize(JdkSerializationRedisSerializer.java:98)\n</code></pre>\n<p>I've read that it's suggested not to use JdkSerializator with GraalVM and use GenericJackson2JsonRedisSerializer instead. I override Redis default serializer like that:</p>\n<pre><code>@Configuration\npublic class SessionConfiguration implements BeanClassLoaderAware {\n\n    private ClassLoader loader;\n\n    @Bean\n    public RedisSerializer&lt;Object&gt; springSessionDefaultRedisSerializer() {\n        return new GenericJackson2JsonRedisSerializer(objectMapper());\n    }\n    \n    private ObjectMapper objectMapper() {\n        var mapper = new ObjectMapper();\n        mapper.registerModules(SecurityJackson2Modules.getModules(this.loader));\n        return mapper;\n    }\n    \n    @Override\n    public void setBeanClassLoader(ClassLoader classLoader) {\n        this.loader = classLoader;\n    }\n}\n</code></pre>\n<p>After it when I'm trying to authorize, I get this error:</p>\n<pre><code>java.lang.ClassCastException: java.util.LinkedHashMap cannot be cast to org.springframework.security.oauth2.core.endpoint.OAuth2AuthorizationRequest\n</code></pre>\n<p>Does anyone knows how to fix it? Or has someone also tried to use Spring Session Redis with GraalVM?</p>\n",
+    "tags" : [ "java", "spring-boot", "redis", "graalvm", "spring-session" ],
+    "owner" : {
+      "account_id" : 18318236,
+      "reputation" : 1,
+      "user_id" : 13339583,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/219c73ebe4abd7e5e44f50a4116e9798?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Aleksandr",
+      "link" : "https://stackoverflow.com/users/13339583/aleksandr"
+    },
+    "is_answered" : false,
+    "view_count" : 57,
+    "answer_count" : 0,
+    "score" : 0,
+    "last_activity_date" : 1748600208,
+    "creation_date" : 1748600208,
+    "link" : "https://stackoverflow.com/questions/79645284/spring-session-redis-graalvm-serialization-error",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140495980,
+    "post_id" : 79645284,
+    "body" : "spring with redis is very popular, it should work out of the box, can you share a small reproducer ?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 58650,
+      "reputation" : 4945,
+      "user_id" : 175554,
+      "user_type" : "registered",
+      "accept_rate" : 40,
+      "profile_image" : "https://i.sstatic.net/KmFczdGy.jpg?s=256",
+      "display_name" : "ozkanpakdil",
+      "link" : "https://stackoverflow.com/users/175554/ozkanpakdil"
+    },
+    "creation_date" : 1749324521,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

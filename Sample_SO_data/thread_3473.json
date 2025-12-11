@@ -1,0 +1,80 @@
+{
+  "question" : {
+    "question_id" : 79547222,
+    "title" : "Assertj-DB says h2 table does not exist",
+    "body" : "<p>I have set up a simple spring-boot app with <code>schema.sql</code> file and a JpaRepository for the <code>Person</code> entity class.\nI can verify that the schema is initialized and that the repository can write and read to the table, I've enabled <code>show-sql</code> and so for an write operation I can see:</p>\n<pre><code>Hibernate: \n    select\n        next value for seq_pk_person\nHibernate: \n    insert \n    into\n        person\n        (name, id) \n    values\n        (?, ?)\n</code></pre>\n<p>Evidently there is a table with the name <code>person</code>. However, when I add assertj-db (3.0.0) with a connection field and try to connect to this table:</p>\n<pre class=\"lang-java prettyprint-override\"><code>private AssertDbConnection assertDbConnection = AssertDbConnectionFactory\n            .of(&quot;jdbc:h2:mem:testdb&quot;, &quot;sa&quot;, &quot;&quot;)\n            .create();\n...\nPerson is written exactly in the same as in the hibernate log above\n    @Test\n    public void testPersistPerson() {\n\n        Table personTable = assertDbConnection.table(&quot;person&quot;).build();\n        Assertions.assertThat(personTable)\n                .exists();\n        ...\n</code></pre>\n<p>I get</p>\n<pre><code>[person table] \nExpecting exist but do not exist\njava.lang.AssertionError: [person table] \nExpecting exist but do not exist\n    at com.example.demo.PersonRepositoryTest.testPersistPerson(PersonRepositoryTest.java:48)\n    at java.base/java.lang.reflect.Method.invoke(Method.java:580)\n    at java.base/java.util.ArrayList.forEach(ArrayList.java:1597)\n    at java.base/java.util.ArrayList.forEach(ArrayList.java:1597)\n</code></pre>\n<p>I'd like to understand what I'm doing wrong here and how to fix it. The complete project can be found <a href=\"https://github.com/timo-a/debug-assertjdb\" rel=\"nofollow noreferrer\">here</a>. Relevant files:</p>\n<p>schema.sql:</p>\n<pre><code>CREATE TABLE person (\n    id BIGINT PRIMARY KEY,\n    name VARCHAR(255) check (length(name) &lt; 10),\n    job INT\n);\n\nCREATE SEQUENCE SEQ_PK_PERSON INCREMENT BY 1;\n</code></pre>\n<p>application.yml:</p>\n<pre><code>spring:\n  datasource:\n    url: jdbc:h2:mem:testdb\n    driver-class-name: org.h2.Driver\n    username: sa\n    password:\n    initialization-mode: always\n  jpa:\n    spring.jpa.database-platform: org.hibernate.dialect.H2Dialect\n    hibernate:\n      ddl-auto: none\n    show-sql: true\n    properties.hibernate.format_sql: true\n    defer-datasource-initialization: true\n  sql:\n    init:\n      mode: always\n  h2:\n    console:\n      enabled: true\n</code></pre>\n<p>Person.java:</p>\n<pre class=\"lang-java prettyprint-override\"><code>package com.example.demo;\n\nimport jakarta.persistence.*;\nimport lombok.Getter;\nimport lombok.Setter;\n\n@Entity\n@Getter\n@Setter\npublic class Person {\n\n    @Id\n    @GeneratedValue(strategy = GenerationType.SEQUENCE, generator = &quot;person_seq&quot;)\n    @SequenceGenerator(name = &quot;person_seq&quot;,\n            sequenceName = &quot;SEQ_PK_PERSON&quot;, allocationSize = 1)\n    private Long id;\n\n    private String name;\n\n}\n</code></pre>\n",
+    "tags" : [ "java", "spring-boot", "h2", "assertj" ],
+    "owner" : {
+      "account_id" : 2637951,
+      "reputation" : 4831,
+      "user_id" : 3014199,
+      "user_type" : "registered",
+      "accept_rate" : 79,
+      "profile_image" : "https://www.gravatar.com/avatar/72332b0ac6ee78bc829c378c6c747e0e?s=256&d=identicon&r=PG",
+      "display_name" : "peer",
+      "link" : "https://stackoverflow.com/users/3014199/peer"
+    },
+    "is_answered" : true,
+    "view_count" : 64,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1743487814,
+    "creation_date" : 1743453433,
+    "link" : "https://stackoverflow.com/questions/79547222/assertj-db-says-h2-table-does-not-exist",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79547825,
+    "question_id" : 79547222,
+    "body" : "<p>They both point to their own in-memory database. You need to reuse the existing datasource for the validation not create a new one. Which is what you are currently doing for the <code>AssertDbConnectionFactory</code>. Hence it doesn't see anything what is in the database. How to do this is explained in <a href=\"https://assertj.github.io/doc/#assertj-db-concepts-assertdbconnection\" rel=\"nofollow noreferrer\">the documentation</a>.</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class YourTest {\n\n  @Autowired \n  private DataSource dataSource;\n\n  private AssertDbConnection assertDbConnection\n\n  @BeforeEach\n  public void setup() {\n    assertDbConnection = AssertDbConnectionFactory\n            .of(dataSource)\n            .create();\n  }\n\n}\n</code></pre>\n<p>Something like that should use the shared datasource one instead of re-creating a new in-memory database.</p>\n<p>Now another challenge is the fact that the <code>@DataJpaTest</code> you are using makes the test method <code>@Transactional</code>. Which means the method is transactional and other connections cannot see data until it is commit (and no a <code>flush</code> isn't a commit!). So you would need to re-use the existing connection instead of getting a new one. To accomplish this you can use the <a href=\"https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/jdbc/datasource/TransactionAwareDataSourceProxy.html\" rel=\"nofollow noreferrer\"><code>TransactionAwareDataSourceProxy</code></a> which will obtain the existing connection if a transaction is ongoing.</p>\n<pre class=\"lang-java prettyprint-override\"><code>@BeforeEach\npublic void setup() {\n  var dsWrapper = new TransactionAwareDataSourceProxy(dataSource);\n  assertDbConnection = AssertDbConnectionFactory\n          .of(dsWrapper)\n          .create();\n}\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126800,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1743487379,
+    "last_activity_date" : 1743487814,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140287049,
+    "post_id" : 79547222,
+    "body" : "Thank you so much! The two approaches seem so equivalent in the documentation, I assumed specifying the same url as in the properties would connect to the same db...",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2637951,
+      "reputation" : 4831,
+      "user_id" : 3014199,
+      "user_type" : "registered",
+      "accept_rate" : 79,
+      "profile_image" : "https://www.gravatar.com/avatar/72332b0ac6ee78bc829c378c6c747e0e?s=256&d=identicon&r=PG",
+      "display_name" : "peer",
+      "link" : "https://stackoverflow.com/users/3014199/peer"
+    },
+    "creation_date" : 1743513176,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140285405,
+    "post_id" : 79547222,
+    "body" : "They both point to their own in-memory database. You need to reuse the existing datasource for the validation not create a new one. Which is what you are currently doing for the <code>AssertDbConnectionFactory</code>. Hence it doesn&#39;t see anything what is in the database.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126800,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1743487162,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

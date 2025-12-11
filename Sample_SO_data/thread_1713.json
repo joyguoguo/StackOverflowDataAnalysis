@@ -1,0 +1,99 @@
+{
+  "question" : {
+    "question_id" : 79680933,
+    "title" : "Spark Unit test failing maven test but pass in IntelliJ",
+    "body" : "<p>I'm working on a Scala project using Spark (with Hive support in some tests) and running unit and integration tests via both IntelliJ and Maven Surefire.</p>\n<p>I have a shared test session setup like this:</p>\n<p><code>SharedSparkSession</code> trait (base)</p>\n<p><code>SharedUnitTestSparkSession</code> (no Hive support, lightweight)</p>\n<p><code>SharedHiveSparkSession</code> (enables Hive, uses Derby metastore)</p>\n<p>Some tests need Hive support (e.g., creating temp views, running SQL queries) and some don’t.</p>\n<p>The Issue:</p>\n<ul>\n<li><p>Tests pass individually in IntelliJ</p>\n</li>\n<li><p>Tests pass when running all tests in IntelliJ</p>\n</li>\n<li><p>Test pass in Gitlab CI server probably as Unix</p>\n</li>\n<li><p>Tests fail when running mvn clean test via command line locally / intellij</p>\n</li>\n</ul>\n<p>Errors is one thing only:</p>\n<p><code>Hadoop home dir / filesystem implementation errors (HADOOP_HOME / winutils.exe issues)</code></p>\n<p>I've tried:</p>\n<pre class=\"lang-scala prettyprint-override\"><code>spark.sparkContext.hadoopConfiguration\n  .setClass(&quot;fs.file.impl&quot;, classOf[org.apache.hadoop.fs.BareLocalFileSystem], classOf[FileSystem])\n</code></pre>\n<p>this is set in both the Unit and SparkHive traits:</p>\n<pre class=\"lang-scala prettyprint-override\"><code>trait SharedSparkSession extends BeforeAndAfterAll { this: Suite =&gt;\n  @transient protected var spark: SparkSession = _\n\n  override def beforeAll(): Unit = {\n    super.beforeAll()\n\n    spark = SparkSession.builder()\n      .appName(&quot;Unit Test Session&quot;)\n      .master(&quot;local[*]&quot;)\n      .getOrCreate()\n\n    spark.sparkContext.hadoopConfiguration\n      .setClass(&quot;fs.file.impl&quot;, classOf[org.apache.hadoop.fs.BareLocalFileSystem], classOf[FileSystem])\n  }\n\n  override def afterAll(): Unit = {\n    if (spark != null) {\n      spark.stop()\n      spark = null\n//clears active sessions also\n    }\n    super.afterAll()\n  }\n}\n</code></pre>\n<p>The hive one is set as follows:</p>\n<pre class=\"lang-scala prettyprint-override\"><code>trait SharedHiveSparkSession extends SharedSparkSession { this: Suite =&gt;\n  override def beforeAll(): Unit = {\n    super.beforeAll()\n\n    val tempDir = java.nio.file.Files.createTempDirectory(&quot;spark_metastore&quot;).toAbsolutePath.toString\n    spark = SparkSession.builder()\n      .appName(&quot;Hive Test Session&quot;)\n      .master(&quot;local[*]&quot;)\n      .config(&quot;spark.sql.warehouse.dir&quot;, s&quot;$tempDir/warehouse&quot;)\n      .config(&quot;javax.jdo.option.ConnectionURL&quot;, s&quot;jdbc:derby:metastore_db_${UUID.randomUUID().toString};create=true&quot;)\n      .enableHiveSupport()\n      .getOrCreate()\n\n    spark.sparkContext.hadoopConfiguration\n      .setClass(&quot;fs.file.impl&quot;, classOf[org.apache.hadoop.fs.BareLocalFileSystem], classOf[FileSystem])\n  }\n}\n\n</code></pre>\n<p>and the unit test one looks like this:</p>\n<pre class=\"lang-scala prettyprint-override\"><code>trait SharedUnitTestSparkSession extends SharedSparkSession { this: Suite =&gt;\n  override def beforeAll(): Unit = {\n    super.beforeAll()\n\n    spark = SparkSession.builder()\n      .appName(&quot;Unit Test Spark Session&quot;)\n      .master(&quot;local[*]&quot;)\n      .getOrCreate()\n\n    spark.sparkContext.hadoopConfiguration\n      .setClass(&quot;fs.file.impl&quot;, classOf[org.apache.hadoop.fs.BareLocalFileSystem], classOf[FileSystem])\n  }\n}\n</code></pre>\n<p>Then the test:</p>\n<pre><code>class MyIntegrationTest extends AnyFlatSpec with SharedHiveSparkSession {\n\n  &quot;A Hive-backed DataFrame&quot; should &quot;perform test operation&quot; in {\n    implicit val implicitSpark: SparkSession = spark\n\n    import spark.implicits._\n\n    val df = Seq((1, &quot;foo&quot;), (2, &quot;bar&quot;)).toDF(&quot;id&quot;, &quot;value&quot;)\n    df.createOrReplaceTempView(&quot;my_table&quot;)\n\n    val result = spark.sql(&quot;SELECT COUNT(*) as total FROM my_table&quot;).collect().head.getLong(0)\n    assert(result == 2)\n  }\n}\n</code></pre>\n<p>the test doesn't run failing with errors hadoop home directory is unset which I've bypassed with <code>BareLocalFileSystem</code> implementation.</p>\n<p>What I’m looking for:</p>\n<ul>\n<li><p>A reliable way to isolate Spark Hive sessions during Maven test runs</p>\n</li>\n<li><p>Clean strategies to avoid Derby metastore lock issues and filesystem config conflicts</p>\n</li>\n</ul>\n<p>Some codee suggestions or pinpoint to what I am missing in maven or configuration in general will really help :)</p>\n<p>Versions:</p>\n<ul>\n<li>Maven Surefire 3.2.5</li>\n<li>Scala 2.12</li>\n<li>Spark 3.4.1</li>\n</ul>\n",
+    "tags" : [ "java", "scala", "maven", "apache-spark", "hadoop" ],
+    "owner" : {
+      "account_id" : 3306844,
+      "reputation" : 1813,
+      "user_id" : 2781389,
+      "user_type" : "registered",
+      "accept_rate" : 46,
+      "profile_image" : "https://www.gravatar.com/avatar/0e6583ef9c56e37547de95bb25d82796?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "M06H",
+      "link" : "https://stackoverflow.com/users/2781389/m06h"
+    },
+    "is_answered" : true,
+    "view_count" : 107,
+    "answer_count" : 2,
+    "score" : 0,
+    "last_activity_date" : 1751115436,
+    "creation_date" : 1750958431,
+    "link" : "https://stackoverflow.com/questions/79680933/spark-unit-test-failing-maven-test-but-pass-in-intellij",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79683017,
+    "question_id" : 79680933,
+    "body" : "<p>Hadoop’s <code>FileSystem</code> cache was hanging around in the JVM across test suites, even after <code>SparkContext.stop()</code>, because by design Hadoop doesn’t automatically evict cached <code>FileSystem</code> instances per scheme when you shut down Spark.</p>\n<p>So adding:<br />\n<code>FileSystem.closeAll()</code> on <code>beforeAll()</code> on <code>SharedHiveSparkSession</code> working for me.</p>\n<p>So it is wiping out any lingering <code>FileSystem</code> handles (like <code>LocalFileSystem</code>) that might have been instantiated in a previous test suite’s context.</p>\n",
+    "score" : 3,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 3306844,
+      "reputation" : 1813,
+      "user_id" : 2781389,
+      "user_type" : "registered",
+      "accept_rate" : 46,
+      "profile_image" : "https://www.gravatar.com/avatar/0e6583ef9c56e37547de95bb25d82796?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "M06H",
+      "link" : "https://stackoverflow.com/users/2781389/m06h"
+    },
+    "creation_date" : 1751115436,
+    "last_activity_date" : 1751115436,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79682960,
+    "question_id" : 79680933,
+    "body" : "<p>You can look at Quality's <a href=\"https://github.com/sparkutils/quality/blob/temp/0.1.3.1/src/test/scala/com/sparkutils/qualityTests/TestUtils.scala\" rel=\"nofollow noreferrer\">TestUtils</a> for some inspiration, which takes care of general setup.</p>\n<p>I still don't get 100% successful runs in intellij on windows (usually one hive test failure, which doesn't have issues in Linux/github ci or when run individually).  The hive specific tests are <a href=\"https://github.com/sparkutils/quality/blob/temp/0.1.3.1/src/test/scala/com/sparkutils/qualityTests/ExtensionTest.scala#L64\" rel=\"nofollow noreferrer\">here</a></p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 1017255,
+      "reputation" : 2965,
+      "user_id" : 1028537,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f929a8e1ab37c0667f6991744a3f3ca1?s=256&d=identicon&r=PG",
+      "display_name" : "Chris",
+      "link" : "https://stackoverflow.com/users/1028537/chris"
+    },
+    "creation_date" : 1751110608,
+    "last_activity_date" : 1751110608,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140546810,
+    "post_id" : 79680933,
+    "body" : "I’m specifically looking to avoid downloading or relying on winutils.exe by setting up HADOOP_HOME. I want to configure Spark and Hadoop to work for unit and integration tests without requiring native Hadoop binaries or external dependencies like winutils.exe, by using BareLocalFileSystem or similar config-based workarounds.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3306844,
+      "reputation" : 1813,
+      "user_id" : 2781389,
+      "user_type" : "registered",
+      "accept_rate" : 46,
+      "profile_image" : "https://www.gravatar.com/avatar/0e6583ef9c56e37547de95bb25d82796?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "M06H",
+      "link" : "https://stackoverflow.com/users/2781389/m06h"
+    },
+    "creation_date" : 1751017748,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140546791,
+    "post_id" : 79680933,
+    "body" : "Did you try to set up <code>%HADOOP_HOME%</code> or <code>hadoop.home.dir</code>? <a href=\"https://stackoverflow.com/questions/73503205/why-all-these-hadoop-home-and-winutils-errors-with-spark-on-windows-if-hadoop\" title=\"why all these hadoop home and winutils errors with spark on windows if hadoop\">stackoverflow.com/questions/73503205/&hellip;</a> <a href=\"https://cwiki.apache.org/confluence/display/HADOOP2/WindowsProblems\" rel=\"nofollow noreferrer\">cwiki.apache.org/confluence/display/HADOOP2/WindowsProblems</a>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2503348,
+      "reputation" : 53077,
+      "user_id" : 5249621,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/lLtZV.jpg?s=256",
+      "display_name" : "Dmytro Mitin",
+      "link" : "https://stackoverflow.com/users/5249621/dmytro-mitin"
+    },
+    "creation_date" : 1751017196,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

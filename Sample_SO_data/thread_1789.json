@@ -1,0 +1,192 @@
+{
+  "question" : {
+    "question_id" : 79674395,
+    "title" : "Spring Boot WebSocket STOMP + JWT (@PreAuthorize) SecurityContext problem: &quot;Authentication object was not found&quot;",
+    "body" : "<p>I'm building a Spring Boot chat application with:</p>\n<ul>\n<li>WebSocket (STOMP) endpoint (with message broker)</li>\n<li>Clients connect via STOMP and authenticate with JWT (sent as a STOMP Authorization header in the CONNECT frame)</li>\n<li>Spring Security with @PreAuthorize on @MessageMapping methods</li>\n</ul>\n<p>I have a ChannelInterceptor that:</p>\n<pre><code>- On CONNECT, parses the JWT from the Authorization header\n- Validates JWT and creates an Authentication object (with authorities)\n- Calls StompHeaderAccessor.setUser(authentication)\n</code></pre>\n<p>My controller looks like:</p>\n<pre><code>@MessageMapping(&quot;/chat/message.send&quot;)\n@PreAuthorize(&quot;hasAuthority('SCOPE_WRITE')&quot;)\npublic void sendMessage(@Payload MessageRequestDto dto) {\n\n}\n</code></pre>\n<p>But whenever a STOMP SEND is received, I get:\nAuthenticationCredentialsNotFoundException: An Authentication object was not found in the SecurityContext</p>\n<p>because of :</p>\n<pre><code>private Authentication getAuthenticationOrThrow() {\n        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();\n        if (authentication == null || !authentication.isAuthenticated())\n            throw new AuthenticationCredentialsNotFoundException(&quot;No authenticated user found in SecurityContext&quot;);\n\n        return authentication;\n    }\n</code></pre>\n<p>How do I properly wire up Spring Security so that the user authenticated at STOMP CONNECT (via JWT) is available in the SecurityContext for each @MessageMapping?(i can provide github link if needed - <a href=\"https://github.com/engly817chat/engly-server\" rel=\"nofollow noreferrer\">https://github.com/engly817chat/engly-server</a>) it is a univ project</p>\n<p>I implemented a custom ChannelInterceptor which, on each STOMP CONNECT, extracts the Authorization header from the STOMP frame, validates the JWT, and sets the authenticated user using accessor.setUser(authentication).\nI also tried (as suggested by Spring/StackOverflow answers) adding a second ChannelInterceptor that, for every inbound message, copies accessor.getUser() (if it's an Authentication) into the SecurityContextHolder. I confirmed in logs that accessor.getUser() is a valid Authentication object during message handling, with the correct authorities.</p>\n",
+    "tags" : [ "java", "spring", "spring-boot", "spring-websocket" ],
+    "owner" : {
+      "account_id" : 29116701,
+      "reputation" : 13,
+      "user_id" : 22305263,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/AAcHTtf56ZPQC9clAaqyVbIIl-RJ84z-GbFgA7EoG9koN1vE=k-s256",
+      "display_name" : "valerii",
+      "link" : "https://stackoverflow.com/users/22305263/valerii"
+    },
+    "is_answered" : true,
+    "view_count" : 131,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1750548457,
+    "creation_date" : 1750506201,
+    "link" : "https://stackoverflow.com/questions/79674395/spring-boot-websocket-stomp-jwt-preauthorize-securitycontext-problem-auth",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79674493,
+    "question_id" : 79674395,
+    "body" : "<p><code>SecurityContextHolder</code> is not automatically populated during STOMP message handling. Spring doesn't do that for you like it does with HTTP. In your <code>ChannelInterceptor</code>, for each inbound message (not just CONNECT), check if <code>accessor.getUser()</code> is an <code>Authentication</code> and manually set it in <code>SecurityContextHolder</code>. Here is what you need inside <code>preSend</code> method.</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Override\npublic Message&lt;?&gt; preSend(Message&lt;?&gt; message, MessageChannel channel) {\n    StompHeaderAccessor accessor = StompHeaderAccessor.wrap(message);\n\n    if (StompCommand.CONNECT.equals(accessor.getCommand())) {\n        String jwt = accessor.getFirstNativeHeader(&quot;Authorization&quot;);\n\n        if (jwt != null &amp;&amp; jwt.startsWith(&quot;Bearer &quot;)) {\n            jwt = jwt.substring(7); // remove &quot;Bearer &quot;\n            Authentication auth = jwtService.validateToken(jwt); // your custom method\n            accessor.setUser(auth); // set the user on the accessor\n        }\n    } else {\n        // For every other frame, set the auth into SecurityContext\n        Principal user = accessor.getUser();\n        if (user instanceof Authentication authentication) {\n            SecurityContext context = SecurityContextHolder.createEmptyContext();\n            context.setAuthentication(authentication);\n            SecurityContextHolder.setContext(context);\n        }\n    }\n\n    return message;\n}\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 6962218,
+      "reputation" : 442,
+      "user_id" : 5341306,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/8rhmy.jpg?s=256",
+      "display_name" : "Imran.Khan",
+      "link" : "https://stackoverflow.com/users/5341306/imran-khan"
+    },
+    "creation_date" : 1750514929,
+    "last_activity_date" : 1750545365,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79674493" : [ {
+      "comment_id" : 140532328,
+      "post_id" : 79674493,
+      "body" : "Because it generates scopes in token and then it uses for @PreAuthorize(hasAuthority) with JwtAccessTokenfilter. Maybe can u pls give suggestions on my situation?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 29116701,
+        "reputation" : 13,
+        "user_id" : 22305263,
+        "user_type" : "registered",
+        "profile_image" : "https://lh3.googleusercontent.com/a/AAcHTtf56ZPQC9clAaqyVbIIl-RJ84z-GbFgA7EoG9koN1vE=k-s256",
+        "display_name" : "valerii",
+        "link" : "https://stackoverflow.com/users/22305263/valerii"
+      },
+      "creation_date" : 1750554570,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140532317,
+      "post_id" : 79674493,
+      "body" : "I think it helped, only the roles remained to be displayed correctly) Thanks for your help!",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 29116701,
+        "reputation" : 13,
+        "user_id" : 22305263,
+        "user_type" : "registered",
+        "profile_image" : "https://lh3.googleusercontent.com/a/AAcHTtf56ZPQC9clAaqyVbIIl-RJ84z-GbFgA7EoG9koN1vE=k-s256",
+        "display_name" : "valerii",
+        "link" : "https://stackoverflow.com/users/22305263/valerii"
+      },
+      "creation_date" : 1750553493,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140532286,
+      "post_id" : 79674493,
+      "body" : "Okay i will try with SecurityContextChannelInterceptor",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 29116701,
+        "reputation" : 13,
+        "user_id" : 22305263,
+        "user_type" : "registered",
+        "profile_image" : "https://lh3.googleusercontent.com/a/AAcHTtf56ZPQC9clAaqyVbIIl-RJ84z-GbFgA7EoG9koN1vE=k-s256",
+        "display_name" : "valerii",
+        "link" : "https://stackoverflow.com/users/22305263/valerii"
+      },
+      "creation_date" : 1750550563,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140532276,
+      "post_id" : 79674493,
+      "body" : "@Imran.Khan Best practice-&gt; &quot;use Spring’s SecurityContextChannelInterceptor&quot; Instead of your custom interceptor, register Spring Security’s one: &quot;@Override  public void configureClientInboundChannel(ChannelRegistration registration) {      registration.interceptors(new SecurityContextChannelInterceptor());  }&quot; This interceptor handles populating the SecurityContextHolder for every STOMP message inbound—not just CONNECT but also SEND, SUBSCRIBE, etc. if you want to try then add this dependency &quot;&lt;dep..&gt;    &lt;groupId&gt;org.springframework.security&lt;/groupId&gt;    &lt;artifactId&gt;spring-security-messaging&lt;/",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 6962218,
+        "reputation" : 442,
+        "user_id" : 5341306,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/8rhmy.jpg?s=256",
+        "display_name" : "Imran.Khan",
+        "link" : "https://stackoverflow.com/users/5341306/imran-khan"
+      },
+      "creation_date" : 1750549548,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140532260,
+      "post_id" : 79674493,
+      "body" : "@valerii Log this inside your preSend() for debugging, If both show a valid Authentication, then your &#39;@PreAuthorize&#39; will start working  System.out.println(&quot;User: &quot; + accessor.getUser());  System.out.println(&quot;SecurityContextHolder: &quot; + SecurityContextHolder.getContext().getAuthentication());",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 6962218,
+        "reputation" : 442,
+        "user_id" : 5341306,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/8rhmy.jpg?s=256",
+        "display_name" : "Imran.Khan",
+        "link" : "https://stackoverflow.com/users/5341306/imran-khan"
+      },
+      "creation_date" : 1750548921,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140532246,
+      "post_id" : 79674493,
+      "body" : "I did as you recommended, created a method for validateToken and still gives the same error. Authentication and everything else works fine on the server. I wrote the logs below from deployed server",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 29116701,
+        "reputation" : 13,
+        "user_id" : 22305263,
+        "user_type" : "registered",
+        "profile_image" : "https://lh3.googleusercontent.com/a/AAcHTtf56ZPQC9clAaqyVbIIl-RJ84z-GbFgA7EoG9koN1vE=k-s256",
+        "display_name" : "valerii",
+        "link" : "https://stackoverflow.com/users/22305263/valerii"
+      },
+      "creation_date" : 1750548416,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140532202,
+      "post_id" : 79674493,
+      "body" : "@valerii preSend method has been updated please check. Clear the context after handling, in your &quot;@MessageMapping&quot; method or using a ThreadLocalSecurityContextHolderStrategy cleanup mechanism.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 6962218,
+        "reputation" : 442,
+        "user_id" : 5341306,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/8rhmy.jpg?s=256",
+        "display_name" : "Imran.Khan",
+        "link" : "https://stackoverflow.com/users/5341306/imran-khan"
+      },
+      "creation_date" : 1750545532,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140532125,
+      "post_id" : 79674493,
+      "body" : "this is websocketConfig: <a href=\"https://github.com/engly817chat/engly-server/blob/main/src/main/java/com/engly/engly_server/config/websocket/WebSocketConfig.java\" rel=\"nofollow noreferrer\">github.com/engly817chat/engly-server/blob/main/src/main/java&zwnj;&#8203;/&hellip;</a>",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 29116701,
+        "reputation" : 13,
+        "user_id" : 22305263,
+        "user_type" : "registered",
+        "profile_image" : "https://lh3.googleusercontent.com/a/AAcHTtf56ZPQC9clAaqyVbIIl-RJ84z-GbFgA7EoG9koN1vE=k-s256",
+        "display_name" : "valerii",
+        "link" : "https://stackoverflow.com/users/22305263/valerii"
+      },
+      "creation_date" : 1750540766,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140532119,
+      "post_id" : 79674493,
+      "body" : "Hello! Thanks for the solution suggestion, but I did everything as you said and still the same error. Can you please look in the git, what could be wrong?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 29116701,
+        "reputation" : 13,
+        "user_id" : 22305263,
+        "user_type" : "registered",
+        "profile_image" : "https://lh3.googleusercontent.com/a/AAcHTtf56ZPQC9clAaqyVbIIl-RJ84z-GbFgA7EoG9koN1vE=k-s256",
+        "display_name" : "valerii",
+        "link" : "https://stackoverflow.com/users/22305263/valerii"
+      },
+      "creation_date" : 1750540459,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

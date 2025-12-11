@@ -1,0 +1,92 @@
+{
+  "question" : {
+    "question_id" : 79622819,
+    "title" : "How to dynamically invoke a method with a POJO parameter using ArgumentConvertingMethodInvoker when a Map is actually provided as argument?",
+    "body" : "<p>I'm trying to dynamically invoke a method using Spring's <code>ArgumentConvertingMethodInvoker</code>, where the method expects a POJO (e.g., <code>UserDTO</code>), but the arguments I'm passing in are <code>Map&lt;String, Object&gt;</code> representations of that POJO (e.g., deserialized from JSON).</p>\n<p>Ideally, I’d like this map-to-bean conversion to be handled automatically.</p>\n<p>Here’s the configuration class I’m using to describe the invocation:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class MethodInvokeConfig {\n    /** Name of the Spring bean to be invoked */\n    private String beanName;\n\n    /**\n     * Fully qualified class name (used when beanName is not provided).\n     * If `staticMethod` is false (default), the method is invoked on an instance:\n     *  - If beanName is missing, the class will be looked up from the context or instantiated.\n     * If `staticMethod` is true, the method is invoked statically via Class.\n     */\n    private String className;\n\n    /** Method name to invoke */\n    private String methodName;\n\n    /**\n     * Whether the method is static (optional).\n     * If false but the method is actually static, invocation can still succeed\n     * if the method name is unique.\n     */\n    private boolean staticMethod;\n\n    /** Arguments to pass to the method */\n    private List&lt;Object&gt; args;\n\n    /**\n     * Explicit argument type names, used to disambiguate overloaded methods.\n     */\n    private List&lt;String&gt; argTypes;\n    \n}\n</code></pre>\n<p>I want to dynamically invoke some methods like the following:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public String processUserDto(UserDTO user);\n</code></pre>\n<p>However, in my <code>MethodInvokeConfig</code>, the argument list contains a single <code>Map&lt;String, Object&gt;</code> representing a <code>UserDTO</code>:</p>\n<pre class=\"lang-json prettyprint-override\"><code>{\n    &quot;beanName&quot;: &quot;paramTestService&quot;,\n    &quot;methodName&quot;: &quot;processUserDto&quot;,\n    &quot;args&quot;: [\n        {\n            &quot;name&quot;: &quot;andrew&quot;,\n            &quot;age&quot;: 30,\n            &quot;email&quot;: &quot;lisi@example.com&quot;,\n            &quot;balance&quot;: 2500.75\n        }\n    ]\n}\n</code></pre>\n<p>The dynamic invoker fails with:</p>\n<pre><code>Caused by: java.lang.NoSuchMethodException: ParamTestService.processUserDto(java.util.LinkedHashMap)\n</code></pre>\n<p>This makes sense, since it’s trying to match the method based on the raw runtime type (<code>Map</code>) instead of converting it to <code>UserDTO</code>.</p>\n<h3>What I've tried:</h3>\n<p>I attempted to manually set up <code>ArgumentConvertingMethodInvoker</code> using Spring’s built-in <code>BeanWrapperImpl</code> as a <code>TypeConverter</code>:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public static Object invoke(MethodInvokeConfig config) {\n    try {\n        ArgumentConvertingMethodInvoker invoker = new ArgumentConvertingMethodInvoker();\n        BeanWrapperImpl typeConverter = new BeanWrapperImpl();\n        invoker.setTypeConverter(typeConverter);\n\n        if (config.isStaticMethod()) {\n            invoker.setStaticMethod(config.getClassName() + &quot;.&quot; + config.getMethodName());\n        } else {\n            Object target = resolveTarget(config);\n            invoker.setTargetObject(target);\n            invoker.setTargetMethod(config.getMethodName());\n        }\n\n        if (CollectionUtils.isNotEmpty(config.getArgs())) {\n            invoker.setArguments(config.getArgs().toArray());\n        }\n\n        invoker.prepare();  // method resolution\n        return invoker.invoke();\n    } catch (Exception e) {\n        throw new RuntimeException(&quot;Method invocation failed&quot;, e);\n    }\n}\n</code></pre>\n<p>Unfortunately, this does <strong>not</strong> work — the method matching still fails because the argument remains a raw <code>Map</code>.</p>\n<hr />\n<h3>✅ What I’m looking for:</h3>\n<p>I would like to achieve <strong>automatic conversion from a <code>Map&lt;String, Object&gt;</code> to a POJO type (e.g., <code>UserDTO</code>)</strong>, during method resolution or just before invocation, with as <strong>little custom conversion logic as possible</strong>.</p>\n<p>Is there a way to configure Spring’s <code>ArgumentConvertingMethodInvoker</code>, or use another utility like <code>BeanWrapper</code>, <code>ConversionService</code>, or similar, to handle this map-to-bean conversion transparently?</p>\n<p>Alternatively, should I manually convert the arguments before calling <code>setArguments()</code>? What would be the cleanest and most Spring-aligned way to plug in such logic?</p>\n<hr />\n<h3>✅ Test case (for reference):</h3>\n<pre class=\"lang-java prettyprint-override\"><code>@Test\npublic void testInvokeWithDtoParam() throws IOException {\n    String jsonConfig = loadJsonConfig(&quot;method_invoke_dto_config.json&quot;);\n    MethodInvokeConfig config = JacksonUtils.fromJSONString(jsonConfig, MethodInvokeConfig.class);\n    Object result = MethodInvokeUtils.invoke(config);\n    Assert.assertTrue(result.toString().contains(&quot;John&quot;));\n}\n</code></pre>\n<hr />\n<h3>✅ Related method signature:</h3>\n<pre class=\"lang-java prettyprint-override\"><code>public String processUserDto(UserDTO user);\n</code></pre>\n<p>And the DTO:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class UserDTO {\n    private String name;\n    private int age;\n    private String email;\n    private BigDecimal balance;\n\n    @Override\n    public String toString() {\n        return &quot;User[name=&quot; + name + &quot;, age=&quot; + age + &quot;, email=&quot; + email + &quot;, balance=&quot; + balance + &quot;]&quot;;\n    }\n}\n</code></pre>\n<hr />\n<p>Let me know if you’d like me to also prepare a <strong>full minimal reproducible example</strong> to post with this.</p>\n",
+    "tags" : [ "java", "spring", "reflection", "type-conversion", "spring-bean" ],
+    "owner" : {
+      "account_id" : 26188979,
+      "reputation" : 13,
+      "user_id" : 19871119,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/AItbvmnbt4fRP-zJDCp3k6beZSB8kqBFIfSxXmF0E9Jw=k-s256",
+      "display_name" : "kai kang",
+      "link" : "https://stackoverflow.com/users/19871119/kai-kang"
+    },
+    "is_answered" : false,
+    "view_count" : 47,
+    "answer_count" : 0,
+    "score" : 0,
+    "last_activity_date" : 1747293834,
+    "creation_date" : 1747293834,
+    "link" : "https://stackoverflow.com/questions/79622819/how-to-dynamically-invoke-a-method-with-a-pojo-parameter-using-argumentconvertin",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140431096,
+    "post_id" : 79622819,
+    "body" : "@M.Deinum Okay, I&#39;ve now accepted that I need to preprocess the parameter types in advance, and I&#39;ve already modified the code accordingly. The reason I need to perform dynamic method invocation is that I received a requirement to orchestrate a business process through some form of textual configuration. This configuration includes information about the beans and methods that provide data, and it may change over time.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 26188979,
+      "reputation" : 13,
+      "user_id" : 19871119,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/AItbvmnbt4fRP-zJDCp3k6beZSB8kqBFIfSxXmF0E9Jw=k-s256",
+      "display_name" : "kai kang",
+      "link" : "https://stackoverflow.com/users/19871119/kai-kang"
+    },
+    "creation_date" : 1747374365,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140427915,
+    "post_id" : 79622819,
+    "body" : "You would first need to find the method, inspect the type. When you have the type you can use Jackson (I assume) to convert the map into a DTO and then dynamically call the method. However feels like a lot of work to actually invoke a method which you kind of already know how to call, how else would you be able to create the JSON to dynamically invoke the method?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126800,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1747298149,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140427825,
+    "post_id" : 79622819,
+    "body" : "@M.Deinum Thank you for taking the time to read my question.There’s an argTypes field intended for disambiguation when there are overloaded methods like <code>someMethod(Foo)</code> and <code>someMethod(Bar)</code>. In such cases, I can explicitly specify parameter types to select the correct method. However, in most scenarios—when the method name and argument count are unique—I’d prefer the arguments (e.g., a Map) to be automatically converted to match the target parameter type.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 26188979,
+      "reputation" : 13,
+      "user_id" : 19871119,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/AItbvmnbt4fRP-zJDCp3k6beZSB8kqBFIfSxXmF0E9Jw=k-s256",
+      "display_name" : "kai kang",
+      "link" : "https://stackoverflow.com/users/19871119/kai-kang"
+    },
+    "creation_date" : 1747296479,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140427788,
+    "post_id" : 79622819,
+    "body" : "You would need to convert to the proper type before trying to call the method. There is no way you would be able to do this automatically. What would yu convert it to if you had <code>someMethod(Foo)</code> and <code>someMethod(Bar)</code>? You could make it a bit magical if there would be a single method but then what would be purpose be of a dynamic method invocation in the first place.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126800,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1747295868,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

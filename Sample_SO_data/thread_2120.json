@@ -1,0 +1,46 @@
+{
+  "question" : {
+    "question_id" : 79645066,
+    "title" : "software.amazon.awssdk.services.s3.model.S3Exception: The provided content-sha256 does not match what was computed",
+    "body" : "<p>At first, everything was normal, getObject was executed successfully, and the return was obtained correctly. However, it failed at the upload step, and the error message was reported: software.amazon.awssdk.services.s3.model.S3Exception: The provided content-sha256 does not match what was computed. Service: S3, Status Code: 400, Request ID: 9a4c01384f828f2c68384f82-ac16ba4b-1uKc8w-PuO-as1-tos-front-azb-2, Extended Request ID: 9a4c01384f828f2c68384f82-ac16ba4b-1uKc8w-PuO-as1-tos-front-azb-2</p>\n<pre><code>@Slf4j\npublic class S3TosClientImpl\n        implements ITosClient&lt;S3Client, ResponseInputStream&lt;GetObjectResponse&gt;&gt; {\n    private S3Client client;\n    private S3TransferManager transferManager;\n    private ExecutorService threadPool;\n    \n    public void test() {\n        this.client =\n                S3Client.builder()\n                        .region(Region.of(&quot;region&quot;))\n                        .credentialsProvider(\n                                StaticCredentialsProvider.create(\n                                        AwsBasicCredentials.create(&quot;ak&quot;, &quot;sk&quot;)))\n                        .forcePathStyle(false)\n                        .endpointOverride(URI.create(&quot;https://test_bucket.endpoint&quot;))\n                        .build();\n        S3AsyncClient asyncClient =\n                S3AsyncClient.builder()\n                        .region(Region.of(&quot;region&quot;))\n                        .credentialsProvider(\n                                StaticCredentialsProvider.create(\n                                        AwsBasicCredentials.create(&quot;ak&quot;, &quot;sk&quot;)))\n                        .forcePathStyle(false)\n                        .endpointOverride(URI.create(&quot;https://test_bucket.endpoint&quot;))\n                        .multipartConfiguration(\n                                MultipartConfiguration.builder()\n                                        .minimumPartSizeInBytes((long) (5 * 1024 * 1024))\n                                        .build())\n                        .build();\n        this.transferManager = S3TransferManager.builder().s3Client(asyncClient).build();\n        this.threadPool = Executors.newFixedThreadPool(10);\n\n        GetObjectRequest req =\n                GetObjectRequest.builder()\n                        .bucket(&quot;test_bucket&quot;)\n                        .key(&quot;test_object&quot;)\n                        .build();\n        ResponseInputStream&lt;GetObjectResponse&gt; resp = this.client.getObject(req);\n\n        PutObjectRequest putObjReq =\n                PutObjectRequest.builder()\n                        .bucket(&quot;test_bucket&quot;)\n                        .key(&quot;test_object&quot;)\n                        .build();\n        AsyncRequestBody reqBody =\n                AsyncRequestBody.fromInputStream(\n                        resp, resp.response().contentLength(), this.threadPool);\n        this.transferManager\n                .upload(\n                        UploadRequest.builder()\n                                .putObjectRequest(putObjReq)\n                                .requestBody(reqBody)\n                                .build())\n                .completionFuture()\n                .join();\n    }\n}\n\n</code></pre>\n<p>I searched a lot for solutions to 400 errors but none of them worked, blocking me for a day.</p>\n",
+    "tags" : [ "java", "amazon-s3", "sha256" ],
+    "owner" : {
+      "account_id" : 19560475,
+      "reputation" : 31,
+      "user_id" : 14313806,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/27bbd73f7b2794f5f6f6d597f1a140c5?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "ITTTTJH",
+      "link" : "https://stackoverflow.com/users/14313806/ittttjh"
+    },
+    "is_answered" : true,
+    "view_count" : 629,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1748591102,
+    "creation_date" : 1748590578,
+    "link" : "https://stackoverflow.com/questions/79645066/software-amazon-awssdk-services-s3-model-s3exception-the-provided-content-sha25",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79645069,
+    "question_id" : 79645066,
+    "body" : "<p>I resolved this problem and now uploads work fine. But I don't understand why this works.\nAny string in checksumSHA256 will work as long as it is not an empty string</p>\n<pre><code>        PutObjectRequest putObjReq =\n                PutObjectRequest.builder()\n                        .bucket(&quot;test_bucket&quot;)\n                        .key(&quot;test_object&quot;)\n                        // The parameters in checksumSHA256 are meaningless, as long as they are not\n                        // empty strings, they are OK\n                        .checksumSHA256(&quot;SIGNED-PAYLOAD&quot;)\n                        .build();\n</code></pre>\n<p>Many DEBUG logs are printed, and the changes can be observed here.</p>\n<p>before add &quot;checksumSHA256&quot;</p>\n<pre><code>AWS4 Canonical Request: PUT\n/java_test/test_json.json\n\namz-sdk-request:attempt=1; max=4\ncontent-encoding:aws-chunked\ncontent-length:114\ncontent-type:application/octet-stream\nhost:xxxxxxxxx\nx-amz-content-sha256:STREAMING-UNSIGNED-PAYLOAD-TRAILER\nx-amz-date:20250530T074216Z\nx-amz-decoded-content-length:72\nx-amz-sdk-checksum-algorithm:CRC32\nx-amz-trailer:x-amz-checksum-crc32\n</code></pre>\n<p>after add &quot;checksumSHA256&quot;</p>\n<pre><code>AWS4 Canonical Request: PUT\n/java_test/test_json.json\n\namz-sdk-request:attempt=1; max=4\ncontent-length:72\ncontent-type:application/octet-stream\nhost:xxxxxxxxx\nx-amz-checksum-sha256:SIGNED-PAYLOAD\nx-amz-content-sha256:UNSIGNED-PAYLOAD\nx-amz-date:20250530T070717Z\n</code></pre>\n",
+    "score" : 5,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 19560475,
+      "reputation" : 31,
+      "user_id" : 14313806,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/27bbd73f7b2794f5f6f6d597f1a140c5?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "ITTTTJH",
+      "link" : "https://stackoverflow.com/users/14313806/ittttjh"
+    },
+    "creation_date" : 1748590725,
+    "last_activity_date" : 1748591102,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : { }
+}

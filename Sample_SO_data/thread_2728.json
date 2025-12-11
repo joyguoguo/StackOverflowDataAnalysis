@@ -1,0 +1,44 @@
+{
+  "question" : {
+    "question_id" : 79599113,
+    "title" : "ClickHouse JDBC Bridge: &quot;Connection was closed&quot; errors with long-running SQL Server queries",
+    "body" : "<p>I'm experiencing persistent timeout issues when connecting ClickHouse (v25.2.2.39) to SQL Server through the ClickHouse JDBC Bridge (v2.1.0).</p>\n<p>Simple queries work fine: SELECT * FROM jdbc('DWH', 'SELECT 1 AS first;')</p>\n<p>Complex queries with large result sets work fine: SELECT * FROM jdbc('DWH', 'SELECT TOP 10000 a.* FROM sys.objects a JOIN sys.columns b ON a.object_id = b.object_id')</p>\n<p>Any query that takes more than a 30 seconds to execute consistently fails with: VertxException: Connection was closed</p>\n<p><strong>Error from logs</strong>:</p>\n<pre><code> Apr 29, 2025 11:24:22 PM com.clickhouse.jdbcbridge.core.ResponseWriter write\nApr 29 23:24:22 dwh-unapp-01 java[3575064]: WARNING: Still have at least 24 bytes in buffer\nApr 29 23:24:22 dwh-unapp-01 java[3575064]: Apr 29, 2025 11:24:22 PM com.clickhouse.jdbcbridge.JdbcBridgeVerticle errorHandler\nApr 29 23:24:22 dwh-unapp-01 java[3575064]: SEVERE: Failed to respond\nApr 29 23:24:22 dwh-unapp-01 java[3575064]: java.lang.IllegalStateException: Response stream was closed\nApr 29 23:24:22 dwh-unapp-01 java[3575064]:         at com.clickhouse.jdbcbridge.core.ResponseWriter.write(ResponseWriter.java:68)\nApr 29 23:24:22 dwh-unapp-01 java[3575064]:         at com.clickhouse.jdbcbridge.core.DataTableReader.process(DataTableReader.java:187)\nApr 29 23:24:22 dwh-unapp-01 java[3575064]:         at com.clickhouse.jdbcbridge.impl.JdbcDataSource.writeQueryResult(JdbcDataSource.java:720)\nApr 29 23:24:22 dwh-unapp-01 java[3575064]:         at com.clickhouse.jdbcbridge.core.NamedDataSource.executeQuery(NamedDataSource.java:552)\nApr 29 23:24:22 dwh-unapp-01 java[3575064]:         at com.clickhouse.jdbcbridge.JdbcBridgeVerticle.handleQuery(JdbcBridgeVerticle.java:492)\nApr 29 23:24:22 dwh-unapp-01 java[3575064]:         at com.clickhouse.jdbcbridge.internal.vertx.ext.web.impl.BlockingHandlerDecorator.lambda$handle$0(BlockingHandlerDecorator.java:48)\nApr 29 23:24:22 dwh-unapp-01 java[3575064]:         at com.clickhouse.jdbcbridge.internal.vertx.core.impl.ContextImpl.lambda$executeBlocking$2(ContextImpl.java:313)\nApr 29 23:24:22 dwh-unapp-01 java[3575064]:         at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1144)\nApr 29 23:24:22 dwh-unapp-01 java[3575064]:         at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:642)\nApr 29 23:24:22 dwh-unapp-01 java[3575064]:         at com.clickhouse.jdbcbridge.internal.netty.util.concurrent.FastThreadLocalRunnable.run(FastThreadLocalRunnable.java:30)\nApr 29 23:24:22 dwh-unapp-01 java[3575064]:         at java.base/java.lang.Thread.run(Thread.java:1583)\n</code></pre>\n<p><strong>What I've tried</strong>:</p>\n<p>Increased timeout values in JDBC Bridge configuration:</p>\n<pre><code>&quot;DWH&quot;: {\n&quot;jdbcUrl&quot;: &quot;jdbc:sqlserver://server:1433;encrypt=true;trustServerCertificate=true;queryTimeout=600;socketTimeout=600000;loginTimeout=60;...&quot;,\n&quot;settings&quot;: {\n  &quot;vertx.workerPoolSize&quot;: 20,\n  &quot;vertx.blockingThreadCheckInterval&quot;: 100000,\n  &quot;vertx.maxWorkerExecuteTime&quot;: 600000,\n  &quot;vertx.maxWorkerExecuteTimeUnit&quot;: &quot;MILLISECONDS&quot;\n},\n&quot;queryTimeout&quot;: 600000,\n&quot;writeTimeout&quot;: 600000\n</code></pre>\n<p>Commented out the timeout check in ResponseWriter.java that was throwing &quot;Abort due to timeout&quot; exceptions</p>\n<pre><code>public void write(ByteBuffer buffer) {\nif (this.response.closed() || this.response.ended()) {\n    if (buffer != null &amp;&amp; buffer.length() &gt; 0) {\n        log.warn(&quot;Still have at least {} bytes in buffer&quot;, buffer.length());\n    }\n    throw new IllegalStateException(&quot;Response stream was closed&quot;);\n}\n// Commented out: if (this.timeout &gt; 0 &amp;&amp; ((System.currentTimeMillis() - this.startTime) &gt; this.timeout)) {\n//                throw new IllegalStateException(&quot;Abort due to timeout&quot;);\n// }\nthis.response.write(buffer.unwrap());\n}\n</code></pre>\n<p>Added ClickHouse HTTP timeouts:</p>\n<pre><code>    &lt;profiles&gt;\n  &lt;default&gt;\n    &lt;http_connection_timeout&gt;0&lt;/http_connection_timeout&gt;\n    &lt;http_receive_timeout&gt;0&lt;/http_receive_timeout&gt;\n    &lt;max_execution_time&gt;600&lt;/max_execution_time&gt;\n    &lt;http_max_tries&gt;5&lt;/http_max_tries&gt;\n    &lt;http_retry_initial_backoff_ms&gt;100&lt;/http_retry_initial_backoff_ms&gt;\n    &lt;http_retry_max_backoff_ms&gt;10000&lt;/http_retry_max_backoff_ms&gt;\n    &lt;http_send_timeout&gt;600&lt;/http_send_timeout&gt;\n    &lt;receive_timeout&gt;600&lt;/receive_timeout&gt;\n    &lt;send_timeout&gt;600&lt;/send_timeout&gt;\n  &lt;/default&gt;\n&lt;/profiles&gt;\n</code></pre>\n<p>Despite all these changes, I still consistently get &quot;Connection was closed&quot; errors. The logs show the connection is being closed by the Vertx HTTP server or client, but I can't figure out what's causing it.\nLooking at the error stack trace, it seems the error is occurring in JdbcBridgeVerticle.lambda$responseHandlers$3, which suggests it's happening in a response handler callback.\n<strong>What else should I try?</strong></p>\n<ul>\n<li>Is there a hardcoded timeout in Vertx's HTTP implementation that I'm missing?</li>\n<li>Could the Apache HTTP Client settings make a difference?</li>\n<li>Are there any known issues with the JDBC bridge and long-running queries?</li>\n</ul>\n<p>Any insight would be greatly appreciated!</p>\n<p><strong>Environment:</strong></p>\n<ul>\n<li>ClickHouse version: 25.2.2.39</li>\n<li>ClickHouse JDBC Bridge: 2.1.0</li>\n<li>SQL Server: Microsoft SQL Server 2019</li>\n<li>Java: OpenJDK 21.0.6</li>\n<li>Operating System: Ubuntu 24.04</li>\n</ul>\n",
+    "tags" : [ "java", "sql-server", "jdbc", "timeout", "clickhouse" ],
+    "owner" : {
+      "account_id" : 41691453,
+      "reputation" : 21,
+      "user_id" : 30406873,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/8078ecd1724161070df5a2d1452e9226?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Stneick",
+      "link" : "https://stackoverflow.com/users/30406873/stneick"
+    },
+    "is_answered" : false,
+    "view_count" : 118,
+    "answer_count" : 0,
+    "score" : 2,
+    "last_activity_date" : 1745955990,
+    "creation_date" : 1745955990,
+    "link" : "https://stackoverflow.com/questions/79599113/clickhouse-jdbc-bridge-connection-was-closed-errors-with-long-running-sql-ser",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140427210,
+    "post_id" : 79599113,
+    "body" : "There are more timeout settings to try, such as keep_alive_timeout, which defaults to 30s.   Check the settings under the &quot;Timeout&quot; bullet point -  <a href=\"https://github.com/ClickHouse/clickhouse-jdbc-bridge?tab=readme-ov-file#configuration\" rel=\"nofollow noreferrer\">github.com/ClickHouse/&hellip;</a>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1370666,
+      "reputation" : 490,
+      "user_id" : 1305959,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/434b8f4a61d2d5a72ed8a83072023fc9?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Derek Chia",
+      "link" : "https://stackoverflow.com/users/1305959/derek-chia"
+    },
+    "creation_date" : 1747277485,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

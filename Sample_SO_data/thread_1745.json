@@ -1,0 +1,117 @@
+{
+  "question" : {
+    "question_id" : 79678643,
+    "title" : "Ehcache consuming all available memory (JGroups)",
+    "body" : "<p>My setup:</p>\n<p>two tomcats, both running the same application\nan Nginx that distributes the load between those two tomcats</p>\n<p>On the two tomcats, there is the exact same application (jsf web application).\nThe application is using ehcache with jgroups so that one tomcat can notify the other about cache changes.</p>\n<p>Now here is the problem:\nThe applications is working fine, ehcache sends the changes to the other tomcat and the other tomcat applies those changes.</p>\n<p>But, <strong>after some time, my tomcat servers slowly consume all of the available memory</strong>.\nI've created a heap dump and the heap dump showed me the following stack trace which consumes so much memory.\nIt looks like a single byte array instance is consuming 1,6GB.</p>\n<pre><code>Connection.Receiver [11.130.1.175:40014 - 11.130.1.175:40014],EH_CACHE,TOMCAT_1-26339\n  at java.net.SocketInputStream.socketRead0(Ljava/io/FileDescriptor;[BIII)I (SocketInputStream.java(Native Method))\n  at java.net.SocketInputStream.socketRead(Ljava/io/FileDescriptor;[BIII)I (SocketInputStream.java:116)\n  at java.net.SocketInputStream.read([BIII)I (SocketInputStream.java:171)\n  at java.net.SocketInputStream.read([BII)I (SocketInputStream.java:141)\n  at java.io.BufferedInputStream.read1([BII)I (BufferedInputStream.java:284)\n  at java.io.BufferedInputStream.read([BII)I (BufferedInputStream.java:345)\n  at java.io.DataInputStream.readFully([BII)V (DataInputStream.java:195)\n  at org.jgroups.blocks.TCPConnectionMap$TCPConnection$ConnectionPeerReceiver.run()V (TCPConnectionMap.java:595)\n  at java.lang.Thread.run()V (Thread.java:750)\n</code></pre>\n<p><em><strong>maybe someone has an idea how to debug or what could be the cause?</strong></em></p>\n<p>my (truncated) nginx.conf</p>\n<pre><code>http {      \n\n    server_tokens off ;\n\n    include /etc/nginx/mime.types;\n    default_type application/octet-stream;\n\n    set_real_ip_from  192.168.0.0/16;\n    set_real_ip_from  11.0.0.0/8;\n    set_real_ip_from  174.16.0.0/16;\n    real_ip_header    X-Forwarded-For;\n    real_ip_recursive on;\n\n    log_format main\n        '$scheme - $remote_addr '\n        '$http_x_forwarded_for - $remote_user [$time_local] '\n        '$request $status $bytes_sent ' '$http_referer $http_user_agent ' '$gzip_ratio' ;\n            \n    client_header_timeout 11m;\n    client_body_timeout 11m;\n    send_timeout 11m;\n    client_max_body_size 50m;\n    client_body_buffer_size 11m;\n\n    sendfile on;\n    tcp_nopush on;\n    tcp_nodelay on;\n\n    keepalive_timeout 75 20;\n    ignore_invalid_headers on;       \n    \n    map $http_upgrade $connection_upgrade {\n        default upgrade;\n        '' close;\n}\n\nmap $upstream_addr        $group {\n    default               &quot;&quot;;\n\n~TOMCAT_1:80$ common; ~TOMCAT_2:80$ common;\n}\n\nupstream default_upstream{\n\n    server TOMCAT_1; \n    server TOMCAT_2;\n\nsticky path=/; \nkeepalive 64;}\n\ninclude /etc/nginx/conf.d/*.conf;\n\n}\n</code></pre>\n<p>The ehcache.xml, it is the exact same for both tomcat servers. They can reach each other on port 40000-40100, multicast is not possible due to network limitations.</p>\n<pre><code>&lt;ehcache xmlns:xsi=&quot;http://www.w3.org/2001/XMLSchema-instance&quot;\nxsi:noNamespaceSchemaLocation=&quot;http://ehcache.org/ehcache.xsd&quot;\nmonitoring=&quot;autodetect&quot; dynamicConfig=&quot;true&quot; updateCheck=&quot;false&quot;&gt;\n\n&lt;!-- Disk Store configuration --&gt;\n&lt;diskStore path=&quot;java.io.tmpdir/ehcache&quot; /&gt;\n\n&lt;cacheManagerPeerProviderFactory\n    class=&quot;net.sf.ehcache.distribution.jgroups.JGroupsCacheManagerPeerProviderFactory&quot;\n    properties=&quot;connect=TCP(\n                   bind_port=40001;\n                   port_range=30;\n                   enable_diagnostics=false):\n       TCPPING(initial_hosts=TOMCAT_1[40001],TOMCAT_2[40001];\n               port_range=30;\n               num_initial_members=1;\n               ergonomics=false):\n       FD_ALL:\n       VERIFY_SUSPECT:\n       MERGE3:\n       pbcast.NAKACK2(use_mcast_xmit=false):\n       UNICAST2:\n       pbcast.STABLE:\n       pbcast.GMS(view_bundling=true;\n                 print_local_addr=true;\n                 log_view_warnings=true):\n       UFC(max_credits=4M):\n       MFC(max_credits=4M):\n       FRAG2:\n       pbcast.STATE_TRANSFER&quot;\n    propertySeparator=&quot;::&quot; /&gt;\n\n&lt;cache name=&quot;org.hibernate.cache.UpdateTimestampsCache&quot;\n    maxElementsInMemory=&quot;100000&quot; eternal=&quot;true&quot; overflowToDisk=&quot;false&quot;\n    diskPersistent=&quot;false&quot; timeToIdleSeconds=&quot;0&quot; timeToLiveSeconds=&quot;0&quot;\n    statistics=&quot;false&quot;&gt;\n    &lt;cacheEventListenerFactory\n        class=&quot;net.sf.ehcache.distribution.jgroups.JGroupsCacheReplicatorFactory&quot;\n        properties=&quot;replicateAsynchronously=true,\n            replicatePuts=true,\n            replicateUpdates=true,\n            replicateUpdatesViaCopy=true,\n            replicatePutsViaCopy=true,\n            replicateRemovals=false&quot; /&gt;\n&lt;/cache&gt;\n\n&lt;cache name=&quot;org.hibernate.cache.StandardQueryCache&quot;\n    maxElementsInMemory=&quot;100000&quot; eternal=&quot;false&quot; overflowToDisk=&quot;false&quot;\n    diskPersistent=&quot;false&quot; timeToIdleSeconds=&quot;600&quot; timeToLiveSeconds=&quot;600&quot;\n    statistics=&quot;false&quot;&gt;\n&lt;/cache&gt;\n\n&lt;defaultCache maxElementsInMemory=&quot;100000&quot; eternal=&quot;false&quot;\n    overflowToDisk=&quot;false&quot; diskPersistent=&quot;false&quot; timeToIdleSeconds=&quot;600&quot;\n    timeToLiveSeconds=&quot;600&quot; statistics=&quot;false&quot;&gt;\n        &lt;cacheEventListenerFactory\n        class=&quot;net.sf.ehcache.distribution.jgroups.JGroupsCacheReplicatorFactory&quot;\n        properties=&quot;replicateAsynchronously=true,\n            replicatePuts=false,\n            replicateUpdates=true,\n            replicateUpdatesViaCopy=false,\n            replicatePutsViaCopy=false,\n            replicateRemovals=false&quot; /&gt;\n&lt;/defaultCache&gt;\n</code></pre>\n\n<p><a href=\"https://i.sstatic.net/kECUngub.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/kECUngub.png\" alt=\"enter image description here\" /></a>\n<a href=\"https://i.sstatic.net/AJZ6J3g8.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/AJZ6J3g8.png\" alt=\"enter image description here\" /></a></p>\n<p>ehcache version 2.6.9 (can't change that)\njgroups 3.4.3\ntomcat 9</p>\n<p><strong>UPDATE</strong>\nI've noticed that the heap dump always has the same port for\nConnection.Receiver [11.130.1.175:xyz- 11.130.1.175:xyz]\nxyz is a port were nothing is running (i only want to dynamically be able to start other tomcats which should then use one of those)</p>\n<p>The Code that creates the thread name</p>\n<pre><code>//org.jgroups.blocks.TCPConnectionMap.TCPConnection.getSockAddress()\nprotected String getSockAddress() {\n    StringBuilder sb=new StringBuilder();\n    if(sock != null) {\n        sb.append(sock.getLocalAddress().getHostAddress()).append(':').append(sock.getLocalPort());\n        sb.append(&quot; - &quot;).append(sock.getInetAddress().getHostAddress()).append(':').append(sock.getPort());\n    }\n    return sb.toString();\n}\n</code></pre>\n<p><em><strong>So it looks like jgroups is trying (or actually connecting) a connection from :xyz to :xyz, so the member is sending stuff to itself.</strong></em></p>\n",
+    "tags" : [ "java", "tomcat", "ehcache", "jgroups" ],
+    "owner" : {
+      "account_id" : 9067171,
+      "reputation" : 1165,
+      "user_id" : 6751603,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://lh3.googleusercontent.com/-pK0SwpBZzdc/AAAAAAAAAAI/AAAAAAAAABk/88ey4CNFUnI/s256-rj/photo.jpg",
+      "display_name" : "JavaMan",
+      "link" : "https://stackoverflow.com/users/6751603/javaman"
+    },
+    "is_answered" : false,
+    "view_count" : 132,
+    "answer_count" : 2,
+    "score" : 0,
+    "last_activity_date" : 1751464681,
+    "creation_date" : 1750837412,
+    "link" : "https://stackoverflow.com/questions/79678643/ehcache-consuming-all-available-memory-jgroups",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79686978,
+    "question_id" : 79678643,
+    "body" : "<p>My first impression was that 100.000 objects can be a lot, try to reduce it to something absurd like 1000 and see if it reproduces. Also you are not overflowing to disk (overflowToDisk=false), that is a hard limit to swapping which would explain the OOM error. Don't use eternal=&quot;true&quot; unless you know very well the amount and size of objects you are storing, you are preventing the cache from cleaning up less used objects. Also remember to check -Xmx and -Xms in the JVM.</p>\n<p>With the information you provide seems more like a code companion (IA) resoluble question.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 173785,
+      "reputation" : 1046,
+      "user_id" : 402723,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Q8TPb.jpg?s=256",
+      "display_name" : "Raul Lapeira Herrero",
+      "link" : "https://stackoverflow.com/users/402723/raul-lapeira-herrero"
+    },
+    "creation_date" : 1751440309,
+    "last_activity_date" : 1751440309,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79687203,
+    "question_id" : 79678643,
+    "body" : "<p><strong>This situation seems to be a problem of JGroups message backlog</strong></p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 30834112,
+      "reputation" : 31,
+      "user_id" : 23655295,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/atj3d.jpg?s=256",
+      "display_name" : "nicolas van",
+      "link" : "https://stackoverflow.com/users/23655295/nicolas-van"
+    },
+    "creation_date" : 1751449508,
+    "last_activity_date" : 1751449508,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79687203" : [ {
+      "comment_id" : 140568746,
+      "post_id" : 79687203,
+      "body" : "@RaulLapeiraHerrero I used different ports, and the port that is in the stack trace is always inside the range that I&#39;m theoretically using (so 40001-40030)",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 9067171,
+        "reputation" : 1165,
+        "user_id" : 6751603,
+        "user_type" : "registered",
+        "accept_rate" : 100,
+        "profile_image" : "https://lh3.googleusercontent.com/-pK0SwpBZzdc/AAAAAAAAAAI/AAAAAAAAABk/88ey4CNFUnI/s256-rj/photo.jpg",
+        "display_name" : "JavaMan",
+        "link" : "https://stackoverflow.com/users/6751603/javaman"
+      },
+      "creation_date" : 1751819541,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140561176,
+      "post_id" : 79687203,
+      "body" : "@JavaMan That port can be ephemerous one... that would explain you don&#39;t info about it, seems like a bad lead",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 173785,
+        "reputation" : 1046,
+        "user_id" : 402723,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/Q8TPb.jpg?s=256",
+        "display_name" : "Raul Lapeira Herrero",
+        "link" : "https://stackoverflow.com/users/402723/raul-lapeira-herrero"
+      },
+      "creation_date" : 1751530713,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140558764,
+      "post_id" : 79687203,
+      "body" : "not sure (see Update of my question)",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 9067171,
+        "reputation" : 1165,
+        "user_id" : 6751603,
+        "user_type" : "registered",
+        "accept_rate" : 100,
+        "profile_image" : "https://lh3.googleusercontent.com/-pK0SwpBZzdc/AAAAAAAAAAI/AAAAAAAAABk/88ey4CNFUnI/s256-rj/photo.jpg",
+        "display_name" : "JavaMan",
+        "link" : "https://stackoverflow.com/users/6751603/javaman"
+      },
+      "creation_date" : 1751464705,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

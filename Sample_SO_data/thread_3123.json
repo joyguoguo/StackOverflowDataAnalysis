@@ -1,0 +1,281 @@
+{
+  "question" : {
+    "question_id" : 79570644,
+    "title" : "Change Jackson deserialization of all enums without using annotations",
+    "body" : "<p>I need to change the deserialization of all Java enum types in Jackson at the <code>ObjectMapper</code> level, without using annotations on the individual annotation classes. Configuring this for serialization is easy, but it's not immediately evident how a custom enum deserializer can be installed.</p>\n<p>Let's say that I want to serialize/deserialize all enumbers with their names reversed. For example for the <code>enum ExampleEnum {FOO_BAR, DRINK_BAR}</code> enum, the <code>FOO_BAR</code> value would be serialized as <code>RAB_OOF</code>, and deserialized back to <code>ExampleEnum.FOO_BAR</code>. I already have a method <code>reverseString(String)</code> to deal with this.</p>\n<p>Here is one way to add a custom serializer:</p>\n<pre class=\"lang-java prettyprint-override\"><code>JsonMapper.builder().addModule(new SimpleModule()\n    .addSerializer(Enum.class, new JsonSerializer&lt;Enum&gt;() {\n      @Override\n      public void serialize(Enum value, JsonGenerator gen, SerializerProvider serializers) throws IOException {\n        gen.writeString(reverseString(value.name());\n      }\n    })\n    .addKeySerializer(Enum.class, new JsonSerializer&lt;Enum&gt;() {\n      @Override\n      public void serialize(Enum value, JsonGenerator gen, SerializerProvider serializers) throws IOException {\n        gen.writeFieldName(reverseString(value.name());\n      }\n    })\n\n    …\n</code></pre>\n<p>This gives me some ugly warnings about <code>Enum</code> raw types, but I'm sure I can find a way to get around them or disable them. It works fine, though.</p>\n<p>Now how would I add a custom deserializer at the same level that would deserialize <em>all</em> enum types, correctly calling <code>reverseString(String)</code> to get back the original enum instance?</p>\n<p><em>The solution must not rely on Jackson annotations or any modification of the individual enum classes.</em></p>\n",
+    "tags" : [ "java", "enums", "jackson", "jackson-databind" ],
+    "owner" : {
+      "account_id" : 184786,
+      "reputation" : 22234,
+      "user_id" : 421049,
+      "user_type" : "registered",
+      "accept_rate" : 50,
+      "profile_image" : "https://www.gravatar.com/avatar/4b9b843fe8e233b2f70e0f2a8e7db4e8?s=256&d=identicon&r=PG",
+      "display_name" : "Garret Wilson",
+      "link" : "https://stackoverflow.com/users/421049/garret-wilson"
+    },
+    "is_answered" : true,
+    "view_count" : 153,
+    "answer_count" : 1,
+    "score" : 2,
+    "last_activity_date" : 1744645978,
+    "creation_date" : 1744472493,
+    "link" : "https://stackoverflow.com/questions/79570644/change-jackson-deserialization-of-all-enums-without-using-annotations",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79570833,
+    "question_id" : 79570644,
+    "body" : "<p>You can register a custom <em>deserialization modifier</em> with a custom <code>EnumDeserializer</code> that maps names in the way you want.</p>\n<p>You can do that by calling the <code>setDeserializerModifier</code> on your <code>Module</code> and override the <code>modifyEnumDeserializer</code> method in the (<code>BeanDeserializerModifier</code>) parameter allowing you to return a custom <code>JsonDeserializer</code> for enums. There, you can return a custom <code>JsonDeserializer</code>. To also use it with <code>Map</code> keys, you also need a custom <code>KeyDeserializer</code></p>\n<pre class=\"lang-java prettyprint-override\"><code>ObjectMapper mapper = new ObjectMapper()\n    .registerModule(\n            new SimpleModule()\n                // your code, nothing new\n                .addSerializer(Enum.class, new JsonSerializer&lt;Enum&gt;() {\n                    @Override\n                    public void serialize(Enum value, JsonGenerator gen, SerializerProvider serializers) throws IOException {\n                        gen.writeString(reverseString(value.name()));\n                    }\n                })\n                .addKeySerializer(Enum.class, new JsonSerializer&lt;Enum&gt;() {\n                    @Override\n                    public void serialize(Enum value, JsonGenerator gen, SerializerProvider serializers) throws IOException {\n                        gen.writeFieldName(reverseString(value.name()));\n                    }\n                })\n                // create a deserialization modifier for your custom names\n                .setDeserializerModifier(new BeanDeserializerModifier() {\n                    @Override\n                    public JsonDeserializer&lt;?&gt; modifyEnumDeserializer(DeserializationConfig config, JavaType type, BeanDescription beanDesc, JsonDeserializer&lt;?&gt; deserializer) {\n                        return new CustomEnumDeserializer&lt;&gt;(type);\n                    }\n                    \n                    @Override\n                    public KeyDeserializer modifyKeyDeserializer(DeserializationConfig config, JavaType type, KeyDeserializer deserializer) {\n                        if(type.isEnumType()){\n                            return new CustomEnumKeyDeserializer&lt;&gt;(type));\n                        }\n                        return deserializer;\n                    }\n                })\n    );\n</code></pre>\n<p>Deserializer classes:</p>\n<pre class=\"lang-java prettyprint-override\"><code>class CustomEnumDeserializer&lt;T extends Enum&lt;T&gt;&gt; extends JsonDeserializer&lt;T&gt; {\n    private final Class&lt;T&gt; enumClass;\n    \n    CustomEnumDeserializer(JavaType type) {\n        this.enumClass = (Class&lt;T&gt;) type.getRawClass();\n    }\n    \n    @Override\n    public Enum&lt;T&gt; deserialize(JsonParser p, DeserializationContext ctxt) throws IOException, JacksonException {\n        // deserialize the enum how you want to\n        return Enum.valueOf(enumClass, reverseString(p.getText()));\n    }\n}\n\nclass CustomEnumKeyDeserializer&lt;T extends Enum&lt;T&gt;&gt; extends KeyDeserializer {\n    private final Class&lt;T&gt; enumClass;\n    \n    CustomEnumKeyDeserializer(JavaType type) {\n        this.enumClass = (Class&lt;T&gt;) type.getRawClass();\n    }\n    \n    @Override\n    public Object deserializeKey(String key, DeserializationContext ctxt) throws IOException {\n        return Enum.valueOf(enumClass, reverseString(key));\n    }\n}\n</code></pre>\n",
+    "score" : 2,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 15064163,
+      "reputation" : 17100,
+      "user_id" : 10871900,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/720202b6e19abc330dcd92e6a1254562?s=256&d=identicon&r=PG",
+      "display_name" : "dan1st",
+      "link" : "https://stackoverflow.com/users/10871900/dan1st"
+    },
+    "creation_date" : 1744484655,
+    "last_activity_date" : 1744645978,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140328535,
+    "post_id" : 79570644,
+    "body" : "@Robert What would that look like? Wouldn&#39;t that require listing every <code>Class&lt;&gt;</code> to serialize that uses enums? I originally commented something similar but I couldn&#39;t get it to work nicely because it should probably replace all enums and not specific fields of a class...",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 15064163,
+      "reputation" : 17100,
+      "user_id" : 10871900,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/720202b6e19abc330dcd92e6a1254562?s=256&d=identicon&r=PG",
+      "display_name" : "dan1st",
+      "link" : "https://stackoverflow.com/users/10871900/dan1st"
+    },
+    "creation_date" : 1744489468,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140328530,
+    "post_id" : 79570644,
+    "body" : "If you use a MixIn class you can use annotations without modifying the original classes.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 50585,
+      "reputation" : 43459,
+      "user_id" : 150978,
+      "user_type" : "registered",
+      "accept_rate" : 78,
+      "profile_image" : "https://www.gravatar.com/avatar/feadc214792e2581c3c750140e3eb2c7?s=256&d=identicon&r=PG",
+      "display_name" : "Robert",
+      "link" : "https://stackoverflow.com/users/150978/robert"
+    },
+    "creation_date" : 1744489215,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79570833" : [ {
+      "comment_id" : 140334554,
+      "post_id" : 79570833,
+      "body" : "I don&#39;t want to get too much off topic, but the benefit is specific to my use case: I&#39;m creating a framework, and I want to change the default enum serialization <i>unless</i> the developer using my framework has indicated a custom serialization for a specific enum type. So with the added layer of indirection using a serializer modifier, I can check the enum class and if there are any Jackson annotations (e.g. <code>@JsonFormat</code>) I can delegate to the default serializer so as not to override the developer&#39;s wishes. Anyway, thanks again for cluing me in to serializer/deserializer modifiers!",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 184786,
+        "reputation" : 22234,
+        "user_id" : 421049,
+        "user_type" : "registered",
+        "accept_rate" : 50,
+        "profile_image" : "https://www.gravatar.com/avatar/4b9b843fe8e233b2f70e0f2a8e7db4e8?s=256&d=identicon&r=PG",
+        "display_name" : "Garret Wilson",
+        "link" : "https://stackoverflow.com/users/421049/garret-wilson"
+      },
+      "creation_date" : 1744664185,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140334539,
+      "post_id" : 79570833,
+      "body" : "I see what you mean but I&#39;m not sure whether this would be an improvement in overhead since only have two serializers (not one per enum) with your old approach (that I just copied). You couldn&#39;t improve on that (much). I guess the main argument there is actually having a symmetry between serialization and deserialization.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 15064163,
+        "reputation" : 17100,
+        "user_id" : 10871900,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/720202b6e19abc330dcd92e6a1254562?s=256&d=identicon&r=PG",
+        "display_name" : "dan1st",
+        "link" : "https://stackoverflow.com/users/10871900/dan1st"
+      },
+      "creation_date" : 1744663879,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140334509,
+      "post_id" : 79570833,
+      "body" : "It turns out that I can use a serializer modifier for serialization as well without any overhead from additional serializers. Because the serializing logic is the same for all enums, I can simply create a singleton serializer and a singleton key serializer, and return them from the <code>BeanSerializerModifier</code> instance. This doesn&#39;t use any more serializers than the original approach, and the extra layer of indirection allows me to delegate to the original serialization strategy if I decide (e.g. based upon the presence or absence of some annotations). Nice!",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 184786,
+        "reputation" : 22234,
+        "user_id" : 421049,
+        "user_type" : "registered",
+        "accept_rate" : 50,
+        "profile_image" : "https://www.gravatar.com/avatar/4b9b843fe8e233b2f70e0f2a8e7db4e8?s=256&d=identicon&r=PG",
+        "display_name" : "Garret Wilson",
+        "link" : "https://stackoverflow.com/users/421049/garret-wilson"
+      },
+      "creation_date" : 1744663386,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140333998,
+      "post_id" : 79570833,
+      "body" : "I think it depends on the applications. If you have thousands of enums that you are deserializing, you would have corresponding memory usage but at that point your program probably needs a lot of memory anyway. I would guess that for most projects, it doesn&#39;t matter in comparison to the total usage (and Jackson might use one <code>JsonDeserializer</code> per class anyway but I don&#39;t know). I don&#39;t know how to do the same (using a custom method for enums) in another way.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 15064163,
+        "reputation" : 17100,
+        "user_id" : 10871900,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/720202b6e19abc330dcd92e6a1254562?s=256&d=identicon&r=PG",
+        "display_name" : "dan1st",
+        "link" : "https://stackoverflow.com/users/10871900/dan1st"
+      },
+      "creation_date" : 1744653370,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140333975,
+      "post_id" : 79570833,
+      "body" : "&quot;I am not creating one deserializer modifier <i>in every module</i> but only one in a single module.&quot; Right, but then Jackson must call <code>modifyEnumDeserializer(…)</code> resulting in a separate instance of <code>CustomEnumDeserializer</code> for each enum type. I was just curious about the overhead of this, as switching to a &quot;modifier&quot; for serialization as well would result in a per-enum-class instance, while there would not be all these instances created using the original serialization approach. I was just curious about the implications.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 184786,
+        "reputation" : 22234,
+        "user_id" : 421049,
+        "user_type" : "registered",
+        "accept_rate" : 50,
+        "profile_image" : "https://www.gravatar.com/avatar/4b9b843fe8e233b2f70e0f2a8e7db4e8?s=256&d=identicon&r=PG",
+        "display_name" : "Garret Wilson",
+        "link" : "https://stackoverflow.com/users/421049/garret-wilson"
+      },
+      "creation_date" : 1744652637,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140333965,
+      "post_id" : 79570833,
+      "body" : "The question about creating a serializer modifier wasn&#39;t a criticism of the answer—it was just a question about whether there were any tradeoffs, because before your awesome answer I didn&#39;t even know there was such a thing as serializer/deserializer &quot;modifiers&quot;.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 184786,
+        "reputation" : 22234,
+        "user_id" : 421049,
+        "user_type" : "registered",
+        "accept_rate" : 50,
+        "profile_image" : "https://www.gravatar.com/avatar/4b9b843fe8e233b2f70e0f2a8e7db4e8?s=256&d=identicon&r=PG",
+        "display_name" : "Garret Wilson",
+        "link" : "https://stackoverflow.com/users/421049/garret-wilson"
+      },
+      "creation_date" : 1744652478,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140333678,
+      "post_id" : 79570833,
+      "body" : "Correction (mistake when editing my comment before sending): I am not creating one deserializer modifier <i>in every module</i> but only one in a single module.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 15064163,
+        "reputation" : 17100,
+        "user_id" : 10871900,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/720202b6e19abc330dcd92e6a1254562?s=256&d=identicon&r=PG",
+        "display_name" : "dan1st",
+        "link" : "https://stackoverflow.com/users/10871900/dan1st"
+      },
+      "creation_date" : 1744647296,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140333624,
+      "post_id" : 79570833,
+      "body" : "For your <i>last</i> comment: Am I not creating one deserializer modifier in a single module (doing it once should be sufficient)? While I am creating one <code>JsonDeserializer</code> (and possibly one <code>KeyDeserializer</code>) per enum, I don&#39;t think this would be a a problem for most cases as long as you reuse the <code>ObjectMapper</code> (which should ensure that the <code>JsonDeserializer</code> are reused and not recreated).",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 15064163,
+        "reputation" : 17100,
+        "user_id" : 10871900,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/720202b6e19abc330dcd92e6a1254562?s=256&d=identicon&r=PG",
+        "display_name" : "dan1st",
+        "link" : "https://stackoverflow.com/users/10871900/dan1st"
+      },
+      "creation_date" : 1744646454,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140333623,
+      "post_id" : 79570833,
+      "body" : "For your <i>first</i> comment: Well, you asked for a way to do this with arbitrary methods (in your case <code>reverseString</code>) so that&#39;s what I did in my answer. For your <i>second</i> comment Yes, that&#39;s true. I edited my answer (and also fixed the raw types in the code I added).",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 15064163,
+        "reputation" : 17100,
+        "user_id" : 10871900,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/720202b6e19abc330dcd92e6a1254562?s=256&d=identicon&r=PG",
+        "display_name" : "dan1st",
+        "link" : "https://stackoverflow.com/users/10871900/dan1st"
+      },
+      "creation_date" : 1744646452,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140333529,
+      "post_id" : 79570833,
+      "body" : "Since we modify the enum deserialization by setting a &quot;deserializer modifier&quot;, why not do the same for serialization by setting a &quot;serializer modifier&quot; on the module? In my tests that seems to work, too, and gives the benefit that we can fall back to the default serializer if needed (e.g. if the user has added custom Jackson annotations). Is there a benefit one way or another? (Creating all these per-enum instances seems inefficient, and if they are cached it seems a memory hog.) How do these per-module serializer/deserializer modifiers interact across modules?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 184786,
+        "reputation" : 22234,
+        "user_id" : 421049,
+        "user_type" : "registered",
+        "accept_rate" : 50,
+        "profile_image" : "https://www.gravatar.com/avatar/4b9b843fe8e233b2f70e0f2a8e7db4e8?s=256&d=identicon&r=PG",
+        "display_name" : "Garret Wilson",
+        "link" : "https://stackoverflow.com/users/421049/garret-wilson"
+      },
+      "creation_date" : 1744645067,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140333513,
+      "post_id" : 79570833,
+      "body" : "Note: You might have gotten carried away with the <code>Enum&lt;T&gt;</code>—I think <code>class CustomEnumDeserializer&lt;T extends Enum&lt;T&gt;&gt; extends JsonDeserializer&lt;Enum&lt;T&gt;&gt;</code> can be <code>class CustomEnumDeserializer&lt;T extends Enum&lt;T&gt;&gt; extends JsonDeserializer&lt;T&gt;</code> (although with the self-referenced generics semantically it may not make much difference). Thus <code>deserialize(…)</code> would simply return <code>T</code>.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 184786,
+        "reputation" : 22234,
+        "user_id" : 421049,
+        "user_type" : "registered",
+        "accept_rate" : 50,
+        "profile_image" : "https://www.gravatar.com/avatar/4b9b843fe8e233b2f70e0f2a8e7db4e8?s=256&d=identicon&r=PG",
+        "display_name" : "Garret Wilson",
+        "link" : "https://stackoverflow.com/users/421049/garret-wilson"
+      },
+      "creation_date" : 1744644868,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140333509,
+      "post_id" : 79570833,
+      "body" : "This is amazing! Thanks. Note that in <a href=\"https://github.com/FasterXML/jackson-databind/issues/5092\" rel=\"nofollow noreferrer\">jackson-databind issue #5092</a> it was discovered that Jackson 2.19.0 will provide a way simply to designate <code>EnumNamingStrategies.KEBAB_CASE</code> at the object mapping level. However your approach has an added benefit for a framework: I can check to see if the user has added any Jackson annotations, indicating that they want to serializer/deserialize some other way, and if so delegate to the default deserializer. I have some more questions/feedback, which I&#39;ll leave in other comments.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 184786,
+        "reputation" : 22234,
+        "user_id" : 421049,
+        "user_type" : "registered",
+        "accept_rate" : 50,
+        "profile_image" : "https://www.gravatar.com/avatar/4b9b843fe8e233b2f70e0f2a8e7db4e8?s=256&d=identicon&r=PG",
+        "display_name" : "Garret Wilson",
+        "link" : "https://stackoverflow.com/users/421049/garret-wilson"
+      },
+      "creation_date" : 1744644776,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

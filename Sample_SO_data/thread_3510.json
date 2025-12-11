@@ -1,0 +1,232 @@
+{
+  "question" : {
+    "question_id" : 79544759,
+    "title" : "How to prevent edit mode on double-click in JavaFX TableView while keeping single-click edit?",
+    "body" : "<p>I have a JavaFX TableView with editable cells where I need:</p>\n<ul>\n<li>Single click → selects cell (standard behavior)</li>\n<li>Single click on selected cell → enters edit mode (standard behavior)</li>\n<li>Double click → selects cell and custom action ONLY (without entering edit mode)</li>\n</ul>\n<p>This is the table that shows current and desired behaviors:</p>\n<div class=\"s-table-container\"><table class=\"s-table\">\n<thead>\n<tr>\n<th>Action</th>\n<th>Current Behavior</th>\n<th>Desired Behavior</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>Single-click</td>\n<td>Selects cell</td>\n<td>(keep) Selects cell</td>\n</tr>\n<tr>\n<td>Single-click selected</td>\n<td>Enters edit mode</td>\n<td>(keep) Enters edit mode</td>\n</tr>\n<tr>\n<td>Double-click</td>\n<td>Custom action + edit mode</td>\n<td>Selects cell + custom action ONLY</td>\n</tr>\n</tbody>\n</table></div>\n<p>This is my code:</p>\n<pre><code>import javafx.application.Application;\nimport javafx.beans.property.SimpleStringProperty;\nimport javafx.beans.property.StringProperty;\nimport javafx.collections.FXCollections;\nimport javafx.collections.ObservableList;\nimport javafx.scene.Scene;\nimport javafx.scene.control.TableColumn;\nimport javafx.scene.control.TableRow;\nimport javafx.scene.control.TableView;\nimport javafx.scene.control.cell.TextFieldTableCell;\nimport javafx.scene.layout.VBox;\nimport javafx.stage.Stage;\n\npublic class NewMain1 extends Application {\n\n    public static class Person {\n        private final StringProperty firstName;\n        private final StringProperty lastName;\n\n        public Person(String firstName, String lastName) {\n            this.firstName = new SimpleStringProperty(firstName);\n            this.lastName = new SimpleStringProperty(lastName);\n        }\n\n        public StringProperty firstNameProperty() { return firstName; }\n        public StringProperty lastNameProperty() { return lastName; }\n    }\n\n    @Override\n    public void start(Stage primaryStage) {\n        TableView&lt;Person&gt; tableView = new TableView&lt;&gt;();\n        tableView.setEditable(true);\n\n        TableColumn&lt;Person, String&gt; firstNameCol = new TableColumn&lt;&gt;(&quot;First Name&quot;);\n        firstNameCol.setCellValueFactory(cellData -&gt; cellData.getValue().firstNameProperty());\n        firstNameCol.setCellFactory(TextFieldTableCell.forTableColumn());\n        firstNameCol.setOnEditStart(e -&gt; System.out.println(&quot;First Name Edit Start&quot;));\n\n        TableColumn&lt;Person, String&gt; lastNameCol = new TableColumn&lt;&gt;(&quot;Last Name&quot;);\n        lastNameCol.setCellValueFactory(cellData -&gt; cellData.getValue().lastNameProperty());\n        lastNameCol.setCellFactory(TextFieldTableCell.forTableColumn());\n        lastNameCol.setOnEditStart(e -&gt; System.out.println(&quot;Last Name Edit Start&quot;));\n\n        tableView.getColumns().addAll(firstNameCol, lastNameCol);\n\n        ObservableList&lt;Person&gt; data = FXCollections.observableArrayList(\n            new Person(&quot;John&quot;, &quot;Smith&quot;),\n            new Person(&quot;Emily&quot;, &quot;Johnson&quot;),\n            new Person(&quot;Michael&quot;, &quot;Williams&quot;),\n            new Person(&quot;Sarah&quot;, &quot;Brown&quot;)\n        );\n        tableView.setItems(data);\n\n        tableView.setRowFactory(tv -&gt; {\n            TableRow&lt;Person&gt; row = new TableRow&lt;&gt;();\n\n            row.setOnMouseClicked(event -&gt; {\n                if (event.getClickCount() == 2 &amp;&amp; !row.isEmpty()) {\n                    Person person = row.getItem();\n                    System.out.println(&quot;DoubleClick on &quot;\n                            + person.firstNameProperty().get() + &quot; &quot; + person.lastNameProperty().get());\n                    event.consume();\n                }\n            });\n\n            return row;\n        });\n\n        VBox root = new VBox(tableView);\n        Scene scene = new Scene(root, 400, 300);\n        primaryStage.setScene(scene);\n        primaryStage.show();\n    }\n\n    public static void main(String[] args) {\n        launch(args);\n    }\n}\n</code></pre>\n<p>Could anyone say how to do it?</p>\n",
+    "tags" : [ "java", "javafx" ],
+    "owner" : {
+      "account_id" : 34599290,
+      "reputation" : 1188,
+      "user_id" : 26656564,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/882f996623517814360ba4bb403102e7?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "SilverCube",
+      "link" : "https://stackoverflow.com/users/26656564/silvercube"
+    },
+    "is_answered" : true,
+    "view_count" : 121,
+    "answer_count" : 3,
+    "score" : 4,
+    "last_activity_date" : 1743497968,
+    "creation_date" : 1743346410,
+    "link" : "https://stackoverflow.com/questions/79544759/how-to-prevent-edit-mode-on-double-click-in-javafx-tableview-while-keeping-singl",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79547378,
+    "question_id" : 79544759,
+    "body" : "<p>I agree with the comments mentioned by @James_D regarding predicting for next click. By default the single click mouse pressed will do the selection or get to edit mode. If you are desperate to fix this problem, you need to separate the event processing of double click from single click.</p>\n<p>You can achieve this by creating some custom events and a custom event dispatcher that can process the events separately.</p>\n<p>The below solution involved four steps:</p>\n<p><strong>Step#1: Create a custom event and event dispatcher</strong></p>\n<p>You can create a custom double pressed event and event dispatcher to separate the events.\nThe general idea is,</p>\n<ul>\n<li>when we receive a single click event, we start a timeline to execute the event after certain duration.</li>\n<li>If we receive another event within this duration, we consider this as a double pressed event, and will fire the custom double pressed event and cancel the previous single pressed event. That way you can separate the two events and handle them separately.</li>\n</ul>\n<p>The code will be as below. In</p>\n<pre><code>/**\n * Custom double pressed mouse event.\n */\ninterface CustomMouseEvent {\n    EventType&lt;MouseEvent&gt; MOUSE_DOUBLE_PRESSED = new EventType&lt;&gt;(MouseEvent.ANY, &quot;MOUSE_DOUBLE_PRESSED&quot;);\n}\n\n/**\n * Custom EventDispatcher to differentiate from double click and single click.\n */\nclass DoubleClickEventDispatcher implements EventDispatcher {\n\n    /** Default delay to fire a double click event in milliseconds. */\n    private static final long DEFAULT_DOUBLE_CLICK_DELAY = 215;\n\n    /** Default event dispatcher of a node. */\n    private final EventDispatcher defaultEventDispatcher;\n\n    /** Timeline for dispatching mouse clicked event. */\n    private Timeline singleClickTimeline;\n\n    /**\n     * Constructor.\n     *\n     * @param initial Default event dispatcher of a node\n     */\n    public DoubleClickEventDispatcher(final EventDispatcher initial) {\n        defaultEventDispatcher = initial;\n    }\n\n    @Override\n    public Event dispatchEvent(final Event event, final EventDispatchChain tail) {\n        final EventType&lt;? extends Event&gt; type = event.getEventType();\n        if (type == MouseEvent.MOUSE_PRESSED &amp;&amp; ((MouseEvent)event).getButton()== MouseButton.PRIMARY) {\n            final MouseEvent mouseEvent = (MouseEvent) event;\n            final EventTarget eventTarget = event.getTarget();\n            // If it is a double click , stop the single click timeline and fire the double pressed event manually\n            if (mouseEvent.getClickCount() &gt; 1) {\n                if (singleClickTimeline != null) {\n                    singleClickTimeline.stop();\n                    singleClickTimeline = null;\n                    final MouseEvent dblClickedEvent = copy(mouseEvent, CustomMouseEvent.MOUSE_DOUBLE_PRESSED);\n                    Event.fireEvent(eventTarget, dblClickedEvent);\n                }\n                return mouseEvent;\n            }\n\n            // If it is single click, start a timeline to fire the single click after a certain duration.\n            if (singleClickTimeline == null) {\n                final MouseEvent singleClickEvent = copy(mouseEvent, mouseEvent.getEventType());\n                singleClickTimeline = new Timeline(new KeyFrame(Duration.millis(DEFAULT_DOUBLE_CLICK_DELAY), e -&gt; {\n                    Event.fireEvent(eventTarget, singleClickEvent);\n                    // Because we are firing the pressed event, we have to fire the release event, to clear the cached values in Table classes.\n                    final MouseEvent releaseEvent = copy(singleClickEvent, MouseEvent.MOUSE_RELEASED);\n                    Event.fireEvent(eventTarget, releaseEvent);\n                    singleClickTimeline = null;\n                }));\n                // Start a timeline to see if we get a double click in future.\n                singleClickTimeline.play();\n                return mouseEvent;\n            }\n        }\n        return defaultEventDispatcher.dispatchEvent(event, tail);\n    }\n\n    /**\n     * Creates a copy of the provided mouse event type with the mouse event.\n     *\n     * @param e         MouseEvent\n     * @param eventType Event type that need to be created\n     * @return New mouse event instance\n     */\n    private MouseEvent copy(final MouseEvent e, final EventType&lt;? extends MouseEvent&gt; eventType) {\n        return new MouseEvent(eventType, e.getSceneX(), e.getSceneY(), e.getScreenX(), e.getScreenY(),\n                e.getButton(), e.getClickCount(), e.isShiftDown(), e.isControlDown(), e.isAltDown(),\n                e.isMetaDown(), e.isPrimaryButtonDown(), e.isMiddleButtonDown(),\n                e.isSecondaryButtonDown(), e.isSynthesized(), e.isPopupTrigger(),\n                e.isStillSincePress(), e.getPickResult());\n    }\n}\n</code></pre>\n<p><strong>Step#2: Set the custom event dispatcher on tableView</strong></p>\n<p>Now we have created the dispatcher that separates the two types of events. Set this event dispatcher on the node we are interested in (TableView).</p>\n<pre><code>tableView.setEventDispatcher(new DoubleClickEventDispatcher(tableView.getEventDispatcher()));\n</code></pre>\n<p><strong>Step#3: Add the double pressed event on the table row.</strong></p>\n<pre><code>row.addEventHandler(CustomMouseEvent.MOUSE_DOUBLE_PRESSED, event -&gt; {\n   // your code\n});\n</code></pre>\n<p><strong>Step#4: Handle the missing functionality that we loose for not firing the single pressed.</strong></p>\n<p>Because we are diverting the single pressed event, we want to handle all the unwanted cases in the double pressed event handler. Particularly here, we need to handle the row selection and cancel the edit (if any)</p>\n<pre><code>tableView.getSelectionModel().select(person);\nif (tableView.getEditingCell() != null) {\n    tableView.edit(-1, null);\n}\n</code></pre>\n<p>Check the below demo and code when combining all the above metioned steps. I hope this can give you some direction on how to approach this requirement.</p>\n<p><a href=\"https://i.sstatic.net/G5b3AfQE.gif\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/G5b3AfQE.gif\" alt=\"enter image description here\" /></a></p>\n<pre><code>import javafx.animation.KeyFrame;\nimport javafx.animation.Timeline;\nimport javafx.application.Application;\nimport javafx.beans.property.SimpleStringProperty;\nimport javafx.beans.property.StringProperty;\nimport javafx.collections.FXCollections;\nimport javafx.collections.ObservableList;\nimport javafx.event.*;\nimport javafx.scene.Scene;\nimport javafx.scene.control.TableColumn;\nimport javafx.scene.control.TableRow;\nimport javafx.scene.control.TableView;\nimport javafx.scene.control.cell.TextFieldTableCell;\nimport javafx.scene.input.MouseButton;\nimport javafx.scene.input.MouseEvent;\nimport javafx.scene.layout.VBox;\nimport javafx.stage.Stage;\nimport javafx.util.Duration;\n\npublic class CustomEventClickOnTableCellDemo extends Application {\n\n    public static class Person {\n        private final StringProperty firstName;\n        private final StringProperty lastName;\n\n        public Person(String firstName, String lastName) {\n            this.firstName = new SimpleStringProperty(firstName);\n            this.lastName = new SimpleStringProperty(lastName);\n        }\n\n        public StringProperty firstNameProperty() {\n            return firstName;\n        }\n\n        public StringProperty lastNameProperty() {\n            return lastName;\n        }\n    }\n\n    @Override\n    public void start(Stage primaryStage) {\n        TableView&lt;Person&gt; tableView = new TableView&lt;&gt;();\n        tableView.setEditable(true);\n\n        TableColumn&lt;Person, String&gt; firstNameCol = new TableColumn&lt;&gt;(&quot;First Name&quot;);\n        firstNameCol.setCellValueFactory(cellData -&gt; cellData.getValue().firstNameProperty());\n        firstNameCol.setCellFactory(TextFieldTableCell.forTableColumn());\n        firstNameCol.setOnEditStart(e -&gt; System.out.println(&quot;First Name Edit Start&quot;));\n\n        TableColumn&lt;Person, String&gt; lastNameCol = new TableColumn&lt;&gt;(&quot;Last Name&quot;);\n        lastNameCol.setCellValueFactory(cellData -&gt; cellData.getValue().lastNameProperty());\n        lastNameCol.setCellFactory(TextFieldTableCell.forTableColumn());\n        lastNameCol.setOnEditStart(e -&gt; System.out.println(&quot;Last Name Edit Start&quot;));\n\n        tableView.getColumns().addAll(firstNameCol, lastNameCol);\n\n        ObservableList&lt;Person&gt; data = FXCollections.observableArrayList(\n                new Person(&quot;John&quot;, &quot;Smith&quot;),\n                new Person(&quot;Emily&quot;, &quot;Johnson&quot;),\n                new Person(&quot;Michael&quot;, &quot;Williams&quot;),\n                new Person(&quot;Sarah&quot;, &quot;Brown&quot;)\n        );\n        tableView.setItems(data);\n        /* STEP#2 : Set the custom event dispatcher to tableView */\n        tableView.setEventDispatcher(new DoubleClickEventDispatcher(tableView.getEventDispatcher()));\n\n        tableView.setRowFactory(tv -&gt; {\n            TableRow&lt;Person&gt; row = new TableRow&lt;&gt;();\n            /* STEP#3 : Add custom mouse double pressed event. */\n            row.addEventHandler(CustomMouseEvent.MOUSE_DOUBLE_PRESSED, event -&gt; {\n                if (!row.isEmpty()) {\n                    Person person = row.getItem();\n                    System.out.println(&quot;DoubleClick on &quot;\n                            + person.firstNameProperty().get() + &quot; &quot; + person.lastNameProperty().get());\n\n                    /* STEP#4 : On double-click, select the row and cancel the current editing(if any), as we are not processing the single click. */\n                    tableView.getSelectionModel().select(person);\n                    if (tableView.getEditingCell() != null) {\n                        tableView.edit(-1, null);\n                    }\n                    event.consume();\n                }\n            });\n\n            return row;\n        });\n\n        VBox root = new VBox(tableView);\n        Scene scene = new Scene(root, 400, 300);\n        primaryStage.setScene(scene);\n        primaryStage.show();\n    }\n\n    public static void main(String[] args) {\n        launch(args);\n    }\n\n    /* STEP#1 : Create custom events and event dispatcher to separate single and double click events. */\n\n    /**\n     * Custom double pressed mouse event.\n     */\n    interface CustomMouseEvent {\n        EventType&lt;MouseEvent&gt; MOUSE_DOUBLE_PRESSED = new EventType&lt;&gt;(MouseEvent.ANY, &quot;MOUSE_DOUBLE_PRESSED&quot;);\n    }\n\n    /**\n     * Custom EventDispatcher to differentiate from double click and single click.\n     */\n    class DoubleClickEventDispatcher implements EventDispatcher {\n\n        /**\n         * Default delay to fire a double click event in milliseconds.\n         */\n        private static final long DEFAULT_DOUBLE_CLICK_DELAY = 215;\n\n        /**\n         * Default event dispatcher of a node.\n         */\n        private final EventDispatcher defaultEventDispatcher;\n\n        /**\n         * Timeline for dispatching mouse clicked event.\n         */\n        private Timeline singleClickTimeline;\n\n        /**\n         * Constructor.\n         *\n         * @param initial Default event dispatcher of a node\n         */\n        public DoubleClickEventDispatcher(final EventDispatcher initial) {\n            defaultEventDispatcher = initial;\n        }\n\n        @Override\n        public Event dispatchEvent(final Event event, final EventDispatchChain tail) {\n            final EventType&lt;? extends Event&gt; type = event.getEventType();\n            if (type == MouseEvent.MOUSE_PRESSED &amp;&amp; ((MouseEvent)event).getButton()== MouseButton.PRIMARY) {\n                final MouseEvent mouseEvent = (MouseEvent) event;\n                final EventTarget eventTarget = event.getTarget();\n                // If it is a double click , stop the single click timeline and fire the double pressed event manually\n                if (mouseEvent.getClickCount() &gt; 1) {\n                    if (singleClickTimeline != null) {\n                        singleClickTimeline.stop();\n                        singleClickTimeline = null;\n                        final MouseEvent dblClickedEvent = copy(mouseEvent, CustomMouseEvent.MOUSE_DOUBLE_PRESSED);\n                        Event.fireEvent(eventTarget, dblClickedEvent);\n                    }\n                    return mouseEvent;\n                }\n\n                // If it is single click, start a timeline to fire the single click after a certain duration.\n                if (singleClickTimeline == null) {\n                    final MouseEvent singleClickEvent = copy(mouseEvent, mouseEvent.getEventType());\n                    singleClickTimeline = new Timeline(new KeyFrame(Duration.millis(DEFAULT_DOUBLE_CLICK_DELAY), e -&gt; {\n                        Event.fireEvent(eventTarget, singleClickEvent);\n                        // Because we are firing the pressed event, we have to fire the release event, to clear the cached values in Table classes.\n                        final MouseEvent releaseEvent = copy(singleClickEvent, MouseEvent.MOUSE_RELEASED);\n                        Event.fireEvent(eventTarget, releaseEvent);\n                        singleClickTimeline = null;\n                    }));\n                    // Start a timeline to see if we get a double click in future.\n                    singleClickTimeline.play();\n                    return mouseEvent;\n                }\n            }\n            return defaultEventDispatcher.dispatchEvent(event, tail);\n        }\n\n        /**\n         * Creates a copy of the provided mouse event type with the mouse event.\n         *\n         * @param e         MouseEvent\n         * @param eventType Event type that need to be created\n         * @return New mouse event instance\n         */\n        private MouseEvent copy(final MouseEvent e, final EventType&lt;? extends MouseEvent&gt; eventType) {\n            return new MouseEvent(eventType, e.getSceneX(), e.getSceneY(), e.getScreenX(), e.getScreenY(),\n                    e.getButton(), e.getClickCount(), e.isShiftDown(), e.isControlDown(), e.isAltDown(),\n                    e.isMetaDown(), e.isPrimaryButtonDown(), e.isMiddleButtonDown(),\n                    e.isSecondaryButtonDown(), e.isSynthesized(), e.isPopupTrigger(),\n                    e.isStillSincePress(), e.getPickResult());\n        }\n    }\n}\n</code></pre>\n",
+    "score" : 3,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 7717111,
+      "reputation" : 10689,
+      "user_id" : 5844477,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/801ce427cdcbac7f648471e75d6d818e?s=256&d=identicon&r=PG",
+      "display_name" : "Sai Dandem",
+      "link" : "https://stackoverflow.com/users/5844477/sai-dandem"
+    },
+    "creation_date" : 1743460897,
+    "last_activity_date" : 1743497968,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79545106,
+    "question_id" : 79544759,
+    "body" : "<p>This answer comes with a big caveat: modifying the behavior of JavaFX controls is really not well supported. Doing so typically relies on undocumented implementation details of the control, which are subject to change in later releases. Hence implementing any such functionality is really not very robust.</p>\n<p>That said, the current table cell implementation appears to manage selection and editing via listeners for mouse pressed and released events. So consuming a mouse pressed event (note: mouse pressed, not mouse clicked) in an event filter (note: filter not handler, so it is invoked before the cell's internal handlers)\nwill prevent the default selection and editing behavior. The following (as a replacement for your existing <code>row.setOnMouseClicked(...)</code>) seems to result in the functionality you specify:</p>\n<pre><code>            row.addEventFilter(MouseEvent.MOUSE_PRESSED, event -&gt; {\n                if (event.getClickCount() == 2 &amp;&amp; !row.isEmpty()) {\n                    Person person = row.getItem();\n                    System.out.println(&quot;DoubleClick on &quot;\n                            + person.firstNameProperty().get() + &quot; &quot; + person.lastNameProperty().get());\n                    event.consume();\n                }\n            });\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 2518243,
+      "reputation" : 210916,
+      "user_id" : 2189127,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/e8e6e627b4b90ec816c5c7aa04cbcc26?s=256&d=identicon&r=PG",
+      "display_name" : "James_D",
+      "link" : "https://stackoverflow.com/users/2189127/james-d"
+    },
+    "creation_date" : 1743365314,
+    "last_activity_date" : 1743365314,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79545394,
+    "question_id" : 79544759,
+    "body" : "<p>I would record the time of the first click in a variable. Then, compare it to the time of the next click before deciding what to do. If the second click is within X milliseconds, then consider it a &quot;double-click&quot; and execute the special action. Else, consider the second click the trigger for entering edit mode.</p>\n<p>OK, what happens if someone clicks a field, which selects it, and then double-clicks? With this scenario, it would go into Edit mode and then the second click of the double would do whatever a click does when editing that field.</p>\n<p>If that is a problem, one possibility is to set the &quot;edit&quot; click to wait X millis before going to edit mode, giving time for a possible &quot;double click&quot; to assert itself.</p>\n<p>I've done this sort of thing with Java, using <code>Timer</code>, and JavaScript, using <code>setTimeout</code>. I can't recall if JavaFX has a preferred timer.</p>\n<p>For similar logic, check the topic of &quot;debouncing&quot;. A quick search gave me a JS example here <a href=\"https://dev.to/jeremiahjacinth13/what-is-debouncing-1akk\" rel=\"nofollow noreferrer\">What is debouncing?</a> but I'm only seeing a couple articles in Medium that show debouncing using Java or JavaFX. I haven't clicked on them because I am conserving my Medium freebies.</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 424804,
+      "reputation" : 7990,
+      "user_id" : 805007,
+      "user_type" : "registered",
+      "accept_rate" : 83,
+      "profile_image" : "https://www.gravatar.com/avatar/2c71fc3a22fdc7607ec3555153d70227?s=256&d=identicon&r=PG",
+      "display_name" : "Phil Freihofner",
+      "link" : "https://stackoverflow.com/users/805007/phil-freihofner"
+    },
+    "creation_date" : 1743387476,
+    "last_activity_date" : 1743387476,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140279929,
+    "post_id" : 79544759,
+    "body" : "This does not answer your question, but I have never been a fan of TableView cell edits. I make use of the selected item a lot. From there, I use something like <code>ContextMenu</code>  to select things I want to happen, like opening a dialog that allows any data on the row to be updated. For me, this approach led to less headaches. Good luck coding!",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2819940,
+      "reputation" : 14002,
+      "user_id" : 2423906,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://i.sstatic.net/rkpYv.jpg?s=256",
+      "display_name" : "SedJ601",
+      "link" : "https://stackoverflow.com/users/2423906/sedj601"
+    },
+    "creation_date" : 1743357309,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140279829,
+    "post_id" : 79544759,
+    "body" : "@James_D I&#39;ve just tried <code>row.addEventFilter(MouseEvent.MOUSE_CLICKED, event -&gt; {... event.consume(); })</code>. It didn&#39;t help - same result.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 34599290,
+      "reputation" : 1188,
+      "user_id" : 26656564,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/882f996623517814360ba4bb403102e7?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "SilverCube",
+      "link" : "https://stackoverflow.com/users/26656564/silvercube"
+    },
+    "creation_date" : 1743355045,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140279751,
+    "post_id" : 79544759,
+    "body" : "Have you tried an event filter, instead of using <code>setOnMouseClicked</code>?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2518243,
+      "reputation" : 210916,
+      "user_id" : 2189127,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/e8e6e627b4b90ec816c5c7aa04cbcc26?s=256&d=identicon&r=PG",
+      "display_name" : "James_D",
+      "link" : "https://stackoverflow.com/users/2189127/james-d"
+    },
+    "creation_date" : 1743353567,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140279556,
+    "post_id" : 79544759,
+    "body" : "Perhaps adding <code>Platform.runLater(row::cancelEdit);</code> or <code>if (tableView.getEditingCell() != null) Platform.runLater(() -&gt; tableView.getEditingCell().cancelEdit());</code> right after event.consume() will suffice?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2053598,
+      "reputation" : 44936,
+      "user_id" : 1831987,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/38b1c37530189ec4471a43a618e33f67?s=256&d=identicon&r=PG",
+      "display_name" : "VGR",
+      "link" : "https://stackoverflow.com/users/1831987/vgr"
+    },
+    "creation_date" : 1743349054,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79545106" : [ {
+      "comment_id" : 140280409,
+      "post_id" : 79545106,
+      "body" : "@SilverCube Yes; because the first click of the double-click will enter edit mode. This is actually specified in your own requirements (&quot;single click selected&quot;)! In order to avoid this, the first click would have to essentially predict the future (know if another click is imminent) and decide what to do based on what the user is going to do in the immediate future. This isn&#39;t completely impossible, but it&#39;d be difficult and would need to introduce a delay to the existing behavior, which is probably undesirable.",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 2518243,
+        "reputation" : 210916,
+        "user_id" : 2189127,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/e8e6e627b4b90ec816c5c7aa04cbcc26?s=256&d=identicon&r=PG",
+        "display_name" : "James_D",
+        "link" : "https://stackoverflow.com/users/2189127/james-d"
+      },
+      "creation_date" : 1743372229,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140280214,
+      "post_id" : 79545106,
+      "body" : "Yes, I also tried using <code>MouseEvent.MOUSE_PRESSED</code> the problem is that if you do double click on already selected row, then edit mode is activated.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 34599290,
+        "reputation" : 1188,
+        "user_id" : 26656564,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/882f996623517814360ba4bb403102e7?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "SilverCube",
+        "link" : "https://stackoverflow.com/users/26656564/silvercube"
+      },
+      "creation_date" : 1743365893,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79545394" : [ {
+      "comment_id" : 140290373,
+      "post_id" : 79545394,
+      "body" : "The timing part is not the issue; the problem is replicating the default behavior on the second click (having prevented it on the first click). You could probably save and re-fire the first event, with a flag saying not to consume it, but this starts to look like a big hack pretty quickly. If the API supported this, the behavior classes would be part of the public API and you would directly invoke the appropriate methods on those classes; the fact that these are not public API is what I mean by the API not supporting this kind of functionality.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2518243,
+        "reputation" : 210916,
+        "user_id" : 2189127,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/e8e6e627b4b90ec816c5c7aa04cbcc26?s=256&d=identicon&r=PG",
+        "display_name" : "James_D",
+        "link" : "https://stackoverflow.com/users/2189127/james-d"
+      },
+      "creation_date" : 1743596539,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140288591,
+      "post_id" : 79545394,
+      "body" : "May have to agree to disagree. Using timers to pause commands has been around for quite a while. The functionality is there, why not? What else is it for? Using it to customize API is fine, it seems to me. It&#39;s certainly been SOP for Javascript for a long while (e.g., as used in debouncing).",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 424804,
+        "reputation" : 7990,
+        "user_id" : 805007,
+        "user_type" : "registered",
+        "accept_rate" : 83,
+        "profile_image" : "https://www.gravatar.com/avatar/2c71fc3a22fdc7607ec3555153d70227?s=256&d=identicon&r=PG",
+        "display_name" : "Phil Freihofner",
+        "link" : "https://stackoverflow.com/users/805007/phil-freihofner"
+      },
+      "creation_date" : 1743563705,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140280818,
+      "post_id" : 79545394,
+      "body" : "<i>”I can&#39;t recall if JavaFX has a preferred timer.”</i> Use the Animation API (probably a <code>PauseTransition</code> is the most appropriate). But if you’re digging this deep you are fighting against the API, instead of using it the way it is intended. That is usually a losing battle.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2518243,
+        "reputation" : 210916,
+        "user_id" : 2189127,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/e8e6e627b4b90ec816c5c7aa04cbcc26?s=256&d=identicon&r=PG",
+        "display_name" : "James_D",
+        "link" : "https://stackoverflow.com/users/2189127/james-d"
+      },
+      "creation_date" : 1743389625,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

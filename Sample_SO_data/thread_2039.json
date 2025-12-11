@@ -1,0 +1,197 @@
+{
+  "question" : {
+    "question_id" : 79653469,
+    "title" : "Asynchronous processing using virtual threads and @Async annotation",
+    "body" : "<p>I have a spring boot project version 3.5 with virtual threads (spring.virtual.threads.enabled=true) and @EnableAsyncConfig enabled.\nI have a simple RestController which is calling the service layer function which is annotated with <code>@Async</code>\nThe function is simply sleeping for 30 seconds before sending a response back. I see that the controller also gets blocked and does not return immediately. Since the service layer function does the computation asynchronously, I expect the controller to return the response immediately and dont wait till the service layer function gets finished.</p>\n<p>If I disable virtual threads and start use ThreadPoolTaskExecutor, everything works fine. The controller sends back the response immediately and in the background, I see the logs after 30 seconds. How to fix this issue?</p>\n<p>Below is the sample code</p>\n<p>Controller</p>\n<pre><code>@RestController\n@RequestMapping(&quot;/hello&quot;)\n@RequiredArgsConstructor\n@Slf4j\npublic class HelloController {\n\n    private final HelloService helloService;\n\n    @GetMapping\n    public ResponseEntity&lt;String&gt; hello() {\n        log.info(&quot;Received request in controller. Handled by thread: {}. Is Virtual Thread?: {}&quot;,\n                Thread.currentThread().getName(), Thread.currentThread().isVirtual());\n        helloService.hello();\n        return ResponseEntity.ok(&quot;Hello, World!&quot;);\n    }\n}\n</code></pre>\n<p>This is calling the service layer function</p>\n<pre><code>@Service\n@Slf4j\npublic class HelloService {\n\n    @Async\n    public CompletableFuture&lt;Void&gt; hello() {\n        log.info(&quot;HelloService called&quot;);\n        try {\n            // Simulate some processing\n            Thread.sleep(30000);\n            log.info(&quot;In Thread: {}&quot;, Thread.currentThread().getName());\n            log.info(&quot;Is Virtual Thread?: {}&quot;, Thread.currentThread().isVirtual());\n            log.info(&quot;Hello service completed&quot;);\n        } catch (InterruptedException e) {\n            log.error(&quot;Error in HelloService&quot;, e);\n            Thread.currentThread().interrupt();\n        }\n        return CompletableFuture.completedFuture(null);\n    }\n}\n</code></pre>\n<p>Async config is present in its own configuration file</p>\n<pre><code>@Configuration\n@EnableAsync\n@RequiredArgsConstructor\npublic class AsyncConfig {\n\n    private final ThreadContextDecorator threadContextDecorator;\n\n    @Bean\n    public ConcurrentTaskExecutor taskExecutor() {\n        ThreadFactory threadFactory = Thread.ofVirtual()\n                .name(&quot;async-executor-&quot;, 0)\n                .factory();\n\n        Executor virtualThreadExecutor = task -&gt; {\n            Runnable runnable = threadContextDecorator.decorate(task);\n            try (var executor = Executors.newThreadPerTaskExecutor(threadFactory)) {\n                executor.execute(runnable);\n            }\n        };\n        return new ConcurrentTaskExecutor(virtualThreadExecutor);\n    }\n}\n</code></pre>\n<p>Im creating a task decorator to add MDC support</p>\n<pre><code>@Component\n@Slf4j\npublic class ThreadContextDecorator implements TaskDecorator {\n    @Override\n    public Runnable decorate(Runnable runnable) {\n        Map&lt;String, String&gt; contextMap = MDC.getCopyOfContextMap();\n        return () -&gt; {\n            try {\n                if (contextMap != null) {\n                    MDC.setContextMap(contextMap);\n                }\n                log.info(&quot;Decorating  Thread: {}&quot;, Thread.currentThread().getName());\n                runnable.run();\n            } finally {\n                // Clear the MDC context to prevent memory leaks\n                MDC.clear();\n            }\n        };\n    }\n}\n\n</code></pre>\n<p>Below are the logs from the controller requst</p>\n<pre><code>[omcat-handler-0] Received request in controller. Handled by thread: tomcat-handler-0. Is Virtual Thread?: true\n[sync-executor-0] Decorating  Thread: async-executor-0\n[sync-executor-0] HelloService called\n[sync-executor-0] In Thread: async-executor-0\n[sync-executor-0] Is Virtual Thread?: true\n[sync-executor-0] Hello service completed\n</code></pre>\n<p>As you can see, the controller is waiting for 30 seconds before sending the response back but I expect it to return response immediately</p>\n",
+    "tags" : [ "java", "spring-boot", "asynchronous", "virtual-threads" ],
+    "owner" : {
+      "account_id" : 1090772,
+      "reputation" : 456,
+      "user_id" : 1085459,
+      "user_type" : "registered",
+      "accept_rate" : 60,
+      "profile_image" : "https://www.gravatar.com/avatar/838739d50ea90c276fe5f770cae1612a?s=256&d=identicon&r=PG",
+      "display_name" : "rakesh",
+      "link" : "https://stackoverflow.com/users/1085459/rakesh"
+    },
+    "is_answered" : true,
+    "view_count" : 394,
+    "answer_count" : 2,
+    "score" : 4,
+    "last_activity_date" : 1749153878,
+    "creation_date" : 1749070029,
+    "link" : "https://stackoverflow.com/questions/79653469/asynchronous-processing-using-virtual-threads-and-async-annotation",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79654652,
+    "question_id" : 79653469,
+    "body" : "<p>Just to extend a little bit perfectly correct @M.Deinum's comment, the <code>AsyncConfig.taskExecutor</code> method could look like follows:</p>\n<pre><code>@Bean\npublic TaskExecutor taskExecutor() {\n    final SimpleAsyncTaskExecutor taskExecutor = new SimpleAsyncTaskExecutor();\n    taskExecutor.setVirtualThreads(true);\n    taskExecutor.setTaskDecorator(threadContextDecorator);\n    return taskExecutor;\n}\n</code></pre>\n<p>Note that the line</p>\n<pre class=\"lang-java prettyprint-override\"><code>taskExecutor.setVirtualThreads(true);\n</code></pre>\n<p>makes <code>spring.threads.virtual.enabled=true</code> unnecessary <em>once <code>@Async</code>-annotated methods are  concerned</em>. Which can make sense if your don't want wholesale virtual thread usage, for example if you don't want <code>HelloController.hello</code> method to be run on virtual threads.</p>\n<p>Here is what is wrong with your version of <code>TaskExecutor.</code></p>\n<p><code>TaskExecutor.execute(Runnable task)</code> contract gives you a full freedom of how to execute the <code>task</code>. The implementation could execute it on the same thread, like <code>org.springframework.core.task.SyncTaskExecutor</code> is doing</p>\n<pre class=\"lang-java prettyprint-override\"><code>task.run();\n</code></pre>\n<p>, blocking the execution, or execute it on new thread, like aforementioned <code>SimpleAsyncTaskExecutor</code> is doing:</p>\n<pre class=\"lang-java prettyprint-override\"><code>newThread(task).start();\n</code></pre>\n<p>which does not block the current thread.</p>\n<p>Your <code>virtualThreadExecutor</code> is in fact, blocking <code>Executor</code>, although it executes the task on separate (and virtual) thread.\nNow the question is about <code>ConcurrentTaskExecutor</code> delegator - does it itself orchestrates the concurrent execution? No, it does not! Instead it only <em>delegates</em> the execution to a concurrent <code>Executor</code>, hence the name of its setter - <code>setConcurrentExecutor</code>. But the delegatee <code>Executor</code> you provided <code>ConcurrentTaskExecutor</code> with was not a concurrent one.</p>\n<p>If you for whatever reason would still want to have your own implementation of <code>Executor</code> it could be the following:</p>\n<pre><code>    @Bean\n    public TaskExecutor taskExecutor() {\n        final ThreadFactory threadFactory = Thread.ofVirtual()\n                .name(&quot;async-executor-&quot;, 0)\n                .factory();\n\n        final Executor virtualThreadExecutor = task -&gt; {\n            final Runnable runnable = threadContextDecorator.decorate(task);\n            threadFactory.newThread(runnable).start();\n        };\n        return new ConcurrentTaskExecutor(virtualThreadExecutor);\n    }\n</code></pre>\n",
+    "score" : 2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 2745991,
+      "reputation" : 2794,
+      "user_id" : 2366397,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/24ee2b89e9791e936235b16af77ebda4?s=256&d=identicon&r=PG",
+      "display_name" : "igor.zh",
+      "link" : "https://stackoverflow.com/users/2366397/igor-zh"
+    },
+    "creation_date" : 1749133091,
+    "last_activity_date" : 1749153878,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79653777,
+    "question_id" : 79653469,
+    "body" : "<p>You mentioned in your question the option <code>spring.virtual.threads.enabled=true</code>. Just to clarify, you mean <code>spring.threads.virtual.enabled=true</code> right?</p>\n<p>Also, if you would like to return the response immediately, may I propose to change your code from:</p>\n<pre><code>@GetMapping\n    public ResponseEntity&lt;String&gt; hello() {\n        log.info(&quot;Received request in controller. Handled by thread: {}. Is Virtual Thread?: {}&quot;,\n                Thread.currentThread().getName(), Thread.currentThread().isVirtual());\n        helloService.hello();\n        return ResponseEntity.ok(&quot;Hello, World!&quot;);\n    }\n</code></pre>\n<p>to something like:</p>\n<pre><code>@GetMapping\n    public ResponseEntity&lt;String&gt; hello() {\n        log.info(&quot;Received request in controller. Handled by thread: {}. Is Virtual Thread?: {}&quot;,\n                Thread.currentThread().getName(), Thread.currentThread().isVirtual());\n        CompletableFuture.runAsync(() -&gt; helloService.hello());\n        return ResponseEntity.ok(&quot;Hello, World!&quot;);\n    }\n</code></pre>\n<p>I tested on my local and this works.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 42273671,
+      "reputation" : 21,
+      "user_id" : 30673520,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/c61c14037ace9a3643b6c8c779526691?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "user30673520",
+      "link" : "https://stackoverflow.com/users/30673520/user30673520"
+    },
+    "creation_date" : 1749096666,
+    "last_activity_date" : 1749096666,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140490567,
+    "post_id" : 79653469,
+    "body" : "Yes, exactly, just use <code>SimpleAsyncTaskExecutor.setDecorator</code>. But it is interesting how seemingly correct OP&#39;s code blocks <code>helloService.hello</code> . Under the hood, <code>HelloService.hello</code> <i>is</i> executed on a separate, Executor-controlled thread, but the caller appeared to be blocked. I think I&#39;ll add later on technical details on that phenomena. Great question of the OP!",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2745991,
+      "reputation" : 2794,
+      "user_id" : 2366397,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/24ee2b89e9791e936235b16af77ebda4?s=256&d=identicon&r=PG",
+      "display_name" : "igor.zh",
+      "link" : "https://stackoverflow.com/users/2366397/igor-zh"
+    },
+    "creation_date" : 1749133920,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140490518,
+    "post_id" : 79653469,
+    "body" : "No it wouldn&#39;t as the spring provided <code>TaskExecutor</code> instances have support for wrapping a task, no need to write your own for that.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126800,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1749132916,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140490190,
+    "post_id" : 79653469,
+    "body" : "@M.Deinum, you are, of course, right about custom <code>taskExecutor</code> which 1) makes <code>HelloService.hello</code> actually sequential 2) makes <code>spring.threads.virtual.enabled=true</code> useless <i>for <code>@Async</code></i> methods (but not for <code>@Controller</code> methods!). But pay attention to the fact that this custom <code>taskExecutor</code> is used for MDC decorating and this would be lost if the OP ditches it.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2745991,
+      "reputation" : 2794,
+      "user_id" : 2366397,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/24ee2b89e9791e936235b16af77ebda4?s=256&d=identicon&r=PG",
+      "display_name" : "igor.zh",
+      "link" : "https://stackoverflow.com/users/2366397/igor-zh"
+    },
+    "creation_date" : 1749127486,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140489189,
+    "post_id" : 79653469,
+    "body" : "Ditch your <code>taskExecutor</code> bean as that basically renders the <code>spring.threads.virtual.enabled=true</code> useless. If you want to use your own just use the <code>SimpleAsyncTaskExecutor</code> and set the <code>virtualThreads</code> property on it to <code>true</code>.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126800,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1749105689,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79654652" : [ {
+      "comment_id" : 140497028,
+      "post_id" : 79654652,
+      "body" : "You are very welcome. Kudos to @M.Deinum. You may also want to consider the <a href=\"https://stackoverflow.com/a/78195317/2366397\">usage of <code>ScopedValue</code></a> instead of <code>ThreadLocal</code>, used by MDC by default, as <code>ScopedValue</code>s are preferred to <code>ThreadLocal</code>s in the context of virtual threads/Loom.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2745991,
+        "reputation" : 2794,
+        "user_id" : 2366397,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/24ee2b89e9791e936235b16af77ebda4?s=256&d=identicon&r=PG",
+        "display_name" : "igor.zh",
+        "link" : "https://stackoverflow.com/users/2366397/igor-zh"
+      },
+      "creation_date" : 1749385876,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140495014,
+      "post_id" : 79654652,
+      "body" : "thanks for the solution. this solved the issue :)",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 1090772,
+        "reputation" : 456,
+        "user_id" : 1085459,
+        "user_type" : "registered",
+        "accept_rate" : 60,
+        "profile_image" : "https://www.gravatar.com/avatar/838739d50ea90c276fe5f770cae1612a?s=256&d=identicon&r=PG",
+        "display_name" : "rakesh",
+        "link" : "https://stackoverflow.com/users/1085459/rakesh"
+      },
+      "creation_date" : 1749288473,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79653777" : [ {
+      "comment_id" : 140490532,
+      "post_id" : 79653777,
+      "body" : "Exactly, beats the purpose of the <code>@Async</code> and also ignores the OP&#39;s need to MDC-based Task Decoration.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2745991,
+        "reputation" : 2794,
+        "user_id" : 2366397,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/24ee2b89e9791e936235b16af77ebda4?s=256&d=identicon&r=PG",
+        "display_name" : "igor.zh",
+        "link" : "https://stackoverflow.com/users/2366397/igor-zh"
+      },
+      "creation_date" : 1749133250,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140489181,
+      "post_id" : 79653777,
+      "body" : "Which beats the purpose of the <code>@Async</code> in Spring.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 3192259,
+        "reputation" : 126800,
+        "user_id" : 2696260,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+        "display_name" : "M. Deinum",
+        "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+      },
+      "creation_date" : 1749105482,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

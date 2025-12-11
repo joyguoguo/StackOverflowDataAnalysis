@@ -1,0 +1,143 @@
+{
+  "question" : {
+    "question_id" : 79628674,
+    "title" : "Concurrent &amp; Thread issues",
+    "body" : "<p>I have a multithreaded program that both produces output via a timer and receives user input. It behaves badly when I want to type in a command such as &quot;pause&quot; or &quot;stop&quot;: anything I type, the letters just vanish. For me to type a complete word, it must be within a second. If I manage to stop or pause the timer, however, then there is no such issue when I type a &quot;resume&quot; command.</p>\n<p>What is wrong, and how can I fix it?</p>\n<pre class=\"lang-java prettyprint-override\"><code>// timer method\nprivate void runTimer() {\n    timer.scheduleAtFixedRate(new TimerTask() {\n        @Override\n        public void run() {\n            if (isPaused.get()) return;\n\n            if (timeleft &gt; 0) {\n                int minutes = timeleft / 60;\n                int seconds = timeleft % 60;\n                // Clear the current line and print the countdown\n                System.out.print(String.format(&quot;\\033[2K\\r%02d:%02d remaining &gt; &quot;, minutes, seconds));\n                System.out.flush();\n                timeleft--;\n            } else {\n                System.out.println(&quot;\\nSession Complete!&quot;);\n                logSession(currentSessionType, Duration.ofMinutes(sessionDurationInMinutes));\n                displayTotalFocusTime(); // Show the total focus time after each session\n                stopSession();\n                focusCount++;\n\n                if (focusCount % 4 == 0){\n                    System.out.println(&quot;Time for a LONG break (15 mins)!&quot;);\n                    startBreak(15, SessionType.WORK);\n                } else {\n                    System.out.println(&quot;Time for a short break (5 mins)!&quot;);\n                    startBreak(5, SessionType.WORK);\n                }\n            }\n        }\n    }, 0, 1000);\n}\n\n// Listen and handle user input Method\nprivate void handleUserInput() {\n    Scanner scanner = new Scanner(System.in);\n    StringBuilder inputBuffer = new StringBuilder();\n\n    while (isRunning.get()) {\n        try {\n            if ( System.in.available() &gt; 0) {\n                char c = (char) System.in.read();\n                if (c == '\\n') {\n                    String input = inputBuffer.toString().trim().toLowerCase();\n                    inputBuffer.setLength(0);\n\n                    switch (input) {\n                        case &quot;pause&quot;:\n                            isPaused.set(true);\n                            System.out.println(&quot;Timer Paused.&quot;);\n                            break;\n                        case &quot;resume&quot;:\n                            isPaused.set(false);\n                            System.out.println(&quot;Timer Resumed&quot;);\n                            break;\n                        case &quot;stop&quot;:\n                            stopSession();\n                            System.out.println(&quot;Timer Stopped.&quot;);\n                            break;\n                        default:\n                            if (!input.isEmpty()) {\n                                System.out.println(&quot;Unknown Command. Use: Pause, Resume, Stop&quot;);\n                            }\n                    }\n                } else {\n                    inputBuffer.append(c);\n                }\n            }\n            Thread.sleep(50);\n        } catch (IOException | InterruptedException e) {\n            System.out.println(&quot;Error Reading Input:&quot;);\n        }\n    }\n}\n</code></pre>\n<p>The results of the code:</p>\n<p><img src=\"https://i.sstatic.net/pzFhpm8f.png\" alt=\"The result of the code\" /></p>\n",
+    "tags" : [ "java", "multithreading", "concurrency", "java.util.concurrent" ],
+    "owner" : {
+      "account_id" : 16418242,
+      "reputation" : 19,
+      "user_id" : 11860157,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/mLkWgMnD.jpg?s=256",
+      "display_name" : "iamzence",
+      "link" : "https://stackoverflow.com/users/11860157/iamzence"
+    },
+    "is_answered" : true,
+    "view_count" : 122,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1747724618,
+    "creation_date" : 1747655281,
+    "link" : "https://stackoverflow.com/questions/79628674/concurrent-thread-issues",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79629567,
+    "question_id" : 79628674,
+    "body" : "<blockquote>\n<p>It behaves badly when I want to type in a command such as &quot;pause&quot; or &quot;stop&quot;: anything I type, the letters just vanish. For me to type a complete word, it must be within a second.</p>\n</blockquote>\n<p>Well, yes.  You have it commented in the code of your timer task:</p>\n<blockquote>\n<pre><code>                    // Clear the current line and print the countdown\n                    System.out.print(String.format(&quot;\\033[2K\\r%02d:%02d remaining &gt; &quot;, minutes, seconds));\n                    System.out.flush();\n</code></pre>\n</blockquote>\n<p>The code behaves as advertised when output to a device that responds to <a href=\"https://en.wikipedia.org/wiki/ANSI_escape_code\" rel=\"nofollow noreferrer\">ANSI control sequences</a>, such as your terminal window.  Such a device interprets the <code>\\033[2K</code> (where the <code>\\033</code> is a Java escape sequence, not literal) as a command to clear the line where the cursor is presently located -- which is necessarily where you are typing.  The subsequent <code>\\r</code> returns the cursor to the beginning of the line, and then the rest of the output is printed, including the updated time remaining.  Meanwhile your input has been lost.</p>\n<blockquote>\n<p>If I manage to stop or pause the timer, however, then there is no such issue when I type a &quot;resume&quot; command.</p>\n</blockquote>\n<p>Well, yes.  Once you suspend the timer-based screen updates, the program ceases emitting those clear commands every second.</p>\n<blockquote>\n<p>how can I fix it?</p>\n</blockquote>\n<ol>\n<li><p>Stop clearing the line.</p>\n</li>\n<li><p>Instead ... that's trickier.  Ideally, you would emit commands to save the current cursor position, overwrite (only) the beginning of the current line, then restore the cursor position.  Unfortunately, commands for that cursor position save and restore are not among the most widely supported.  However, chances are relatively good that your device will recognize <code>\\0337</code> and <code>\\0338</code> for those purposes.  Those are from the VT100 terminal control set, which is widely emulated, and they are among <a href=\"https://learn.microsoft.com/en-us/windows/console/console-virtual-terminal-sequences\" rel=\"nofollow noreferrer\">those supported by recent Windows</a>.</p>\n<p>The result would be something like</p>\n<pre><code>                    // Update the countdown\n                    System.out.print(String.format(\n                        &quot;\\0337\\r%02d:%02d remaining &gt; \\0338&quot;, minutes, seconds));\n                    System.out.flush();\n</code></pre>\n</li>\n</ol>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 2792262,
+      "reputation" : 190832,
+      "user_id" : 2402272,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+      "display_name" : "John Bollinger",
+      "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+    },
+    "creation_date" : 1747694601,
+    "last_activity_date" : 1747694601,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140441641,
+    "post_id" : 79628674,
+    "body" : "Please provide a title that summarizes your actual question.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 213468,
+      "reputation" : 110282,
+      "user_id" : 466862,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/d873f397779db38cd510d9ee5416fd43?s=256&d=identicon&r=PG",
+      "display_name" : "Mark Rotteveel",
+      "link" : "https://stackoverflow.com/users/466862/mark-rotteveel"
+    },
+    "creation_date" : 1747724639,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140440951,
+    "post_id" : 79628674,
+    "body" : "Try removing the <code>System.in.available() &gt; 0</code> check. That&#39;s what <a href=\"https://docs.oracle.com/javase/8/docs/api/java/util/Scanner.html#hasNext--\" rel=\"nofollow noreferrer\">Scanner#hasNext</a> is for. You seem to be trying to reimplement the functionality of Scanner despite also creating a Scanner.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 14914414,
+      "reputation" : 1185,
+      "user_id" : 10808904,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Ts8fIsJj.png?s=256",
+      "display_name" : "Xavier Pedraza",
+      "link" : "https://stackoverflow.com/users/10808904/xavier-pedraza"
+    },
+    "creation_date" : 1747693931,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140440944,
+    "post_id" : 79628674,
+    "body" : "@VGR That doesn&#39;t appear to be true. Runnable would not satisfy any of the contracts of the <a href=\"https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/util/Timer.html\" rel=\"nofollow noreferrer\">Timer</a> class. Recall that TimerTask is a <i>subclass</i> of Runnable; just as you cannot pass a Number to a method that accepts Integer, you cannot pass a Runnable to a method that accepts TimerTask. That being said, I find the usage of Timer/TimerTask in this code to be strange anywho, and it could theoretically be refactored to use Thread/Runnable.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 14914414,
+      "reputation" : 1185,
+      "user_id" : 10808904,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Ts8fIsJj.png?s=256",
+      "display_name" : "Xavier Pedraza",
+      "link" : "https://stackoverflow.com/users/10808904/xavier-pedraza"
+    },
+    "creation_date" : 1747693778,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140440438,
+    "post_id" : 79628674,
+    "body" : "You&#39;re updating the console output each second, meaning that the command you write will also &quot;vanish&quot; in this process. You have to handle them separately.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 38890247,
+      "reputation" : 156,
+      "user_id" : 29003408,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/LhjH9Wyd.jpg?s=256",
+      "display_name" : "Andrei Greblă",
+      "link" : "https://stackoverflow.com/users/29003408/andrei-grebl%c4%83"
+    },
+    "creation_date" : 1747681854,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140440401,
+    "post_id" : 79628674,
+    "body" : "It seems that your terminal resets its input buffer when you send it &quot;\\033[2K\\r%02d:%02d remaining &gt; &quot;. <code>System.in</code> is buffered and only returns data once you press enter - see <a href=\"https://stackoverflow.com/questions/1066318/how-to-read-a-single-char-from-the-console-in-java-as-the-user-types-it\" title=\"how to read a single char from the console in java as the user types it\">stackoverflow.com/questions/1066318/&hellip;</a> for workarounds",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7423601,
+      "reputation" : 21950,
+      "user_id" : 5646962,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/950788cd150c2e596944181dfd8421af?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Thomas Kl&#228;ger",
+      "link" : "https://stackoverflow.com/users/5646962/thomas-kl%c3%a4ger"
+    },
+    "creation_date" : 1747681105,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140439479,
+    "post_id" : 79628674,
+    "body" : "Please check the answer to the question <a href=\"https://meta.stackoverflow.com/q/285551/85421\">Why should I not upload images of code/data/errors?</a>",
+    "score" : 5,
+    "owner" : {
+      "account_id" : 31180,
+      "reputation" : 29752,
+      "user_id" : 85421,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/kKvXH.gif?s=256",
+      "display_name" : "user85421",
+      "link" : "https://stackoverflow.com/users/85421/user85421"
+    },
+    "creation_date" : 1747664034,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

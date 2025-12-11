@@ -1,0 +1,80 @@
+{
+  "question" : {
+    "question_id" : 79635170,
+    "title" : "Azure Function with RabbitMQ: output multiple messages",
+    "body" : "<p>I have an Azure Function made in Java, which is triggered by RabbitMQ messages on a specific queue.<br />\nMy problem is that I need to output two different messages, one in the middle of the function's code and one at the end. I saw that <code>OutputBinding.setValue</code> doesn't immediately send a message but only sets the value to be used as the output of the function.</p>\n<p>Here's my code structure:</p>\n<pre class=\"lang-java prettyprint-override\"><code>import com.microsoft.azure.functions.ExecutionContext;\nimport com.microsoft.azure.functions.OutputBinding;\nimport com.microsoft.azure.functions.annotation.FunctionName;\nimport com.microsoft.azure.functions.rabbitmq.annotation.RabbitMQOutput;\nimport com.microsoft.azure.functions.rabbitmq.annotation.RabbitMQTrigger;\n\npublic class MyFunction {\n\n    @FunctionName(&quot;MyFunction&quot;)\n    public void run(\n            @RabbitMQTrigger(connectionStringSetting = &quot;RABBIT_URL&quot;, queueName = &quot;input-queue&quot;)\n            InputMessage message,\n            @RabbitMQOutput(connectionStringSetting = &quot;RABBIT_URL&quot;, queueName = &quot;output-queue&quot;)\n            OutputBinding&lt;OutputMessage&gt; output,\n            final ExecutionContext context) {\n        \n        // some code...\n        \n        output.setValue(new OutputMessage(OutputMessage.Status.PROCESSING, &quot;some other info 1&quot;));\n        \n        // other code...\n        \n        output.setValue(new OutputMessage(OutputMessage.Status.DONE, &quot;some other info 2&quot;));\n    }\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>public record OutputMessage (Status status, String info) {\n    \n    public enum Status {\n        PROCESSING,\n        DONE\n    }\n}\n</code></pre>\n<p>The message with status &quot;PROCESSING&quot; needs to be fired before the function has done its thing, but if I test the function and go to the RabbitMQ management interface I see that there's only 1 message in the output queue, not 2, and it's the one with status &quot;DONE&quot;.</p>\n<p>Is there actually a way to send 2 messages from 1 function by using the available tools provided by the Azure Functions Java library/es? Or do I have to import the RabbitMQ library, connect to the queue and manually send a message through that?</p>\n",
+    "tags" : [ "java", "azure", "azure-functions", "rabbitmq" ],
+    "owner" : {
+      "account_id" : 2650647,
+      "reputation" : 1614,
+      "user_id" : 3514976,
+      "user_type" : "registered",
+      "accept_rate" : 71,
+      "profile_image" : "https://i.sstatic.net/o5LkM.png?s=256",
+      "display_name" : "nonzaprej",
+      "link" : "https://stackoverflow.com/users/3514976/nonzaprej"
+    },
+    "is_answered" : true,
+    "view_count" : 126,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1749103233,
+    "creation_date" : 1747990323,
+    "link" : "https://stackoverflow.com/questions/79635170/azure-function-with-rabbitmq-output-multiple-messages",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79653863,
+    "question_id" : 79635170,
+    "body" : "<p>The issue occurred because <code>@RabbitMQOutput</code> combined with <code>OutputBinding.setValue()</code> only sends a single message when the function finishes. It doesn't support sending multiple messages at different points during execution.</p>\n<p>To fix the issue, I used the native RabbitMQ Java client (<code>com.rabbitmq.client</code>) inside the RabbitMQ trigger function. This allows me to manually publish messages to the output-queue exactly when needed, one during processing and another after completion.</p>\n<p><strong>RabbitMQTriggerJava.java :</strong></p>\n<pre class=\"lang-java prettyprint-override\"><code>import com.microsoft.azure.functions.*;\nimport com.microsoft.azure.functions.annotation.*;\nimport com.microsoft.azure.functions.rabbitmq.annotation.RabbitMQTrigger;\nimport com.rabbitmq.client.Channel;\nimport com.rabbitmq.client.Connection;\nimport com.rabbitmq.client.ConnectionFactory;\n\npublic class RabbitMQTriggerJava {\n\n    private static final String RABBIT_URL = System.getenv(&quot;RABBIT_URL&quot;);\n    private static final String OUTPUT_QUEUE = &quot;output-queue&quot;;\n\n    @FunctionName(&quot;RabbitMQTriggerJava&quot;)\n    public void run(\n            @RabbitMQTrigger(connectionStringSetting = &quot;RABBIT_URL&quot;, queueName = &quot;input-queue&quot;)\n            InputMessage message,\n            final ExecutionContext context) {\n\n        context.getLogger().info(&quot;Processing message: &quot; + message);\n\n        try (Connection connection = createRabbitConnection();\n             Channel channel = connection.createChannel()) {\n\n            OutputMessage processingMsg = new OutputMessage(OutputMessage.Status.PROCESSING, &quot;Processing started&quot;);\n            channel.basicPublish(&quot;&quot;, OUTPUT_QUEUE, null, processingMsg.toString().getBytes());\n            Thread.sleep(2000); \n\n            OutputMessage doneMsg = new OutputMessage(OutputMessage.Status.DONE, &quot;Processing completed&quot;);\n            channel.basicPublish(&quot;&quot;, OUTPUT_QUEUE, null, doneMsg.toString().getBytes());\n            \n        } catch (Exception e) {\n            context.getLogger().severe(&quot;Error sending message: &quot; + e.getMessage());\n        }\n    }\n\n    private Connection createRabbitConnection() throws Exception {\n        ConnectionFactory factory = new ConnectionFactory();\n        factory.setUri(RABBIT_URL);\n        return factory.newConnection();\n    }\n}\n</code></pre>\n<p><strong>InputMessage.java :</strong></p>\n<pre class=\"lang-java prettyprint-override\"><code>public class InputMessage {\n    private String content;\n\n    public InputMessage() {\n    }\n\n    public InputMessage(String content) {\n        this.content = content;\n    }\n\n    public String getContent() {\n        return content;\n    }\n\n    public void setContent(String content) {\n        this.content = content;\n    }\n\n    @Override\n    public String toString() {\n        return &quot;InputMessage{content='&quot; + content + &quot;'}&quot;;\n    }\n}\n</code></pre>\n<p><strong>OutputMessage.java :</strong></p>\n<pre class=\"lang-java prettyprint-override\"><code>public class OutputMessage {\n\n    private Status status;\n    private String info;\n\n    public OutputMessage(Status status, String info) {\n        this.status = status;\n        this.info = info;\n    }\n\n    public Status getStatus() {\n        return status;\n    }\n\n    public String getInfo() {\n        return info;\n    }\n\n    @Override\n    public String toString() {\n        return &quot;OutputMessage{&quot; +\n                &quot;status=&quot; + status +\n                &quot;, info='&quot; + info + '\\'' +\n                '}';\n    }\n\n    public enum Status {\n        PROCESSING,\n        DONE\n    }\n}\n</code></pre>\n<p><strong>local.settings.json :</strong></p>\n<pre class=\"lang-json prettyprint-override\"><code>&quot;RABBIT_URL&quot;: &quot;amqp://guest:guest@localhost:5672&quot;,\n</code></pre>\n<p>I sent a message to the input-queue in RabbitMQ as shown below,</p>\n<p><a href=\"https://i.sstatic.net/TMfwqmyJ.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/TMfwqmyJ.png\" alt=\"enter image description here\" /></a></p>\n<p>The RabbitMQ trigger function ran successfully.</p>\n<p><a href=\"https://i.sstatic.net/XIxT5Jvc.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/XIxT5Jvc.png\" alt=\"enter image description here\" /></a></p>\n<p>I successfully received two messages in the <code>output-queue</code> of RabbitMQ as shown below.</p>\n<p><a href=\"https://i.sstatic.net/wLNtawY8.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/wLNtawY8.png\" alt=\"enter image description here\" /></a></p>\n",
+    "score" : 0,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 26618602,
+      "reputation" : 4373,
+      "user_id" : 20237646,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/fa24d5646e4d1c444b17a77fd8a37337?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Dasari Kamali",
+      "link" : "https://stackoverflow.com/users/20237646/dasari-kamali"
+    },
+    "creation_date" : 1749103233,
+    "last_activity_date" : 1749103233,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140452311,
+    "post_id" : 79635170,
+    "body" : "Yeah that&#39;s what I thought... it&#39;s a shame though.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2650647,
+      "reputation" : 1614,
+      "user_id" : 3514976,
+      "user_type" : "registered",
+      "accept_rate" : 71,
+      "profile_image" : "https://i.sstatic.net/o5LkM.png?s=256",
+      "display_name" : "nonzaprej",
+      "link" : "https://stackoverflow.com/users/3514976/nonzaprej"
+    },
+    "creation_date" : 1747996662,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140452206,
+    "post_id" : 79635170,
+    "body" : "Use the RabbitMQ Java client inside your function to send multiple messages manually instead of relying on <code>OutputBinding.setValue()</code>.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 26618602,
+      "reputation" : 4373,
+      "user_id" : 20237646,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/fa24d5646e4d1c444b17a77fd8a37337?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Dasari Kamali",
+      "link" : "https://stackoverflow.com/users/20237646/dasari-kamali"
+    },
+    "creation_date" : 1747994278,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

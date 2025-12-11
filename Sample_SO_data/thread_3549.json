@@ -1,0 +1,130 @@
+{
+  "question" : {
+    "question_id" : 79541316,
+    "title" : "Collectors#toMap: No NPEs on null values",
+    "body" : "<p>What if I don't want <code>Collectors#toMap</code> to throw on null values? Java 8</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class CollectorsTest {\n\n    @Test\n    public void collectorsTest() {\n        List&lt;Map.Entry&lt;String, Object&gt;&gt; params = Arrays.asList(\n                new AbstractMap.SimpleEntry&lt;&gt;(&quot;key1&quot;, 1),\n                new AbstractMap.SimpleEntry&lt;&gt;(&quot;key2&quot;, null)\n        );\n        Map&lt;String, Object&gt; paramMap = toParamMap(params); // throws NPE\n    }\n\n    private static Map&lt;String, Object&gt; toParamMap(List&lt;Map.Entry&lt;String, Object&gt;&gt; params) {\n        Map&lt;String, Object&gt; paramMap = params.stream().collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));\n        return paramMap;\n    }\n}\n</code></pre>\n",
+    "tags" : [ "java", "java-stream" ],
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2679,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "is_answered" : true,
+    "view_count" : 187,
+    "answer_count" : 2,
+    "score" : 4,
+    "last_activity_date" : 1743333708,
+    "creation_date" : 1743161746,
+    "link" : "https://stackoverflow.com/questions/79541316/collectorstomap-no-npes-on-null-values",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79543658,
+    "question_id" : 79541316,
+    "body" : "<p>The <code>toMap</code> collectors don't permit null entry or values. To avoid this you could use <code>forEach</code> with <code>HashMap.put</code> as in Hiro Silva's answer.</p>\n<p>It is also easy to keep using streams, which might be preferred if making use of  parallel or filters on the data. A collector based on <code>HashMap</code> will permit use of both null keys and values. <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/util/stream/Stream.html#collect(java.util.function.Supplier,java.util.function.BiConsumer,java.util.function.BiConsumer)\" rel=\"nofollow noreferrer\"><code>Stream.collect</code></a> handles definition of custom collectors, setting up with arguments to supply a new <code>HashMap</code> and to add entries to that hashmap:</p>\n<pre><code>private static Map&lt;String, Object&gt; toParamMap(List&lt;Map.Entry&lt;String, Object&gt;&gt; params) {\n    return params.stream()\n            .collect(HashMap::new,\n                    (map, entry) -&gt; map.put(entry.getKey(), entry.getValue()),\n                    HashMap::putAll);\n}\n</code></pre>\n<p>It is cumbersome to write the above each time you might need it, but it can be re-worked to new method returning your own hashmap collector with generic key + value types. This works for handling any collections of Map.Entry using <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/util/stream/Collector.html#of(java.util.function.Supplier,java.util.function.BiConsumer,java.util.function.BinaryOperator,java.util.stream.Collector.Characteristics...)\" rel=\"nofollow noreferrer\"><code>Collector.of</code></a>:</p>\n<pre><code>public static &lt;K,V&gt; Collector&lt;Map.Entry&lt;K, V&gt;, Map&lt;K, V&gt;, Map&lt;K, V&gt;&gt; toHashMap() {\n    return Collector.of(HashMap::new,\n                       (map, entry) -&gt; map.put(entry.getKey(), entry.getValue()),\n                       (a,b) -&gt; { a.putAll(b); return a; });\n}\n</code></pre>\n<p>Then you can collect streams of <code>Map.Entry</code> which contains null key+values by adding <code>.collect(toHashMap())</code>, for example:</p>\n<pre><code>Map&lt;String, Object&gt; paramMap = params.stream().collect(toHashMap());\nSystem.out.println(paramMap);\n// prints {key1=1, key2=null}\n</code></pre>\n",
+    "score" : 6,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 5998820,
+      "reputation" : 16283,
+      "user_id" : 4712734,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f6e922a2cb7e2da59286f27b162aaca5?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "DuncG",
+      "link" : "https://stackoverflow.com/users/4712734/duncg"
+    },
+    "creation_date" : 1743270232,
+    "last_activity_date" : 1743333708,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79541367,
+    "question_id" : 79541316,
+    "body" : "<h2>The old HashMap.put()</h2>\n<p>The modern methods of the standard library, including the methods in the stream package, don’t like nulls as keys or values in maps. Generally for good reasons: nulls are problematic. You may consider a different design where keys with null values are omitted from your map. <code>paramMap.get(yourKey)</code> will still return the <code>null</code> that you say you want.</p>\n<p>There could still be situations where you got legitimate reasons for wanting one or more null values in the map. To obtain that you may use the classic methods from the introduction of the Java collections framework in Java 1.2. It gets just a little wordier:</p>\n<pre><code>private static Map&lt;String, Object&gt; toParamMap(List&lt;Map.Entry&lt;String, Object&gt;&gt; params) {\n    Map&lt;String, Object&gt; paramMap = new HashMap&lt;&gt;();\n    params.forEach(param -&gt; paramMap.put(param.getKey(), param.getValue()));\n    return paramMap;\n}\n</code></pre>\n<p>Trying it out with your example:</p>\n<pre><code>    List&lt;Map.Entry&lt;String, Object&gt;&gt; params = Arrays.asList(\n            new AbstractMap.SimpleEntry&lt;&gt;(&quot;key1&quot;, 1),\n            new AbstractMap.SimpleEntry&lt;&gt;(&quot;key2&quot;, null)\n    );\n    Map&lt;String, Object&gt; paramMap = toParamMap(params);\n    System.out.println(paramMap);\n</code></pre>\n<p>Output is a map with a null value in it:</p>\n<blockquote>\n<p>{key1=1, key2=null}</p>\n</blockquote>\n",
+    "score" : 4,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 41044567,
+      "reputation" : 56,
+      "user_id" : 30092482,
+      "user_type" : "unregistered",
+      "profile_image" : "https://www.gravatar.com/avatar/159327474915b865564e505d952b1ef8?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Hiro Silva",
+      "link" : "https://stackoverflow.com/users/30092482/hiro-silva"
+    },
+    "creation_date" : 1743163134,
+    "last_activity_date" : 1743163672,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140290432,
+    "post_id" : 79541316,
+    "body" : "@SergeyZolotarev the <code>toMap</code> collector doesn’t use <code>merge</code>. It did in the first version (Java 8) but nowadays uses an explicit <code>null</code> check inside the collector to stay compatible to the first version. It would be easy to create a copy of that implementation and remove the explicit <code>null</code> check.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 3211603,
+      "reputation" : 300981,
+      "user_id" : 2711488,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+      "display_name" : "Holger",
+      "link" : "https://stackoverflow.com/users/2711488/holger"
+    },
+    "creation_date" : 1743597418,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140273600,
+    "post_id" : 79541316,
+    "body" : "@Anonymous it&#39;s <code>HashMap</code> that throws it on <code>merge()</code>. The class is mandated to do so by the <code>Map</code> interface (see <code>java.util.Map#merge</code>)",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2679,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "creation_date" : 1743163251,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140273516,
+    "post_id" : 79541316,
+    "body" : "You can’t. You would need to write your own collector. Which is definitely possible, said without having done it myself.",
+    "score" : 4,
+    "owner" : {
+      "account_id" : 7612423,
+      "reputation" : 87400,
+      "user_id" : 5772882,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Anonymous",
+      "link" : "https://stackoverflow.com/users/5772882/anonymous"
+    },
+    "creation_date" : 1743162014,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79543658" : [ {
+      "comment_id" : 140278712,
+      "post_id" : 79543658,
+      "body" : "Surprisingly elegant. Bravo. +1",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 7612423,
+        "reputation" : 87400,
+        "user_id" : 5772882,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Anonymous",
+        "link" : "https://stackoverflow.com/users/5772882/anonymous"
+      },
+      "creation_date" : 1743323232,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

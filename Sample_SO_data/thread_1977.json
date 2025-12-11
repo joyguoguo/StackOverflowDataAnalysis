@@ -1,0 +1,111 @@
+{
+  "question" : {
+    "question_id" : 79658974,
+    "title" : "How to JUnit Test Asynchronous CompletableFuture.runAsync code?",
+    "body" : "<p>I want to test a method which asynchronously calls an API. Somewhat like below -</p>\n<pre><code>private void callExternalAPI(){\n\n   CompletableFuture.runAsync(() -&gt; {\n      try{\n         //Calling the API\n      }catch(final Exception e){\n         //logging some metrics\n      }\n   });\n\n}\n</code></pre>\n<p>I am mocking the API call in the tests, returning some values of throwing some exceptions to test both the success case and exception case and verifying metrics.\nUsing JUnit &amp; Mockito to write tests.</p>\n<p>The test completes its execution before the asynchronous part could complete logging the metric and the test could catch them, which gives me a\n<code>Argument(s) are different, Wanted: Error</code></p>\n<p>When I remove the CompletableFuture.runAsync part and make the code Synchronous, then the tests pass.</p>\n<p>I tried multiple things like -</p>\n<ol>\n<li>Thread.sleep(5000) just after the test subject was called.</li>\n<li>In the verify(), I used timeout(5000) like below -\n<code>verify(mockMetricLogger, timeout(5000).times(1)).....</code></li>\n</ol>\n<p>I did not want to use Awaitility or Executors, they would unnecessarily make the code big.</p>\n<p>Also, don't want to use <code>supplyAsync</code> or return anything from this method.</p>\n",
+    "tags" : [ "java", "asynchronous", "junit", "mockito", "completable-future" ],
+    "owner" : {
+      "account_id" : 25172469,
+      "reputation" : 31,
+      "user_id" : 19015119,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/AATXAJx4FAhocsff_aAnEF2A_gRfE-_OBZ8--NF6U6DY=k-s256",
+      "display_name" : "Prachi Srivastava",
+      "link" : "https://stackoverflow.com/users/19015119/prachi-srivastava"
+    },
+    "is_answered" : true,
+    "view_count" : 379,
+    "answer_count" : 1,
+    "score" : -3,
+    "last_activity_date" : 1749493299,
+    "creation_date" : 1749476727,
+    "link" : "https://stackoverflow.com/questions/79658974/how-to-junit-test-asynchronous-completablefuture-runasync-code",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79659342,
+    "question_id" : 79658974,
+    "body" : "<p>Your implementation is on the right track with CompletableFuture.runAsync. Still, since it runs asynchronously, your test needs to wait until the background task completes, without changing the  code or making the test overly complex.</p>\n<p>You don’t need to use Awaitility or Executors, but you do need a deterministic and lightweight way to wait for async completion inside the test.</p>\n<pre class=\"lang-java prettyprint-override\"><code>    @Test\n    void testCallExternalAPILogsMetricsOnException() {\n        // Given\n        CountDownLatch latch = new CountDownLatch(1);\n\n        // Mock API call to throw exception\n        doAnswer(invocation -&gt; {\n            throw new RuntimeException(&quot;testCallExternalAPILogsMetricsOnException() =&gt; API execution failure&quot;);\n        }).when(mockApiClient).call(); // Example mock\n\n        // Mock metric logger to count down the latch\n        doAnswer(invocation -&gt; {\n            latch.countDown(); // This will unblock the test\n            return null;\n        }).when(mockMetricLogger).log(any());\n\n        // When\n        myService.callExternalAPI();\n\n        // Then\n        boolean isCompleted = latch.await(5, TimeUnit.SECONDS); // Wait max 5s\n        assertTrue(isCompleted, &quot;testCallExternalAPILogsMetricsOnException() =&gt; Async logging didn't finish in time&quot;);\n        verify(mockMetricLogger, times(1)).log(any());\n    }\n</code></pre>\n<p>Try this method, this should help you get yours query resolved.</p>\n",
+    "score" : 2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 11993302,
+      "reputation" : 121,
+      "user_id" : 8775691,
+      "user_type" : "registered",
+      "profile_image" : "https://graph.facebook.com/1032056236897102/picture?type=large",
+      "display_name" : "Sanjit Shrestha",
+      "link" : "https://stackoverflow.com/users/8775691/sanjit-shrestha"
+    },
+    "creation_date" : 1749493299,
+    "last_activity_date" : 1749493299,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140502347,
+    "post_id" : 79658974,
+    "body" : "So your unit test is already a success: it revealed that caller of <code>callExternalAPI()</code> can not be sure that the operation has been performed nor know whether it was successful or not. When you’re fine with that, there’s no point in testing that method which is just a wrapper around the actual operation. If you think the actual operation is worth testing, it’s also worth being in a named method rather than an anonymous lambda expression. Move it into a method, change <code>callExternalAPI()</code> to <code>CompletableFuture.runAsync(this::theNewMethod)</code> and create a unit test for <code>theNewMethod()</code> instead.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 3211603,
+      "reputation" : 300981,
+      "user_id" : 2711488,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+      "display_name" : "Holger",
+      "link" : "https://stackoverflow.com/users/2711488/holger"
+    },
+    "creation_date" : 1749558746,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140499692,
+    "post_id" : 79658974,
+    "body" : "I&#39;ll toss out an opinion: when you&#39;re testing a external API like this, you&#39;re doing integration testing, not unit testing.  Break this method up, separate concerns so that the multithreading is not part of the rest of the code, and test the components in unit testing that can be tested in unit test.  Don&#39;t try to test absolutely everything in unit testing, it won&#39;t work.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 2709823,
+      "reputation" : 11069,
+      "user_id" : 2338547,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/QT3fG.png?s=256",
+      "display_name" : "markspace",
+      "link" : "https://stackoverflow.com/users/2338547/markspace"
+    },
+    "creation_date" : 1749484917,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140499531,
+    "post_id" : 79658974,
+    "body" : "Mockito doesn&#39;t support multithreading. You have to mock <code>runAsync</code> method.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 4497436,
+      "reputation" : 20786,
+      "user_id" : 3656904,
+      "user_type" : "registered",
+      "accept_rate" : 67,
+      "profile_image" : "https://www.gravatar.com/avatar/8bdbd1f89f8907e8e8b15ab88c084c65?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "talex",
+      "link" : "https://stackoverflow.com/users/3656904/talex"
+    },
+    "creation_date" : 1749481746,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140499372,
+    "post_id" : 79658974,
+    "body" : "I mean you have your answer there. Use Awaitility or verification with timeout. &quot;unnecessarily make the code big&quot; doesnt make sense. Though you also mentioned using verification with timeout. Whats wrong with that? you just briefly mentioned using it and just glossed over it completely",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 21724606,
+      "reputation" : 1431,
+      "user_id" : 16034206,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/MRBdT.jpg?s=256",
+      "display_name" : "pebble unit",
+      "link" : "https://stackoverflow.com/users/16034206/pebble-unit"
+    },
+    "creation_date" : 1749478472,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

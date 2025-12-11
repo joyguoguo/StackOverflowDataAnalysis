@@ -1,0 +1,256 @@
+{
+  "question" : {
+    "question_id" : 79539826,
+    "title" : "Itext 9 - Signing a PDF using an external service - &quot;document was modified or corrupted after the signature was applied&quot;",
+    "body" : "<p>I want to sign a document with using an external API. You can send an hash of your document to that service and get a signed hash back.</p>\n<p>This is how I send the document hash to the API:</p>\n<pre><code>private String generateHash(byte[] content) throws NoSuchAlgorithmException {\n        MessageDigest digest = MessageDigest.getInstance(&quot;SHA256&quot;);\n        byte[] hash = digest.digest(content);\n        return Base64.getEncoder().encodeToString(hash);\n}\n</code></pre>\n<p>This is how I handle the response with the signature hash:</p>\n<pre><code>byte[] signByte = Base64.getDecoder().decode(stsCallbackDocumentResponse.getSignByte());\n</code></pre>\n<p>After signing the signature is invalid because of &quot;The document was modified or corrupted after the signature was applied&quot;.</p>\n<p>Here is the code responsible for signing:</p>\n<pre><code>private byte[] signPdf(byte[] content, byte[] signByte, String reason, String location)\n            throws GeneralSecurityException, IOException {\n        ByteArrayInputStream inputStream = new ByteArrayInputStream(content);\n        PdfReader reader = new PdfReader(inputStream);\n\n        StampingProperties stampingProperties = new StampingProperties().useAppendMode();\n\n        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();\n        PdfSigner signer = new PdfSigner(reader, outputStream, stampingProperties);\n\n        // .setFieldName(&quot;Signature1&quot;);\n        Rectangle rect = new Rectangle(36, 648, 200, 100);\n        signer.getSignerProperties().setPageRect(rect).setPageNumber(1);\n        if (reason != null) {\n            signer.getSignerProperties().setReason(reason);\n        }\n        if (location != null) {\n            signer.getSignerProperties().setLocation(location);\n        }\n\n        IExternalDigest digest = new BouncyCastleDigest();\n        IExternalSignature signature = new IExternalSignature() {\n\n            @Override\n            public String getDigestAlgorithmName() {\n                return DigestAlgorithms.SHA256;\n            }\n\n            @Override\n            public String getSignatureAlgorithmName() {\n                return &quot;RSA&quot;;\n            }\n\n            @Override\n            public ISignatureMechanismParams getSignatureMechanismParameters() {\n                return null;\n            }\n\n            @Override\n            public byte[] sign(byte[] message) throws GeneralSecurityException {\n                return signByte;\n            }\n        };\n\n        StsAccessToken stsAccessToken = stsAccessTokenRepository\n                .findByApplicationUserId(SecurityUtils.getCurrentUserId());\n\n        Certificate[] chain = generateCertificateChain(stsAccessToken.getSigningCertificate().getPemCertificate());\n\n        signer.signDetached(digest, signature, chain, null, null, null, 0, PdfSigner.CryptoStandard.CMS);\n\n        return outputStream.toByteArray();\n    }\n\n    private Certificate[] generateCertificateChain(String pemCertificate) {\n        try {\n            byte[] decodedCert = java.util.Base64.getDecoder()\n                    .decode(pemCertificate.replaceAll(&quot;-----\\\\w+ CERTIFICATE-----&quot;, &quot;&quot;).replaceAll(&quot;\\n&quot;, &quot;&quot;));\n            InputStream inputStream = new ByteArrayInputStream(decodedCert);\n\n            CertificateFactory certFactory = CertificateFactory.getInstance(&quot;X.509&quot;);\n\n            X509Certificate certificate = (X509Certificate) certFactory.generateCertificate(inputStream);\n\n            List&lt;Certificate&gt; certificateChain = new ArrayList&lt;&gt;();\n            certificateChain.add(certificate);\n\n            return certificateChain.toArray(new Certificate[0]);\n        } catch (Exception e) {\n            throw new ServiceException(e);\n        }\n    }\n</code></pre>\n<p>Finally I create a document from the resulting byte[].</p>\n<p>I also tried saving directly to a document.</p>\n<pre><code>PdfSigner signer = new PdfSigner(reader, new FileOutputStream(&quot;/home/alex/repo/alex.pdf&quot;), stampingProperties);\n</code></pre>\n<p>Dependencies:</p>\n<pre><code>        &lt;dependency&gt;\n            &lt;groupId&gt;com.itextpdf&lt;/groupId&gt;\n            &lt;artifactId&gt;sign&lt;/artifactId&gt;\n            &lt;version&gt;9.1.0&lt;/version&gt;\n        &lt;/dependency&gt;\n        &lt;dependency&gt;\n            &lt;groupId&gt;com.itextpdf&lt;/groupId&gt;\n            &lt;artifactId&gt;bouncy-castle-adapter&lt;/artifactId&gt;\n            &lt;version&gt;9.1.0&lt;/version&gt;\n        &lt;/dependency&gt;\n</code></pre>\n<p>Any idea what I'm doing wrong?</p>\n<p>I don't have API documentation for the signing step, I only have one <a href=\"https://kb.itextpdf.com/itext/digital-signatures-chapter-4#Digitalsignatures-chapter4-c4_07_clientserversigning\" rel=\"nofollow noreferrer\">link</a>.</p>\n<p><strong>UPDATES:</strong></p>\n<p>You are right, I was not sending the hash for the message from the sign method of IExternalSignature but was sending the hash of the entire document because that's what the API documentation says.</p>\n<p>What I didn't mention and I think it was useful to do is that my signature happens in different steps.</p>\n<p>My poor documentation says:</p>\n<pre><code> 1. /api/v1/signature\nBody:\n - id: unique identifier of the record.\n - hashByte: the hash value of the document, encoded (e.g. Base64) to validate data integrity.\n - algorithmName: name of the algorithm used to generate the hash (e.g. SHA256).\n - docName: name of the document or file for which the hash was calculated.\n 2. /api/v1/callback\nResponse:\n- id: unique identifier of the record.\n- signByte: A digital signature in the form of an array of bytes, encoded in Base64.\n</code></pre>\n<p>I updated the code as follows after your response but the signature is still invalid.</p>\n<pre><code>    public void signDocument(DocumentContent documentContent) {\n    /*\n     * { \n     *  &quot;id&quot;: documentContent.getId(), \n     *  &quot;hashByte&quot;: generateHash(documentContent.getContent()), \n     *  &quot;algorithmName&quot;: &quot;SHA256&quot;,\n     *  &quot;docName&quot;: documentContent.getName() \n     * } \n     * send sign request\n     */\n}\n\nprivate String generateHash(byte[] content) {\n    try {\n        PdfReader reader = new PdfReader(new ByteArrayInputStream(content));\n        PdfSigner signer = new PdfSigner(reader, new ByteArrayOutputStream(),\n                new StampingProperties().useAppendMode());\n        signer.getSignerProperties().setPageRect(new Rectangle(36, 648, 200, 100)).setPageNumber(1);\n\n        final HashHolder extracted = new HashHolder();\n        IExternalSignature hashExtractor = new IExternalSignature() {\n\n            @Override\n            public byte[] sign(byte[] hash) throws GeneralSecurityException {\n                extracted.hash = hash;\n                return new byte[0];\n            }\n\n            @Override\n            public String getDigestAlgorithmName() {\n                return DigestAlgorithms.SHA256;\n            }\n\n            @Override\n            public String getSignatureAlgorithmName() {\n                return &quot;RSA&quot;;\n            }\n\n            @Override\n            public ISignatureMechanismParams getSignatureMechanismParameters() {\n                return null;\n            }\n        };\n        signer.signDetached(new BouncyCastleDigest(), hashExtractor, getCertificateChain(), null, null, null, 0,\n                PdfSigner.CryptoStandard.CMS);\n\n        MessageDigest messageDigest = MessageDigest.getInstance(&quot;SHA256&quot;);\n        byte[] hash = messageDigest.digest(extracted.hash);\n\n        return Base64.getEncoder().encodeToString(hash);\n    } catch (Exception e) {\n        throw new ServiceException(e);\n    }\n}\n\npublic void addCallbackSignatureHash(DocumentContent documentContent) {\n    try {\n        byte[] signByte = Base64.getDecoder().decode(getCallbackSignByte());\n        PdfReader reader = new PdfReader(new ByteArrayInputStream(documentContent.getContent()));\n\n        PdfSigner signer = new PdfSigner(reader, new FileOutputStream(&quot;/home/alex/repo/alex.pdf&quot;),\n                new StampingProperties().useAppendMode());\n        signer.getSignerProperties().setPageRect(new Rectangle(36, 648, 200, 100)).setPageNumber(1);\n\n        IExternalSignature signature = new IExternalSignature() {\n\n            @Override\n            public String getDigestAlgorithmName() {\n                return DigestAlgorithms.SHA256;\n            }\n\n            @Override\n            public String getSignatureAlgorithmName() {\n                return &quot;RSA&quot;;\n            }\n\n            @Override\n            public ISignatureMechanismParams getSignatureMechanismParameters() {\n                return null;\n            }\n\n            @Override\n            public byte[] sign(byte[] message) throws GeneralSecurityException {\n                return signByte;\n            }\n        };\n        signer.signDetached(new BouncyCastleDigest(), signature, getCertificateChain(), null, null, null, 0,\n                PdfSigner.CryptoStandard.CMS);\n\n    } catch (Exception e) {\n        throw new ServiceException(e);\n    }\n}\n</code></pre>\n<p>What am I missing this time?</p>\n",
+    "tags" : [ "java", "pdf", "hash", "itext", "digital-signature" ],
+    "owner" : {
+      "account_id" : 23181449,
+      "reputation" : 11,
+      "user_id" : 17279228,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/AATXAJzK5h7z04_DDx-yq-VPYt8t0DEp__xXbINq46Pe=k-s256",
+      "display_name" : "Alex Dolhescu",
+      "link" : "https://stackoverflow.com/users/17279228/alex-dolhescu"
+    },
+    "is_answered" : true,
+    "view_count" : 160,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1743164804,
+    "creation_date" : 1743102572,
+    "link" : "https://stackoverflow.com/questions/79539826/itext-9-signing-a-pdf-using-an-external-service-document-was-modified-or-co",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79540902,
+    "question_id" : 79539826,
+    "body" : "<p>As already indicated in a comment, it is unclear from your question which bytes you apply your <code>generateHash</code> method to and then sign. Apparently, though, you don't apply it to the <code>byte[] message</code> parameter of the <code>sign</code> method of your <code>IExternalSignature</code> implementation as you should.</p>\n<p>Thus, basically you should simply change that <code>sign</code> method to something like this:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public byte[] sign(byte[] message) throws GeneralSecurityException {\n    MessageDigest digest = MessageDigest.getInstance(&quot;SHA256&quot;);\n    byte[] hash = digest.digest(message);\n    String base64Hash = Base64.getEncoder().encodeToString(hash);\n    var stsCallbackDocumentResponse = [... request signature response for base64Hash ...];\n    byte[] signByte = Base64.getDecoder().decode(stsCallbackDocumentResponse.getSignByte());\n    return signByte;\n}\n</code></pre>\n<p>and get rid of the <code>signByte</code> parameter of <code>signPdf</code>.</p>\n<p>With that change in place, <code>signPdf</code> should be able to properly sign your PDF in a single step.</p>\n<hr />\n<p>Yes, there are situations in which people use a multistep approach to signing with iText, i.e. you first sign the PDF with a dummy signature value, calculate the hash of the signed byte ranges of that dummy-signed file, request and retrieve a signature for that hash, and overwrite the dummy signature in the prepared PDF by the actual one.</p>\n<p>Often, though, they do this without need and only create unnecessarily complicated code this way. The only situations in which such a multistep approach makes sense for me, are either when the signature value retrieval from a server takes a long time and you don't want your thread to linger that long; or when the preparation step and the signature value retrieval occur on different computers, for example the preparation step is executed on a computer without network access to the signing server.</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 1916831,
+      "reputation" : 97003,
+      "user_id" : 1729265,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/VMMeP.jpg?s=256",
+      "display_name" : "mkl",
+      "link" : "https://stackoverflow.com/users/1729265/mkl"
+    },
+    "creation_date" : 1743151092,
+    "last_activity_date" : 1743151092,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140274414,
+    "post_id" : 79539826,
+    "body" : "Got it, thanks a lot! I&#39;will try this way.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 23181449,
+      "reputation" : 11,
+      "user_id" : 17279228,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/AATXAJzK5h7z04_DDx-yq-VPYt8t0DEp__xXbINq46Pe=k-s256",
+      "display_name" : "Alex Dolhescu",
+      "link" : "https://stackoverflow.com/users/17279228/alex-dolhescu"
+    },
+    "creation_date" : 1743175806,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140274227,
+    "post_id" : 79539826,
+    "body" : "Alex, just like @Deepak said, if you start the signing process twice from the original PDF of the user, you&#39;ll usually get different files (in particular because the current time is added to the PDF as modification and signing time, and new document IDs are generated). Tweaking that to create identical files can be hard. Thus, it&#39;s much easier <b>not</b> to discard the result of the first pass but keep it and overwrite the dummy signature from the first pass using deferred signing.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 1916831,
+      "reputation" : 97003,
+      "user_id" : 1729265,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/VMMeP.jpg?s=256",
+      "display_name" : "mkl",
+      "link" : "https://stackoverflow.com/users/1729265/mkl"
+    },
+    "creation_date" : 1743173036,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140273765,
+    "post_id" : 79539826,
+    "body" : "@Alex You need to make sure the parameters remain same during the two calls of signDetached(1. getting hash, 2. attaching signature). I have listed those parameters in the answer link I shared in earlier comment. You need to either use reflection+hot-patching java code or recompile the particular jars of the iText to make this work.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 6487480,
+      "reputation" : 486,
+      "user_id" : 5022546,
+      "user_type" : "registered",
+      "profile_image" : "https://graph.facebook.com/1121959014497385/picture?type=large",
+      "display_name" : "Deepak Chaudhary",
+      "link" : "https://stackoverflow.com/users/5022546/deepak-chaudhary"
+    },
+    "creation_date" : 1743165949,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140273609,
+    "post_id" : 79539826,
+    "body" : "@DeepakChaudhary you&#39;re right that&#39;s what i needed: sign a pdf in multiple phases. I updated the code, but without success. What am I missing this time?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 23181449,
+      "reputation" : 11,
+      "user_id" : 17279228,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/AATXAJzK5h7z04_DDx-yq-VPYt8t0DEp__xXbINq46Pe=k-s256",
+      "display_name" : "Alex Dolhescu",
+      "link" : "https://stackoverflow.com/users/17279228/alex-dolhescu"
+    },
+    "creation_date" : 1743163383,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140273607,
+    "post_id" : 79539826,
+    "body" : "@mkl Before I was sending the whole document completely wrong. I updated the code, but without success. What am I missing this time?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 23181449,
+      "reputation" : 11,
+      "user_id" : 17279228,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/AATXAJzK5h7z04_DDx-yq-VPYt8t0DEp__xXbINq46Pe=k-s256",
+      "display_name" : "Alex Dolhescu",
+      "link" : "https://stackoverflow.com/users/17279228/alex-dolhescu"
+    },
+    "creation_date" : 1743163374,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140272452,
+    "post_id" : 79539826,
+    "body" : "@Alex I assume you are feeding the whole document to generate the hash, which is then signed via external service. But the PDF signing excludes some part of file for getting hash for signing. You may refer my answer to a <a href=\"https://stackoverflow.com/a/79050758/5022546\">similar question</a>, and see if it helps your case.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 6487480,
+      "reputation" : 486,
+      "user_id" : 5022546,
+      "user_type" : "registered",
+      "profile_image" : "https://graph.facebook.com/1121959014497385/picture?type=large",
+      "display_name" : "Deepak Chaudhary",
+      "link" : "https://stackoverflow.com/users/5022546/deepak-chaudhary"
+    },
+    "creation_date" : 1743142325,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140272444,
+    "post_id" : 79539826,
+    "body" : "What bytes do you apply <code>generateHash</code> to? Apparently not the <code>message</code> parameter bytes of the <code>sign</code> method of your <code>IExternalSignature</code> implementation as you should do.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 1916831,
+      "reputation" : 97003,
+      "user_id" : 1729265,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/VMMeP.jpg?s=256",
+      "display_name" : "mkl",
+      "link" : "https://stackoverflow.com/users/1729265/mkl"
+    },
+    "creation_date" : 1743142060,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79540902" : [ {
+      "comment_id" : 140274464,
+      "post_id" : 79540902,
+      "body" : "I consider that an option. Depending on how you detect the manual trigger, that should work. And if you need to cancel the attempt, you can use a custom security or runtime exception. But hey, confirmation via e-mail... ok, it is a second factor, but is it secure enough?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1916831,
+        "reputation" : 97003,
+        "user_id" : 1729265,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/VMMeP.jpg?s=256",
+        "display_name" : "mkl",
+        "link" : "https://stackoverflow.com/users/1729265/mkl"
+      },
+      "creation_date" : 1743176544,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140274371,
+      "post_id" : 79540902,
+      "body" : "Currently I trigger manually after I approve the email. Later I will see what method I approach. Do you suggest I do this in the sign method? Could this be the problem?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 23181449,
+        "reputation" : 11,
+        "user_id" : 17279228,
+        "user_type" : "registered",
+        "profile_image" : "https://lh3.googleusercontent.com/a/AATXAJzK5h7z04_DDx-yq-VPYt8t0DEp__xXbINq46Pe=k-s256",
+        "display_name" : "Alex Dolhescu",
+        "link" : "https://stackoverflow.com/users/17279228/alex-dolhescu"
+      },
+      "creation_date" : 1743175286,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140274243,
+      "post_id" : 79540902,
+      "body" : "@Alex <i>&quot;I send the request, and after the user validates the signature via email, I have to make a callback and retrieve the signature hash&quot;</i> - how does your code know when to start making callbacks? Or does it try all the time? In the latter case, why not do so in the  <code>sign</code> method?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1916831,
+        "reputation" : 97003,
+        "user_id" : 1729265,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/VMMeP.jpg?s=256",
+        "display_name" : "mkl",
+        "link" : "https://stackoverflow.com/users/1729265/mkl"
+      },
+      "creation_date" : 1743173177,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140273626,
+      "post_id" : 79540902,
+      "body" : "@DeepakChaudhary The document remains on my client, I have to handle the signing. The signing server only sends me the signed hash (on my callback) as I updated in the description",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 23181449,
+        "reputation" : 11,
+        "user_id" : 17279228,
+        "user_type" : "registered",
+        "profile_image" : "https://lh3.googleusercontent.com/a/AATXAJzK5h7z04_DDx-yq-VPYt8t0DEp__xXbINq46Pe=k-s256",
+        "display_name" : "Alex Dolhescu",
+        "link" : "https://stackoverflow.com/users/17279228/alex-dolhescu"
+      },
+      "creation_date" : 1743163748,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140273617,
+      "post_id" : 79540902,
+      "body" : "@mkl I am in exactly the situation you described because I send the request, and after the user validates the signature via email, I have to make a callback and retrieve the signature hash.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 23181449,
+        "reputation" : 11,
+        "user_id" : 17279228,
+        "user_type" : "registered",
+        "profile_image" : "https://lh3.googleusercontent.com/a/AATXAJzK5h7z04_DDx-yq-VPYt8t0DEp__xXbINq46Pe=k-s256",
+        "display_name" : "Alex Dolhescu",
+        "link" : "https://stackoverflow.com/users/17279228/alex-dolhescu"
+      },
+      "creation_date" : 1743163532,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140273067,
+      "post_id" : 79540902,
+      "body" : "Yes, my answer mentioned in the comment with multi-step approach was to tackle a use case where the files sit on a web-server, while the signing happens at client machine. The server cannot contact the client to get the hash signed. And downloading, signing locally and uploading the file was not ideal.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 6487480,
+        "reputation" : 486,
+        "user_id" : 5022546,
+        "user_type" : "registered",
+        "profile_image" : "https://graph.facebook.com/1121959014497385/picture?type=large",
+        "display_name" : "Deepak Chaudhary",
+        "link" : "https://stackoverflow.com/users/5022546/deepak-chaudhary"
+      },
+      "creation_date" : 1743154853,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

@@ -1,0 +1,208 @@
+{
+  "question" : {
+    "question_id" : 79599745,
+    "title" : "PostgreSQL sequence suddenly behind table data across multiple entities — no manual inserts, no gaps",
+    "body" : "<p>We're experiencing a critical and unexpected issue in our Spring Boot production system backed by PostgreSQL. A few days ago, the following error started appearing across multiple entity save operations:</p>\n<pre class=\"lang-none prettyprint-override\"><code>ERROR: duplicate key value violates unique constraint &quot;lifecycle_event_pkey&quot;\nDetail: Key (id)=(2914) already exists.\n\norg.springframework.dao.DataIntegrityViolationException: \ncould not execute statement; SQL [n/a]; constraint [lifecycle_event_pkey]; \nnested exception is org.hibernate.exception.ConstraintViolationException: could not execute statement\n</code></pre>\n<p>This first appeared in a transactional service method handling an asset-tracking action. It uses Spring Data JPA with <code>@Transactional</code> and saves entities extending a common <code>Root</code> base class.</p>\n<p>The root issue was PostgreSQL trying to reuse a primary key ID that already exists, despite:</p>\n<ul>\n<li>Not explicitly setting any <code>id</code></li>\n<li>Relying on Hibernate to auto-generate IDs via <code>@GeneratedValue(strategy = GenerationType.IDENTITY)</code></li>\n</ul>\n<p>Key facts:</p>\n<ul>\n<li><p>The affected entities all extend a shared <code>Root</code> class that defines the <code>id</code> field with:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@MappedSuperclass\n@Inheritance(strategy = InheritanceType.TABLE_PER_CLASS)\npublic class Root {\n\n@Id\n@GeneratedValue(strategy = GenerationType.IDENTITY)\nprivate Long id;\n\n// Additional audit fields...\n}\n</code></pre>\n</li>\n<li><p>The same <code>Root</code> class is used across multiple modules/services</p>\n</li>\n<li><p>No recent deployments or schema changes (last deployment was ~2 months ago)</p>\n</li>\n<li><p>No manual SQL <code>INSERT</code>s or bulk imports have been executed</p>\n</li>\n<li><p>The table's <code>id</code> column had <strong>no gaps</strong> (<code>MAX(id)</code> was continuous)</p>\n</li>\n<li><p>The error appeared in a method annotated with <code>@Transactional</code>, and occurred during a <code>saveAndFlush()</code> operation</p>\n</li>\n<li><p>The issue was <em>resolved</em> by syncing the sequence with:</p>\n<pre class=\"lang-sql prettyprint-override\"><code>SELECT setval('lifecycle_event_id_seq', (SELECT MAX(id) FROM lifecycle_event));\n</code></pre>\n</li>\n</ul>\n<p>However, this fix is reactive. We're now focused on identifying what caused the sequence to fall behind in the first place.</p>\n<p>This issue didn't just affect one table — it surfaced across multiple tables in the same project. All these tables extend from the same mapped superclass (<code>Root</code>), and all rely on PostgreSQL to auto-generate primary keys.</p>\n<p>This kind of issue was never encountered before, even though:</p>\n<ul>\n<li>The same service and codebase have been used for months (or years)</li>\n<li>Multiple services run concurrently using the same schema and inheritance strategy</li>\n<li>Sequences were in sync until recently</li>\n</ul>\n<p>We've ruled out:</p>\n<div class=\"s-table-container\"><table class=\"s-table\">\n<thead>\n<tr>\n<th>Suspected Cause</th>\n<th>Status</th>\n<th>Notes</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>Manual inserts with explicit <code>id</code></td>\n<td>No such operations executed</td>\n<td></td>\n</tr>\n<tr>\n<td>Data migration or ETL</td>\n<td>No data migration was done on affected tables</td>\n<td></td>\n</tr>\n<tr>\n<td>Hibernate misconfiguration</td>\n<td>Using standard <code>IDENTITY</code> with no <code>@GenericGenerator</code> or manual sequence manipulation</td>\n<td></td>\n</tr>\n<tr>\n<td>Gaps in the table</td>\n<td>None — IDs were continuous</td>\n<td></td>\n</tr>\n<tr>\n<td>Allocation size drift (<code>SEQUENCE</code> strategy)</td>\n<td>Not applicable — using <code>IDENTITY</code> strategy</td>\n<td></td>\n</tr>\n<tr>\n<td>Shared sequence conflict</td>\n<td>Each table has its own sequence (confirmed via <code>pg_get_serial_sequence</code>)</td>\n<td></td>\n</tr>\n</tbody>\n</table></div>\n<p>Our best hypotheses are:</p>\n<div class=\"s-table-container\"><table class=\"s-table\">\n<thead>\n<tr>\n<th>Possibility</th>\n<th>Likelihood</th>\n<th>Notes</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>PostgreSQL sequence cache loss after restart/crash</td>\n<td>Possible</td>\n<td>If <code>CACHE</code> &gt; 1, in-memory values can be lost on crash and not synced back to disk</td>\n</tr>\n<tr>\n<td>Insert rollback during transaction before <code>nextval</code> persisted</td>\n<td>Possible</td>\n<td>Especially since the error appeared in a method using <code>@Transactional</code></td>\n</tr>\n<tr>\n<td>Hibernate reused detached entity with existing <code>id</code></td>\n<td>Unlikely</td>\n<td>No such logic is present in our service code</td>\n</tr>\n<tr>\n<td>Concurrent app using same table with broken ID strategy</td>\n<td>Unlikely</td>\n<td>No evidence of conflicting ID generators across services</td>\n</tr>\n</tbody>\n</table></div>\n<p>Given that no manual inserts, migrations, or schema changes were done, and no gaps existed in the table data, what could cause PostgreSQL's sequence to fall behind table data unexpectedly, especially when using:</p>\n<ul>\n<li><code>@GeneratedValue(strategy = GenerationType.IDENTITY)</code></li>\n<li>A <code>@MappedSuperclass</code> with <code>TABLE_PER_CLASS</code> inheritance</li>\n<li>A method wrapped in <code>@Transactional</code></li>\n</ul>\n<p>Are there known cases where:</p>\n<ul>\n<li>A failed insert inside a transaction does not advance the sequence?</li>\n<li>PostgreSQL crashes/restarts and loses cached sequence values?</li>\n<li>Hibernate or JDBC drivers trigger a misalignment under specific edge conditions?</li>\n</ul>\n",
+    "tags" : [ "java", "spring", "postgresql", "hibernate" ],
+    "owner" : {
+      "account_id" : 26153785,
+      "reputation" : 21,
+      "user_id" : 19841317,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a-/AFdZucqshfdtZ4uqcOYMiSu1BICrPt6VPbOCqGvVeARW=k-s256",
+      "display_name" : "Ariful Haque Noman",
+      "link" : "https://stackoverflow.com/users/19841317/ariful-haque-noman"
+    },
+    "is_answered" : false,
+    "view_count" : 92,
+    "answer_count" : 1,
+    "score" : 2,
+    "last_activity_date" : 1746381373,
+    "creation_date" : 1745997556,
+    "link" : "https://stackoverflow.com/questions/79599745/postgresql-sequence-suddenly-behind-table-data-across-multiple-entities-no-man",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79605900,
+    "question_id" : 79599745,
+    "body" : "<p>In Spring Data JPA, when you execute the <code>save()</code> method on an entity it needs to figure out if the entity is new or existing.</p>\n<p>Read more here: <a href=\"https://docs.spring.io/spring-data/jpa/reference/jpa/entity-persistence.html#jpa.entity-persistence.saving-entities\" rel=\"nofollow noreferrer\">https://docs.spring.io/spring-data/jpa/reference/jpa/entity-persistence.html#jpa.entity-persistence.saving-entities</a></p>\n<p>So you can imagine scenarios where Spring Data JPA gets confused and performs an <code>INSERT</code> where you expected an <code>UPDATE</code>. For example, if your application retrieves an entity from the database and you then update the <em>Version-property</em> to <code>null</code> and then perform a <code>save()</code> . This is an example - there are others -that can explain what you experience.</p>\n<p>In general, never fiddle with the property value of fields marked with <code>@Id</code>  or <code>@Version</code>, meaning do not use their setters. It is important that you leave this to Hibernate.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 1629745,
+      "reputation" : 19491,
+      "user_id" : 1504556,
+      "user_type" : "registered",
+      "accept_rate" : 63,
+      "profile_image" : "https://www.gravatar.com/avatar/fdeaf6c510d511137faafdf8c790c21a?s=256&d=identicon&r=PG",
+      "display_name" : "peterh",
+      "link" : "https://stackoverflow.com/users/1504556/peterh"
+    },
+    "creation_date" : 1746381373,
+    "last_activity_date" : 1746381373,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140389397,
+    "post_id" : 79599745,
+    "body" : "@AdrianKlaver added the code of <b>Root</b> class",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 26153785,
+      "reputation" : 21,
+      "user_id" : 19841317,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a-/AFdZucqshfdtZ4uqcOYMiSu1BICrPt6VPbOCqGvVeARW=k-s256",
+      "display_name" : "Ariful Haque Noman",
+      "link" : "https://stackoverflow.com/users/19841317/ariful-haque-noman"
+    },
+    "creation_date" : 1746176249,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140389224,
+    "post_id" : 79599745,
+    "body" : "The use of AI isn&#39;t allowed on this site, and that includes rephrasing and reformatting of questions. Please don&#39;t do that.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 6897470,
+      "reputation" : 30091,
+      "user_id" : 5298879,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Qv2LD.png?s=256",
+      "display_name" : "Zegarek",
+      "link" : "https://stackoverflow.com/users/5298879/zegarek"
+    },
+    "creation_date" : 1746172088,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140388255,
+    "post_id" : 79599745,
+    "body" : "@peterh By design, UUIDs aren&#39;t and can&#39;t be affected by what OP&#39;s experiencing, but you pay for that in storage and higher generation cost. There are advantages to having the ID in the db first, too, and it&#39;s not simpler or harder either way. I guess it&#39;s a small part of the old &quot;code first vs db first&quot; debate",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 6897470,
+      "reputation" : 30091,
+      "user_id" : 5298879,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Qv2LD.png?s=256",
+      "display_name" : "Zegarek",
+      "link" : "https://stackoverflow.com/users/5298879/zegarek"
+    },
+    "creation_date" : 1746131462,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140386752,
+    "post_id" : 79599745,
+    "body" : "Ouch. This just makes me even more happy that we&#39;ve chosen <i>not</i> to let the database generate the PK. Instead we generate sequential UUIDs in the app itself. Much simpler. And there are so many benefits to the app knowing the ID <i>before</i> a record is inserted. I find the whole idea that the db should generate the PK to be slightly outdated. But that&#39;s just me.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1629745,
+      "reputation" : 19491,
+      "user_id" : 1504556,
+      "user_type" : "registered",
+      "accept_rate" : 63,
+      "profile_image" : "https://www.gravatar.com/avatar/fdeaf6c510d511137faafdf8c790c21a?s=256&d=identicon&r=PG",
+      "display_name" : "peterh",
+      "link" : "https://stackoverflow.com/users/1504556/peterh"
+    },
+    "creation_date" : 1746098060,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140385471,
+    "post_id" : 79599745,
+    "body" : "A <code>cycle</code> setting on the underlying sequence could&#39;ve also caused this and the 2914 it conflicted on would be expected if the lower ID&#39;s correspond to some oldest/boostrap/test values that got removed, freeing up a few ranges like this near the lower bound. It&#39;d be more likely something issued an <code>alter table..restart identity</code> or <code>alter sequence..restart</code> for whatever reason because Postgres <code>serial</code> type behind that column creates regular <code>no cycle</code> sequences.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 6897470,
+      "reputation" : 30091,
+      "user_id" : 5298879,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Qv2LD.png?s=256",
+      "display_name" : "Zegarek",
+      "link" : "https://stackoverflow.com/users/5298879/zegarek"
+    },
+    "creation_date" : 1746043342,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140385450,
+    "post_id" : 79599745,
+    "body" : "One note on <code>pg_get_serial_sequence()</code> is that it just returns one of the sequences owned by the column (I think the first/oldest one) - <code>identity</code> and <code>serial</code> just build a sequence with <code>owned by column_name</code>. It&#39;s possible to have more of them, that <code>pg_get_serial_sequence()</code> will not show and in case of <code>serial</code> a newer one could be the current default: <a href=\"https://dbfiddle.uk/qAvElhKp\" rel=\"nofollow noreferrer\">dbfiddle.uk/qAvElhKp</a> Confusingly, hibernate&#39;s <a href=\"https://docs.jboss.org/hibernate/orm/7.0/userguide/html_single/Hibernate_User_Guide.html#identifiers-generators\" rel=\"nofollow noreferrer\"><code>GenerationType.IDENTITY</code></a> uses Postgres&#39; <code>serial</code>, not <code>identity</code>.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 6897470,
+      "reputation" : 30091,
+      "user_id" : 5298879,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Qv2LD.png?s=256",
+      "display_name" : "Zegarek",
+      "link" : "https://stackoverflow.com/users/5298879/zegarek"
+    },
+    "creation_date" : 1746042633,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140385393,
+    "post_id" : 79599745,
+    "body" : "My guess would be something must&#39;ve explicitly <code>setval()</code>&#39;d the sequence. You&#39;re referring to the sequences being gapless - if that&#39;s something someone tries to actively maintain by rewinding the sequence whenever they jump ahead and want to undo that, this situation is exactly why they should stop. IDs are just meant to identify, and if you need gapless ordinal row numbers, it&#39;s best to generate them in a view and keep in mind they&#39;ll only persist until the nearest delete/update/out-of-order-insert that&#39;ll require fresh re-ordering.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 6897470,
+      "reputation" : 30091,
+      "user_id" : 5298879,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Qv2LD.png?s=256",
+      "display_name" : "Zegarek",
+      "link" : "https://stackoverflow.com/users/5298879/zegarek"
+    },
+    "creation_date" : 1746041276,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140385376,
+    "post_id" : 79599745,
+    "body" : "The <b>1st</b> hypothesis misinterprets what <code>cache</code> does: it&#39;s the client session that pre-allocates the values in a cache. According to the shared sequence object, those were already requested back at cache request time, and it progressed passed them way back then so losing them means it&#39;s just the client lost them. The <b>2nd</b> idea is also false because sequences aren&#39;t mvcc-safe, they don&#39;t respect transaction bounds. The sequence moves regardless of whether the transactions it serves commit or roll back.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 6897470,
+      "reputation" : 30091,
+      "user_id" : 5298879,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Qv2LD.png?s=256",
+      "display_name" : "Zegarek",
+      "link" : "https://stackoverflow.com/users/5298879/zegarek"
+    },
+    "creation_date" : 1746040993,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140384754,
+    "post_id" : 79599745,
+    "body" : "1) Did someone/thing set the sequence to <code>CYCLE</code> instead of leaving it at the default of <code>NO CYCLE</code>? 2) Add the code for the <code>ROOT</code> class to the question text.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 9513375,
+      "reputation" : 20363,
+      "user_id" : 7070613,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/iZQNZ.jpg?s=256",
+      "display_name" : "Adrian Klaver",
+      "link" : "https://stackoverflow.com/users/7070613/adrian-klaver"
+    },
+    "creation_date" : 1746027727,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140383023,
+    "post_id" : 79599745,
+    "body" : "The only way a sequence can move backward like that is if it was explicitly set back. Not sure if there is anything in your stack that would do that, but that&#39;s how it looks from the database side. No crash could do that, and point-in-time-recovery would also have reset the tables with the conflicting keys.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 8633322,
+      "reputation" : 257131,
+      "user_id" : 6464308,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/12PVX.jpg?s=256",
+      "display_name" : "Laurenz Albe",
+      "link" : "https://stackoverflow.com/users/6464308/laurenz-albe"
+    },
+    "creation_date" : 1745998769,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

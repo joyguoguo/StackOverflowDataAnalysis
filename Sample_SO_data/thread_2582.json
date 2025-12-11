@@ -1,0 +1,124 @@
+{
+  "question" : {
+    "question_id" : 79610667,
+    "title" : "NonUniqueObjectException when save nested entity",
+    "body" : "<p>I'm trying to test how transaction works, it's a very simple example.</p>\n<p>Entity class:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class BettingProgram {\n@Id\nprivate int id;\n\n@Column(name = &quot;name&quot;, nullable = false)\nprivate String name;\n\n@Column(name = &quot;date&quot;, nullable = false)\nprivate LocalDate date;\n\n@JsonManagedReference\n@OneToMany(mappedBy = &quot;bettingProgram&quot;, fetch = FetchType.LAZY, cascade = CascadeType.ALL)\nprivate List&lt;Event&gt; events;\n}\n\npublic class Event {\n@EmbeddedId\nprivate EventId eventId;\n\n@JsonBackReference\n@ManyToOne\n@MapsId(&quot;idBettingProgram&quot;)\n@JoinColumn(name = &quot;idBettingProgram&quot;)\nprivate BettingProgram bettingProgram;\n\n@Column(name = &quot;type&quot;, nullable = false)\nprivate String type;\n\n@Column(name = &quot;name&quot;, nullable = false)\nprivate String name;\n\n@Column(name = &quot;dateEvent&quot;, nullable = false)\n@JsonSerialize(using = LocalDateTimeSerializer.class)\n@JsonDeserialize(using = LocalDateTimeDeserializer.class)\nprivate LocalDateTime dateEvent;\n\n@JsonManagedReference\n@OneToMany(fetch = FetchType.LAZY, mappedBy = &quot;event&quot;, cascade = CascadeType.ALL)\nprivate List&lt;Market&gt; marketList;\n}\n\npublic class Market {\n@EmbeddedId\nprivate MarketId marketId;\n\n@JsonBackReference\n@ManyToOne\n@JoinColumns({\n        @JoinColumn(name = &quot;idEvent&quot;, referencedColumnName = &quot;idEvent&quot;),\n        @JoinColumn(name = &quot;idBettingProgram&quot;, referencedColumnName = &quot;idBettingProgram&quot;)\n})\n@Valid\n@MapsId(&quot;eventId&quot;)\nprivate Event event;\n\n@Column(name = &quot;name&quot;, nullable = false)\nprivate String name;\n\n@Enumerated(EnumType.STRING)\n@Column(name = &quot;status&quot;, nullable = false)\nprivate Status status;\n}\n</code></pre>\n<p>These are the functions that manage insert for each entity:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public BettingProgramDTO createBettingProgramWithManualTransaction(BettingProgramDTO bettingProgramDTO) throws CustomException {\n    log.info(&quot;Betting program da creare : {}&quot;, bettingProgramDTO);\n    BettingProgram bettingProgramCreated = methodCreaBettingPAndEvent(bettingProgramDTO);\n    BettingProgramDTO bettingProgramDTOCreated = bettingProgramMapper.toDTO(bettingProgramCreated);\n    TransactionStatus txStatus = txManager.getTransaction(new DefaultTransactionDefinition());\n    try {\n        List&lt;MarketDTO&gt; marketDTOList = methodCreaMArketSelection(bettingProgramCreated.getEvents().getFirst(), bettingProgramDTO.getEvents().getFirst().getMarketList());\n\n        bettingProgramDTOCreated.getEvents().getFirst().setMarketList(marketDTOList);\n    } catch (Exception e) {\n        log.error(&quot;{}  Got an error:{}&quot;, LogUtil.errorLogString(), e.getMessage(), e);\n        txManager.rollback(txStatus);\n    }\n    txManager.commit();\n    return bettingProgramDTOCreated;\n}\n\npublic BettingProgram methodCreaBettingPAndEvent(BettingProgramDTO bettingProgramDTO) throws CustomException {\n    Optional&lt;BettingProgram&gt; optBettingProgram = bettingProgramRepository.findById(bettingProgramDTO.getId());\n    if (optBettingProgram.isPresent()){\n        throw new NotValidFieldException(&quot;Betting program già esistente.&quot;);\n    }\n    BettingProgram bettingProgram = bettingProgramMapper.toEntityWithoutSon(bettingProgramDTO);\n    BettingProgram bettingProgramInserted = bettingProgramRepository.save(bettingProgram);\n\n    EventDTO eventDTO = bettingProgramDTO.getEvents().getFirst();\n    eventDTO.setIdBettingProgram(bettingProgramInserted.getId());\n    log.info(&quot;Event da creare : {}&quot;, eventDTO);\n    Event eventCreated = eventMapper.toEntityWithoutSon(eventServiceTransactional.createEventWithTransaction(eventDTO));\n    bettingProgramInserted.getEvents().add(eventCreated);\n\n    return bettingProgramInserted;\n}\n\n\npublic List&lt;MarketDTO&gt; methodCreaMArketSelection(Event event, List&lt;MarketDTO&gt; marketDTO) throws CustomException {\n    List&lt;MarketDTO&gt; marketDTOList = new ArrayList&lt;&gt;();\n    for (MarketDTO marketDTOToCreate : marketDTO){\n        marketDTOToCreate.setIdBettingProgram(event.getEventId().getIdBettingProgram());\n        marketDTOToCreate.setIdEvent(event.getEventId().getIdEvent());\n        log.info(&quot;Market dto da creare : {}&quot;, marketDTOToCreate);\n        MarketDTO marketDTOCreated = marketServiceTransactional.createMarketWithTransaction(event, marketDTOToCreate);\n        marketDTOList.add(marketDTOCreated);\n    }\n    return marketDTOList;\n}\n</code></pre>\n<p>When I save market, I have</p>\n<blockquote>\n<p>org.springframework.dao.DuplicateKeyException: A different object with the same identifier value was already associated with the session: [com.gestionebettingoffer.model.Event#EventId(idBettingProgram=784, idEvent=1726)].</p>\n</blockquote>\n<p>How can I resolve this?</p>\n",
+    "tags" : [ "java", "spring-boot", "spring-transactions" ],
+    "owner" : {
+      "account_id" : 26205939,
+      "reputation" : 11,
+      "user_id" : 19885530,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/AItbvmka43cBjlpdY_T9dPpA8Ihu07mPxmgRoR3dvoPC=k-s256",
+      "display_name" : "rux",
+      "link" : "https://stackoverflow.com/users/19885530/rux"
+    },
+    "is_answered" : false,
+    "view_count" : 63,
+    "answer_count" : 0,
+    "score" : 0,
+    "last_activity_date" : 1749771203,
+    "creation_date" : 1746625152,
+    "link" : "https://stackoverflow.com/questions/79610667/nonuniqueobjectexception-when-save-nested-entity",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140408202,
+    "post_id" : 79610667,
+    "body" : "Try them with separate key names for each Entity.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10927511,
+      "reputation" : 3218,
+      "user_id" : 8031784,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/ikcJL.png?s=256",
+      "display_name" : "Aniruddh Parihar",
+      "link" : "https://stackoverflow.com/users/8031784/aniruddh-parihar"
+    },
+    "creation_date" : 1746717766,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140407590,
+    "post_id" : 79610667,
+    "body" : "@AniruddhParihar i thought code was more readable in this way",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 26205939,
+      "reputation" : 11,
+      "user_id" : 19885530,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/AItbvmka43cBjlpdY_T9dPpA8Ihu07mPxmgRoR3dvoPC=k-s256",
+      "display_name" : "rux",
+      "link" : "https://stackoverflow.com/users/19885530/rux"
+    },
+    "creation_date" : 1746707972,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140406879,
+    "post_id" : 79610667,
+    "body" : "@rux : I am asking for this field @Column(name = &quot;name&quot;, nullable = false) private String name;",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10927511,
+      "reputation" : 3218,
+      "user_id" : 8031784,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/ikcJL.png?s=256",
+      "display_name" : "Aniruddh Parihar",
+      "link" : "https://stackoverflow.com/users/8031784/aniruddh-parihar"
+    },
+    "creation_date" : 1746692997,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140404809,
+    "post_id" : 79610667,
+    "body" : "@rux, Try below. <code>Event eventCreated = eventServiceTransactional.createEventWithTransaction(eventDT&zwnj;&#8203;O);</code> // Do NOT call eventMapper.toEntityWithoutSon(...) again <code>bettingProgramInserted.getEvents().add(eventCreated);</code>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7645025,
+      "reputation" : 440,
+      "user_id" : 5795975,
+      "user_type" : "registered",
+      "profile_image" : "https://lh6.googleusercontent.com/-6KwPUS4RnyA/AAAAAAAAAAI/AAAAAAAAC8w/auZqreI45x0/s256-rj/photo.jpg",
+      "display_name" : "Vijay",
+      "link" : "https://stackoverflow.com/users/5795975/vijay"
+    },
+    "creation_date" : 1746633027,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140404667,
+    "post_id" : 79610667,
+    "body" : "Sorry but i don&#39;t understand what do you mean for &quot;common name key&quot;.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 26205939,
+      "reputation" : 11,
+      "user_id" : 19885530,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/AItbvmka43cBjlpdY_T9dPpA8Ihu07mPxmgRoR3dvoPC=k-s256",
+      "display_name" : "rux",
+      "link" : "https://stackoverflow.com/users/19885530/rux"
+    },
+    "creation_date" : 1746630681,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140404533,
+    "post_id" : 79610667,
+    "body" : "Any reason behind the common name key in all Entities?",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 10927511,
+      "reputation" : 3218,
+      "user_id" : 8031784,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/ikcJL.png?s=256",
+      "display_name" : "Aniruddh Parihar",
+      "link" : "https://stackoverflow.com/users/8031784/aniruddh-parihar"
+    },
+    "creation_date" : 1746629102,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

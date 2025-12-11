@@ -1,0 +1,97 @@
+{
+  "question" : {
+    "question_id" : 79599453,
+    "title" : "Can nested classes or even anonymous classes extend a class or implement a interface?",
+    "body" : "<p>Can nested classes or anonymous classes extend a class or implement an interface in Java? If so, are there any limitations or things I should be aware of? I'm not very familiar with nested classes, will appreciate any examples or clarifications!</p>\n<pre><code>class OuterClass {\n    class NestedClass implements Runnable {\n        @Override\n        public void run() {\n            System.out.println(&quot;Nested class running...&quot;);\n        }\n    }\n\n    public void createInstance() {\n        Runnable anonymousRunnable = new Runnable() {\n            public void run() {\n                System.out.println(&quot;Anonymous class running...&quot;);\n            }\n        };\n\n        NestedClass nested = new NestedClass(); \n        nested.run();\n        anonymousRunnable.run();\n    }\n}\n</code></pre>\n<p>Was playing around with these nested/anonymous classes and encountered some errors.\nSorry if my code formatting is wrong; not familiar with this site!</p>\n",
+    "tags" : [ "java", "inner-classes", "anonymous-class" ],
+    "owner" : {
+      "account_id" : 31877160,
+      "reputation" : 1,
+      "user_id" : 27066663,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/ACg8ocIOp02Xor1krUj8XhXPKiwgNJ2tjiFPCsEEY0c982fHBNbn0aa3=k-s256",
+      "display_name" : "coder12",
+      "link" : "https://stackoverflow.com/users/27066663/coder12"
+    },
+    "is_answered" : true,
+    "view_count" : 79,
+    "closed_date" : 1746008228,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1746016950,
+    "creation_date" : 1745980452,
+    "link" : "https://stackoverflow.com/questions/79599453/can-nested-classes-or-even-anonymous-classes-extend-a-class-or-implement-a-inter",
+    "closed_reason" : "Needs details or clarity"
+  },
+  "answers" : [ {
+    "answer_id" : 79600096,
+    "question_id" : 79599453,
+    "body" : "<p>As your own snippet shows, method local classes, inner classes, nested classes, and top level classes all have 'definition' lines that look identical, there is room for an <code>extends</code> and <code>implements</code> clause, and you are entirely free to add them.</p>\n<h2>Method local classes</h2>\n<p>These are class defs inside a method body:</p>\n<pre><code>class TopLevel {\n  void methodA() {}\n  void foo() {\n    int methodVar = 5;\n    class MethodLocalClass extends SomeType implements SomeInterface, OtherInterface {\n      void innerMethod() {\n        methodA();\n        System.out.println(methodVar);\n      }\n    }\n  }\n}\n</code></pre>\n<p>MethodLocalClasses are exactly like normal classes, except for 2 details:</p>\n<ul>\n<li>They can call instance methods contained in <code>TopLevel</code>. This is implemented as follows: Instances of your method local class have an invisible <code>final</code> field that is equal to <code>this</code> as resolved at the point you declare it. The compiler compiles that <code>methodA();</code> line in the above example as <code>$thatSecretField.methodA();</code>. The constructor of <code>MethodLocalClass</code> is similarly secretly upgraded: Even though you have a constructor (because all classes have one; if you fail to type one, the JVM injects <code>YourType() {}</code> for you. And with the same 'you wrote nothing? Then I inject a default' logic, constructors that don't have a <code>super()</code> or <code>this()</code> call inside are compiled as if their first line reads <code>super();</code>. In other words, if you have no constructor at all in your code, then it is identical to having <code>public YourType() { super(); }</code> in your code) - at any rate, you have that constructor, and because it's an inner type, that constructor is silently modified to read <code>public MethodLocalClass(TopLevel $outer) { this.$outer = $outer; super(); }</code>. You can verify all this by using <code>javap -c -v</code> on compiled class files, which shows you the bytecode in human readable memoic names.</li>\n<li>They also can capture any (effectively) final variables from the method if they are declared and initialized before your method local class definition line. This is done in a similar fashion: With hidden extra fields and upgrading the constructor. That <code>System.out.println(methodVar);</code> works fine and would print 5. Note that <code>methodVar</code> must be <code>final</code>, or must be 'effectively' final which means it could have been marked <code>final</code> without any issue, which is true for the above snippet. That's <em>because</em> the compiler implements all this by making hidden fields and copying the value, which means things would be rather confusing if elsewhere, <code>methodVar</code> is set to '6' but that <code>innerMethod</code> continues to print 5. This confusion is irrelevant if the variable is (effectively) final, hence why it works this way.</li>\n</ul>\n<p>Given that they act just like a top level class once you apply these 'inject hidden fields to deal with the outer <code>this</code> and any captured method locals', they can do all the things top level classes can do, including <code>extends</code> and <code>implements</code>.</p>\n<h2>Inner classes</h2>\n<p>These are classes declared inside a class and without the modifier <code>static</code>:</p>\n<pre><code>class Outer {\n  class Inner {}\n}\n</code></pre>\n<p>These are exactly like local classes in that they are 'upgraded' with an invisible field containing a reference to an instance of <code>Outer</code>, and you can invoke instance methods of Outer from within <code>Inner</code>. The constructor has a hidden <code>Outer outer$this</code> parameter. You can even invoke the constructor if Inner, passing an explicit Outer:</p>\n<pre><code>class Outer {\n  class Inner {}\n\n  static void example() {\n    new Inner(); // Would be illegal; there is no instance of Outer to pass!\n    Outer o = new Outer();\n    o.new Inner(); // legal - exotic but legal java syntax!\n  }\n\n  void example2() {\n    new Inner(); // Legal - there is a `this` available here and the compiler assumes you meant to use that.\n  }\n}\n</code></pre>\n<p>The same principle applies here - once you've dealt with this hidden field to capture the outer instance business, it's 100% identical to a top level class, and can do all the things they can do.</p>\n<h2>Nested class</h2>\n<p>Same as above except with a <code>static</code> modifier. There is absolutely no capturing going on in any way and they are identical to top level classes, completely. The only 'magic' that happens is that they can access <code>private</code> methods of the outer (static or not), but they are compiled as separate classes, so depending on JVM version synthetic package private bridger methods are made to facilitate this (otherwise the JVM would look at the code and reject it due to being invalid, class A cannot access <code>private</code> stuff from class B), or the newer 'nestmates' feature is used, which lets B say: Hey, class verifier? Don't worry if B accesses this <code>private</code>-marked stuff here.</p>\n<h2>Anonymous classes</h2>\n<p>That one is a little different, because the syntax is different. Looks like this:</p>\n<pre><code>Object o = new Runnable() {\n  public void run() { .. }\n};\n</code></pre>\n<p>This is just syntax sugar. The syntax is as simple as above - there is no room for the word <code>class</code> nor the word <code>extends</code> or <code>implements</code>. It's just <code>new SomeType(params) { body }</code>. The compiler treats it as if you wrote:</p>\n<pre><code>class $SomeRandomlyGeneratedName extends SomeType {\n  $SomeRandomlyGeneratedName(String arg0) {\n    super(arg0);\n  }\n\n  everything-in-body;\n}\n\nObject o = new $SomeRandomlyGeneratedName(params);\n</code></pre>\n<p>Because its just syntax sugar, the one and only thing that's interesting about them is what you <em>cannot</em> do from a language syntax perspective, because in execution and compilation terms, just.. apply the above desugaring and now you know exactly what they can and cannot do. This is where we finally get to a 'no, they cannot do that': anonymous inner classes <em>by definition</em> always explicitly extends/implements exactly one type - the one you mentioned as the <code>X</code> in <code>new X() { .. }</code>. But that's all they can extends/implements. That one type. There is simply no place to express any further types.</p>\n<p>This isn't limiting in any way; after all, if you want to do that, just manually desugar it. There is nothing an anonymous inner class can do that a method local class cannot do.</p>\n",
+    "score" : 2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 401843,
+      "reputation" : 107186,
+      "user_id" : 768644,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+      "display_name" : "rzwitserloot",
+      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+    },
+    "creation_date" : 1746007788,
+    "last_activity_date" : 1746016950,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140382447,
+    "post_id" : 79599453,
+    "body" : "Hello coder12, welcome, the simple answer is “yes”, without having an idea of the application scenario not much more can be added.",
+    "score" : 3,
+    "owner" : {
+      "account_id" : 10843443,
+      "reputation" : 916,
+      "user_id" : 20882864,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+      "display_name" : "Marce Puente",
+      "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+    },
+    "creation_date" : 1745983781,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140382381,
+    "post_id" : 79599453,
+    "body" : "If you encountered &quot;some errors,&quot; you should tell us what they are.",
+    "score" : 5,
+    "owner" : {
+      "account_id" : 465573,
+      "reputation" : 200423,
+      "user_id" : 869736,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/ae7bb06b9a23a4dd7eea69e853d47d12?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Louis Wasserman",
+      "link" : "https://stackoverflow.com/users/869736/louis-wasserman"
+    },
+    "creation_date" : 1745980914,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140382369,
+    "post_id" : 79599453,
+    "body" : "The code you showed compiles and runs without errors. Doesn&#39;t that already answer your question? What exactly are you asking about?",
+    "score" : 9,
+    "owner" : {
+      "account_id" : 6651855,
+      "reputation" : 292025,
+      "user_id" : 5133585,
+      "user_type" : "registered",
+      "accept_rate" : 96,
+      "profile_image" : "https://i.sstatic.net/dfqcw.png?s=256",
+      "display_name" : "Sweeper",
+      "link" : "https://stackoverflow.com/users/5133585/sweeper"
+    },
+    "creation_date" : 1745980617,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

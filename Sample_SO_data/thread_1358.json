@@ -1,0 +1,45 @@
+{
+  "question" : {
+    "question_id" : 79715020,
+    "title" : "gpg finished with non-zero exit value 2 when publishing Java SDK to Maven Central via Gradle",
+    "body" : "<p>I'm trying to publish a custom Java SDK to Maven Central using Sonatype. The setup includes maven-publish and signing plugins in my build.gradle.</p>\n<h4>What works</h4>\n<p>When I run:\n<code>./gradlew clean publish</code>\nThe project builds and publishes successfully but still i cannot see anything in deployment section of sona type.</p>\n<h4>What fails</h4>\n<p>When I run:\n<code>./gradlew clean build publishToMavenLocal</code></p>\n<p>I get this error:\n<code>Process 'command 'gpg'' finished with non-zero exit value 2</code></p>\n<h4>Signing setup</h4>\nI’ve configured my `gradle.properties` like this (redacted for security):\n<pre class=\"lang-bash prettyprint-override\"><code>- signing.key= *******\n- signing.password= *******\n- signing.secretKeyRingFile= *******\n- signing.secretKey= *******\n- ossrhUsername= *******\n- ossrhPassword= *******\n- mavenCentralUsername= *******\n- mavenCentralPassword= *******\n</code></pre>\n<p><strong>I also uploaded my key to:</strong>\n<code>hkps://keys.openpgp.org</code>\nBut when I try to verify it using a search query on the key server, it doesn't appear.</p>\n<p><strong>build.gradle</strong></p>\n<pre class=\"lang-bash prettyprint-override\"><code>plugins {\n    // Apply the java-library plugin for API and implementation separation.\n    id 'java-library'\n    id 'maven-publish'\n    id 'signing'\n}\n\ncompileJava.options.encoding = &quot;UTF-8&quot;\ncompileJava.options.compilerArgs += '-Xlint:unchecked'\ncompileTestJava.options.encoding = &quot;UTF-8&quot;\n\nrepositories {\n    // Use Maven Central for resolving dependencies.\n    mavenCentral()\n}\n\njava {\n    sourceCompatibility = JavaVersion.VERSION_11\n    targetCompatibility = JavaVersion.VERSION_11\n    withSourcesJar()\n    withJavadocJar()\n}\n\nmodel {\n    tasks.generatePomFileForMavenPublication {\n        destination = file(&quot;$buildDir/pom.xml&quot;)\n    }\n}\n\nversion = &quot;${version}&quot;\ngroup = &quot;${groupId}&quot;\n\njar {\n    dependsOn(&quot;:generatePomFileForMavenPublication&quot;)\n\n    into(&quot;META-INF/maven/**.*****/sdk&quot;) {\n        from(&quot;$buildDir/pom.xml&quot;)\n    }\n}\n\njavadoc {\n    options.encoding = &quot;UTF-8&quot;\n\n    if(JavaVersion.current().isJava9Compatible()) {\n        options.addBooleanOption('html5', true)\n    }\n    options.addStringOption('Xdoclint:none', '-quiet')\n}\n\ntasks.withType(Javadoc) {\n  failOnError false\n  options.addStringOption('Xdoclint:none', '-quiet')\n}\n\nsourcesJar {\n    archiveBaseName = &quot;${artifactId}&quot;\n}\n\njavadocJar {\n    archiveBaseName = &quot;${artifactId}&quot;\n}\n\nProperties properties = new Properties()\nproperties.load(project.rootProject.file('gradle.properties').newDataInputStream())\n\nafterEvaluate {\n    publishing {\n        publications {\n            maven(MavenPublication) {\n                groupId = &quot;**.*******&quot;\n                artifactId = &quot;sdk&quot;\n                version = &quot;0.1.0&quot;\n                from components.java\n\n                pom {\n                    name = '******* Java SDK'\n                    description = 'SDK enabling Java developers to easily integrate with the My Company API.'\n                    url = 'https://github.com/*******/*******-java'\n                    scm {\n                        url = 'https://github.com/*******/*******-java'\n                        connection = 'scm:git:git://github.com/*******/*******-java.git'\n                        developerConnection = 'scm:git:git://github.com/*******/*******-java.git'\n                    }\n                    licenses {\n                        license {\n                            name = 'The MIT License (MIT)'\n                            url = 'https://mit-license.org/'\n                        }\n                    }\n                    developers {\n                        developer {\n                            name = '*******'\n                            organization = '*******'\n                            email = 'devs@*******.io'\n                        }\n                    }\n                    organization {\n                        name = '*******'\n                        url = 'https://*******.io'\n                    }\n                }\n            }\n        }\n    }\n    repositories {\n        maven {\n            // change URLs to point to your repos, e.g. http://my.org/repo\n            //def releasesRepoUrl = layout.buildDirectory.dir('repos/releases')\n            //def snapshotsRepoUrl = layout.buildDirectory.dir('repos/snapshots')\n            url =uri(&quot;https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/&quot;)\n            credentials {\n                username = properties.getProperty('ossrhUsername')\n                password = properties.getProperty('ossrhPassword')\n            }\n        }\n    }\n}\n\n\nif (!project.hasProperty('skip.signing')) {\n    signing {\n        if(properties.hasProperty(&quot;signing.secretKey&quot;)){\n            useInMemoryPgpKeys(\n                    properties.getProperty(&quot;signing.keyId&quot;) as String,\n                    properties.getProperty(&quot;signing.secretKey&quot;) as String,\n                    properties.getProperty(&quot;signing.password&quot;) as String\n            )\n        } else {\n            useGpgCmd()\n        }\n        sign publishing.publications\n    }\n}\n\ndependencies {\n    api 'com.fasterxml.jackson.core:jackson-annotations:2.18.2'\n    implementation 'com.fasterxml.jackson.core:jackson-databind:2.18.2'\n    implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jsr310:2.18.2'\n    implementation 'com.fasterxml.jackson.datatype:jackson-datatype-jdk8:2.18.2'\n    api('org.openapitools:jackson-databind-nullable:0.2.6') {exclude group: 'com.fasterxml.jackson.core', module: 'jackson-databind'}\n    implementation 'commons-io:commons-io:2.18.0'\n}\n</code></pre>\n<h4>What I'm trying to understand</h4>\n<ol>\n<li>What does <code>gpg finished with non-zero exit value 2</code> typically indicate in this Gradle context?</li>\n<li>Why does <code>publish</code> work, but <code>publishToMavenLocal</code> + <code>build</code> fails?</li>\n<li>Could this be due to <code>gpg</code> not finding the correct key locally even though I pass it via <code>useInMemoryPgpKeys</code>?</li>\n</ol>\n<h4>Environment</h4>\n<p>I am using Java 11 with Gradle 8.5. <br>\nSigning using <code>useInMemoryPgpKeys</code> and Publishing to Sonatype OSSRH via Maven Central</p>\n<p>Any guidance, suggestions, or shared experiences would be greatly appreciated.</p>\n",
+    "tags" : [ "java", "gradle", "gnupg", "sonatype", "maven-publish" ],
+    "owner" : {
+      "account_id" : 17667321,
+      "reputation" : 9,
+      "user_id" : 12824388,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a-/AAuE7mCESZKo0zdK96KvjEpTKsdXF0Q-3M32qPyx8wyO=k-s256",
+      "display_name" : "Siddharth Singh",
+      "link" : "https://stackoverflow.com/users/12824388/siddharth-singh"
+    },
+    "is_answered" : false,
+    "view_count" : 57,
+    "answer_count" : 0,
+    "score" : 0,
+    "last_activity_date" : 1753460391,
+    "creation_date" : 1753460146,
+    "link" : "https://stackoverflow.com/questions/79715020/gpg-finished-with-non-zero-exit-value-2-when-publishing-java-sdk-to-maven-centra",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140621629,
+    "post_id" : 79715020,
+    "body" : "I think this is a duplicate of <a href=\"https://stackoverflow.com/questions/6350442/gpg-error-code-2\">stackoverflow.com/questions/6350442/gpg-error-code-2</a>.  That Q&amp;A lists more than one possible cause for &quot;exit code 2&quot;.  My guess is that it is a permission problem.  Another possibility is this: <a href=\"https://github.com/keybase/client/issues/4845#issuecomment-573359746\" rel=\"nofollow noreferrer\">github.com/keybase/client/issues/4845#issuecomment-573359746</a>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 47283,
+      "reputation" : 723428,
+      "user_id" : 139985,
+      "user_type" : "registered",
+      "accept_rate" : 69,
+      "profile_image" : "https://www.gravatar.com/avatar/147c5a9cc1feec049c50da791ac7d144?s=256&d=identicon&r=PG",
+      "display_name" : "Stephen C",
+      "link" : "https://stackoverflow.com/users/139985/stephen-c"
+    },
+    "creation_date" : 1753619522,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

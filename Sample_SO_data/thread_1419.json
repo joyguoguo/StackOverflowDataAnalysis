@@ -1,0 +1,98 @@
+{
+  "question" : {
+    "question_id" : 79707876,
+    "title" : "How to use visitLocalVariable in ASM correctly?",
+    "body" : "<p>So I am trying to add information about locals I use. The current way I am trying to achieve it - is:</p>\n<pre class=\"lang-java prettyprint-override\"><code>methodVisitor = classWriter.visitMethod(ACC_PUBLIC | ACC_STATIC, &quot;something&quot;, &quot;()V&quot;, null, null);\nmethodVisitor.visitCode();\nLabel label0 = new Label();\nmethodVisitor.visitLabel(label0);\nmethodVisitor.visitInsn(ICONST_1);\nLabel label1 = new Label();\nmethodVisitor.visitJumpInsn(IFEQ, label1);\nmethodVisitor.visitLdcInsn(&quot;number&quot;);\nmethodVisitor.visitVarInsn(ASTORE, 0);\nmethodVisitor.visitVarInsn(ALOAD, 0);\nmethodVisitor.visitMethodInsn(INVOKESTATIC, &quot;org/bezsahara/minikotlin/NamingTests&quot;, &quot;accept&quot;, &quot;(Ljava/lang/Object;)V&quot;, false);\nmethodVisitor.visitInsn(RETURN);\nmethodVisitor.visitLabel(label1);\nmethodVisitor.visitIntInsn(BIPUSH, 21);\nmethodVisitor.visitMethodInsn(INVOKESTATIC, &quot;java/lang/Integer&quot;, &quot;valueOf&quot;, &quot;(I)Ljava/lang/Integer;&quot;, false);\nmethodVisitor.visitVarInsn(ASTORE, 0);\nmethodVisitor.visitVarInsn(ALOAD, 0);\nmethodVisitor.visitMethodInsn(INVOKESTATIC, &quot;org/bezsahara/minikotlin/NamingTests&quot;, &quot;accept&quot;, &quot;(Ljava/lang/Object;)V&quot;, false);\nmethodVisitor.visitInsn(RETURN);\nLabel label2 = new Label();\nmethodVisitor.visitLabel(label2);\nmethodVisitor.visitLocalVariable(&quot;hello&quot;, &quot;Ljava/lang/String;&quot;, null, label0, label1, 0);\nmethodVisitor.visitLocalVariable(&quot;goodbye&quot;, &quot;Ljava/lang/Integer;&quot;, null, label1, label2, 0);\nmethodVisitor.visitMaxs(0, 0);\nmethodVisitor.visitEnd();\n</code></pre>\n<p>However, when using Intellij decompiler (I think it uses FernFlower). Variable names are incorrect:</p>\n<pre><code>public static void something() {\n    if (true) {\n        String goodbye = &quot;number&quot;;\n        NamingTests.accept(goodbye);\n    } else {\n        Integer hello = 21;\n        NamingTests.accept(hello);\n    }\n}\n</code></pre>\n<p>After examining compiler outputs. It seems they indicate only LOAD kind of operations on variables. But it seems unreasonable. I mean if I just assign a variable to something it will loose all naming information then.</p>\n<p>So, I would appreciate it if you can help me understand:</p>\n<ol>\n<li>Only LOAD should be marked in visitLocalVariable?</li>\n<li>If so, why is it reasonable? Why can't I also mark STORE?</li>\n</ol>\n",
+    "tags" : [ "java", "kotlin", "jvm", "bytecode", "java-bytecode-asm" ],
+    "owner" : {
+      "account_id" : 10443944,
+      "reputation" : 258,
+      "user_id" : 7802769,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/x8ITi.jpg?s=256",
+      "display_name" : "Gleb",
+      "link" : "https://stackoverflow.com/users/7802769/gleb"
+    },
+    "is_answered" : true,
+    "view_count" : 100,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1753055462,
+    "creation_date" : 1753002155,
+    "link" : "https://stackoverflow.com/questions/79707876/how-to-use-visitlocalvariable-in-asm-correctly",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79708441,
+    "question_id" : 79707876,
+    "body" : "<p>I don't know enough about the decompiler's implementation details to tell you <em>exactly</em> why it produced that output, but the bytecode you generated is quite odd in the first place.</p>\n<p>As you may know, <code>visitLocalVariable</code> corresponds to adding entries to the <a href=\"https://docs.oracle.com/javase/specs/jvms/se24/html/jvms-4.html#jvms-4.7.13\" rel=\"nofollow noreferrer\"><code>LocalVariableTable</code> attribute</a> of the method. The two <code>Label</code> arguments are used to compute the <code>start_pc</code> and <code>length</code> items in each entry. The specification says (emphasis mine):</p>\n<blockquote>\n<p>The <code>start_pc</code> and <code>length</code> items indicate that <strong>the given local variable has a value</strong> at indices into the code array in the interval <code>[start_pc, start_pc + length)</code>, that is, between <code>start_pc</code> inclusive and <code>start_pc + length</code> exclusive.</p>\n</blockquote>\n<p>Based on this, the placement of the labels in your code is quite odd. You are saying that <code>hello</code> &quot;has a value&quot; even before the <code>astore</code> instruction. Similarly, you are saying that <code>goodbye</code> &quot;has a value&quot; as soon as the <code>else</code> branch begins. This obviously doesn't make sense, and it is not surprising that a decompiler would behave unexpectedly.</p>\n<p>This is not about &quot;marking&quot; load/store instructions. This is about the range of code where that variable <em>has a value</em>. The first <code>Label</code> should be after the first instruction that assigns the variable a value, and the second <code>Label</code> should be before the variable &quot;goes out of scope&quot;.</p>\n<p>Here I have added 4 labels to indicate the ranges for the 2 variables:</p>\n<pre class=\"lang-java prettyprint-override\"><code>var methodVisitor = cw.visitMethod(ACC_PUBLIC | ACC_STATIC, &quot;something&quot;, &quot;()V&quot;, null, null);\nmethodVisitor.visitCode();\nLabel label0 = new Label();\nmethodVisitor.visitLabel(label0);\nmethodVisitor.visitInsn(ICONST_1);\nLabel label1 = new Label();\nmethodVisitor.visitJumpInsn(IFEQ, label1);\nmethodVisitor.visitLdcInsn(&quot;number&quot;);\nmethodVisitor.visitVarInsn(ASTORE, 0);\nvar helloStart = new Label();\nmethodVisitor.visitLabel(helloStart);\nmethodVisitor.visitVarInsn(ALOAD, 0);\nmethodVisitor.visitMethodInsn(INVOKESTATIC, &quot;org/bezsahara/minikotlin/NamingTests&quot;, &quot;accept&quot;, &quot;(Ljava/lang/Object;)V&quot;, false);\nvar helloEnd = new Label();\nmethodVisitor.visitLabel(helloEnd);\nmethodVisitor.visitInsn(RETURN);\nmethodVisitor.visitLabel(label1);\nmethodVisitor.visitIntInsn(BIPUSH, 21);\nmethodVisitor.visitMethodInsn(INVOKESTATIC, &quot;java/lang/Integer&quot;, &quot;valueOf&quot;, &quot;(I)Ljava/lang/Integer;&quot;, false);\nmethodVisitor.visitVarInsn(ASTORE, 0);\nvar goodbyeStart = new Label();\nmethodVisitor.visitLabel(goodbyeStart);\nmethodVisitor.visitVarInsn(ALOAD, 0);\nmethodVisitor.visitMethodInsn(INVOKESTATIC, &quot;org/bezsahara/minikotlin/NamingTests&quot;, &quot;accept&quot;, &quot;(Ljava/lang/Object;)V&quot;, false);\nvar goodbyeEnd = new Label();\nmethodVisitor.visitLabel(goodbyeEnd);\nmethodVisitor.visitInsn(RETURN);\nLabel label2 = new Label();\nmethodVisitor.visitLabel(label2);\nmethodVisitor.visitLocalVariable(&quot;hello&quot;, &quot;Ljava/lang/String;&quot;, null, helloStart, helloEnd, 0);\nmethodVisitor.visitLocalVariable(&quot;goodbye&quot;, &quot;Ljava/lang/Integer;&quot;, null, goodbyeStart, goodbyeEnd, 0);\nmethodVisitor.visitMaxs(0, 0);\nmethodVisitor.visitEnd();\n</code></pre>\n<p>The IntelliJ decompiler is now able to give the variables their expected names.</p>\n",
+    "score" : 2,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 6651855,
+      "reputation" : 292025,
+      "user_id" : 5133585,
+      "user_type" : "registered",
+      "accept_rate" : 96,
+      "profile_image" : "https://i.sstatic.net/dfqcw.png?s=256",
+      "display_name" : "Sweeper",
+      "link" : "https://stackoverflow.com/users/5133585/sweeper"
+    },
+    "creation_date" : 1753055462,
+    "last_activity_date" : 1753055462,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79708441" : [ {
+      "comment_id" : 140607640,
+      "post_id" : 79708441,
+      "body" : "@Gleb for the first half of your comment, yes. For the second half, I would not think in terms of the byte code instructions. Think about the Java code that you want the decompiler to produce. The second label should be at the end of the scope in which the variable is declared.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 6651855,
+        "reputation" : 292025,
+        "user_id" : 5133585,
+        "user_type" : "registered",
+        "accept_rate" : 96,
+        "profile_image" : "https://i.sstatic.net/dfqcw.png?s=256",
+        "display_name" : "Sweeper",
+        "link" : "https://stackoverflow.com/users/5133585/sweeper"
+      },
+      "creation_date" : 1753154263,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140607483,
+      "post_id" : 79708441,
+      "body" : "I see. Thanks, mate. Just to confirm I understood your point correctly. I need to mark the range in bytecode where the variable actually holds a value, even if it’s not accessed via LOAD, right? Also, if a variable is immediately followed by a RETURN or GOTO after assignment, is it fine to use that (basically just one instruction) as the end of its lifetime scope, or would that not produce useful results?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10443944,
+        "reputation" : 258,
+        "user_id" : 7802769,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/x8ITi.jpg?s=256",
+        "display_name" : "Gleb",
+        "link" : "https://stackoverflow.com/users/7802769/gleb"
+      },
+      "creation_date" : 1753144500,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140605348,
+      "post_id" : 79708441,
+      "body" : "I think, the main problem of the question’s code is that the first variable scope is declared to span the conditional branch, so the decompiler has to assume that the variable is valid at the beginning of <code>if(true)</code> already whereas the end doesn’t match the end of the statement, so there’s no way to map those spans to Java source code scopes.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 3211603,
+        "reputation" : 300981,
+        "user_id" : 2711488,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+        "display_name" : "Holger",
+        "link" : "https://stackoverflow.com/users/2711488/holger"
+      },
+      "creation_date" : 1753086454,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

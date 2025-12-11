@@ -1,0 +1,165 @@
+{
+  "question" : {
+    "question_id" : 79556450,
+    "title" : "The difference between set() and setVolatile of VarHandle",
+    "body" : "<pre class=\"lang-java prettyprint-override\"><code>public class MyClass {\n\n    private volatile Object refValue;\n\n    private static final VarHandle REF_VALUE_HANDLE;\n\n    static {\n        try {\n            REF_VALUE_HANDLE = MethodHandles.lookup()\n                    .findVarHandle(MyClass.class, &quot;refValue&quot;, Object.class);\n        } catch (ReflectiveOperationException e) {\n            throw new Error(e);\n        }\n    }\n\n    public Object get1() {\n        return this.refValue;\n    }\n\n    public Object get2() {\n        return REF_VALUE_HANDLE.get(this);\n    }\n\n    public Object get3() {\n        return REF_VALUE_HANDLE.getVolatile(this);\n    }\n\n    public void set1(Object newValue) {\n        this.refValue = newValue;\n    }\n\n    public void set2(Object newValue) {\n        REF_VALUE_HANDLE.set(this, newValue);\n    }\n\n    public void set3(Object newValue) {\n        REF_VALUE_HANDLE.setVolatile(this, newValue);\n    }\n}\n</code></pre>\n<p>If the variable has been declared volatile, is there any difference between the different set and get methods above?</p>\n<p>My confusion comes from the comment of java.util.concurrent.atomic.AtomicReference#get\nand java.util.concurrent.atomic.AtomicReference#set</p>\n<blockquote>\n<p>Returns the current value, with memory effects as specified by VarHandle. getVolatile.</p>\n</blockquote>\n<blockquote>\n<p>Sets the value to newValue, with memory effects as specified by VarHandle. setVolatile.</p>\n</blockquote>\n<pre class=\"lang-java prettyprint-override\"><code>public class AtomicReference&lt;V&gt; implements java.io.Serializable {\n    private static final long serialVersionUID = -1848883965231344442L;\n    private static final VarHandle VALUE;\n    static {\n        try {\n            MethodHandles.Lookup l = MethodHandles.lookup();\n            VALUE = l.findVarHandle(AtomicReference.class, &quot;value&quot;, Object.class);\n        } catch (ReflectiveOperationException e) {\n            throw new ExceptionInInitializerError(e);\n        }\n    }\n\n    @SuppressWarnings(&quot;serial&quot;) // Conditionally serializable\n    private volatile V value;\n\n    /**\n     * Creates a new AtomicReference with the given initial value.\n     *\n     * @param initialValue the initial value\n     */\n    public AtomicReference(V initialValue) {\n        value = initialValue;\n    }\n\n    /**\n     * Creates a new AtomicReference with null initial value.\n     */\n    public AtomicReference() {\n    }\n\n    /**\n     * Returns the current value,\n     * with memory effects as specified by {@link VarHandle#getVolatile}.\n     *\n     * @return the current value\n     */\n    public final V get() {\n        return value;\n    }\n\n    /**\n     * Sets the value to {@code newValue},\n     * with memory effects as specified by {@link VarHandle#setVolatile}.\n     *\n     * @param newValue the new value\n     */\n    public final void set(V newValue) {\n        value = newValue;\n    }\n}\n</code></pre>\n<p>The JDK version is 21</p>\n",
+    "tags" : [ "java", "volatile", "atomicreference", "varhandle" ],
+    "owner" : {
+      "account_id" : 32812647,
+      "reputation" : 29,
+      "user_id" : 25499090,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/21cfaad28296fcd89d2789ba39795524?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Photon",
+      "link" : "https://stackoverflow.com/users/25499090/photon"
+    },
+    "is_answered" : true,
+    "view_count" : 213,
+    "answer_count" : 3,
+    "score" : 2,
+    "last_activity_date" : 1758910333,
+    "creation_date" : 1743816138,
+    "link" : "https://stackoverflow.com/questions/79556450/the-difference-between-set-and-setvolatile-of-varhandle",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79557621,
+    "question_id" : 79556450,
+    "body" : "<h1>Relevant Documentation</h1>\n<p>Instead of looking at the implementation of <code>AtomicReference</code>, it would be better to read the documentation of <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/invoke/VarHandle.html\" rel=\"nofollow noreferrer\"><code>VarHandle</code></a> to understand how it interacts with fields.</p>\n<p>From class-level documentation:</p>\n<blockquote>\n<p><em>[...]</em></p>\n<p>Each access mode is associated with one <em>access mode method</em>, a <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/invoke/MethodHandle.html#sigpoly\" rel=\"nofollow noreferrer\">signature polymorphic</a> method named for the access mode. When an access mode method is invoked on a VarHandle instance, the initial arguments to the invocation are coordinate expressions that indicate in precisely which object the variable is to be accessed. Trailing arguments to the invocation represent values of importance to the access mode. For example, the various compare-and-set or compare-and-exchange access modes require two trailing arguments for the variable's expected value and new value.</p>\n<p><em>[...]</em></p>\n<p>Access modes control atomicity and consistency properties. <em>Plain</em> read (<code>get</code>) and write (<code>set</code>) accesses are guaranteed to be bitwise atomic only for references and for primitive values of at most 32 bits, and impose no observable ordering constraints with respect to threads other than the executing thread. <em>Opaque</em> operations are bitwise atomic and coherently ordered with respect to accesses to the same variable. In addition to obeying Opaque properties, <em>Acquire</em> mode reads and their subsequent accesses are ordered after matching <em>Release</em> mode writes and their previous accesses. In addition to obeying Acquire and Release properties, all <em>Volatile</em> operations are totally ordered with respect to each other.</p>\n<p><em>[...]</em></p>\n<p><strong>Access modes will override any memory ordering effects specified at the declaration site of a variable</strong> <em>[emphasis added]</em>. For example, a <code>VarHandle</code> accessing a field using the <code>get</code> access mode will access the field as specified <em>by its access mode</em> even if that field is declared <code>volatile</code>. When mixed access is performed extreme care should be taken since the Java Memory Model may permit surprising results.</p>\n<p><em>[...]</em></p>\n</blockquote>\n<p><sup><strong>Note:</strong> The last paragraph is the most important part and is enough to answer your question. I included the other paragraphs to provide background on what an &quot;access mode&quot; is.</sup></p>\n<p>From <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/invoke/VarHandle.html#get(java.lang.Object...)\" rel=\"nofollow noreferrer\"><code>VarHandle::get</code></a>:</p>\n<blockquote>\n<p>Returns the value of a variable, with memory semantics of reading as if the variable was declared non-<code>volatile</code>. Commonly referred to as plain read access.</p>\n</blockquote>\n<p>From <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/invoke/VarHandle.html#set(java.lang.Object...)\" rel=\"nofollow noreferrer\"><code>VarHandle::set</code></a>:</p>\n<blockquote>\n<p>Sets the value of a variable to the <code>newValue</code>, with memory semantics of setting as if the variable was declared non-<code>volatile</code> and non-<code>final</code>. Commonly referred to as plain write access.</p>\n</blockquote>\n<p>From <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/invoke/VarHandle.html#getVolatile(java.lang.Object...)\" rel=\"nofollow noreferrer\"><code>VarHandle::getVolatile</code></a>:</p>\n<blockquote>\n<p>Returns the value of a variable, with memory semantics of reading as if the variable was declared <code>volatile</code>.</p>\n</blockquote>\n<p>From <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/invoke/VarHandle.html#setVolatile(java.lang.Object...)\" rel=\"nofollow noreferrer\"><code>VarHandle::setVolatile</code></a>:</p>\n<blockquote>\n<p>Sets the value of a variable to the <code>newValue</code>, with memory semantics of setting as if the variable was declared <code>volatile</code>.</p>\n</blockquote>\n<h2>MethodHandles.Lookup</h2>\n<p><a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/invoke/MethodHandles.Lookup.html#findVarHandle(java.lang.Class,java.lang.String,java.lang.Class)\" rel=\"nofollow noreferrer\"><code>MethodHandles.Lookup::findVarHandle</code></a> also has relevant documentation:</p>\n<blockquote>\n<p>If the field is declared <code>volatile</code> then the returned VarHandle will override access to the field (effectively ignore the <code>volatile</code> declaration) in accordance to its specified access modes.</p>\n</blockquote>\n<p>And <code>findStaticVarHandle</code> says the same thing.</p>\n<hr />\n<h1>Applying to Your Code</h1>\n<p>The above documentation explains that whether the underlying field is declared <code>volatile</code> is irrelevant to the <code>VarHandle</code>. When accessing the field via a <code>VarHandle</code>, the memory and ordering semantics used are entirely determined by the methods invoked. With that in mind:</p>\n<ul>\n<li><p>Your <code>get1</code> and <code>set1</code> methods will have volatile memory semantics because they access the field directly, and the field is declared <code>volatile</code>.</p>\n</li>\n<li><p>Your <code>get2</code> and <code>set2</code> methods will have &quot;plain&quot; memory semantics because they access the field via <code>VarHandle::get</code> and <code>VarHandle::set</code>.</p>\n</li>\n<li><p>Your <code>get3</code> and <code>set3</code> methods the volatile memory semantics because they access the field via <code>VarHandle::getVolatile</code> and <code>VarHandle::setVolatile</code>.</p>\n</li>\n</ul>\n<p>The second and third points will remain true even if your remove the <code>volatile</code> keyword from the field. In contrast, making such a modification would mean the first point has the memory semantics change from volatile to &quot;plain&quot;.</p>\n<h2>About <code>AtomicXXX</code> Classes</h2>\n<p>When <code>VarHandle</code> was introduced in Java 9, the <code>AtomicXXX</code> classes <a href=\"https://bugs.openjdk.org/browse/JDK-8080603\" rel=\"nofollow noreferrer\">were reworked to use <code>VarHandle</code> instead of <code>Unsafe</code></a>. The documentation of the <code>AtomicXXX</code> classes were also changed to reference <code>VarHandle</code>. This avoids duplication. Why explain the same thing in every <code>AtomicXXX</code> class when they can all just reference the single extensively documented <code>VarHandle</code> class?</p>\n<p>If you have a <code>volatile</code> field then accessing that field directly will give you volatile memory semantics. You get the <em>same volatile memory semantics</em> when accessing that same field via <code>VarHandle::getVolatile</code> and <code>VarHandle::setVolatile</code>. The documentation of those two methods say as much. Thus, the various <code>AtomicXXX::get</code> and <code>AtomicXXX::set</code> methods accessing their <code>volatile</code> field directly meet the contract specified by their documentation.</p>\n<p>The <code>AtomicXXX::get</code> and <code>AtomicXXX::set</code> methods could access their field via <code>VarHandle::getVolatile</code> and <code>VarHandle::setVolatile</code> and still be correctly implemented. It may be that direct field access was used instead for performance reasons. Though if I'm not mistaken, a static final <code>VarHandle</code> should have comparable, if not equal, performance. At least in OpenJDK-based builds.</p>\n",
+    "score" : 2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 8532578,
+      "reputation" : 49884,
+      "user_id" : 6395627,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Slaw",
+      "link" : "https://stackoverflow.com/users/6395627/slaw"
+    },
+    "creation_date" : 1743894979,
+    "last_activity_date" : 1745869312,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79775077,
+    "question_id" : 79556450,
+    "body" : "<p>The documentation is somewhat contradictory about what <code>volatile</code> keyword and <code>VH.setVolatile</code> supposedly do.</p>\n<p>And the contradiction runs deep.</p>\n<p>I don't remember the chapter... but the one for <code>VarHandle</code> explicitly states that it resembled a <code>fullFence</code>... which means that at least both <code>setVolatile</code> and <code>getVolatile</code> are of<code>seq_cst</code> barrier.<br />\nI remember coming out of that documentation PLUS some mailing list discussing that I cannot remember right now... that <code>VH.setVolatile</code> was undoubtedly <code>seq_cst</code> .</p>\n<p>The contradiction being... in the same paragraph... the VarHandle volatile &quot;mode&quot; was stated as being &quot;the default mode for volatile variables&quot; (paraphrasing)...</p>\n<p>So, what does <code>volatile</code> keyword do? Is it also <code>seq_cst</code> ?</p>\n<p>... I have my doubts that the keyword version is <strong>as</strong> strong.</p>\n<p>Chapter 17 is very obtuse... and the reason is that they attempted to try to explain both... the lock monitor/queue AND the volatile load/stores as if they were 2 tools from the same toolkit.... and that is the wrong mindset.</p>\n<p>Chapter 17 treats the concept of &quot;Synchronization order&quot; out of nowhere.<br />\nIt doesn't explain WHAT enforces it or how it even works under the hood.</p>\n<p>To me, the entire &quot;totally ordered&quot; concept that Chapter 17 alludes to is to the combination of both lock monitor PLUS volatile/memory barriers/fences ops.</p>\n<p>But anyways... related to <code>volatile</code>:<br />\n<strong>Chapter 17.4.3</strong> makes a subtle distinction...<br />\nIt states:</p>\n<blockquote>\n<p>&quot;A write to a volatile variable v (§8.3.1.4) synchronizes-with all subsequent reads of v by any thread (where &quot;subsequent&quot; is defined according to the synchronization order)&quot;</p>\n</blockquote>\n<p>Notice the property &quot;synchronization order&quot; is not explicitly granted to the &quot;write to a volatile variable v&quot; action/subject.<br />\nThey could've written this as<br />\n&quot;According to the synchronization order OF/IMPOSED-BY volatile actions, the volatile write will synchronize with subsequent...&quot;<br />\nBut no, &quot;synchronization order&quot; seems not to be a property of the volatile write...</p>\n<p>This means that the &quot;total order&quot; property that was previously granted to the &quot;synchronization order&quot; concept... is not the same as a <em>volatile read/write</em> as in the paragraph prior, in <strong>Chapter 17.4.2</strong> it was implied that both where &quot;<strong>synchronization actions</strong>&quot;... not order.</p>\n<blockquote>\n<p>17.4.2. Actions</p>\n<p>An <em>inter-thread action</em> is an action performed by one thread that can be detected or directly influenced by another thread. There are several kinds of inter-thread action that a program may perform:</p>\n<ul>\n<li><p><em>Read</em> (normal, or non-volatile). Reading a variable.</p>\n</li>\n<li><p><em>Write</em> (normal, or non-volatile). Writing a variable.</p>\n</li>\n<li><p><em><strong>Synchronization actions</strong></em>, which are:</p>\n<ul>\n<li><p><em>Volatile read</em>. A volatile read of a variable.</p>\n</li>\n<li><p><em>Volatile write</em>. A volatile write of a variable.</p>\n</li>\n</ul>\n</li>\n</ul>\n</blockquote>\n<p>Then, in the next chapter, the &quot;total order&quot; property is given to the concept of &quot;synchronization order&quot;... but not actions.</p>\n<blockquote>\n<h3>17.4.4. Synchronization Order</h3>\n<p>Every execution has a <em>synchronization order</em>. A <strong>synchronization order is a total order</strong> over all of the synchronization actions of an execution.</p>\n</blockquote>\n<p>At first glance this doesn't make much sense.<br />\nEvery &quot;execution&quot; (Thread)'s sequence will never stay on a fixed order.<br />\nIn fact, it may be rearranged multiple times based on &quot;heuristics&quot;.</p>\n<ul>\n<li><p>The initial rearranges done by the compiler.</p>\n</li>\n<li><p>Subsequent multiple rearranges performed by JIT tiered compilation.</p>\n</li>\n<li><p>Then multiple rearranges done by the OoO (Out-Of-Order) engine based on cache misses and speculation at the bare metal level.</p>\n</li>\n</ul>\n<p>So, there is no fixed order... not a &quot;perceived&quot; fixed order cross executions (Threads) and not a fixed order not even WITHIN the same execution.</p>\n<p>So, my immediate assumption then is that that paragraph EXPLICITLY refers to the <code>synchronized</code> keyword, which based on the next paragraph it seems very likely:</p>\n<blockquote>\n<p>17.4.6. Executions</p>\n<p>An execution <em>E</em> is described by a tuple &lt; <em>P, A, po, so, W, V, sw, hb</em> &gt;, comprising:</p>\n<ul>\n<li><p><em>P</em> - a program</p>\n</li>\n<li><p><em>A</em> - a set of actions</p>\n</li>\n<li><p><em>po</em> - program order, which for each thread <em>t</em>, is a total order over all actions performed by <em>t</em> in <em>A</em></p>\n</li>\n<li><p><em>so</em> - synchronization order, which is a total order over all synchronization actions in <em>A</em></p>\n</li>\n</ul>\n</blockquote>\n<p>... basically, the monitor/CLH queue.</p>\n<p>I know for a fact that the <code>synchronized</code> keyword, which is a lock-queue... is not &quot;totally ordered&quot; per-se... that is not <em>entirely</em> true...<br />\nAs all <code>MCS/CLH lock-queues</code> could very well work perfectly fine with both <code>acquire</code> and <code>release</code> semantics.</p>\n<p>So... in <em>reordering</em> terms the <code>acquire</code> side and the <code>release</code> side of the Lock-queue can become <em>&quot;fuzzy&quot;</em> allowing prior and subsequent ops to intertwine with the spin attempts of the synchronization queue.<br />\nEventually ops OUTISDE the locking queue mechanic will find a hard barrier within the queue spin-lock design... A <strong>release</strong> in the acquiring side of the lock... and an <strong>acquire</strong> in the release side of the lock.</p>\n<p>These are the ultimate barriers allowing for the monitor to behave in an <code>acq_rel</code> manner.</p>\n<p>So, is the <code>synchronized</code> keyword actually <code>seq_cst</code>?</p>\n<p>Under modern processors that do not leave retirements/commits as an option to be taken by the programmer.... both <code>acq_rel</code> and <code>seq_cst</code> are now basically the same since all processors do nowadays is &quot;juggle&quot; the value from one core to the sibling core WITHOUT actually ever committing to Main Memory, doing so via &quot;snoop-invalidations&quot;... only retiring when contention resumes... so what's left for <code>seq_cst</code> and <code>acq_rel</code> is JUST the reordering constrain... which is basically the same... a <strong>bidirectional barrier</strong>.</p>\n<p>But what's intereting about how the MESI/MOESI protocol works is that... <strong>THE CACHE IS ALWAYS COHERENT</strong>... there is never any hazard on cache incoherency... not at least if caused by a &quot;barrier not being able to commit&quot; to main memory.</p>\n<p>In which case... YES... a CLH queue DOES behave as a <code>seq_cst</code> barrier no doubt about that...</p>\n<p>So, given that the &quot;total order&quot; property has been found to be a property of the <code>synchronized</code> keyword... and maybe even divorced from the volatile loads and stores...</p>\n<p>Now... we go back to the first quote once again:</p>\n<blockquote>\n<p>&quot;A write to a volatile variable v (§8.3.1.4) synchronizes-with all subsequent reads of v by any thread (where &quot;subsequent&quot; is defined according to the synchronization order)&quot;</p>\n</blockquote>\n<p>The fact that the documentation uses the word &quot;<strong>variable v</strong>&quot; implies a <a href=\"https://llvm.org/docs/Atomics.html#monotonic\" rel=\"nofollow noreferrer\">monotonic</a>-base sequencing defined by a &quot;per-address sequential consistency&quot;, which... as far as I understand... is the BASE Program Order sequencing respected by ALL memory model/processors (bare metal) ... no matter how weak or strong they are.</p>\n<p><em>(And if any JIT or compiler disobeys this principle... then I don't know what to tell you... that is simply wrong... a mistake...)</em></p>\n<p>Based on the phrase &quot;<strong>all subsequent reads of v</strong>&quot; strongly implies that the barrier is anchored by the dependency chain of the address v (monotonic dependency chain).</p>\n<p>Hence this is explicitly what a <strong><code>release</code></strong> barrier does, since nonrelated ops on other addresses that are not v... are still allowed to be reordered before the <code>release</code>.</p>\n<p>(To me) the usage of the word &quot;v&quot; is the hint that the <code>volatile</code> keyword is an acquire/release barrier.</p>\n<p><strong>If not... then the documentation needs to provide more explicit wording.</strong><br />\nBut this is not <em>just</em> a Java issue... even within the Linux Kernel... the concept of barriers/ fences and synchronization gets mixed up... so I don't blame them.</p>\n<p>And my reasoning for the reason why they do it is that at the very core of the processor... the LLC (last level cache)... directory.... DOES contain a synchronization mechanism (MCS queue) in order to handle all parallel STORES (RFO stores) to apply in a serialized fashion (serialized = synchronization but fancier) ...</p>\n<p>Also, to the fact that some <code>volatile stores</code> are translated by some compilers as <code>LOCK</code>-prefixed in x86... but the reason why this is better than using a simple <code>mFence</code> is never explained....</p>\n<p>So... why do architects do this... if (remember) THE CACHE IS ALWAYS COHERENT?</p>\n<p>In reality the only ops that need to be LOCK prefixed are that of RMW(read-modify-write) ops aka. <code>compareAndSet</code> the reason is obvious... the need to hold exclusivity in order for the <code>cmp</code> load to be consistent before the &quot;xchg&quot; set... so these two ops need to be indivisible and no Thread must alter the value in-between both...</p>\n<p>But a volatile-write just DOESN'T NEED this?... so why do they do this?<br />\nAfter you read the document explaining why... the reason is that it has <strong>better performance</strong>.</p>\n<p>But they never explain why... my theory is that... by tripling the points of contention... it reliefs the RFO MCS synchronizing queue from the LLC directory... which must have 3 points of contention (TAIL, HEAD and NEXT)</p>\n<p>After using <code>LOCK</code> prefix, it will now have 9 points of contention (3 for <code>LOCK</code>'s HEAD, 3 for <code>LOCK</code>'s TAIL and 3 for <code>LOCK</code>'s NEXT... after entering the cache the directory will be empty without contention) which will release pressure from the directory.... allowing a better performance....<br />\nThis works (in some processors) because by tripling the avenues of contention... each pressure point now handles less &quot;flow&quot;, less invalidations... less contention... redistributed across 9 points instead of 3...</p>\n<p>but this has NOTHING to do with the <code>volatile</code> keyword &quot;synchronizing&quot; with another process calling for an <code>acquire</code> at the same address from another thread... that makes no sense...</p>\n<p>In fact, you can verify this... In the <code>ReentrantReadWriteLock</code> which mimics the design principle of all lock queuing mechanism... you'll see that LOADS are NEVER made to &quot;wait&quot; behind concurrent STOREs are performing.</p>\n<p><em>(There are some problems that require this... but it is not the rule...)</em></p>\n<p>This is what happens at the bare-metal level.... the LLC directory stalls concurrent STORES... but any sibling core performing a LOAD concurrently is free from this queuing... it just checks its own L1 and if its single bit flag is invalid, then it refers to the directory... but still unbound by any possible RFO queueing pressure on that same address.</p>\n<p>LOADS are never synchronized and if they were, processors would have an <strong>unbelievably high latency</strong>.</p>\n<p>So, NO... <code>release</code> does not &quot;synchronize&quot; with other <code>acquire</code>... they just enforce <a href=\"https://en.cppreference.com/w/cpp/atomic/memory_order.html#Constants\" rel=\"nofollow noreferrer\">reordering constraints</a>.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 15545149,
+      "reputation" : 1385,
+      "user_id" : 11214643,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-RP1GwpkAYX4/AAAAAAAAAAI/AAAAAAAAAEc/fknm-MHAJYU/s256-rj/photo.jpg",
+      "display_name" : "Delark",
+      "link" : "https://stackoverflow.com/users/11214643/delark"
+    },
+    "creation_date" : 1758816524,
+    "last_activity_date" : 1758910333,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79556471,
+    "question_id" : 79556450,
+    "body" : "<p>all three styles of get and set provide the same memory visibility guarantees. for non-volatile fields, there would be differences but in your case no.</p>\n",
+    "score" : -2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 41155008,
+      "reputation" : 87,
+      "user_id" : 30148459,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/1Kk1m663.jpg?s=256",
+      "display_name" : "Jo&#227;o Vaz",
+      "link" : "https://stackoverflow.com/users/30148459/jo%c3%a3o-vaz"
+    },
+    "creation_date" : 1743818064,
+    "last_activity_date" : 1743818064,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140377401,
+    "post_id" : 79556450,
+    "body" : "It’s <a href=\"https://docs.oracle.com/en/java/javase/23/docs/api/java.base/java/lang/invoke/VarHandle.html#:~:text=Access%20modes%20will%20override,declared%20volatile.\" rel=\"nofollow noreferrer\">spelled out explicitly</a>: “<i>Access modes will override any memory ordering effects specified at the declaration site of a variable. For example, a VarHandle accessing a field using the get access mode will access the field as specified by its access mode even if that field is declared volatile.</i>”",
+    "score" : 3,
+    "owner" : {
+      "account_id" : 3211603,
+      "reputation" : 300981,
+      "user_id" : 2711488,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+      "display_name" : "Holger",
+      "link" : "https://stackoverflow.com/users/2711488/holger"
+    },
+    "creation_date" : 1745860261,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140301660,
+    "post_id" : 79556450,
+    "body" : "<code>If the variable has been declared volatile, is there any difference between the different set and get methods above?</code> I don&#39;t know, but <code>get()</code> specifically says that it uses semantics as if the variable was declared non-volatile.  I have to assume that <code>VarHandle</code> overrides the declared semantics of a variable.",
+    "score" : 3,
+    "owner" : {
+      "account_id" : 2709823,
+      "reputation" : 11069,
+      "user_id" : 2338547,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/QT3fG.png?s=256",
+      "display_name" : "markspace",
+      "link" : "https://stackoverflow.com/users/2338547/markspace"
+    },
+    "creation_date" : 1743825706,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79556471" : [ {
+      "comment_id" : 140444695,
+      "post_id" : 79556471,
+      "body" : "@jo&#227;o-vaz a volatile will also not guarentee the most recent data is seen. In Java, when code is properly synchronized, then all executions will be sequential consistent (SC). For SC, the real time order doesn&#39;t need to be respected. And it is perfectly fine if a thread doesn&#39;t immediately see a change made by another thread. An example is a store in the store buffer that is retired; so is guaranteed to become visible to the other cores at some point in the future. But only when the store is drained from the store buffer and committed to the coherent cache, it becomes visible.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 292208,
+        "reputation" : 11569,
+        "user_id" : 2245707,
+        "user_type" : "registered",
+        "accept_rate" : 17,
+        "profile_image" : "https://i.sstatic.net/Klcqr.gif?s=256",
+        "display_name" : "pveentjer",
+        "link" : "https://stackoverflow.com/users/2245707/pveentjer"
+      },
+      "creation_date" : 1747798006,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140302387,
+      "post_id" : 79556471,
+      "body" : "As the <a href=\"https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/lang/invoke/VarHandle.html#getVolatile(java.lang.Object)\" rel=\"nofollow noreferrer\">documentation</a> says, the <code>getOpaque()</code> acess with no assurance of memory ordering effects with respect to other threads, witch means that you may see &quot;stale&quot; values . the <code>getAcquire()</code>establishes a happens-before relationship with all prior volatile writes to that variable.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 41155008,
+        "reputation" : 87,
+        "user_id" : 30148459,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/1Kk1m663.jpg?s=256",
+        "display_name" : "Jo&#227;o Vaz",
+        "link" : "https://stackoverflow.com/users/30148459/jo%c3%a3o-vaz"
+      },
+      "creation_date" : 1743858023,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140301550,
+      "post_id" : 79556471,
+      "body" : "If you use VarHandle&#39;s getOpaque and getAcquire in a scenario where variables are declared volatile, does it make any difference?",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 32812647,
+        "reputation" : 29,
+        "user_id" : 25499090,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/21cfaad28296fcd89d2789ba39795524?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Photon",
+        "link" : "https://stackoverflow.com/users/25499090/photon"
+      },
+      "creation_date" : 1743819001,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

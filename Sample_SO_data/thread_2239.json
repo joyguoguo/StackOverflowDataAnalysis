@@ -1,0 +1,227 @@
+{
+  "question" : {
+    "question_id" : 79636196,
+    "title" : "Java two-way SSL with client certificate results in HTTP 403, but works in Postman",
+    "body" : "<p>I am integrating with a SOAP server that uses two-way SSL (mutual TLS).</p>\n<p>To validate my certificates were okay, I make a request using Postman and curl.</p>\n<p><strong>Via POSTMAN:</strong>\nI enable SSL certificate validation in Postman, add the CA certificate, and then add my client PFX certificate for the target host.</p>\n<p>The request works successfully in Postman. If I remove the client certificate, the server returns HTTP 403, so I know the client certificate is required and being used.</p>\n<p><strong>With curl</strong> I just use openssl to transform pfx file in p12. The curl worked.</p>\n<p><strong>In Java,</strong>\nI add the CA certificate to the truststore. After doing this, I can complete the handshake, but I get HTTP 403 from the server, but it is okay since I hadn't had added the client pfx certificate.</p>\n<p>Then, I add the same client PFX certificate to the keystore, but I continue to get HTTP 403. I tried to convert it to PKCS12 and to JKS, but I always got the same error.</p>\n<p>Enabling SSL and handshake logs in Java, I can only see the CA certificate being sent—there is no evidence that the client certificate is being presented. Of course it is loaded and logged in the begin, but I can't see it in the handshake.</p>\n<p>It seems like my java app is not using this.</p>\n<p>Any suggestions on what might be happening?</p>\n<p>Below is the simple Java code I am using (I made a minimal main method just to ensure the request is sent under the same conditions as Postman):</p>\n<pre><code>\n        String url = &quot;https://.....&quot;;\n\n        // Corpo da requisiç ão (como String)\n        String body = &quot;...&quot;;\n\n        Map&lt;String, String&gt; headers = Map.of(\n                &quot;Content-Type&quot;, &quot;application/soap+xml; charset=utf-8&quot;\n        );\n\n        KeyStore clientStore = KeyStore.getInstance(&quot;PKCS12&quot;);\n        InputStream keyStoreStream = new FileInputStream(&quot;client.pfx&quot;);\n        clientStore.load(keyStoreStream, &quot;A123456789&quot;.toCharArray());\n\n        KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());\n        kmf.init(clientStore, &quot;mypassword&quot;.toCharArray());\n\n        KeyStore trustStore = KeyStore.getInstance(&quot;JKS&quot;);\n        trustStore.load(new FileInputStream(&quot;ca_intermediate.jks&quot;), &quot;mypassword&quot;.toCharArray());\n\n        TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());\n        tmf.init(trustStore);\n\n        SSLContext sslContext = SSLContext.getInstance(&quot;TLS&quot;);\n        //sslContext.init(kmf.getKeyManagers(), null, new SecureRandom());\n        sslContext.init(kmf.getKeyManagers(), tmf.getTrustManagers(), new SecureRandom());\n\n        SSLConnectionSocketFactory socketFactory =\n                new SSLConnectionSocketFactory(sslContext, new DefaultHostnameVerifier());\n\n        Registry&lt;ConnectionSocketFactory&gt; socketFactoryRegistry = RegistryBuilder.&lt;ConnectionSocketFactory&gt;create()\n                .register(&quot;https&quot;, socketFactory)\n                .build();\n\n        PoolingHttpClientConnectionManager connectionManager =\n                new PoolingHttpClientConnectionManager(socketFactoryRegistry);\n\n        CloseableHttpClient httpClient = HttpClients.custom()\n                .setSSLSocketFactory(socketFactory)\n                .setConnectionManager(connectionManager)\n                .build();\n\n\n        HttpPost post = new HttpPost(url);\n        post.setEntity(new StringEntity(body));\n\n        headers.forEach(post::addHeader);\n        HttpResponse response =httpClient.execute(post);\n\n        System.out.println(response.getStatusLine().getStatusCode());\n\n</code></pre>\n",
+    "tags" : [ "java", "ssl", "client-certificates", "handshake", "mtls" ],
+    "owner" : {
+      "account_id" : 17129550,
+      "reputation" : 97,
+      "user_id" : 12395944,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/190336fac7ebce4a97fc9d16e97600f7?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Mark",
+      "link" : "https://stackoverflow.com/users/12395944/mark"
+    },
+    "is_answered" : true,
+    "view_count" : 120,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1748270253,
+    "creation_date" : 1748034331,
+    "link" : "https://stackoverflow.com/questions/79636196/java-two-way-ssl-with-client-certificate-results-in-http-403-but-works-in-postm",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79639129,
+    "question_id" : 79636196,
+    "body" : "<p>The issue was resolved as follows:</p>\n<p>The client certificate depended on a full chain of three certificates (two intermediates and one root).</p>\n<p>So, using Windows, I first imported the client certificate and then exported it again, this time including the entire certificate chain.</p>\n<p>Using OpenSSL, I converted the certificate to PEM format with the following command:</p>\n<p><code>openssl pkcs12 -in certifiate_full.pfx -out certifiate_full-export.pem -nodes --legacy</code></p>\n<p>This allowed me to confirm that all four certificates were present in the exported file.</p>\n<p>In Java, I kept the code I had originally written — the truststore still used the default <code>cacert of the intermediate certified</code>, but for the keystore I used the <code>.pfx</code> file that contained the full certificate chain.</p>\n<p>With this setup, I was able to successfully authenticate with the target service and received an HTTP 200 response.</p>\n<p>I believe that <code>curl</code> is more flexible and can handle incomplete or implicit chains better, whereas Java requires the full chain to be explicitly and correctly configured in the keystore. That explains the different behavior I observed.</p>\n<p>Thanks to everyone for the help!</p>\n",
+    "score" : 0,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 17129550,
+      "reputation" : 97,
+      "user_id" : 12395944,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/190336fac7ebce4a97fc9d16e97600f7?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Mark",
+      "link" : "https://stackoverflow.com/users/12395944/mark"
+    },
+    "creation_date" : 1748270253,
+    "last_activity_date" : 1748270253,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140459951,
+    "post_id" : 79636196,
+    "body" : "@SteffenUllrich  You got it.  When I exported the client certificate with all chain It worked. Probably Java needs the full chain.  Thank you and everyone else that helped me with that.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 17129550,
+      "reputation" : 97,
+      "user_id" : 12395944,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/190336fac7ebce4a97fc9d16e97600f7?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Mark",
+      "link" : "https://stackoverflow.com/users/12395944/mark"
+    },
+    "creation_date" : 1748270386,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140456023,
+    "post_id" : 79636196,
+    "body" : "Can you pls chk if you are using http/2 with Java code? Http2 has some concerns with client certificates on some TLS versions. Does the code run when you force http 1.1?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 30416556,
+      "reputation" : 422,
+      "user_id" : 23309143,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/ACg8ocIO8RJEp3HfOZeQwzK80OiMbtgPIBMG95j1x20zK9C3=k-s256",
+      "display_name" : "ErkinD39",
+      "link" : "https://stackoverflow.com/users/23309143/erkind39"
+    },
+    "creation_date" : 1748116192,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140455295,
+    "post_id" : 79636196,
+    "body" : "@SteffenUllrich I don&#39;t see in the question if the request in Postman or curl has an authorization header instead or some other authentication method. Also how the server interprets the client certificate if that is the case. Many years ago I had to implement a non standard client certification authentication scheme. A <a href=\"https://stackoverflow.com/help/minimal-reproducible-example\">minimal reproducible example</a> is needed.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 372682,
+      "reputation" : 26512,
+      "user_id" : 721855,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/vZiox.png?s=256",
+      "display_name" : "aled",
+      "link" : "https://stackoverflow.com/users/721855/aled"
+    },
+    "creation_date" : 1748091014,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140454678,
+    "post_id" : 79636196,
+    "body" : "Make sure the server sends the list of accepted CA for the client certificate and that the client certificate in the keystore matches an entry in this list. Both postman and curl do not care about what the server accept but simply used the client certificate explicitly given. Java expects it though to select the appropriate one in the keystore.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 3701398,
+      "reputation" : 125106,
+      "user_id" : 3081018,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Z2NYm.png?s=256",
+      "display_name" : "Steffen Ullrich",
+      "link" : "https://stackoverflow.com/users/3081018/steffen-ullrich"
+    },
+    "creation_date" : 1748066771,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140454566,
+    "post_id" : 79636196,
+    "body" : "@aled: The behavior that the TLS handshake is successful but the server returns 403 w/o client certificate was already validated by the OP with postman. The OP also checked the handshake and determined that the Java application is not sending the client certificate. So the problem very likely seems to be caused by the missing client certificate, not something else as you proposed.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 3701398,
+      "reputation" : 125106,
+      "user_id" : 3081018,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Z2NYm.png?s=256",
+      "display_name" : "Steffen Ullrich",
+      "link" : "https://stackoverflow.com/users/3081018/steffen-ullrich"
+    },
+    "creation_date" : 1748058830,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140454301,
+    "post_id" : 79636196,
+    "body" : "The HTTP status 403 means Forbidden . It depends on what the server requires for authentication which is not mentioned in the question. The TLS handshake is working, otherwise you would not get an HTTP error. You need to add to the question the authentication requirements of the server.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 372682,
+      "reputation" : 26512,
+      "user_id" : 721855,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/vZiox.png?s=256",
+      "display_name" : "aled",
+      "link" : "https://stackoverflow.com/users/721855/aled"
+    },
+    "creation_date" : 1748043422,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140454125,
+    "post_id" : 79636196,
+    "body" : "You can implement your own <code>X509KeyManager</code> instance where you can specify which certificate to be used as client cert.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 50585,
+      "reputation" : 43459,
+      "user_id" : 150978,
+      "user_type" : "registered",
+      "accept_rate" : 78,
+      "profile_image" : "https://www.gravatar.com/avatar/feadc214792e2581c3c750140e3eb2c7?s=256&d=identicon&r=PG",
+      "display_name" : "Robert",
+      "link" : "https://stackoverflow.com/users/150978/robert"
+    },
+    "creation_date" : 1748035599,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79639129" : [ {
+      "comment_id" : 140461671,
+      "post_id" : 79639129,
+      "body" : "@SteffenUllrich OK. How bizarre.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 71739,
+        "reputation" : 311869,
+        "user_id" : 207421,
+        "user_type" : "registered",
+        "accept_rate" : 82,
+        "profile_image" : "https://www.gravatar.com/avatar/5cfe5f7d64f44be04f147295f5c7b88e?s=256&d=identicon&r=PG",
+        "display_name" : "user207421",
+        "link" : "https://stackoverflow.com/users/207421/user207421"
+      },
+      "creation_date" : 1748333200,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140461383,
+      "post_id" : 79639129,
+      "body" : "@user207421: from to the RFC regarding what a &quot;suitable&quot; certificate is: <i>&quot;If the certificate_authorities list in the certificate request       message was non-empty, one of the certificates in the certificate       chain SHOULD be issued by one of the listed CAs.&quot;</i>. So this is a SHOULD, not a MUST. Which means curl and postman do not actually violate the RFC. And they simply rely on the user to configure the right certificate - there is only one.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 3701398,
+        "reputation" : 125106,
+        "user_id" : 3081018,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/Z2NYm.png?s=256",
+        "display_name" : "Steffen Ullrich",
+        "link" : "https://stackoverflow.com/users/3081018/steffen-ullrich"
+      },
+      "creation_date" : 1748326723,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140461102,
+      "post_id" : 79639129,
+      "body" : "And note that this behaviour of <code>curl</code> and <code>postman</code> is a TLS protocol violation as of TLS 1.2: &quot;If no suitable certificate is available,       the client MUST send a certificate message containing no       certificates.&quot;<a href=\"https://datatracker.ietf.org/doc/html/rfc5246#section-7.4.6\" rel=\"nofollow noreferrer\">RFC 5246 #7.4.6</a>. @SteffenUllrich",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 71739,
+        "reputation" : 311869,
+        "user_id" : 207421,
+        "user_type" : "registered",
+        "accept_rate" : 82,
+        "profile_image" : "https://www.gravatar.com/avatar/5cfe5f7d64f44be04f147295f5c7b88e?s=256&d=identicon&r=PG",
+        "display_name" : "user207421",
+        "link" : "https://stackoverflow.com/users/207421/user207421"
+      },
+      "creation_date" : 1748311294,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140460139,
+      "post_id" : 79639129,
+      "body" : "The server provides the CA it trusted for client certificate validation to the client. Java uses this list to decide which certificate to send, while curl and postman simply send a fixed certificate which was configured no matter what the server asks for. If the server accepts the client certificate from curl/postman without intermediate certificates then the server might be either misconfigured regarding the CA it sends as acceptable to the client or will use different CA to validate the client certificate or will not properly validate the client certificate.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 3701398,
+        "reputation" : 125106,
+        "user_id" : 3081018,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/Z2NYm.png?s=256",
+        "display_name" : "Steffen Ullrich",
+        "link" : "https://stackoverflow.com/users/3081018/steffen-ullrich"
+      },
+      "creation_date" : 1748274435,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

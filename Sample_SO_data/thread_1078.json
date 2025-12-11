@@ -1,0 +1,101 @@
+{
+  "question" : {
+    "question_id" : 79745847,
+    "title" : "How to make use of Windows trust store when using SSL?",
+    "body" : "<p>I'm trying to connect to a company server using HTTPS. The server certificates are stored on all clients (Windows) and I want to configure my Java app to use the Windows trust store.</p>\n<p>I set <code>javax.net.ssl.trustStoreType=Windows-ROOT</code> which I understand should allow Java to use the certificates installed in Windows.</p>\n<p>The Client is created in this method:</p>\n<pre><code>static CloseableHttpClient getClientWindowsTrust() throws Exception {\n    System.setProperty(&quot;javax.net.ssl.trustStoreType&quot;, &quot;Windows-ROOT&quot;);\n\n    SSLContext sslContext = SSLContext.getDefault();\n\n    DefaultClientTlsStrategy strat = new DefaultClientTlsStrategy(sslContext);\n        \n    var connectionManager = PoolingHttpClientConnectionManagerBuilder.create()\n            .setTlsSocketStrategy(strat)\n            .build();\n\n    return HttpClients.custom()\n            .setConnectionManager(connectionManager)\n            .build();\n}\n</code></pre>\n<p>The required certificates are in the Windows trust store and other apps (which I am assuming use these) are working ok.</p>\n<p>The error message is:</p>\n<pre><code>TransportContext.java:363|Fatal (CERTIFICATE_UNKNOWN): PKIX path building failed: sun.security.provider.certpath.SunCertPathBuilderException: unable to find valid certification path to requested target\n</code></pre>\n<p>What might I be missing? How can I determine where exactly the path-building fails?</p>\n<p><strong>UPDATE</strong></p>\n<p>thanks to those who replied. I tried all suggestions but to no avail. I then focussed more on the server as I had tried everything I could think of on the client side.</p>\n<p>The server recently got a new intermediate certificate and this is not being found by the client. I tried a different server which already has the new cert - and it worked. The difference is that server 1 is a Windows server with Apache and Tomcat, server 2 is a containerised server.</p>\n<p>At the moment I'm guessing that the Windows installation has a config problem. I installed the new certificate on another Windows server that had been working and now it doesn't.</p>\n<p>I'll post another update when I have more information.</p>\n<p><strong>PROBLEM SOLVED</strong></p>\n<p>It wasn't a client problem. The certificate was installed on the server by a co-worker who forgot to update the Apache config. The config still referenced the old intermediate cert and this caused the problem.</p>\n",
+    "tags" : [ "java", "ssl", "ssl-certificate", "apache-httpclient-5.x" ],
+    "owner" : {
+      "account_id" : 6642,
+      "reputation" : 13582,
+      "user_id" : 11249,
+      "user_type" : "registered",
+      "accept_rate" : 51,
+      "profile_image" : "https://i.sstatic.net/B11BF.jpg?s=256",
+      "display_name" : "paul",
+      "link" : "https://stackoverflow.com/users/11249/paul"
+    },
+    "is_answered" : true,
+    "view_count" : 303,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1756208308,
+    "creation_date" : 1756129811,
+    "link" : "https://stackoverflow.com/questions/79745847/how-to-make-use-of-windows-trust-store-when-using-ssl",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79746279,
+    "question_id" : 79745847,
+    "body" : "<p>I think you shall set it up on load</p>\n<pre><code> public static void applyWindowsRootTrustStore() throws Exception {\n        // 1. Load the Windows-ROOT keystore (system-wide trusted root CAs)\n        //    Equivalent to trustStoreType=Windows-ROOT, trustStoreProvider=SunMSCAPI\n        KeyStore windowsRoot = KeyStore.getInstance(&quot;Windows-ROOT&quot;, &quot;SunMSCAPI&quot;);\n        windowsRoot.load(null, null);\n        //(Optionally also clear your system properties to set trustStore=NONE so that no file based trust store is looked up\n        //    This ensures Java won't try to load a file-based truststore\n        System.clearProperty(&quot;javax.net.ssl.trustStore&quot;);\n        System.clearProperty(&quot;javax.net.ssl.trustStorePassword&quot;);\n        System.setProperty(&quot;javax.net.ssl.trustStoreType&quot;, &quot;Windows-ROOT&quot;);\n        System.setProperty(&quot;javax.net.ssl.trustStoreProvider&quot;, &quot;SunMSCAPI&quot;);\n\n        // 2. Initialize a TrustManagerFactory with the Windows keystore\n        TrustManagerFactory tmf =\n                TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());\n        tmf.init(windowsRoot);\n\n        // 3. Create an SSLContext that uses only this TrustManager\n        SSLContext sslContext = SSLContext.getInstance(&quot;TLS&quot;);\n        sslContext.init(null, tmf.getTrustManagers(), null);\n\n        // 4. Set this SSLContext as the default for all HTTPS connections\n        SSLContext.setDefault(sslContext);\n        HttpsURLConnection.setDefaultSSLSocketFactory(sslContext.getSocketFactory());\n\n    }\n</code></pre>\n<p>By setting javax.net.ssl.trustStore=NONE, you are explicitly telling  Java “don’t even look for a file”.</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 2508750,
+      "reputation" : 4547,
+      "user_id" : 2181703,
+      "user_type" : "registered",
+      "accept_rate" : 20,
+      "profile_image" : "https://www.gravatar.com/avatar/f0782a6f7690b5109552cb3fe4193a72?s=256&d=identicon&r=PG",
+      "display_name" : "Optional",
+      "link" : "https://stackoverflow.com/users/2181703/optional"
+    },
+    "creation_date" : 1756166049,
+    "last_activity_date" : 1756166049,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140692716,
+    "post_id" : 79745847,
+    "body" : "Checking the JDK sources of <a href=\"https://github.com/openjdk/jdk/blob/3641c32c11aa3768ce986d5dcd5393b74f776228/src/java.base/share/classes/sun/security/ssl/TrustStoreManager.java#L130\" rel=\"nofollow noreferrer\">TrustStoreManager</a> it seems that the property <code>javax.net.ssl.trustStoreType</code> is checked every time a new instance is created.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 50585,
+      "reputation" : 43459,
+      "user_id" : 150978,
+      "user_type" : "registered",
+      "accept_rate" : 78,
+      "profile_image" : "https://www.gravatar.com/avatar/feadc214792e2581c3c750140e3eb2c7?s=256&d=identicon&r=PG",
+      "display_name" : "Robert",
+      "link" : "https://stackoverflow.com/users/150978/robert"
+    },
+    "creation_date" : 1756199380,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140690998,
+    "post_id" : 79745847,
+    "body" : "System properties are often only read when the class is loaded, thus setting them at run-time may have no effect. Therefore better set them via command-line to the Java runtime. At run-time the better way may be to load the Windows certificate store as KeyStore and then create a TrustManager and SSLContext from it.",
+    "score" : 4,
+    "owner" : {
+      "account_id" : 50585,
+      "reputation" : 43459,
+      "user_id" : 150978,
+      "user_type" : "registered",
+      "accept_rate" : 78,
+      "profile_image" : "https://www.gravatar.com/avatar/feadc214792e2581c3c750140e3eb2c7?s=256&d=identicon&r=PG",
+      "display_name" : "Robert",
+      "link" : "https://stackoverflow.com/users/150978/robert"
+    },
+    "creation_date" : 1756135978,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79746279" : [ {
+      "comment_id" : 140692723,
+      "post_id" : 79746279,
+      "body" : "Why do you set the properties and manually load the Windows-ROOT keystore for constructing a SSLContext from it? If the properties work you don&#39;t need the SSLContext way.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 50585,
+        "reputation" : 43459,
+        "user_id" : 150978,
+        "user_type" : "registered",
+        "accept_rate" : 78,
+        "profile_image" : "https://www.gravatar.com/avatar/feadc214792e2581c3c750140e3eb2c7?s=256&d=identicon&r=PG",
+        "display_name" : "Robert",
+        "link" : "https://stackoverflow.com/users/150978/robert"
+      },
+      "creation_date" : 1756199693,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

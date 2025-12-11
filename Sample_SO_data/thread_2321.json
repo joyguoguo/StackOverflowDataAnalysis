@@ -1,0 +1,144 @@
+{
+  "question" : {
+    "question_id" : 79630226,
+    "title" : "Multithreading simple queue",
+    "body" : "<p>I'm practicing with multithreading. I've a task:</p>\n<p>Create a message queue that N threads write to (the number of threads is specified via args) and N threads read from, using only the java.util.concurrent package. Thread names must be meaningful, using constructions with wait/notify is prohibited.</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class MessageQueueApp {\n\n    private static final int MESSAGE_COUNT = 5; \n\n    public static void main(String[] args) {\n        if (args.length &lt; 1) {\n            System.err.println(&quot;Set number of threds through args&quot;);\n            return;\n        }\n\n        int threadCount;\n        try {\n            threadCount = Integer.parseInt(args[0]);\n        } catch (NumberFormatException e) {\n            System.err.println(&quot;Invalid format number: &quot; + args[0]);\n            return;\n        }\n\n        BlockingQueue&lt;String&gt; queue = new LinkedBlockingQueue&lt;&gt;();\n\n        ExecutorService writerPool = Executors.newFixedThreadPool(threadCount);\n        ExecutorService readerPool = Executors.newFixedThreadPool(threadCount);\n\n        // Writers\n        for (int i = 0; i &lt; threadCount; i++) {\n            String writerName = &quot;Writer-&quot; + (i + 1);\n            writerPool.submit(() -&gt; {\n                for (int j = 1; j &lt;= MESSAGE_COUNT; j++) {\n                    String message = writerName + &quot; message &quot; + j;\n                    try {\n                        queue.put(message);\n                        System.out.println(writerName + &quot; put: &quot; + message);\n                        Thread.sleep(2000); //Simulation\n                    } catch (InterruptedException e) {\n                        Thread.currentThread().interrupt();\n                    }\n                }\n            });\n        }\n\n        // Readers\n        for (int i = 0; i &lt; threadCount; i++) {\n            String readerName = &quot;Reader-&quot; + (i + 1);\n            readerPool.submit(() -&gt; {\n                int received = 0;\n                while (received &lt; MESSAGE_COUNT) {\n                    try {\n                        String message = queue.take();\n                        System.out.println(readerName + &quot; got: &quot; + message);\n                        received++;\n                        Thread.sleep(500); //Simulation\n                    } catch (InterruptedException e) {\n                        Thread.currentThread().interrupt();\n                    }\n                }\n            });\n        }\n\n        writerPool.shutdown();\n        readerPool.shutdown();\n    }\n}\n</code></pre>\n<p>When I open logs I see:</p>\n<pre><code>Reader-6 got: Writer-1 message 1\nWriter-1 put: Writer-1 message 1\n</code></pre>\n<p>Why Reader appears before Writer? Does it mean that my app doesnt work as it should? Or I should place <code>readers</code> and <code>writers</code> inside one loop? What fixes should I make?</p>\n",
+    "tags" : [ "java", "multithreading" ],
+    "owner" : {
+      "account_id" : 29845114,
+      "reputation" : 133,
+      "user_id" : 22872363,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/ACg8ocIpN5w5guiiGEOgNe5kFxs2WaWMz7wzMU6xXna6W1_s=k-s256",
+      "display_name" : "Mark Avreliy",
+      "link" : "https://stackoverflow.com/users/22872363/mark-avreliy"
+    },
+    "is_answered" : true,
+    "view_count" : 127,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1747741278,
+    "creation_date" : 1747735549,
+    "link" : "https://stackoverflow.com/questions/79630226/multithreading-simple-queue",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79630279,
+    "question_id" : 79630226,
+    "body" : "<p>When you say <code>writerPool.submit(...)</code> you instruct the system to schedule the execution of the tasks asynchronously in no particular order. You then proceed to do the same with <code>readerPool</code>. In other words, while the source code is written top to bottom, the actual execution order of tasks is arbitrary</p>\n<p>This means that by the time your writer <code>for</code> loop is done,  some of the tasks haven't started yet, some  done <code>queue.put</code> and some that did, did not print yet.</p>\n<p>It is then possible for <code>Writer-1</code> to enqueue it's message, be suspended before printing and have <code>Reader-6</code> take the message and print.</p>\n<p>You can gain more insight on how this all works by examining the <code>Future</code> objects returned by <code>submit()</code></p>\n<p><strong>Edit</strong><br />\nYou ask &quot;<em>What fixes should I make?</em>&quot;, that really depends on your expectation. If you want run the readers only after the writers are done, you can use a <a href=\"https://docs.oracle.com/javase/8/docs/api/index.html?java/util/concurrent/CountDownLatch.html\" rel=\"nofollow noreferrer\">CountDownLatch</a>.</p>\n<p>add <code>startSignal = CountDownLatch(threadCount)</code> before the write loop<br />\nadd <code>startSignal.countDown()</code> when each thread completes writing<br />\nadd <code>startSignal.await()</code> between the write loop and the read loop</p>\n",
+    "score" : 2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 85850,
+      "reputation" : 9394,
+      "user_id" : 239101,
+      "user_type" : "registered",
+      "accept_rate" : 57,
+      "profile_image" : "https://i.sstatic.net/zEXWJ.jpg?s=256",
+      "display_name" : "David Soroko",
+      "link" : "https://stackoverflow.com/users/239101/david-soroko"
+    },
+    "creation_date" : 1747738062,
+    "last_activity_date" : 1747741278,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140443198,
+    "post_id" : 79630226,
+    "body" : "I was given this task at my university. I can&#39;t really tell what is a <code>message queue</code> in this case. I also found this task at github: <a href=\"https://github.com/vspochernin/java-2021-2022-1/tree/master/src/main/java/lab7\" rel=\"nofollow noreferrer\">github.com/vspochernin/java-2021-2022-1/tree/master/src/main&zwnj;&#8203;/&hellip;</a>, probably by previous student).",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 29845114,
+      "reputation" : 133,
+      "user_id" : 22872363,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/ACg8ocIpN5w5guiiGEOgNe5kFxs2WaWMz7wzMU6xXna6W1_s=k-s256",
+      "display_name" : "Mark Avreliy",
+      "link" : "https://stackoverflow.com/users/22872363/mark-avreliy"
+    },
+    "creation_date" : 1747755162,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140442876,
+    "post_id" : 79630226,
+    "body" : "This question would benefit from some clarification on what &quot;Create a message queue&quot; is intended to mean.  The code presented seems to take it to mean creating an <i>application</i> that passes messages between senders and receivers, but it seems more natural to me to interpret that as a request to create a class implementing a message queue (as opposed to using <code>BlockingQueue</code> directly).  Either way, more information is needed about the characteristics of the class(es) requested.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2792262,
+      "reputation" : 190832,
+      "user_id" : 2402272,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+      "display_name" : "John Bollinger",
+      "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+    },
+    "creation_date" : 1747749968,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140442416,
+    "post_id" : 79630226,
+    "body" : "Since it appears you are adding diagnostics to understand the dynamics of the queueing, it seems sufficient to only print the readers since it contains the writer message.  Then, all you can discern from the reader message is &quot;reader N got writer M message&quot; nothing more - which may be enough.  I&#39;d suggest defining exactly what you want out of the diagnostics - what is left is &quot;the order of writers writing&quot; which is a different problem.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 3212023,
+      "reputation" : 1614,
+      "user_id" : 17856705,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/OoOsD.png?s=256",
+      "display_name" : "Computable",
+      "link" : "https://stackoverflow.com/users/17856705/computable"
+    },
+    "creation_date" : 1747741197,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140442341,
+    "post_id" : 79630226,
+    "body" : "(Your code would catch the interrupt, reraise the flag, and continue the loop. Because the flag is up, <code>Thread.sleep(2000)</code> will fail instantly with an interruptedexception, and rise and repeat. Hence, if you interrupt this thread, that means: &quot;Add everything, right now&quot;, which is a bizarre thing to call &quot;interrupt&quot;. Thus, if that is truly the intent, it should be clearly documented.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 401843,
+      "reputation" : 107186,
+      "user_id" : 768644,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+      "display_name" : "rzwitserloot",
+      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+    },
+    "creation_date" : 1747739837,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140442339,
+    "post_id" : 79630226,
+    "body" : "Note that your catch interruptedexception is horrible. If an interrupt occurs, what that means is that your code will then speed through the queue, adding everything in one go without sleeping. This is example code so none of it matters, but, you write it to learn. &quot;Reraise the flag&quot; is common advice... and it&#39;s wrong. Interrupts do not occur unless you explicitly write an interrupt call, so it means whatever you want it to. If you&#39;re not sure, the best &quot;I do not want to think about it&quot; content of a <code>catch (InterruptedException e)</code> block is <code>return;</code>: &quot;Stop, now.&quot;.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 401843,
+      "reputation" : 107186,
+      "user_id" : 768644,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+      "display_name" : "rzwitserloot",
+      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+    },
+    "creation_date" : 1747739771,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140442239,
+    "post_id" : 79630226,
+    "body" : "<code>System.out.println(s)</code> is synchronised so isn&#39;t suitable method to call frequently from  multiple threads unless you want contention. All you are seeing is that reader thread happens to access System.out first after the put/take combination. It might not happen every time and nothing to be concerned about in a demo app.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 5998820,
+      "reputation" : 16283,
+      "user_id" : 4712734,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f6e922a2cb7e2da59286f27b162aaca5?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "DuncG",
+      "link" : "https://stackoverflow.com/users/4712734/duncg"
+    },
+    "creation_date" : 1747737462,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

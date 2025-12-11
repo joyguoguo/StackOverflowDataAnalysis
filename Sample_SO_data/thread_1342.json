@@ -1,0 +1,98 @@
+{
+  "question" : {
+    "question_id" : 79716948,
+    "title" : "JOLT transformation using java library bazaarvoice",
+    "body" : "<p>Using the java jolt library - <a href=\"https://github.com/bazaarvoice/jolt?tab=readme-ov-file\" rel=\"nofollow noreferrer\">bazaarvoice</a> to perform jolt transformation and unable to get the result. I have an input json and I want to transform based on the rules json to get the final output.</p>\n<p>Here are my files:\n<code>AttributeTransformer.java</code></p>\n<pre><code>package com.ebay.app.compliance;\n\nimport com.bazaarvoice.jolt.Chainr;\nimport com.fasterxml.jackson.core.type.TypeReference;\nimport com.fasterxml.jackson.databind.ObjectMapper;\n\nimport java.io.IOException;\nimport java.io.InputStream;\nimport java.util.List; // Import List\nimport java.util.Map;\n\npublic class AttributeTransformer {\n\n    private final Chainr chainr;\n    private final Map&lt;String, Object&gt; rules;\n    private final ObjectMapper objectMapper = new ObjectMapper();\n\n    /**\n     * Constructor loads the JOLT specification and compliance rules from classpath resources.\n     * In a real microservice (e.g., using Spring Boot), this would be done once at startup.\n     */\n    public AttributeTransformer() throws IOException {\n        // Load the JOLT transformation spec from the classpath\n        InputStream specStream = this.getClass().getResourceAsStream(&quot;/spec.json&quot;);\n        if (specStream == null) {\n            throw new IOException(&quot;Could not find spec.json in classpath.&quot;);\n        }\n        // Use Jackson ObjectMapper to parse the spec directly into a List.\n        List&lt;Object&gt; specJson = objectMapper.readValue(specStream, new TypeReference&lt;List&lt;Object&gt;&gt;() {});\n        this.chainr = Chainr.fromSpec(specJson);\n\n        // Load the business rules from the classpath\n        InputStream rulesStream = this.getClass().getResourceAsStream(&quot;/rules.json&quot;);\n        if (rulesStream == null) {\n            throw new IOException(&quot;Could not find rules.json in classpath.&quot;);\n        }\n        // Use Jackson to parse the rules JSON into a Java Map\n        this.rules = objectMapper.readValue(rulesStream, new TypeReference&lt;Map&lt;String, Object&gt;&gt;() {});\n    }\n\n    /**\n     * Transforms an input payload into compliance attributes.\n     *\n     * @param inputJson The input from the classification service (e.g., {&quot;product_class&quot;: &quot;Knife&quot;, &quot;product_subclass&quot;: &quot;Throwing Knife&quot;})\n     * @return A JSON string of the transformed attributes.\n     * @throws IOException if JSON processing fails.\n     */\n    public String transform(String inputJson) throws IOException {\n        // Parse the input JSON string into a Java Map\n        Map&lt;String, Object&gt; inputMap = objectMapper.readValue(inputJson, new TypeReference&lt;Map&lt;String, Object&gt;&gt;() {});\n\n        // The JOLT transform method can take a &quot;context&quot; map, which allows the spec\n        // to reference external data. We'll provide our rules here.\n        Map&lt;String, Object&gt; context = Map.of(&quot;rules&quot;, this.rules);\n\n        // Perform the transformation\n        Object transformedOutput = chainr.transform(inputMap, context);\n\n        // Convert the final Java Object back to a pretty-printed JSON string\n        return objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(transformedOutput);\n    }\n\n    /**\n     * Main method to act as a test harness for our transformer.\n     */\n    public static void main(String[] args) {\n        try {\n            // 1. Initialize the transformer (loads specs and rules)\n            AttributeTransformer transformer = new AttributeTransformer();\n\n            // 2. Define the input payload from the upstream service\n            String inputPayload = &quot;{\\&quot;product_class\\&quot;: \\&quot;Knife\\&quot;, \\&quot;product_subclass\\&quot;: \\&quot;Throwing Knife\\&quot;}&quot;;\n\n            System.out.println(&quot;--- \uD83D\uDE80 Starting JOLT Transformation ---&quot;);\n            System.out.println(&quot;Input Payload: &quot; + inputPayload);\n            System.out.println(&quot;----------------------------------------&quot;);\n\n            // 3. Run the transformation\n            String finalOutput = transformer.transform(inputPayload);\n\n            // 4. Print the result\n            System.out.println(&quot;Final Output:&quot;);\n            System.out.println(finalOutput);\n            System.out.println(&quot;--- ✅ Transformation Complete ---&quot;);\n\n        } catch (IOException e) {\n            System.err.println(&quot;Failed to initialize or run transformer.&quot;);\n            e.printStackTrace();\n        }\n    }\n}\n\n</code></pre>\n<p><code>rules.json</code></p>\n<pre><code>{\n  &quot;Knife&quot;: {\n    &quot;Cutlery Knife&quot;: {\n      &quot;is_bladed&quot;: true,\n      &quot;is_prohibited_ca&quot;: false,\n      &quot;requires_age_verification&quot;: false,\n      &quot;compliance_policy_id&quot;: &quot;CP-102&quot;\n    },\n    &quot;Throwing Knife&quot;: {\n      &quot;is_bladed&quot;: true,\n      &quot;is_prohibited_ca&quot;: true,\n      &quot;requires_age_verification&quot;: true,\n      &quot;compliance_policy_id&quot;: &quot;CP-451&quot;\n    }\n  },\n  &quot;Lighter&quot;: {\n    &quot;Default&quot;: {\n      &quot;is_bladed&quot;: false,\n      &quot;is_hazmat_ground&quot;: true,\n      &quot;is_hazmat_air&quot;: true,\n      &quot;compliance_policy_id&quot;: &quot;CP-210&quot;\n    }\n  }\n}\n</code></pre>\n<p>And my <code>spec.json</code></p>\n<pre><code>[\n  {\n    &quot;operation&quot;: &quot;shift&quot;,\n    &quot;spec&quot;: {\n      &quot;rules&quot;: {\n        &quot;@1,product_class&quot;: {\n          &quot;*&quot;: {\n            &quot;@2,&amp;&quot;: {\n              &quot;@4,product_subclass&quot;: {\n                &quot;*&quot;: {\n                  &quot;@2,&amp;&quot;: &quot;attributes&quot;\n                }\n              }\n            }\n          }\n        }\n      },\n      &quot;*&quot;: &quot;&amp;&quot;\n    }\n  }\n]\n\n</code></pre>\n<p>My expected output is</p>\n<pre><code>--- \uD83D\uDE80 Starting JOLT Transformation ---\nInput Payload: {&quot;product_class&quot;: &quot;Knife&quot;, &quot;product_subclass&quot;: &quot;Throwing Knife&quot;}\n----------------------------------------\nFinal Output:\n{\n  &quot;product_class&quot; : &quot;Knife&quot;,\n  &quot;product_subclass&quot; : &quot;Throwing Knife&quot;,\n  &quot;attributes&quot; : {\n    &quot;is_bladed&quot; : true,\n    &quot;is_prohibited_ca&quot; : true,\n    &quot;requires_age_verification&quot; : true,\n    &quot;compliance_policy_id&quot; : &quot;CP-451&quot;\n  }\n}\n\n--- ✅ Transformation Complete ---\n</code></pre>\n<p><code>actual output</code></p>\n<pre><code>--- \uD83D\uDE80 Starting JOLT Transformation ---\nInput Payload: {&quot;product_class&quot;: &quot;Knife&quot;, &quot;product_subclass&quot;: &quot;Throwing Knife&quot;}\n----------------------------------------\nFinal Output:\n{\n  &quot;product_class&quot; : &quot;Knife&quot;,\n  &quot;product_subclass&quot; : &quot;Throwing Knife&quot;\n}\n--- ✅ Transformation Complete ---\n</code></pre>\n",
+    "tags" : [ "java", "jolt", "bazaarvoice", "bazaarvoice-jolt" ],
+    "owner" : {
+      "account_id" : 212445,
+      "reputation" : 5218,
+      "user_id" : 2005490,
+      "user_type" : "registered",
+      "accept_rate" : 59,
+      "profile_image" : "https://www.gravatar.com/avatar/3419bb2799672ef53b1535fdd48b30e7?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Atihska",
+      "link" : "https://stackoverflow.com/users/2005490/atihska"
+    },
+    "is_answered" : false,
+    "view_count" : 119,
+    "answer_count" : 2,
+    "score" : 0,
+    "last_activity_date" : 1754047217,
+    "creation_date" : 1753683296,
+    "link" : "https://stackoverflow.com/questions/79716948/jolt-transformation-using-java-library-bazaarvoice",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79721652,
+    "question_id" : 79716948,
+    "body" : "<p>You may consider other JSON library to do the transformation. Below is the solution using <em>Josson</em>.</p>\n<p><a href=\"https://github.com/octomix/josson\" rel=\"nofollow noreferrer\">https://github.com/octomix/josson</a></p>\n<p><strong>Deserialize the rules and store in a</strong> <code>Josson</code> <strong>Object</strong></p>\n<pre class=\"lang-java prettyprint-override\"><code>Josson rules = Josson.fromJsonString(&quot;&quot;&quot;\n    {\n      &quot;Knife&quot;: {\n        &quot;Cutlery Knife&quot;: {\n          &quot;is_bladed&quot;: true,\n          &quot;is_prohibited_ca&quot;: false,\n          &quot;requires_age_verification&quot;: false,\n          &quot;compliance_policy_id&quot;: &quot;CP-102&quot;\n        },\n        &quot;Throwing Knife&quot;: {\n          &quot;is_bladed&quot;: true,\n          &quot;is_prohibited_ca&quot;: true,\n          &quot;requires_age_verification&quot;: true,\n          &quot;compliance_policy_id&quot;: &quot;CP-451&quot;\n        }\n      },\n      &quot;Lighter&quot;: {\n        &quot;Default&quot;: {\n          &quot;is_bladed&quot;: false,\n          &quot;is_hazmat_ground&quot;: true,\n          &quot;is_hazmat_air&quot;: true,\n          &quot;compliance_policy_id&quot;: &quot;CP-210&quot;\n        }\n      }\n    }\n    &quot;&quot;&quot;);\n</code></pre>\n<p><strong>Deserialize the input payload and define the transformation expression</strong></p>\n<pre class=\"lang-java prettyprint-override\"><code>JsonNode inputPayload = Josson.readJsonNode(&quot;&quot;&quot;\n    {&quot;product_class&quot;: &quot;Knife&quot;, &quot;product_subclass&quot;: &quot;Throwing Knife&quot;}\n    &quot;&quot;&quot;);\nMap&lt;String, JsonNode&gt; variables = Map.of(&quot;$inputPayload&quot;, inputPayload);\nString expression = &quot;&quot;&quot;\n    mergeObjects(\n        $inputPayload,\n        map(attributes:\n              *[key=$inputPayload.product_class].*[key=$inputPayload.product_subclass]\n        )\n    )\n    &quot;&quot;&quot;;\n</code></pre>\n<ol>\n<li><p>Put the input payload in a <code>Map&lt;String, JsonNode&gt;</code> and set the variable name to <code>$inputPayload</code> .</p>\n</li>\n<li><p>The expression manipulates the <code>Josson</code> object data start from the root.</p>\n</li>\n<li><p>Function <code>mergeObjects()</code> merge JSON objects into a single object.</p>\n</li>\n<li><p>Function <code>map()</code> create a new JSON object by key:value pairs.</p>\n</li>\n<li><p>Syntax <code>*[key=</code><em><code>'name'</code></em><code>]</code> find an object entry by the key name and then return the value of the entry.</p>\n</li>\n</ol>\n<p><strong>Do the transformation</strong></p>\n<pre class=\"lang-java prettyprint-override\"><code>System.out.println(&quot;--- Starting Josson Transformation ---&quot;);\nSystem.out.println(&quot;Input Payload: &quot; + inputPayload);\nSystem.out.println(&quot;----------------------------------------&quot;);\nJsonNode finalOutput = rules.getNode(expression, variables);\nSystem.out.println(&quot;Final Output:&quot;);\nSystem.out.println(finalOutput.toPrettyString());\nSystem.out.println(&quot;--- Transformation Complete ---&quot;);\n</code></pre>\n<p><strong>Output</strong></p>\n<pre><code>--- Starting Josson Transformation ---\nInput Payload: {&quot;product_class&quot;:&quot;Knife&quot;,&quot;product_subclass&quot;:&quot;Throwing Knife&quot;}\n----------------------------------------\nFinal Output:\n{\n  &quot;product_class&quot; : &quot;Knife&quot;,\n  &quot;product_subclass&quot; : &quot;Throwing Knife&quot;,\n  &quot;attributes&quot; : {\n    &quot;is_bladed&quot; : true,\n    &quot;is_prohibited_ca&quot; : true,\n    &quot;requires_age_verification&quot; : true,\n    &quot;compliance_policy_id&quot; : &quot;CP-451&quot;\n  }\n}\n--- Transformation Complete ---\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 13009011,
+      "reputation" : 1281,
+      "user_id" : 9402689,
+      "user_type" : "registered",
+      "profile_image" : "https://graph.facebook.com/10155248276785868/picture?type=large",
+      "display_name" : "Raymond Choi",
+      "link" : "https://stackoverflow.com/users/9402689/raymond-choi"
+    },
+    "creation_date" : 1753983466,
+    "last_activity_date" : 1753983466,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79722428,
+    "question_id" : 79716948,
+    "body" : "<h1>Try this spec</h1>\n<pre><code>[\n  {\n    &quot;operation&quot;: &quot;shift&quot;,\n    &quot;spec&quot;: {\n      &quot;Knife&quot;: {\n        &quot;Throwing Knife&quot;: {\n          &quot;*&quot;: &quot;attributes.&amp;&quot;,\n          &quot;$&quot;: &quot;product_subclass&quot;,\n          &quot;#Knife&quot;: &quot;product_class&quot;\n        }\n      }\n    }\n  }\n]\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 5300710,
+      "reputation" : 589,
+      "user_id" : 4230445,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/LBxxS.png?s=256",
+      "display_name" : "rahulP",
+      "link" : "https://stackoverflow.com/users/4230445/rahulp"
+    },
+    "creation_date" : 1754047217,
+    "last_activity_date" : 1754047217,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140627801,
+    "post_id" : 79716948,
+    "body" : "@mattyb I added rules in the top level and it still doesn&#39;t work. could you provide an updated script, please that I can try?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 212445,
+      "reputation" : 5218,
+      "user_id" : 2005490,
+      "user_type" : "registered",
+      "accept_rate" : 59,
+      "profile_image" : "https://www.gravatar.com/avatar/3419bb2799672ef53b1535fdd48b30e7?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Atihska",
+      "link" : "https://stackoverflow.com/users/2005490/atihska"
+    },
+    "creation_date" : 1753813353,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140624291,
+    "post_id" : 79716948,
+    "body" : "Your sample JSON doesn&#39;t have the top-level <code>rules</code> key. Also once you match on something at a certain level, you have to use the &quot;*&quot;: &quot;&amp;&quot; to include the others, else they will be excluded from the output.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1838718,
+      "reputation" : 12223,
+      "user_id" : 1668575,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/gw21ZjvI.jpg?s=256",
+      "display_name" : "mattyb",
+      "link" : "https://stackoverflow.com/users/1668575/mattyb"
+    },
+    "creation_date" : 1753717479,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

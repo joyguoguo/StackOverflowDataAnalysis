@@ -1,0 +1,65 @@
+{
+  "question" : {
+    "question_id" : 79546294,
+    "title" : "KafkaProducer: How to raise and catch UNKNOWN_TOPIC_OR_PARTITION error?",
+    "body" : "<p>I have Kafka with disabled topic auto creation. All topics must be created with external API. And I want to implement topic auto creation =)</p>\n<pre><code>try { producer.send(...) } catch (UnknownTopicException e) { ... external API call ... }\n\n</code></pre>\n<p>By default, <code>KafkaProducer</code> do not throw exception on send to unknown topic. Only logs endlessly <code>UNKNOWN_TOPIC_OR_PARTITION</code> errors:</p>\n<pre><code>[kafka-producer-network-thread | producer-1] WARN org.apache.kafka.clients.NetworkClient - [Producer clientId=producer-1] Error while fetching metadata with correlation id 1 : {unknown_topic=UNKNOWN_TOPIC_OR_PARTITION}\n</code></pre>\n<p>I fix this with decreasing <code>max.block.ms</code> configuration. Now <code>KafkaProducer</code> don't retry before thrown the exception:</p>\n<pre class=\"lang-java prettyprint-override\"><code>import org.apache.kafka.clients.producer.*;\nimport org.apache.kafka.common.serialization.StringSerializer;\n\nimport java.util.Properties;\nimport java.util.concurrent.ExecutionException;\n\npublic class Main {\n    public static void main(String[] args) {\n        var properties = new Properties();\n        properties.setProperty(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, &quot;***:9092&quot;);\n        properties.setProperty(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());\n        properties.setProperty(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());\n        properties.setProperty(&quot;max.block.ms&quot;, &quot;0&quot;);\n\n        try (var producer = new KafkaProducer&lt;String, String&gt;(properties)) {\n            System.out.println(&quot;recordMetadata: &quot; + producer.send(new ProducerRecord&lt;&gt;(&quot;unknown_topic&quot;, &quot;hello world&quot;)).get());\n        } catch (ExecutionException | InterruptedException e) {\n            throw new RuntimeException(e);\n        }\n    }\n}\n</code></pre>\n<p>This doesn't seem to be the best solution. What other options are there?</p>\n",
+    "tags" : [ "java", "apache-kafka" ],
+    "owner" : {
+      "account_id" : 7229358,
+      "reputation" : 1283,
+      "user_id" : 5516822,
+      "user_type" : "registered",
+      "profile_image" : "https://lh6.googleusercontent.com/-PE5M_8vbie4/AAAAAAAAAAI/AAAAAAAAADg/2W8S8izKXkE/s256-rj/photo.jpg",
+      "display_name" : "Makrushin Evgenii",
+      "link" : "https://stackoverflow.com/users/5516822/makrushin-evgenii"
+    },
+    "is_answered" : true,
+    "view_count" : 77,
+    "answer_count" : 2,
+    "score" : 2,
+    "last_activity_date" : 1743438203,
+    "creation_date" : 1743426191,
+    "link" : "https://stackoverflow.com/questions/79546294/kafkaproducer-how-to-raise-and-catch-unknown-topic-or-partition-error",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79546377,
+    "question_id" : 79546294,
+    "body" : "<p>The best option to check if the topic exists is to call <code>AdminClient</code> before any call.</p>\n<p>It has this method: <code>describeTopics</code>. That method throws the <code>UNKNOWN_TOPIC_OR_PARTITION</code>  exception, so the way to go is to catch it.</p>\n<p><a href=\"https://kafka.apache.org/23/javadoc/org/apache/kafka/clients/admin/AdminClient.html#describeTopics-java.util.Collection-\" rel=\"nofollow noreferrer\"><code>https://kafka.apache.org/23/javadoc/org/apache/kafka/clients/admin/AdminClient.html#describeTopics-java.util.Collection-org.apache.kafka.clients.admin.DescribeTopicsOptions-</code></a></p>\n<p>You could just modify your try block:</p>\n<pre><code>//...\n\n    try (var adminClient = AdminClient.create(properties);\n         var producer = new KafkaProducer&lt;String, String&gt;(properties)) \n    {\n        \n        if (topicExists(adminClient, &quot;yourTopic&quot;)) \n        {\n          System.out.println(&quot;recordMetadata: &quot; + producer.send(new ProducerRecord&lt;&gt;(&quot;yourTopic&quot;, &quot;hi!&quot;)).get());\n        //...\n        } \n         else //well, it doesn't exist as we catched the exception and returned false\n        {\n           //your non-topic logic here.\n        }\n    \n      //...  \n    } catch (ExecutionException | InterruptedException e) {\n             throw new RuntimeException(e);\n    }\n//...\n\nprivate boolean topicExists(AdminClient adminClient, String topic) \n{\n   try \n   {\n      DescribeTopicsResult result = adminClient.describeTopics(java.util.List.of(topic));\n      result.all().get();\n      return true; //OK, it exists\n    }\n    catch (ExecutionException e) \n    {\n      if (e.getCause() instanceof UnknownTopicOrPartitionException) \n         return false; //catch the false -- UnknownTopicOrPartition means it doesnt exist\n      else \n         throw new RuntimeException(e);\n    } \n }\n</code></pre>\n",
+    "score" : 2,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 2465829,
+      "reputation" : 13577,
+      "user_id" : 2148953,
+      "user_type" : "registered",
+      "accept_rate" : 96,
+      "profile_image" : "https://i.sstatic.net/DVHoP84E.jpg?s=256",
+      "display_name" : "aran",
+      "link" : "https://stackoverflow.com/users/2148953/aran"
+    },
+    "creation_date" : 1743428604,
+    "last_activity_date" : 1743429741,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79546752,
+    "question_id" : 79546294,
+    "body" : "<p>Thank @aran for this hint with <code>describeTopics()</code>. Write this decorator for <code>KafkaProducer</code>. Redirect records to backoff-topic, If destination topic is unknown or creation is requested a short time ago</p>\n<pre><code>import org.apache.kafka.clients.admin.AdminClient;\nimport org.apache.kafka.clients.producer.Callback;\nimport org.apache.kafka.clients.producer.KafkaProducer;\nimport org.apache.kafka.clients.producer.ProducerRecord;\nimport org.apache.kafka.clients.producer.RecordMetadata;\nimport org.apache.kafka.common.errors.UnknownTopicOrPartitionException;\n\nimport java.time.Instant;\nimport java.util.*;\nimport java.util.concurrent.ExecutionException;\nimport java.util.concurrent.Future;\n\npublic class KafkaProducerAutoCreateDecorator&lt;K, V&gt; extends KafkaProducer&lt;K, V&gt; {\n    private final Map&lt;String, Long&gt; describedTopics = new HashMap&lt;&gt;();\n    private final Map&lt;String, Long&gt; requestedTopics = new HashMap&lt;&gt;();\n    private final AdminClient adminClient;\n\n    private static final long describedTopicsTtlMs = 1000;\n    private static final long requestedTopicsTtlMs = 1000;\n    private static final String defaultTopic = &quot;test&quot;;\n\n    public KafkaProducerAutoCreateDecorator(Properties properties) {\n        super(properties);\n        this.adminClient = AdminClient.create(properties);\n    }\n\n    @Override\n    public Future&lt;RecordMetadata&gt; send(ProducerRecord&lt;K, V&gt; record, Callback callback) {\n        if (!isTopicExist(record.topic())) {\n            record = new ProducerRecord&lt;&gt;(defaultTopic, record.value());\n        }\n\n        return super.send(record, callback);\n    }\n\n    private boolean isTopicExist(String topic) {\n        if (describedTopics.containsKey(topic) &amp;&amp; Instant.now().toEpochMilli() - describedTopics.get(topic) &lt; describedTopicsTtlMs) {\n            return true;\n        }\n\n        if (requestedTopics.containsKey(topic) &amp;&amp; Instant.now().toEpochMilli() - requestedTopics.get(topic) &lt; requestedTopicsTtlMs) {\n            return false;\n        }\n\n        try {\n            adminClient.describeTopics(List.of(topic)).all().get();\n            describedTopics.put(topic, Instant.now().toEpochMilli());\n            requestedTopics.remove(topic);\n            return true;\n        } catch (ExecutionException | InterruptedException e) {\n            if (e.getCause() instanceof UnknownTopicOrPartitionException) {\n                // TODO: request topic creation\n                requestedTopics.put(topic, Instant.now().toEpochMilli());\n                return false;\n            }\n            throw new RuntimeException(e);\n        }\n    }\n\n    public void close() {\n        adminClient.close();\n        super.close();\n    }\n}\n</code></pre>\n<pre><code>import org.apache.kafka.clients.producer.*;\nimport org.apache.kafka.common.serialization.StringSerializer;\n\nimport java.util.Properties;\nimport java.util.concurrent.ExecutionException;\n\npublic class Main {\n    public static void main(String[] args) {\n        var properties = new Properties();\n        properties.setProperty(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, &quot;***:9092&quot;);\n        properties.setProperty(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());\n        properties.setProperty(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());\n\n        var records = new ProducerRecord[]{\n                new ProducerRecord&lt;&gt;(&quot;test&quot;, &quot;...&quot;),\n                new ProducerRecord&lt;&gt;(&quot;unknown_topic&quot;, &quot;...&quot;),\n                new ProducerRecord&lt;&gt;(&quot;test&quot;, &quot;...&quot;),\n                new ProducerRecord&lt;&gt;(&quot;unknown_topic&quot;, &quot;...&quot;)\n        };\n\n        try (var producer = new KafkaProducerAutoCreateDecorator&lt;String, String&gt;(properties)) {\n            for (var record : records) {\n                System.out.println(producer.send(record).get());\n            }\n        } catch (ExecutionException | InterruptedException e) {\n            throw new RuntimeException(e);\n        }\n    }\n}\n</code></pre>\n<p><em>Not sure what will happen if the described topic is deleted</em></p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 7229358,
+      "reputation" : 1283,
+      "user_id" : 5516822,
+      "user_type" : "registered",
+      "profile_image" : "https://lh6.googleusercontent.com/-PE5M_8vbie4/AAAAAAAAAAI/AAAAAAAAADg/2W8S8izKXkE/s256-rj/photo.jpg",
+      "display_name" : "Makrushin Evgenii",
+      "link" : "https://stackoverflow.com/users/5516822/makrushin-evgenii"
+    },
+    "creation_date" : 1743438203,
+    "last_activity_date" : 1743438203,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : { }
+}

@@ -1,0 +1,113 @@
+{
+  "question" : {
+    "question_id" : 79554425,
+    "title" : "Map object using @Query and nativeQuery = true in Spring Boot 3.4.3",
+    "body" : "<p>I'm working with Spring Boot and need to run a complex native SQL query with several JOINS, but I have problem to map the result in the next record (DTO):</p>\n<pre><code>public record FindAvailableEventResponseDto(\n        UUID id,\n        String name,\n        String description,\n        ZonedDateTime date,\n        short capacity,\n        short occupiedSeats,\n        String organizedBy) {\n}\n\n</code></pre>\n<p>My SQL query is:</p>\n<pre><code>SELECT e.id, e.name, e.description, e.date, e.capacity,\n       COUNT(s.id) AS occupiedSeats, u.name as organizedBy\nFROM events e\nLEFT JOIN seats s ON s.eventId = e.id\nLEFT JOIN users u on e.organizedBy = u.id\nWHERE e.date &gt; :currentDate\n  AND s.state = 'OCCUPIED'\nGROUP BY e.id, e.name, e.description, e.date, e.capacity, u.name\nORDER BY e.date ASC\n</code></pre>\n<p>Inside my interface <code>EventRepository</code>, I put the <code>@Query</code> annotation like this:</p>\n<pre><code>public interface EventRepository extends JpaRepository&lt;Event, UUID&gt; {\n\n    @Query(value = &quot;&quot;&quot;\n            SELECT e.id, e.name, e.description, e.date, e.capacity,\n            CAST(COUNT(s.id) AS smallint) AS occupiedSeats, u.name as organizedBy\n            FROM events e\n            LEFT JOIN seats s ON s.eventId = e.id AND s.state = 'OCCUPIED'\n            LEFT JOIN users u on e.organizedBy = u.id\n            WHERE e.date &gt; :currentDate\n            GROUP BY e.id, e.name, e.description, e.date, e.capacity, u.name\n            ORDER BY e.date ASC;\n            &quot;&quot;&quot;, nativeQuery = true)\n    List&lt;FindAvailableEventResponseDto&gt; findUpcomingEventsWithAvailableSeats(\n            @Param(&quot;currentDate&quot;) ZonedDateTime currentDate);\n}\n</code></pre>\n<p>This code throw the error:</p>\n<pre><code>org.springframework.orm.jpa.JpaSystemException: Cannot instantiate query result type 'com.hector.crud.events.dtos.response.FindAvailableEventResponseDto' due to: argument type mismatch\\r\\n\\tat org.springframework.orm.jpa.vendor.HibernateJpaDialect.convertHibernateAccessException(HibernateJpaDialect.java:341)\\r\\n\\tat org.springframework.orm.jpa.vendor.HibernateJpaDialect.translateExceptionIfPossible(HibernateJpaDialect.java:241)\\r\\n\\tat org.springframework.orm.jpa.AbstractEntityManagerFactoryBean.translateExceptionIfPossible(AbstractEntityManagerFactoryBean.java:560)\\r\\n\\tat org.springframework.dao.support.ChainedPersistenceExceptionTranslator.translateExceptionIfPossible(ChainedPersistenceExceptionTranslator.java:61)\\r\\n\\tat org.springframework.dao.support.DataAccessUtils.translateIfNecessary(DataAccessUtils.java:343)\\r\\n\\tat org.springframework.dao.support.PersistenceExceptionTranslationInterceptor.invoke(PersistenceExceptionTranslationInterceptor.java:160)\\r\\n\\tat org.springframework.aop.framework.ReflectiveMethodInvocation.proceed(ReflectiveMethodInvocation.java:184)\\r\\n\\tat org.springframework.data.jpa.repository.support...\n</code></pre>\n<p>What is the cleanest way to achieve this while keeping the mapping logic inside the repository?</p>\n<p>I read about using JPL, but I prefer to use SQL in case I have to change DB engines.</p>\n<p>In case you need search queries with similar complexity as above, what is more advisable? I have MapStruct configured in my project, but Java is not my main stack language.</p>\n",
+    "tags" : [ "java", "spring", "spring-boot", "hibernate", "jpa" ],
+    "owner" : {
+      "account_id" : 41179844,
+      "reputation" : 33,
+      "user_id" : 30161771,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/44d6df46931e88f2000677e3f4a155bc?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "H&#233;ctor Romero",
+      "link" : "https://stackoverflow.com/users/30161771/h%c3%a9ctor-romero"
+    },
+    "is_answered" : true,
+    "view_count" : 230,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1744004394,
+    "creation_date" : 1743738512,
+    "link" : "https://stackoverflow.com/questions/79554425/map-object-using-query-and-nativequery-true-in-spring-boot-3-4-3",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79554591,
+    "question_id" : 79554425,
+    "body" : "<p>Please try any of the below solution works:</p>\n<p>Option 1: You can modify your query to return an object array or a Tuple, which Spring Data JPA can then map manually.</p>\n<pre class=\"lang-java prettyprint-override\"><code>public interface EventRepository extends JpaRepository&lt;Event, UUID&gt; {\n    @Query(value = &quot;&quot;&quot;\n            SELECT e.id, e.name, e.description, e.date, e.capacity,\n                   COUNT(s.id) AS occupiedSeats, u.name as organizedBy\n            FROM events e\n            LEFT JOIN seats s ON s.eventId = e.id AND s.state = 'OCCUPIED'\n            LEFT JOIN users u on e.organizedBy = u.id\n            WHERE e.date &gt; :currentDate\n            GROUP BY e.id, e.name, e.description, e.date, e.capacity, u.name\n            ORDER BY e.date ASC\n            &quot;&quot;&quot;, nativeQuery = true)\n    List&lt;Object[]&gt; findUpcomingEventsWithAvailableSeats(@Param(&quot;currentDate&quot;) ZonedDateTime currentDate);\n}\n</code></pre>\n<p>And wherever you are using it, you can map it to <code>FindAvailableEventResponseDto</code> something like below:</p>\n<pre class=\"lang-java prettyprint-override\"><code>List&lt;Object[]&gt; results = eventRepository.findUpcomingEventsWithAvailableSeats(currentDate);\n\nList&lt;FindAvailableEventResponseDto&gt; eventResponseDtoList = \n    results.stream()\n           .map(result -&gt; {\n                UUID id = (UUID) result[0];\n                String name = (String) result[1]; \n                String description = (String) result[2];\n                ZonedDateTime date = (ZonedDateTime) result[3];\n                short capacity = ((Number) result[4]).shortValue();\n                short occupiedSeats = ((Number) result[5]).shortValue();\n                String organizedBy = (String) result[6];\n\n                return new FindAvailableEventResponseDto(id, name, description, date, capacity, occupiedSeats, organizedBy);\n        }).collect(Collectors.toList());\n</code></pre>\n<p>Option 2: You can even make use of Mapper.</p>\n<p>Create a Mapper:</p>\n<pre class=\"lang-java prettyprint-override\"><code> \n@Mapper(componentModel = &quot;spring&quot;)  \npublic interface EventMapper {\n\n    @Mapping(source = &quot;result[0]&quot;, target = &quot;id&quot;)\n    @Mapping(source = &quot;result[1]&quot;, target = &quot;name&quot;)\n    @Mapping(source = &quot;result[2]&quot;, target = &quot;description&quot;)\n    @Mapping(source = &quot;result[3]&quot;, target = &quot;date&quot;)\n    @Mapping(source = &quot;result[4]&quot;, target = &quot;capacity&quot;)\n    @Mapping(source = &quot;result[5]&quot;, target = &quot;occupiedSeats&quot;)\n    @Mapping(source = &quot;result[6]&quot;, target = &quot;organizedBy&quot;)\n    FindAvailableEventResponseDto toDto(Object[] result);\n}\n</code></pre>\n<p>To use it:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Autowired  \nprivate EventMapper eventMapper;  \n    \nList&lt;Object[]&gt; results = eventRepository.findUpcomingEventsWithAvailableSeats(currentDate);\n\nList&lt;FindAvailableEventResponseDto&gt; eventResponseDtoList = results.stream()\n                      .map(eventMapper::toDto)\n                      .collect(Collectors.toList());\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 24948833,
+      "reputation" : 38,
+      "user_id" : 18813886,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a-/AOh14GjxwjRYh-IwnRo5O2_ORyqIoeV8x7joTw0qo0XW=k-s256",
+      "display_name" : "Amit J.",
+      "link" : "https://stackoverflow.com/users/18813886/amit-j"
+    },
+    "creation_date" : 1743747658,
+    "last_activity_date" : 1744004394,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140306609,
+    "post_id" : 79554425,
+    "body" : "use JPA projections",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3719338,
+      "reputation" : 12720,
+      "user_id" : 3094731,
+      "user_type" : "registered",
+      "accept_rate" : 56,
+      "profile_image" : "https://i.sstatic.net/yHWeg.jpg?s=256",
+      "display_name" : "Abdullah Mohammad Motiullah",
+      "link" : "https://stackoverflow.com/users/3094731/abdullah-mohammad-motiullah"
+    },
+    "creation_date" : 1744009191,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140299112,
+    "post_id" : 79554425,
+    "body" : "<a href=\"https://thorben-janssen.com/spring-data-jpa-dto-native-queries\" rel=\"nofollow noreferrer\">@NamedNativeQuery with an @SqlResultSetMapping</a> is what you are looking for",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 8026267,
+      "reputation" : 5044,
+      "user_id" : 6053084,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/616306286f1da49445d0f5f944440c2d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Turo",
+      "link" : "https://stackoverflow.com/users/6053084/turo"
+    },
+    "creation_date" : 1743767688,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79554591" : [ {
+      "comment_id" : 140306661,
+      "post_id" : 79554591,
+      "body" : "@Evgeniy If the option 2 with MapStruct doesn&#39;t seem to be working. Please move forward with the 1st option",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 24948833,
+        "reputation" : 38,
+        "user_id" : 18813886,
+        "user_type" : "registered",
+        "profile_image" : "https://lh3.googleusercontent.com/a-/AOh14GjxwjRYh-IwnRo5O2_ORyqIoeV8x7joTw0qo0XW=k-s256",
+        "display_name" : "Amit J.",
+        "link" : "https://stackoverflow.com/users/18813886/amit-j"
+      },
+      "creation_date" : 1744010451,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140300246,
+      "post_id" : 79554591,
+      "body" : "The first option works. Thanks you. However, MapStruct don&#39;t support declare <code>FindAvailableEventResponseDto toDto(Object[] result)</code>. Its show the next error message:  ` Can&#39;t map collection element &quot;Object&quot; to &quot;FindAvailableEventResponseDto &quot;. Consider to declare/implement a mapping method: &quot;FindAvailableEventResponseDto map(Object value)&quot;. `",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 41179844,
+        "reputation" : 33,
+        "user_id" : 30161771,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/44d6df46931e88f2000677e3f4a155bc?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "H&#233;ctor Romero",
+        "link" : "https://stackoverflow.com/users/30161771/h%c3%a9ctor-romero"
+      },
+      "creation_date" : 1743783886,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

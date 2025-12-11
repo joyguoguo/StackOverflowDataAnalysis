@@ -1,0 +1,94 @@
+{
+  "question" : {
+    "question_id" : 79640348,
+    "title" : "Read/write on device file with timeout",
+    "body" : "<p>I'm currently writing a printer driver in Java 1.6. I need to be able to read/write to the device file (/dev/usb/lp0) <strong>with a timeout</strong>. I'm using a wrapper around a RandomAccessFile, then use a channel over the RAF when I want to read/write. The channel allows me to define a timeout when I write. But the current issue that I have is that in case of a timeout, the channel becomes corrupted and I get a ClosedChannelException the next time I'm trying to read or write. I tried different things including not using a channel (which doesn't allow for a timeout), and recreating aRandomAccessFile each time I read and write, but so far I couldn't make it work.</p>\n<pre><code>public class ThreadSafeRafChannel extends ThreadSafeRaf {\n    final ExecutorService executor = Executors.newSingleThreadExecutor();\n    private Exception currentException = null;\n\n    public ThreadSafeRafChannel(final String port) throws FileNotFoundException {\n        super(port);\n    }\n\n    /**\n     * Écrit un tableau de bytes sur le fichier associé au RandomAccessFile.\n     * @param  b  le tableau de bytes à écrire\n     * @throws InterruptedException, ExecutionException, TimeoutException \n     * @throws IOException\n     */\n    public synchronized void write(final byte[] b, final long timeout) throws InterruptedException, ExecutionException, TimeoutException {\n\n        final Future&lt;Void&gt; future = executor.submit(new Callable&lt;Void&gt;() {\n            public Void call() throws Exception {\n                final ByteBuffer buf = ByteBuffer.wrap(b);\n                while (buf.hasRemaining()) {\n                    raf.getChannel().write(buf);\n                }\n                addToBuffer(Direction.WRITE, b);\n                return null;\n            }\n        });\n\n        try {\n            if (future != null) {\n                logWrite(b);\n                future.get(timeout, TimeUnit.MILLISECONDS);\n                currentException = null;\n            }\n            else {\n                logger.warn(&quot;write(): impossible de créer un future pour écriture.&quot;);\n            }\n        }\n        catch (final InterruptedException e) {\n            cancel(future);\n            throw e;\n        }\n        catch (final ExecutionException e) {\n            cancel(future);\n            throw e;\n        }\n        catch (final TimeoutException e) {\n            cancel(future);\n            throw e;\n        }\n    }\n\n    /**\n     * Effectue une lecture sur le fichier associé au RandomAccessFile.\n     * S'arrête dès une fin de fichier.\n     * @return le tableau de bytes lu\n     * @throws IOException\n     */\n    public synchronized byte[] read() throws InterruptedException, ExecutionException, TimeoutException {\n        final Future&lt;byte[]&gt; future = executor.submit(new Callable&lt;byte[]&gt;() {\n            public byte[] call() throws Exception {\n                final List&lt;Byte&gt; byteList = new ArrayList&lt;Byte&gt;();\n                final ByteBuffer buffer = ByteBuffer.allocate(1);\n\n                while (true) {\n                    buffer.clear();\n                    int bytesRead = raf.getChannel().read(buffer);\n                    if (bytesRead == -1) {\n                        break;\n                    }\n\n                    buffer.flip();\n                    while (buffer.hasRemaining()) {\n                        byteList.add(buffer.get());\n                    }\n                }\n\n                final byte[] result = UTIL_ESCPOS.toByteArray(byteList);\n                if (result.length &gt; 0) {\n                    addToBuffer(Direction.READ, result);\n                }\n                currentException = null;\n                return result;\n            }\n        });\n\n        try {\n            if (future != null) {\n                final byte[] result = future.get(PrinterConfig.TO_READ, TimeUnit.MILLISECONDS);\n                if (result != null &amp;&amp; result.length &gt; 0) {\n                    logRead(result);\n                }\n                return result;\n            }\n            else {\n                logger.warn(&quot;read(): impossible de créer un future pour écriture.&quot;);\n            }\n            return null;\n        }\n        catch (InterruptedException e) {\n            handleReadException(e, future);\n            throw e;\n        }\n        catch (ExecutionException e) {\n            handleReadException(e, future);\n            throw e;\n        }\n        catch (TimeoutException e) {\n            handleReadException(e, future);\n            throw e;\n        }\n    }\n\n    private void cancel(final Future&lt;?&gt; future) {\n        if (future != null) {\n            future.cancel(true);\n        }\n    }\n\n    private void handleReadException(final Exception e, final Future&lt;byte[]&gt; future) {\n        cancel(future);\n        if (currentException == null) {\n            UTIL_LOG_PRINTER.logException(this, &quot;read&quot;, e);\n            logger.debug(formatDeviceFileInfos());\n            logger.debug(formatPrinterIoSnapshot());\n            currentException = e;\n        }\n    }\n\n    public synchronized void shutdown() {\n        executor.shutdownNow();\n    }\n}\n\npublic abstract class ThreadSafeRaf implements DeviceFileAccessor {\n    /** Nombre d'opération à garder en mémoire. */\n    protected final static int  BUFFER_LIST_SIZE  = 20;\n\n    /**\n     * Mode d'écriture sur le RandomAccessFile.\n     * &lt;ul&gt;\n     * &lt;li&gt;rws = sync data + metadata (plus lent)&lt;/li&gt;\n     * &lt;li&gt;rwd = sync data only (plus rapide et toujours safe)&lt;/li&gt;\n     * &lt;/ul&gt;\n     */\n    protected final static String FILE_MODE = &quot;rwd&quot;;\n\n    protected final Log logger = Log.getInstance();\n    protected final String port;\n    protected RandomAccessFile raf;\n    protected final LinkedBlockingDeque&lt;PrinterInputOutput&gt; buffer = new LinkedBlockingDeque&lt;PrinterInputOutput&gt;(BUFFER_LIST_SIZE);\n\n    public ThreadSafeRaf(final String port) throws FileNotFoundException {\n        this.port = port;\n        this.raf = new RandomAccessFile(port, FILE_MODE);\n        logger.info(&quot;ThreadSafeRaf::construct(): RAF #&quot; + System.identityHashCode(this) + &quot; created for &quot; + port + &quot; inode=&quot; + iNode());\n    }\n\n    /**\n     * Logue une lecture.\n     * @param  b  les bytes à loguer\n     */\n    protected void logRead(final byte[] b) {\n        logIo(&quot;READ &quot;, b);\n    }\n\n    /**\n     * Logue une écriture.\n     * @param  b  les bytes à loguer\n     */\n    protected void logWrite(final byte[] b) {\n        logIo(&quot;WRITE&quot;, b);\n    }\n\n    /**\n     * Logue une lecture ou une écriture.\n     * @param  rw  la direction\n     * @param  b   les bytes\n     */\n    protected void logIo(final String rw, final byte[] b) {\n        int loggedLength;\n        try {\n            loggedLength = PrinterConfig.LOGGED_BYTES_MAX_LENGTH;\n        }\n        catch (final Exception e) {\n            loggedLength = 16;\n        }\n        logger.debug(rw + &quot; : &quot; + UtilEscPos.UTIL_ESCPOS.getReadable(b, loggedLength, false) + &quot; (&quot; + b.length + &quot;bytes)&quot;);\n        logger.debug(&quot;        &quot; + UtilEscPos.UTIL_ESCPOS.getReadable(b, loggedLength, true ) + &quot; (&quot; + b.length + &quot;bytes)&quot;);\n    }\n\n    /**\n     * Ajoute une entrée au buffer, retire la plus ancienne si nécessaire.\n     * @param  direction  direction de l'opération\n     * @param  bytes      contenu de l'opération\n     */\n    protected void addToBuffer(final Direction direction, final byte[] bytes) {\n        if (buffer.remainingCapacity() == 0) {\n            buffer.removeFirst();\n        }\n        buffer.addLast(new PrinterInputOutput(direction, bytes));\n    }\n\n    /**\n     * Ferme le RandomAccessFile.\n     * @throws IOException\n     */\n    public synchronized void close() throws IOException {\n        if (raf != null) {\n            raf.close();\n        } else {\n            logger.warn(&quot;close(): skipping raf.close() because raf is already null.&quot;);\n        }\n    }\n\n    /**\n     * Retourne l'existence du fichier associé au RandomAccessFile.\n     * @return true si le fichier existe\n     */\n    public boolean exists() {\n        return new File(this.port).exists();\n    }\n\n    /**\n     * Retourne l'iNode fichier associé au RandomAccessFile.\n     * @return l'iNode ou &quot;ERROR&quot;\n     */\n    protected String iNode() {\n        String iNode = &quot;&quot;;\n        try {\n            iNode = UTIL_FILE.getFileInode(port);\n        }\n        catch (final Exception e) {\n            UTIL_LOG_PRINTER.logException(this, &quot;iNode&quot;, e);\n            iNode = &quot;ERROR&quot;;\n        }\n\n        return iNode;\n    }\n\n    /**\n     * Affiche les informations sur le fichier associé au RandomAccessFile.\n     * @return l'existence et l'iNode du fichier\n     */\n    public String formatDeviceFileInfos() {\n        return UTIL_OBJECT.new DisplayedObject(this)\n                .withMember(&quot;port&quot;, port)\n                .withMember(&quot;exists()&quot;, exists())\n                .withMember(&quot;iNode()&quot;, iNode())\n                .toString();\n    }\n\n    /**\n     * Affiche les dernières opérations de lcture et d'écriture.\n     * @return les opérations contenues dans le buffer\n     */\n    protected String formatPrinterIoSnapshot() {\n        final StringBuffer sb = new StringBuffer(&quot;Snapshot I/O printer:\\n&quot;);\n        for (final PrinterInputOutput io: buffer) {\n            sb.append(&quot;    &quot; + io.toString() + &quot;\\n&quot;);\n        }\n        return sb.toString();\n    }\n\n    @Override\n    public String toString() {\n        return this.getClass().getSimpleName() + &quot;@&quot; + System.identityHashCode(this) + &quot;(port: &quot; + this.port + &quot;, exists: &quot; + exists() + &quot;, iNode: &quot; + iNode() + &quot;)&quot;;\n    }\n}\n</code></pre>\n<p>Stacktrace excrept:</p>\n<pre><code>java.util.concurrent.ExecutionException, message : java.nio.channels.ClosedChannelException\njava.util.concurrent.FutureTask$Sync.innerGet(Unknown Source)\njava.util.concurrent.FutureTask.get(Unknown Source)\nxxx.caisseimpression.imprimante.io.ThreadSafeRafChannel.write(ThreadSafeRafChannel.java:81)\nxxx.caisseimpression.imprimante.io.UsbWriterService.write(UsbWriterService.java:99)\n...\n(business classes)\n...\njava.lang.Thread.run(Unknown Source)\n\nCaused by:\njava.nio.channels.ClosedChannelException, message : null\nsun.nio.ch.FileChannelImpl.ensureOpen(Unknown Source)\nsun.nio.ch.FileChannelImpl.write(Unknown Source)\nxxx.caisseimpression.imprimante.io.ThreadSafeRafChannel$1.call(ThreadSafeRafChannel.java:73)\nxxx.caisseimpression.imprimante.io.ThreadSafeRafChannel$1.call(ThreadSafeRafChannel.java:1)\njava.util.concurrent.FutureTask$Sync.innerRun(Unknown Source)\njava.util.concurrent.FutureTask.run(Unknown Source)\njava.util.concurrent.ThreadPoolExecutor$Worker.runTask(Unknown Source)\njava.util.concurrent.ThreadPoolExecutor$Worker.run(Unknown Source)\njava.lang.Thread.run(Unknown Source)\n</code></pre>\n",
+    "tags" : [ "java", "io" ],
+    "owner" : {
+      "account_id" : 8565752,
+      "reputation" : 685,
+      "user_id" : 6418277,
+      "user_type" : "registered",
+      "accept_rate" : 81,
+      "profile_image" : "https://www.gravatar.com/avatar/00ffc3a2339e61d1403a89097591921a?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Gaetan L.",
+      "link" : "https://stackoverflow.com/users/6418277/gaetan-l"
+    },
+    "is_answered" : false,
+    "view_count" : 77,
+    "answer_count" : 0,
+    "score" : 0,
+    "last_activity_date" : 1748415191,
+    "creation_date" : 1748344159,
+    "link" : "https://stackoverflow.com/questions/79640348/read-write-on-device-file-with-timeout",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140467050,
+    "post_id" : 79640348,
+    "body" : "From the <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/nio/channels/InterruptibleChannel.html\" rel=\"nofollow noreferrer\">documentation of InterruptibleChannel</a>:  “If a thread is blocked in an I/O operation on an interruptible channel then another thread may invoke the blocked thread&#39;s interrupt method. This will cause the channel to be closed, the blocked thread to receive a ClosedByInterruptException, and the blocked thread&#39;s interrupt status to be set.”",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 2053598,
+      "reputation" : 44936,
+      "user_id" : 1831987,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/38b1c37530189ec4471a43a618e33f67?s=256&d=identicon&r=PG",
+      "display_name" : "VGR",
+      "link" : "https://stackoverflow.com/users/1831987/vgr"
+    },
+    "creation_date" : 1748454558,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140465818,
+    "post_id" : 79640348,
+    "body" : "I guessed that you can not change the JDK version. My suggestion was to isolate if the problem is related to the JDK version.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 372682,
+      "reputation" : 26512,
+      "user_id" : 721855,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/vZiox.png?s=256",
+      "display_name" : "aled",
+      "link" : "https://stackoverflow.com/users/721855/aled"
+    },
+    "creation_date" : 1748432912,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140464849,
+    "post_id" : 79640348,
+    "body" : "@aled I know. I&#39;m not at liberty of chosing the JDK I&#39;m using unfortunately. That&#39;s why I have to redevelop a driver from scratch in the first place.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 8565752,
+      "reputation" : 685,
+      "user_id" : 6418277,
+      "user_type" : "registered",
+      "accept_rate" : 81,
+      "profile_image" : "https://www.gravatar.com/avatar/00ffc3a2339e61d1403a89097591921a?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Gaetan L.",
+      "link" : "https://stackoverflow.com/users/6418277/gaetan-l"
+    },
+    "creation_date" : 1748414727,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140462346,
+    "post_id" : 79640348,
+    "body" : "Java 1.6 is ancient. Does it reproduce with a recent JDK? It could be useful to compare to understand if it is an unfixed bug of the old version.",
+    "score" : 4,
+    "owner" : {
+      "account_id" : 372682,
+      "reputation" : 26512,
+      "user_id" : 721855,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/vZiox.png?s=256",
+      "display_name" : "aled",
+      "link" : "https://stackoverflow.com/users/721855/aled"
+    },
+    "creation_date" : 1748346706,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

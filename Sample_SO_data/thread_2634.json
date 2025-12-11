@@ -1,0 +1,284 @@
+{
+  "question" : {
+    "question_id" : 79607483,
+    "title" : "Extending a Java Map, and dealing with return type of entrySet",
+    "body" : "<p>I am trying to create a class that extends a java.util.TreeMap with some specific parameter type values.  So I have this class definition:</p>\n<pre><code>public class Table extends TreeMap&lt;String,Integer&gt; {\n    /* there are other methods in here unrelated to this issue */\n}\n</code></pre>\n<p>Because of inheritance, you can use Table just as though it were a TreeMap&lt;String,Integer&gt;.  And it works fine, with the one exception of the TreeMap.entrySet() method.  The problem is that entrySet() returns a Set&lt;Map.Entry&lt;String,Integer&gt;&gt;.  But I want the return type of the Table.entrySet() method to be named Set&lt;Table.Entry&gt; so the caller doesn't have to deal with knowing that Table is a subclass of TreeMap&lt;String,Integer&gt;.</p>\n<p>A naive approach is to try the following code:</p>\n<pre><code>public class Table extends TreeMap&lt;String,Integer&gt; {\n    static interface Entry extends Map.Entry&lt;String,Integer&gt; {}\n    /* there are other methods in here unrelated to this issue */\n}\n</code></pre>\n<p>Although the above code does declare an interface named Table.Entry that looks like it should work, a Set&lt;Table.Entry&gt; class cannot actually be used as the return type for the Table.entrySet() method.  When you write the following calling code, you get a syntax error:</p>\n<pre><code>{\n    Table table = new Table();\n    table.put(&quot;a&quot;,1);\n    table.put(&quot;b&quot;,2);\n    Set&lt;Map.Entry&lt;String,Integer&gt;&gt; e1 = table.entrySet();       /* works */\n    Set&lt;Table.Entry&gt; e2 = table.entrySet();                     /* syntax error */\n}\n</code></pre>\n<p>Because of the way generics work in java, a Set of a subclass cannot be used as a Set of the superclass.  The compile-time error on the above code is:</p>\n<pre><code>Error: incompatible types: Set&lt;java.util.Map.Entry&lt;String,Integer&gt;&gt; cannot be converted to Set&lt;Table.Entry&gt;\n</code></pre>\n<p>For performance reasons, I was hoping to avoid rewriting my own Table.entrySet method that first calls the superclass' TreeMap.entrySet, and then copies the elements one-at-a-time to a Set&lt;Table.Entry&gt;.  This would of course work, but seems inefficient.</p>\n<p>My question is, how can I define the interface Table.Entry inside of the Table class, so that the type &quot;Set&lt;Table.Entry&gt;&quot; is the return type of the Table.entrySet() method?</p>\n",
+    "tags" : [ "java", "generics" ],
+    "owner" : {
+      "account_id" : 2650729,
+      "reputation" : 809,
+      "user_id" : 2292492,
+      "user_type" : "registered",
+      "accept_rate" : 50,
+      "profile_image" : "https://i.sstatic.net/CD9c7.jpg?s=256",
+      "display_name" : "deltamind106",
+      "link" : "https://stackoverflow.com/users/2292492/deltamind106"
+    },
+    "is_answered" : true,
+    "view_count" : 121,
+    "answer_count" : 2,
+    "score" : 3,
+    "last_activity_date" : 1746630613,
+    "creation_date" : 1746471165,
+    "link" : "https://stackoverflow.com/questions/79607483/extending-a-java-map-and-dealing-with-return-type-of-entryset",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79607529,
+    "question_id" : 79607483,
+    "body" : "<p>In Java, overriding a method requires that the return type be exactly the same, or a <a href=\"https://en.m.wikipedia.org/wiki/Covariance_and_contravariance_(computer_science)\" rel=\"nofollow noreferrer\">covariant</a> subtype, which only works for concrete types, not for <a href=\"https://en.m.wikipedia.org/wiki/Generics_in_Java\" rel=\"nofollow noreferrer\">generics</a> with different type parameters. So this is valid:</p>\n<pre class=\"lang-java prettyprint-override\"><code>class A {\n    public Number getNumber() { return 1; }\n}\n\nclass B extends A {\n    @Override\n    public Integer getNumber() { return 1; } // OK: Integer is a subtype of Number\n}\n</code></pre>\n<p>But this is Not:</p>\n<pre class=\"lang-java prettyprint-override\"><code>class A {\n    public List&lt;Number&gt; getList() { return List.of(1); }\n}\n\nclass B extends A {\n    @Override\n    public List&lt;Integer&gt; getList() { return List.of(1); } //Not allowed: generics are invariant\n}\n</code></pre>\n<p>You can not override <code>entrySet()</code> with a different generic return type. You can add a new method like below and return <code>Set&lt;Entry&gt;</code></p>\n<pre class=\"lang-java prettyprint-override\"><code>public Set&lt;Entry&gt; tableEntrySet() {\n        Set&lt;Map.Entry&lt;String, Integer&gt;&gt; original = super.entrySet();\n\n        return new AbstractSet&lt;&gt;() {\n            @Override\n            public Iterator&lt;Entry&gt; iterator() {\n                Iterator&lt;Map.Entry&lt;String, Integer&gt;&gt; it = original.iterator();\n                return new Iterator&lt;&gt;() {\n                    @Override public boolean hasNext() { return it.hasNext(); }\n\n                    @Override public Entry next() {\n                        Map.Entry&lt;String, Integer&gt; e = it.next();\n                        return new Entry() {\n                            @Override public String getKey() { return e.getKey(); }\n                            @Override public Integer getValue() { return e.getValue(); }\n                            @Override public Integer setValue(Integer value) { return e.setValue(value); }\n\n                            @Override public boolean equals(Object o) { return e.equals(o); }\n                            @Override public int hashCode() { return e.hashCode(); }\n                        };\n                    }\n                };\n            }\n\n            @Override\n            public int size() {\n                return original.size();\n            }\n\n            @Override\n            public boolean contains(Object o) {\n                return original.contains(o);\n            }\n        };\n    }\n</code></pre>\n",
+    "score" : 2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 10315060,
+      "reputation" : 106,
+      "user_id" : 7609613,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/F9zFA.jpg?s=256",
+      "display_name" : "Mojtaba",
+      "link" : "https://stackoverflow.com/users/7609613/mojtaba"
+    },
+    "creation_date" : 1746473604,
+    "last_activity_date" : 1746630613,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79607629,
+    "question_id" : 79607483,
+    "body" : "<p>What you want doesn't even make sense. I guess you are already ready to hear: &quot;What you want is not possible&quot;, but I'll try to extinguish all hope so you can move on from this silly endeavour.</p>\n<p>What you're asking for is to blow your friends face off. Hence, java <em>emphatically</em> does not allow this, <strong>at all</strong>, and never will <sup>1</sup>.</p>\n<p>Hold on, I better explain after dropping that one on you.</p>\n<p>Imagine the following type:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public interface Gun {\n  void shoot(Person p);\n}\n</code></pre>\n<p>Seems reasonable.</p>\n<p>Now, what you want is the ability to declare a completely new type, and have any instance created in the system for any reason <em>that so happens to match the same structural elements of the type you declared</em> to just <em>be</em> that, automatically, no effort needed.</p>\n<p>In other words, what you want is to be able to declare:</p>\n<pre><code>package completely.different.and.totally.unrelated.to.Gun.above;\n\npublic interface Camera {\n  void shoot(Person p);\n}\n</code></pre>\n<p>Which also seems an entirely reasonable type to declare, and then by the mere act of declaring this type, for all guns to silently and automatically be addressable as cameras and... there goes your friend's face.</p>\n<h2>The clue is in the package names: Namespaces</h2>\n<p>In java, <em>everything</em> <strong>has</strong> to be in a type, or has to be a type. That's because types have a <em>namespace</em> (the package you find them in), and most other things (such as methods, fields, constructors) do not. Having no namespace is how we got into this cameragun mess; nobody should &quot;claim&quot; the word 'shoot' because it is ambiguous. With namespaces, we can resolve this ambiguity: One certainly <em>can</em> claim the type <code>com.domainyouown.yourproject.Camera</code> and there's no way from that to end up in confusing situations from there. As an example, 3 completely unrelated projects in java are all called 'spark' and yet you can use them interchangibly because they are in different namespaces.</p>\n<p>This is <em>why</em> the concept of &quot;Cameras have a <code>shoot(Person p)</code> method; this object happens to be of a type that happens to have a method with signature <code>shoot(Person p)</code>, let me treat it as a camera already!&quot; is <strong>not in any way supported</strong>. Because it's dangerous and lacks the protections of the namespace scheme.</p>\n<h2>But my situation is not like that...</h2>\n<p>But it is. You want the authors of <code>TreeMap</code>'s <code>Set&lt;Map.Entry&lt;K, V&gt;&gt; entrySet()</code> method to just silently have to accept that the mere act of you defining a completely unrelated type means <em>their</em> set can now be treated as <em>your type</em> (in that the authors of TreeMap are not aware of its existence and it's not in the same build, project, jar, or for that matter, decade when it was written).</p>\n<p>This is why the semantic concept cannot possibly work.</p>\n<p>Forget generics which are wobbly and mostly erased. The set returned by <code>entrySet()</code> contains instances of some object whose supertypes include <code>Map.Entry</code>. It definitely does not contain any instances whose supertypes includes <code>com.foo.yourpackage.Table.Entry</code>. And the Camera Gun situation explains why the logic of 'but.. their signatures line up, shut up and just make it work!' isn't something java supports, and that is intentional.</p>\n<p>What's left is different semantics. Instead of attempting to slap a new type into the type hierarchy of the objects in that set that <code>TreeMap.entrySet()</code> produces, you could instead say: &quot;Lets you and I agree that the identifier sequence &quot;com.foo.mypkg.Table.Entry&quot; is shorthand for <code>j.u.Map.Entry&lt;String, Integer&gt;</code>. That would be <em>semantically</em> fine for java and does not run into cameragun shenanigans (in the sense that confusion isn't possible; if you intentionally define your camera as being an alias for a gun, well, $DEITY help you then if you're that daft - a language should not be designed to stop intentional, malicious moronics, because the universe is really really good at coming up with inventive morons, you can never outsmart them!)</p>\n<p>However, java does not support type aliases. It might one day; unlike CameraGuns there is no fundamental semantic &quot;oh deary me do NOT go there, there be dragons!&quot; issue in the way of them. But, there's nothing on the mailing lists at the time I wrote this answer that indicates it's even a sparkle in someone's eye (someone who has any chance of piloting a JEP through the process or incepting the idea into someone who can). So don't keep your hopes up.</p>\n<h2>Alternatives - the ones you already knew</h2>\n<ol>\n<li><p>Suck it up and tell your users to write that type. Java programmers are presumably used to it.</p>\n</li>\n<li><p>Override EntrySet and wrap every object; you can't just 'treat' every entry produced by <code>super.entrySet()</code> because CameraGuns. There is no way to dig into the underlying storage mechanism of TreeSet and make them yourself. Not without hackery.</p>\n</li>\n</ol>\n<h2>Crazy alternative you might not know</h2>\n<p>This has caused loads of trouble in the past so you probably don't want to do this, but the <code>Map.Entry</code> interface is an interface for a reason - it explicitly says these things <strong>are not</strong> an identity and <strong>are not longlived</strong>, or at least, not guaranteed to be. This is a completely legitimate but bizarre implementation of <code>entrySet().iterator()</code> - because that's what 99% of all uses of entrySet end up calling (because it's used as <code>for (var entry : table.entrySet())</code>:</p>\n<pre class=\"lang-java prettyprint-override\"><code>  ...\n\n  @Override public Iterator&lt;Map.Entry&lt;String, Integer&gt;&gt; iterator() {\n    var m = new Table.Entry();\n    var wrapped = super.entrySet().iterator();\n    return new Iterator() {\n      boolean next = false;\n      @Override public boolean hasNext() {\n        if (next) return true;\n        return adv();\n      }\n      @Override public Map.Entry&lt;String, Integer&gt; next() {\n        if (!hasNext()) throw new NoSuchElementException();\n        return m;\n      }\n      private boolean adv() {\n        if (!wrapped.hasNext()) return false;\n        var e = wrapped.next();\n        m.k = e.getKey();\n        m.v = e.getValue();\n        return true;\n      }\n    };\n  }\n</code></pre>\n<p>What's happening here is that you only ever made the one table entry. You reuse it. Every iteration gets the exact same table entry object, just, with its k/v fields updated. This means if the caller allows the entry object to 'escape' its lexical confinement (it assigns it to a field, stores them in a set or list, or boots up a thread or otherwise allows them to be captured), bad things happen (there's just the one entry object so if e.g. someone iterates and adds all entries to an arraylist, it's just 10x the same reference, so all entries' k/v values are the last key and the last value repeated 10 times).</p>\n<p>Any code that would do that is techically making assumptions that the spec of Map.Entry indicates you should not be making. Whether that's okay to you depends on how soundly you can sleep when a plausible cover-your-butt explanation is available to lay all blame on the users of your library.</p>\n<p>Because there will be plenty of blame to go around.</p>\n<p>I don't suggest you do this. But if you just <em>have to have</em> both this <code>Table.Entry</code> business <em>and</em> you just don't want to make the objects, go nuts. For what its worth, java's garbage collection has been focusing for <em>over a decade now</em> on efficiently dealing with so-called fast garbage: Newly created objects that are only ever accessible to a single thread and don't live for very long. And hence, java is <em>very very fast</em> at it. A newly minted Map.Entry object, even a cloned Table.Entry object if you really want to do that, is minimal, because its fast garbage. You really, really shouldn't add &quot;performance improvements&quot; unless you have a profiler and JMH study ready and checked into source control to <em>actually prove the evil you did to that code base at least paid out in performance gains</em>, because they rarely do, and you're just making your library weird and the code harder to maintain for absolutely no reason whatsoever, other than assuaging imagined performance demons.</p>\n<hr />\n<p>[1] Never say never and all that, but java's insistence on nominal over structural is pretty ingrained and there is zero traffic on the various mailing lists about ever changing this. The way e.g. <code>@FunctionalInterface</code> is set up goes out of its way to avoid structural typing. Hence I feel pretty safe making such a statement</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 401843,
+      "reputation" : 107186,
+      "user_id" : 768644,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+      "display_name" : "rzwitserloot",
+      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+    },
+    "creation_date" : 1746478860,
+    "last_activity_date" : 1746478860,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140405630,
+    "post_id" : 79607483,
+    "body" : "Unless you can meaningfully say &quot;a table is a tree map&quot;, extending TreeMap is not the right thing to do.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 162699,
+      "reputation" : 141035,
+      "user_id" : 3788176,
+      "user_type" : "registered",
+      "accept_rate" : 54,
+      "profile_image" : "https://www.gravatar.com/avatar/44c841338e1646af9a977f1fa0e23948?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Andy Turner",
+      "link" : "https://stackoverflow.com/users/3788176/andy-turner"
+    },
+    "creation_date" : 1746649875,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140398685,
+    "post_id" : 79607483,
+    "body" : "That&#39;s not a syntax error.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 71739,
+      "reputation" : 311869,
+      "user_id" : 207421,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/5cfe5f7d64f44be04f147295f5c7b88e?s=256&d=identicon&r=PG",
+      "display_name" : "user207421",
+      "link" : "https://stackoverflow.com/users/207421/user207421"
+    },
+    "creation_date" : 1746498599,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140398316,
+    "post_id" : 79607483,
+    "body" : "Does <code>Table.Entry</code> have any new methods beyond what <code>Map.Entry</code> has?  The answer to your question is almost certainly &quot;you can&#39;t,&quot; but it&#39;s not clear from your question why you even need <code>Table.Entry</code>.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 465573,
+      "reputation" : 200423,
+      "user_id" : 869736,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/ae7bb06b9a23a4dd7eea69e853d47d12?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Louis Wasserman",
+      "link" : "https://stackoverflow.com/users/869736/louis-wasserman"
+    },
+    "creation_date" : 1746482228,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140398279,
+    "post_id" : 79607483,
+    "body" : "<i>...so the caller doesn&#39;t have to deal with knowing that Table is a subclass of TreeMap</i> Consider using composition instead of inheritance, and expose only the methods a caller would actually need.",
+    "score" : 4,
+    "owner" : {
+      "account_id" : 8909811,
+      "reputation" : 2861,
+      "user_id" : 6650475,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/fe85994d05ad7aaaa1c47d638b37bc45?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Andrew S",
+      "link" : "https://stackoverflow.com/users/6650475/andrew-s"
+    },
+    "creation_date" : 1746480675,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140398099,
+    "post_id" : 79607483,
+    "body" : "@Sotirios Delimanolis No I&#39;m not looking for an alias.  As I said in the question, the class &quot;Table&quot; does a lot of other things besides just being a Map with Entries.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2650729,
+      "reputation" : 809,
+      "user_id" : 2292492,
+      "user_type" : "registered",
+      "accept_rate" : 50,
+      "profile_image" : "https://i.sstatic.net/CD9c7.jpg?s=256",
+      "display_name" : "deltamind106",
+      "link" : "https://stackoverflow.com/users/2292492/deltamind106"
+    },
+    "creation_date" : 1746474962,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140398061,
+    "post_id" : 79607483,
+    "body" : "Are you looking for an alias? Java doesn&#39;t have that feature. Use <code>var</code> if writing out <code>Set&lt;Map.Entry&lt;String,Integer&gt;&gt;</code> is too long for your local variables.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 195331,
+      "reputation" : 281037,
+      "user_id" : 438154,
+      "user_type" : "registered",
+      "accept_rate" : 98,
+      "profile_image" : "https://www.gravatar.com/avatar/4ec21df1e55febf8deb2e3b24b9cb39b?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Sotirios Delimanolis",
+      "link" : "https://stackoverflow.com/users/438154/sotirios-delimanolis"
+    },
+    "creation_date" : 1746473950,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79607629" : [ {
+      "comment_id" : 140425193,
+      "post_id" : 79607629,
+      "body" : "As I said, java does not support type aliases. And java will <i>never</i> just go &#39;ah they look similar&#39; for explained CameraGun reasons. Type aliases could one day happen perhaps; but it&#39;s not on the horizon (none of the openjdk mailing lists are talking about this, there is no JEP, I am not aware of any OpenJDK contributor actively working on this or looking for support), so don&#39;t hold your breath. It&#39;s not about whether you and I agree to disagree, it&#39;s what OpenJDK thinks. And they disagree with your idea of shape-based typing.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 401843,
+        "reputation" : 107186,
+        "user_id" : 768644,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+        "display_name" : "rzwitserloot",
+        "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+      },
+      "creation_date" : 1747230118,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140425062,
+      "post_id" : 79607629,
+      "body" : "Yes I understand the Set class does not allow what I described in my previous comment, and I understand why it doesn&#39;t allow it.  Although I realized that I  overstated my case-- I didn&#39;t really need &quot;Set&lt;Number&gt;&quot; to be used to store a Set&lt;Integer&gt;, instead I needed Set&lt;MyCustomType&gt; to be used to store a Set&lt;integer&gt; AFTER DECLARING TO JAVA THAT MyCustomType is identical to an Integer (essentially an alias).  In any case, we&#39;re going to have to agree to disagree that I secretly want all Java types to automatically act like TypeScript&#39;s &quot;shape-based&quot; typing system.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2650729,
+        "reputation" : 809,
+        "user_id" : 2292492,
+        "user_type" : "registered",
+        "accept_rate" : 50,
+        "profile_image" : "https://i.sstatic.net/CD9c7.jpg?s=256",
+        "display_name" : "deltamind106",
+        "link" : "https://stackoverflow.com/users/2292492/deltamind106"
+      },
+      "creation_date" : 1747227932,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140423156,
+      "post_id" : 79607629,
+      "body" : "The Set class <b>does not</b> allow what you want! Imagine it worked like you think it should: <code>Set&lt;Integer&gt; integers = new HashSet&lt;&gt;(); Set&lt;Number&gt; numbers = integers; Double d = 5.5; numbers.add(d); for (int i : integers) { ... uh.. i is.. a double, oh dear, this is  broken .. }</code> - see?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 401843,
+        "reputation" : 107186,
+        "user_id" : 768644,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+        "display_name" : "rzwitserloot",
+        "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+      },
+      "creation_date" : 1747173990,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140423155,
+      "post_id" : 79607629,
+      "body" : "_I&#39;m not interested in having types that happen to &quot;look similar&quot; be interchangeable. _ Then you do not understand. What you want IS THAT. It just is. You don&#39;t think it is, but it is. Hence the logic here. 1. Establish that this is what you want even though you protest, it&#39;s what you&#39;re requesting, then 2. explain why that is a bad idea and OpenJDK is hostile to ever implementing it. But, you&#39;re now asking for a separate thing that is impossible, and intentionally so. generics are invariant because they just are. What you want breaks everything.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 401843,
+        "reputation" : 107186,
+        "user_id" : 768644,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+        "display_name" : "rzwitserloot",
+        "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+      },
+      "creation_date" : 1747173921,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140423032,
+      "post_id" : 79607629,
+      "body" : "I&#39;m not interested in having types that happen to &quot;look similar&quot; be interchangeable.  I just wanted a way to tell java that a variable of type &quot;Set&lt;Number&gt;&quot; can be used to store a Set&lt;Integer&gt; (of course with some loss of capability) because Integer is a subclass of Number.   I expected to need to declare that fact to the Java language, as I wouldn&#39;t expect Java to automatically know that the &quot;Set&quot; class should allow that.  But as we can see, you can&#39;t instruct Java to allow this even when it makes sense, end of story.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2650729,
+        "reputation" : 809,
+        "user_id" : 2292492,
+        "user_type" : "registered",
+        "accept_rate" : 50,
+        "profile_image" : "https://i.sstatic.net/CD9c7.jpg?s=256",
+        "display_name" : "deltamind106",
+        "link" : "https://stackoverflow.com/users/2292492/deltamind106"
+      },
+      "creation_date" : 1747171106,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79607529" : [ {
+      "comment_id" : 140399111,
+      "post_id" : 79607529,
+      "body" : "Yes, you are right. You have no choice :(",
+      "score" : 3,
+      "owner" : {
+        "account_id" : 10315060,
+        "reputation" : 106,
+        "user_id" : 7609613,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/F9zFA.jpg?s=256",
+        "display_name" : "Mojtaba",
+        "link" : "https://stackoverflow.com/users/7609613/mojtaba"
+      },
+      "creation_date" : 1746513951,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140398101,
+      "post_id" : 79607529,
+      "body" : "Yes, I mentioned this possible solution in my question.  But as I said in the question, I&#39;d prefer not re-implement the entrySet logic.  It sounds like I have no choice.  Fair enough.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2650729,
+        "reputation" : 809,
+        "user_id" : 2292492,
+        "user_type" : "registered",
+        "accept_rate" : 50,
+        "profile_image" : "https://i.sstatic.net/CD9c7.jpg?s=256",
+        "display_name" : "deltamind106",
+        "link" : "https://stackoverflow.com/users/2292492/deltamind106"
+      },
+      "creation_date" : 1746475130,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

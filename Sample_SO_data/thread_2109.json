@@ -1,0 +1,414 @@
+{
+  "question" : {
+    "question_id" : 79646000,
+    "title" : "Invalid argument in FileInputStream.seek(Long.MAX_VALUE)",
+    "body" : "<p>I'm computing the length of an <code>InputStream</code> using <code>skip(Long.MAX_VALUE)</code> method.</p>\n<pre class=\"lang-java prettyprint-override\"><code>    public int size(String teslaContentEntry) {\n        int result = 0;\n        try (InputStream stream = read(teslaContentEntry)) {\n            if (stream != null) {\n                try {\n                    result = (int) min(Integer.MAX_VALUE, stream.skip(Long.MAX_VALUE));\n                } finally {\n                    StreamUtil.closeSilently(stream);\n                }\n            }\n        } catch (IOException e) {\n            error(&quot;Can't extract &quot; + teslaContentEntry + &quot; from &quot; + element, e);\n        }\n        return result;\n    }\n\n    // The code below is provided on request from comments. It can safely be ignored\n    public synchronized InputStream read(String name) {\n        if (disposed) {\n            throw new IllegalStateException(&quot;Disposed&quot;);\n        }\n        File file = files.get(name);\n        if (file == null) {\n            return null;\n        }\n        waitUntilExtracted(name);\n        try {\n            if (!file.exists()) {\n                extractFile(name);\n                waitUntilExtracted(name);\n            }\n        } catch (IOException e) {\n            error(&quot;Can't extract &quot; + name + &quot; from &quot; + element, e);\n        }\n        if (file.exists()) {\n            try {\n                return getInput(file);\n            } catch (FileNotFoundException e) {\n                RcpttPlugin.log(e);\n            }\n        }\n\n        return null;\n    }\n\n    private void waitUntilExtracted(String name) {\n        synchronized (extractions) {\n            while (extractions.contains(name)) {\n                try {\n                    extractions.wait(100);\n                } catch (InterruptedException e) {\n                    RcpttPlugin.log(e);\n                }\n            }\n        }\n    }\n\n    protected BufferedInputStream getInput(File file)\n            throws FileNotFoundException {\n        return new BufferedInputStream(new FileInputStream(file));\n    }\n\n</code></pre>\n<p>A following error occasionally happens when <code>InputStream</code>is a <em>file</em> in Jenkins CI, on a Kubernetes hosted agent (Linux), running Java 21. The agent is not directly accessible.</p>\n<pre><code>Caused by: java.io.IOException: Invalid argument\n    at java.base/java.io.FileInputStream.skip0(Native Method)\n    at java.base/java.io.FileInputStream.skip(FileInputStream.java:444)\n    at java.base/java.io.BufferedInputStream.implSkip(BufferedInputStream.java:467)\n    at java.base/java.io.BufferedInputStream.skip(BufferedInputStream.java:446)\n    at org.eclipse.rcptt.core.persistence.BasePersistenceModel.size(BasePersistenceModel.java:390)\n    ... 127 more\n</code></pre>\n<p>The code around is quite complex, I can't eliminate a hypothesis of concurrent access to the file (for example, for deletion). But the error happens too consistently to assume concurrent deletion.</p>\n<p>I assumed, that <code>skip()</code> is filesystem-dependent, but when I created an empty file on the same filesystem <code>skip()</code> worked fine with <code>Long.MAX_VALUE</code> argument.</p>\n<p>I'm also unable to reproduce the behavior locally, to create an MVCE, I need to at least have some idea of what's going on.</p>\n<p>What could cause such exception?</p>\n<p><sub><a href=\"https://github.com/eclipse-rcptt/org.eclipse.rcptt/issues/181\" rel=\"nofollow noreferrer\">Further context</a></sub></p>\n<p>P.S.\nJava sources indicate that <a href=\"https://github.com/openjdk/jdk21u/blob/432eb57354b08e48b5649e0903e01cfbf2cc4f8d/src/java.base/share/native/libjava/FileInputStream.c#L118\" rel=\"nofollow noreferrer\">error comes from system layer</a>.</p>\n",
+    "tags" : [ "java" ],
+    "owner" : {
+      "account_id" : 43022,
+      "reputation" : 24626,
+      "user_id" : 125562,
+      "user_type" : "registered",
+      "accept_rate" : 64,
+      "profile_image" : "https://i.sstatic.net/SdIqA.png?s=256",
+      "display_name" : "Basilevs",
+      "link" : "https://stackoverflow.com/users/125562/basilevs"
+    },
+    "is_answered" : true,
+    "view_count" : 132,
+    "answer_count" : 1,
+    "score" : -3,
+    "last_activity_date" : 1748641795,
+    "creation_date" : 1748633310,
+    "link" : "https://stackoverflow.com/questions/79646000/invalid-argument-in-fileinputstream-seeklong-max-value",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79646132,
+    "question_id" : 79646000,
+    "body" : "<p>The behavior is inherited from native <code>lseek</code>.</p>\n<ul>\n<li><a href=\"https://bugs.openjdk.org/browse/JDK-6294974\" rel=\"nofollow noreferrer\">it can return a position after the end of file</a>, which makes size detected this way useless (thanks, @user85421). This quirk is described in <a href=\"https://docs.oracle.com/javase/8/docs/api/java/io/FileInputStream.html#skip-long-\" rel=\"nofollow noreferrer\">documentation</a>.</li>\n<li><code>lseek</code> <a href=\"https://www.man7.org/linux/man-pages/man2/lseek.2.html#ERRORS\" rel=\"nofollow noreferrer\">may return EINVAL code</a> when the target position is outside of the range of the seekable device\n<blockquote>\n<p>the resulting file offset would\nbe negative, or beyond the end of a seekable device.</p>\n</blockquote>\n</li>\n</ul>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 43022,
+      "reputation" : 24626,
+      "user_id" : 125562,
+      "user_type" : "registered",
+      "accept_rate" : 64,
+      "profile_image" : "https://i.sstatic.net/SdIqA.png?s=256",
+      "display_name" : "Basilevs",
+      "link" : "https://stackoverflow.com/users/125562/basilevs"
+    },
+    "creation_date" : 1748641795,
+    "last_activity_date" : 1748641795,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140481493,
+    "post_id" : 79646000,
+    "body" : "@g00se The stream was indeed requested again. See <a href=\"https://github.com/eclipse-rcptt/org.eclipse.rcptt/commit/726d6d32841da6cb14f08b0b4a037823d7410653#diff-04a74e12a23050e35096360773b40f4222603b9b8f4092ba557b48e85f926c86R404-R405\" rel=\"nofollow noreferrer\">github.com/eclipse-rcptt/org.eclipse.rcptt/commit/&hellip;</a>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 43022,
+      "reputation" : 24626,
+      "user_id" : 125562,
+      "user_type" : "registered",
+      "accept_rate" : 64,
+      "profile_image" : "https://i.sstatic.net/SdIqA.png?s=256",
+      "display_name" : "Basilevs",
+      "link" : "https://stackoverflow.com/users/125562/basilevs"
+    },
+    "creation_date" : 1748896814,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140478635,
+    "post_id" : 79646000,
+    "body" : "I thought about the exhaustion of the stream too but assumed that it would be requested again if processing were necessary. What is the situation Basilevs?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 22124137,
+      "reputation" : 4243,
+      "user_id" : 16376827,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/1ImPw.png?s=256",
+      "display_name" : "g00se",
+      "link" : "https://stackoverflow.com/users/16376827/g00se"
+    },
+    "creation_date" : 1748854722,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140478257,
+    "post_id" : 79646000,
+    "body" : "OK but that&#39;s just a problem of calling sequences. The calling site exhausts the stream with the <code>seek()</code> call, so it can&#39;t do anything else with it but close it, so having an <code>InputStream</code> <i>at all</i> is a waste of time. Just pass the <code>File</code>. You are using a hammer to crack a nut.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 71739,
+      "reputation" : 311869,
+      "user_id" : 207421,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/5cfe5f7d64f44be04f147295f5c7b88e?s=256&d=identicon&r=PG",
+      "display_name" : "user207421",
+      "link" : "https://stackoverflow.com/users/207421/user207421"
+    },
+    "creation_date" : 1748844384,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140478168,
+    "post_id" : 79646000,
+    "body" : "@user207421 the code was posted on comments request. The code is relevant, because, while File is not avalable at the call site, it is still used to contruct the InputStream in question.  The skip can be constant on onther implementations of InputStream too. In my case, some implementations could be linear but fast due to skippped encoding steps.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 43022,
+      "reputation" : 24626,
+      "user_id" : 125562,
+      "user_type" : "registered",
+      "accept_rate" : 64,
+      "profile_image" : "https://i.sstatic.net/SdIqA.png?s=256",
+      "display_name" : "Basilevs",
+      "link" : "https://stackoverflow.com/users/125562/basilevs"
+    },
+    "creation_date" : 1748839265,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140477986,
+    "post_id" : 79646000,
+    "body" : "If you don&#39;t have a <code>File</code> why did you post a lot of code that does have a <code>File</code>? And file skip is only <i>O(1)</i> <b><i>on a file</i></b>. This isn&#39;t making any sense.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 71739,
+      "reputation" : 311869,
+      "user_id" : 207421,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/5cfe5f7d64f44be04f147295f5c7b88e?s=256&d=identicon&r=PG",
+      "display_name" : "user207421",
+      "link" : "https://stackoverflow.com/users/207421/user207421"
+    },
+    "creation_date" : 1748827764,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140474933,
+    "post_id" : 79646000,
+    "body" : "You should use <a href=\"https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/nio/file/Files.html#size(java.nio.file.Path)\" rel=\"nofollow noreferrer\"><code>Files.size(Path)</code></a> for this.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 213468,
+      "reputation" : 110282,
+      "user_id" : 466862,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/d873f397779db38cd510d9ee5416fd43?s=256&d=identicon&r=PG",
+      "display_name" : "Mark Rotteveel",
+      "link" : "https://stackoverflow.com/users/466862/mark-rotteveel"
+    },
+    "creation_date" : 1748694411,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140474760,
+    "post_id" : 79646000,
+    "body" : "@user207421 file skip is O(1).",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 43022,
+      "reputation" : 24626,
+      "user_id" : 125562,
+      "user_type" : "registered",
+      "accept_rate" : 64,
+      "profile_image" : "https://i.sstatic.net/SdIqA.png?s=256",
+      "display_name" : "Basilevs",
+      "link" : "https://stackoverflow.com/users/125562/basilevs"
+    },
+    "creation_date" : 1748687614,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140474759,
+    "post_id" : 79646000,
+    "body" : "@g00se transferTo() is nice, but does take linear time.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 43022,
+      "reputation" : 24626,
+      "user_id" : 125562,
+      "user_type" : "registered",
+      "accept_rate" : 64,
+      "profile_image" : "https://i.sstatic.net/SdIqA.png?s=256",
+      "display_name" : "Basilevs",
+      "link" : "https://stackoverflow.com/users/125562/basilevs"
+    },
+    "creation_date" : 1748687549,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140474748,
+    "post_id" : 79646000,
+    "body" : "@gthanop The method is not anottated final. It can be overriden to return any InputStream. So while for the purpose of this question the InputStream comes from a file (as evident by stacktrace), the file object in question is not available.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 43022,
+      "reputation" : 24626,
+      "user_id" : 125562,
+      "user_type" : "registered",
+      "accept_rate" : 64,
+      "profile_image" : "https://i.sstatic.net/SdIqA.png?s=256",
+      "display_name" : "Basilevs",
+      "link" : "https://stackoverflow.com/users/125562/basilevs"
+    },
+    "creation_date" : 1748687334,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140474745,
+    "post_id" : 79646000,
+    "body" : "But your <code>read</code> method indicates you have a name mapped to a <code>File</code> and then you read that <code>File</code>. Can you please clarify? Is, for example, the code shown not corresponding to the real one?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 9059972,
+      "reputation" : 3471,
+      "user_id" : 6746785,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/3zi2O.png?s=256",
+      "display_name" : "gthanop",
+      "link" : "https://stackoverflow.com/users/6746785/gthanop"
+    },
+    "creation_date" : 1748687218,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140474740,
+    "post_id" : 79646000,
+    "body" : "@user207421I don&#39;t have a file",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 43022,
+      "reputation" : 24626,
+      "user_id" : 125562,
+      "user_type" : "registered",
+      "accept_rate" : 64,
+      "profile_image" : "https://i.sstatic.net/SdIqA.png?s=256",
+      "display_name" : "Basilevs",
+      "link" : "https://stackoverflow.com/users/125562/basilevs"
+    },
+    "creation_date" : 1748686837,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140474650,
+    "post_id" : 79646000,
+    "body" : "I actually assumed it won&#39;t always be a file, as I can&#39;t think <code>File::length</code> can have been overlooked",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 22124137,
+      "reputation" : 4243,
+      "user_id" : 16376827,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/1ImPw.png?s=256",
+      "display_name" : "g00se",
+      "link" : "https://stackoverflow.com/users/16376827/g00se"
+    },
+    "creation_date" : 1748683028,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140474545,
+    "post_id" : 79646000,
+    "body" : "As you have a <code>File</code> why aren&#39;t you using <code>File.length()</code>? This is <i>O(1)</i> where your code is <i>O(N)</i>, the worst possible choice.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 71739,
+      "reputation" : 311869,
+      "user_id" : 207421,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/5cfe5f7d64f44be04f147295f5c7b88e?s=256&d=identicon&r=PG",
+      "display_name" : "user207421",
+      "link" : "https://stackoverflow.com/users/207421/user207421"
+    },
+    "creation_date" : 1748678862,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140474538,
+    "post_id" : 79646000,
+    "body" : "I would use <code>in.transferTo</code> <a href=\"https://docs.oracle.com/en/java/javase/22/docs/api/java.base/java/io/OutputStream.html#nullOutputStream()\" rel=\"nofollow noreferrer\">THIS</a>",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 22124137,
+      "reputation" : 4243,
+      "user_id" : 16376827,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/1ImPw.png?s=256",
+      "display_name" : "g00se",
+      "link" : "https://stackoverflow.com/users/16376827/g00se"
+    },
+    "creation_date" : 1748678708,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140473920,
+    "post_id" : 79646000,
+    "body" : "It even says so in the documentation \uD83E\uDD26",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 43022,
+      "reputation" : 24626,
+      "user_id" : 125562,
+      "user_type" : "registered",
+      "accept_rate" : 64,
+      "profile_image" : "https://i.sstatic.net/SdIqA.png?s=256",
+      "display_name" : "Basilevs",
+      "link" : "https://stackoverflow.com/users/125562/basilevs"
+    },
+    "creation_date" : 1748641428,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140473884,
+    "post_id" : 79646000,
+    "body" : "I cannot reproduce the Exception, but <code>new FileInputStream(&quot;test&quot;).skip(Long.MAX_VALUE)</code> is returning <code>Long.MAX_VALUE</code> even for a file with less than 2KB (testing on jshell, Windows 11 [a different filesystem?!], OpenJDK 24 and 21)  -- I wonder if there are no <i>better</i> method to find the file size (e.g. <code>Files.size()</code>)",
+    "score" : 3,
+    "owner" : {
+      "account_id" : 31180,
+      "reputation" : 29752,
+      "user_id" : 85421,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/kKvXH.gif?s=256",
+      "display_name" : "user85421",
+      "link" : "https://stackoverflow.com/users/85421/user85421"
+    },
+    "creation_date" : 1748640174,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140473847,
+    "post_id" : 79646000,
+    "body" : "@Robert if BufferedInputStream calls delegate&#39;s skip, <a href=\"https://github.com/openjdk/jdk21u/blob/master/src/java.base/share/classes/java/io/BufferedInputStream.java#L457\" rel=\"nofollow noreferrer\">then the value is passed as is</a>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 43022,
+      "reputation" : 24626,
+      "user_id" : 125562,
+      "user_type" : "registered",
+      "accept_rate" : 64,
+      "profile_image" : "https://i.sstatic.net/SdIqA.png?s=256",
+      "display_name" : "Basilevs",
+      "link" : "https://stackoverflow.com/users/125562/basilevs"
+    },
+    "creation_date" : 1748638948,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140473828,
+    "post_id" : 79646000,
+    "body" : "@Anonymous if I could I would not ask the question, and would look it up in Java bugs.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 43022,
+      "reputation" : 24626,
+      "user_id" : 125562,
+      "user_type" : "registered",
+      "accept_rate" : 64,
+      "profile_image" : "https://i.sstatic.net/SdIqA.png?s=256",
+      "display_name" : "Basilevs",
+      "link" : "https://stackoverflow.com/users/125562/basilevs"
+    },
+    "creation_date" : 1748638540,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140473819,
+    "post_id" : 79646000,
+    "body" : "@Robert the Kubernetes cluster is only available via Jenkins, so the only debugging I can do is adding print statements",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 43022,
+      "reputation" : 24626,
+      "user_id" : 125562,
+      "user_type" : "registered",
+      "accept_rate" : 64,
+      "profile_image" : "https://i.sstatic.net/SdIqA.png?s=256",
+      "display_name" : "Basilevs",
+      "link" : "https://stackoverflow.com/users/125562/basilevs"
+    },
+    "creation_date" : 1748638281,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140473797,
+    "post_id" : 79646000,
+    "body" : "Could you create a <a href=\"https://stackoverflow.com/help/minimal-reproducible-example\">minimal reproducible example</a>, please? I know it won’t be trivial to do.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7612423,
+      "reputation" : 87400,
+      "user_id" : 5772882,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Anonymous",
+      "link" : "https://stackoverflow.com/users/5772882/anonymous"
+    },
+    "creation_date" : 1748637682,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140473718,
+    "post_id" : 79646000,
+    "body" : "The stack trace shows that you don&#39;t use a pure FileInputStream but a BufferedInputStream. Thus you don&#39;t know is the skip call argument is really Long.MAX_VALUE at the end of the call chain. Use the debugger to get the actual value that is sent to FileInputStream.skip.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 50585,
+      "reputation" : 43459,
+      "user_id" : 150978,
+      "user_type" : "registered",
+      "accept_rate" : 78,
+      "profile_image" : "https://www.gravatar.com/avatar/feadc214792e2581c3c750140e3eb2c7?s=256&d=identicon&r=PG",
+      "display_name" : "Robert",
+      "link" : "https://stackoverflow.com/users/150978/robert"
+    },
+    "creation_date" : 1748635513,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140473659,
+    "post_id" : 79646000,
+    "body" : "Share the code of <code>read()</code>.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 372682,
+      "reputation" : 26512,
+      "user_id" : 721855,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/vZiox.png?s=256",
+      "display_name" : "aled",
+      "link" : "https://stackoverflow.com/users/721855/aled"
+    },
+    "creation_date" : 1748634016,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

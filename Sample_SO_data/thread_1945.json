@@ -1,0 +1,82 @@
+{
+  "question" : {
+    "question_id" : 79661680,
+    "title" : "Spring MVC List&lt;Enum&gt; binding: Why does arr[]=HELLO&amp;arr[]=WORLD require @Setter, but arr=HELLO&amp;arr=WORLD doesn’t?",
+    "body" : "<h2>Spring MVC List binding: Why does arr[]=HELLO&amp;arr[]=WORLD require @Setter, but arr=HELLO&amp;arr=WORLD doesn’t?</h2>\n<p>In our frontend, we use <code>Axios</code>, which by default serializes array parameters like this:</p>\n<pre class=\"lang-none prettyprint-override\"><code>arr[]=HELLO&amp;arr[]=WORLD\n</code></pre>\n<p>However, this caused 400 Bad Request errors on our Spring Boot (Tomcat) backend.\nTo fix that, we added the following configuration:</p>\n<pre class=\"lang-yaml prettyprint-override\"><code>server:\n  tomcat:\n    relaxed-query-chars: ['[', ']', '{', '}']\n</code></pre>\n<p>After applying this setting, everything appeared to work fine — until we encountered a strange case.</p>\n<hr />\n<h2>⚠️ The problem</h2>\n<p>We have the following request DTO:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Getter\n@AllArgsConstructor\n@ToString\n@ParameterObject\npublic class ExampleRequestDto {\n\n    @Parameter(description = &quot;example&quot;)\n    private List&lt;SomeEnum&gt; arr;\n\n}\n</code></pre>\n<p>Our frontend sends a request like:</p>\n<pre class=\"lang-none prettyprint-override\"><code>GET /api/example?arr[]=HELLO&amp;arr[]=WORLD\n</code></pre>\n<h2>✅ Expected log:</h2>\n<pre><code>ExampleRequestDto(arr=[HELLO, WORLD])\n</code></pre>\n<h2>❌ Actual log:</h2>\n<pre><code>ExampleRequestDto(arr=[HELLO])\n</code></pre>\n<p>Only the first value is present; the rest are silently ignored.\nNo exceptions or warnings were thrown.</p>\n<hr />\n<h2>Further investigation</h2>\n<p>We changed the frontend to send:</p>\n<pre class=\"lang-none prettyprint-override\"><code>GET /api/example?arr=HELLO&amp;arr=WORLD\n</code></pre>\n<p>This works perfectly even without <code>@Setter</code> on the DTO.</p>\n<p>Then, we added <code>@Setter</code> to the DTO, and the original <code>arr[]=...</code> format also worked correctly — all values were bound.</p>\n<hr />\n<h2>My questions</h2>\n<ol>\n<li>Why does <code>arr[]=HELLO&amp;arr[]=WORLD</code> require <code>@Setter</code> to bind correctly, but <code>arr=HELLO&amp;arr=WORLD</code> does not?</li>\n<li>Is there a difference in how Spring interprets these two formats during <code>@ModelAttribute</code> binding?</li>\n<li>Is this behavior caused by Spring MVC’s internal binder or by Tomcat’s parameter parser?</li>\n<li>Why is the issue silent (i.e., no exception or binding error), even when values are missing?</li>\n</ol>\n<hr />\n<h2>Context</h2>\n<ul>\n<li>Spring Boot 3.2.x</li>\n<li>Tomcat (embedded)</li>\n<li>Binding via @ModelAttribute</li>\n<li>Logging shows only partial parameter binding with the [] format</li>\n<li>The enum values are standard like HELLO, WORLD, etc.</li>\n</ul>\n<hr />\n<p>I suspect this is due to Spring’s reflection mechanism, but I’m not sure.</p>\n<p>Any official documentation, related GitHub issues, or explanations would be highly appreciated.</p>\n",
+    "tags" : [ "java", "spring", "spring-boot", "tomcat", "axios" ],
+    "owner" : {
+      "account_id" : 15768649,
+      "reputation" : 43,
+      "user_id" : 11378291,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-BX7u9QXXqBM/AAAAAAAAAAI/AAAAAAAAAP8/Ymz17N-RjdM/s256-rj/photo.jpg",
+      "display_name" : "좋아감자탕",
+      "link" : "https://stackoverflow.com/users/11378291/%ec%a2%8b%ec%95%84%ea%b0%90%ec%9e%90%ed%83%95"
+    },
+    "is_answered" : true,
+    "view_count" : 85,
+    "answer_count" : 1,
+    "score" : 3,
+    "last_activity_date" : 1749715609,
+    "creation_date" : 1749632797,
+    "link" : "https://stackoverflow.com/questions/79661680/spring-mvc-listenum-binding-why-does-arr-helloarr-world-require-setter",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79662349,
+    "question_id" : 79661680,
+    "body" : "<p>The difference comes from internal implementation of Spring's <a href=\"https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/web/bind/ServletRequestDataBinder.html\" rel=\"nofollow noreferrer\">ServletRequestDataBinder</a></p>\n<p>There are two steps relevant for creating the object:</p>\n<ol>\n<li><p><code>ServletRequestDataBinder.construct()</code> - This method scans the constructors of the DTO and creates the object. If the available constructor has arguments, it uses <code>request.getParameterValues(...)</code> to find appropriate values. Note that <code>request.getParameterValues(&quot;arr&quot;)</code> returns null if request parameter is <code>arr[]</code></p>\n</li>\n<li><p><code>ServletRequestDataBinder.bind()</code> - This method parses request parameters, normalizes them (&quot;arr[]&quot; becomes &quot;arr&quot;), then scans for setters and applies the values using setters. In this phase it doesn't matter if request param is called &quot;arr[]&quot; or &quot;arr&quot;. But it is only applicable if setters exist</p>\n</li>\n</ol>\n<p>Note: if no-args constructor exists, the behavior will be the same because 1st phase will construct object with null values and only setters become relevant.</p>\n<p>To answer your questions:</p>\n<blockquote>\n<p>1.Why does <code>arr[]=HELLO&amp;arr[]=WORLD</code> require <code>@Setter</code> to bind correctly, but arr=HELLO&amp;arr=WORLD does not?</p>\n</blockquote>\n<p><code>arr=HELLO&amp;arr=WORLD</code> can be handled by constructor</p>\n<p><code>arr[]=HELLO&amp;arr[]=WORLD</code> can't be handled by constructor, and is handled by attribute processing. During attribute processing the request parameters are normalized so it doesn't matter if they are called &quot;arr[]&quot; or &quot;arr&quot;</p>\n<blockquote>\n<p>2.Is there a difference in how Spring interprets these two formats during <code>@ModelAttribute</code> binding?</p>\n</blockquote>\n<p>No. This is handled by bind attribute which normalizes array parameters so it doesn't matter if they are called &quot;arr[]&quot; or &quot;arr&quot;</p>\n<blockquote>\n<p>3.Is this behavior caused by Spring MVC’s internal binder or by Tomcat’s parameter parser?</p>\n</blockquote>\n<p>Spring internal binder</p>\n<blockquote>\n<p>4.Why is the issue silent (i.e., no exception or binding error), even when values are missing?</p>\n</blockquote>\n<p>By default, all DTO attributes are considered optional. Values are only populated for accessible fields using values received in request. If no appropriate value is found, value will be null. To change this behavior, you can use <a href=\"https://docs.spring.io/spring-framework/reference/core/validation/beanvalidation.html\" rel=\"nofollow noreferrer\">Bean Validations</a> to specify which attributes are required to have a value when reaching controller.</p>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 2714938,
+      "reputation" : 6448,
+      "user_id" : 2342529,
+      "user_type" : "registered",
+      "accept_rate" : 98,
+      "profile_image" : "https://i.sstatic.net/SSkK4.jpg?s=256",
+      "display_name" : "Alexandru Severin",
+      "link" : "https://stackoverflow.com/users/2342529/alexandru-severin"
+    },
+    "creation_date" : 1749659064,
+    "last_activity_date" : 1749715609,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79662349" : [ {
+      "comment_id" : 140507485,
+      "post_id" : 79662349,
+      "body" : "@%ec%a2%8b%ec%95%84%ea%b0%90%ec%9e%90%ed%83%95 In my tests value of <code>arr</code> would be null when receiving params as arr[] with no setter, because `request.getParameterValues(&quot;arr&quot;) returns null. I can&#39;t explain why for you the first value would be bound, but it might be due to some custom binding configuration you already have. I tested with a plain spring boot app 3.2.5 with only default config.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2714938,
+        "reputation" : 6448,
+        "user_id" : 2342529,
+        "user_type" : "registered",
+        "accept_rate" : 98,
+        "profile_image" : "https://i.sstatic.net/SSkK4.jpg?s=256",
+        "display_name" : "Alexandru Severin",
+        "link" : "https://stackoverflow.com/users/2342529/alexandru-severin"
+      },
+      "creation_date" : 1749707976,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140507218,
+      "post_id" : 79662349,
+      "body" : "Thank you so much for your detailed answer — it truly felt like receiving a big gift this morning. Just to clarify, is the reason only the first value gets bound to the DTO because Spring uses the all-args constructor for binding instead of the default constructor with setters?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 15768649,
+        "reputation" : 43,
+        "user_id" : 11378291,
+        "user_type" : "registered",
+        "profile_image" : "https://lh3.googleusercontent.com/-BX7u9QXXqBM/AAAAAAAAAAI/AAAAAAAAAP8/Ymz17N-RjdM/s256-rj/photo.jpg",
+        "display_name" : "좋아감자탕",
+        "link" : "https://stackoverflow.com/users/11378291/%ec%a2%8b%ec%95%84%ea%b0%90%ec%9e%90%ed%83%95"
+      },
+      "creation_date" : 1749690563,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

@@ -1,0 +1,280 @@
+{
+  "question" : {
+    "question_id" : 79703764,
+    "title" : "JComboBox rendering larger than enclosing Frame on Linux/GTK",
+    "body" : "<p>I encounter an issue with JComboBoxes on Linux (verified on Ubuntu with GTK LF but probably applies to other combos as well).</p>\n<p>When I create a list of JComboBox components within a JInternalFrame, the boxes seem to render larger than what the enclosing frame assumes.</p>\n<p>Result on Linux, the 5th element is only shown partially\n<a href=\"https://i.sstatic.net/YuzyaXx7.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/YuzyaXx7.png\" alt=\"result on Linux, the 5th element is only shown partially\" /></a></p>\n<p>result on Windows, all boxes show properly\n<a href=\"https://i.sstatic.net/KNfWV5Gy.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/KNfWV5Gy.png\" alt=\"result on Windows, all boxes show properly\" /></a></p>\n<p>The code for this dialog is the following:</p>\n<pre><code>public class DebugDialog extends JInternalFrame {\n\n\n    public DebugDialog() {\n        super(&quot;Debug Dialog&quot;);\n        setDefaultCloseOperation(DISPOSE_ON_CLOSE);\n        JPanel panel = new JPanel();\n        add(panel);\n        panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));\n        for (int i = 0; i&lt; 5; i++) {\n            panel.add(new JComboBox&lt;&gt;(new Integer[]{1, 2, 3, 4, 5}));\n        }\n        validate();\n        pack();\n    }\n\n    public void showDialog(JDesktopPane desktopPane) {\n        desktopPane.add(this);\n        setVisible(true);\n        moveToFront();\n    }\n\n}\n\n</code></pre>\n<p>And is called like this:</p>\n<pre><code>\n        JDesktopPane jDesktopPane = ; // passed from the parent application, usually created with new JDesktopPane()\n        DebugDialog debugDialog = new DebugDialog();\n        debugDialog.showDialog(jDesktopPane);\n</code></pre>\n<p>This seems to have started only lately, according to user reports, and I am a bit at a loss  on what causes this or how to mitigate it. The sizes (max, min, preferred,...) are returned as the same values before and after calling <code>pack()</code> but it seems that the size reported from child to parent is smaller than what is eventually used.</p>\n<p>Does anyone have any thoughts?</p>\n<p>Edit:</p>\n<p>If the frame contains only one JComboBox that one gets rendered correctly. The more boxes are added the farther they get pushed beyond the bottom border.</p>\n<p>If other elements are used I have not seen any such issues.</p>\n",
+    "tags" : [ "java", "linux", "swing", "jcombobox", "jdesktoppane" ],
+    "owner" : {
+      "account_id" : 1632091,
+      "reputation" : 330,
+      "user_id" : 1506428,
+      "user_type" : "registered",
+      "accept_rate" : 67,
+      "profile_image" : "https://www.gravatar.com/avatar/8eeec44e25433f4aac7d834564a90c20?s=256&d=identicon&r=PG",
+      "display_name" : "Candlejack",
+      "link" : "https://stackoverflow.com/users/1506428/candlejack"
+    },
+    "is_answered" : true,
+    "view_count" : 107,
+    "answer_count" : 1,
+    "score" : 2,
+    "last_activity_date" : 1753251452,
+    "creation_date" : 1752684706,
+    "link" : "https://stackoverflow.com/questions/79703764/jcombobox-rendering-larger-than-enclosing-frame-on-linux-gtk",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79707250,
+    "question_id" : 79703764,
+    "body" : "<p>I had thought that since the JInternalFrame’s border is <code>java.awt.Insets[top=3,left=5,bottom=6,right=6]</code>, which obviously does not properly account for its title bar height, that it must be responsible for this problem.  That is not the actual cause.</p>\n<p>The problem is that, at least on my system, a JComboBox created in the Gnome look-and-feel has an initial height of 35, but only after it is added to a displayable container does its “real” height of 41 get applied.  Basically, the JInternalFrame’s <code>pack()</code> method doesn’t have access to the real sizes yet.</p>\n<p>This is almost certainly a bug.  The workaround is to call <code>pack()</code> again, once the JComboBoxes have their true sizes.  This can be done in the JInternalFrame’s <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.desktop/java/awt/Component.html#addNotify()\" rel=\"nofollow noreferrer\">addNotify()</a> method:</p>\n<pre><code>@Override\npublic void addNotify() {\n    super.addNotify();\n    pack();\n}\n</code></pre>\n<p>But it is not necessary to subclass JInternalFrame at all.  The same effect can be accomplished with a <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.desktop/java/awt/Component.html#addHierarchyListener(java.awt.event.HierarchyListener)\" rel=\"nofollow noreferrer\">HierarchyListener</a>:</p>\n<pre><code>addHierarchyListener(e -&gt; {\n    long flags = e.getChangeFlags();\n    if ((flags &amp; HierarchyEvent.DISPLAYABILITY_CHANGED) != 0 &amp;&amp;\n        e.getComponent().isDisplayable()) {\n\n        EventQueue.invokeLater(() -&gt; pack());\n    }\n});\n</code></pre>\n<hr />\n<p>(Everything from here on down is <strong>incorrect.</strong>  I am leaving it as evidence of a dead end in my research.)</p>\n<p>It appears the JInternalFrame’s border is <code>java.awt.Insets[top=3,left=5,bottom=6,right=6]</code>, which obviously does not properly account for its title bar height.  This, in turn, causes <code>pack()</code> to produce an incorrect preferred size.  I suspect the left and right insets are also off.  This certainly appears to be a bug.</p>\n<p>One workaround is to override <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.desktop/java/awt/Component.html#addNotify()\" rel=\"nofollow noreferrer\">addNotify()</a>, which is called when a component is made displayable (meaning, the component is in a window and that window has been allocated screen real estate by the system, even though it may not be visible yet).  Since the JInternalFrame is guaranteed to be fully constructed at that point, you can search for its <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.desktop/javax/swing/plaf/basic/BasicInternalFrameUI.html#titlePane\" rel=\"nofollow noreferrer\">BasicInternalFrameTitlePane</a> child and use that title bar’s height to compute the proper size:</p>\n<pre><code>private static &lt;C extends Component&gt; C findDescendantOfType(\n                                            Class&lt;C&gt; type,\n                                            Component root) {\n    if (type.isInstance(root)) {\n        return type.cast(root);\n    }\n\n    if (root instanceof Container parent) {\n        for (Component child : parent.getComponents()) {\n            C match = findDescendantOfType(type, child);\n            if (match != null) {\n                return match;\n            }\n        }\n    }\n\n    return null;\n}\n\n@Override\npublic void addNotify() {\n    super.addNotify();\n\n    Component titleBar =\n        findDescendantOfType(BasicInternalFrameTitlePane.class, this);\n    if (titleBar != null) {\n        titleBar.validate();\n\n        EventQueue.invokeLater(() -&gt; {\n            Insets border = getInsets();\n            int newWidth = getWidth() + border.left + border.right + 2;\n            int newHeight = getHeight()\n                - border.top + titleBar.getHeight() + border.bottom;\n            setSize(newWidth, newHeight);\n        });\n    }\n}\n</code></pre>\n<p>I found that I had to add 2 to the width, to get it to accommodate the JComboBoxes properly.  I wish I knew why.</p>\n",
+    "score" : 0,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 2053598,
+      "reputation" : 44936,
+      "user_id" : 1831987,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/38b1c37530189ec4471a43a618e33f67?s=256&d=identicon&r=PG",
+      "display_name" : "VGR",
+      "link" : "https://stackoverflow.com/users/1831987/vgr"
+    },
+    "creation_date" : 1752929245,
+    "last_activity_date" : 1753202409,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140604417,
+    "post_id" : 79703764,
+    "body" : "@Alex Did you mean to link to this same question?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2053598,
+      "reputation" : 44936,
+      "user_id" : 1831987,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/38b1c37530189ec4471a43a618e33f67?s=256&d=identicon&r=PG",
+      "display_name" : "VGR",
+      "link" : "https://stackoverflow.com/users/1831987/vgr"
+    },
+    "creation_date" : 1753039081,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140603668,
+    "post_id" : 79703764,
+    "body" : "<a href=\"https://stackoverflow.com/questions/79703764/jcombobox-rendering-larger-than-enclosing-frame-on-linux-gtk\" title=\"jcombobox rendering larger than enclosing frame on linux gtk\">stackoverflow.com/questions/79703764/&hellip;</a> This is the exact problem you are facing",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 34932063,
+      "reputation" : 10,
+      "user_id" : 26867515,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/3dd216f1f1845b16bfd23e135447f25c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "carlosreyna0",
+      "link" : "https://stackoverflow.com/users/26867515/carlosreyna0"
+    },
+    "creation_date" : 1753009746,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140598175,
+    "post_id" : 79703764,
+    "body" : "Thank you everyone for your answers, much appreciated. I will see if a change of L&amp;F changes anything. But as I stated above, this issue has seemingly only appeared recently.   JInternalFrames with other elements are fine, same goes if only one JComboBox is present. I will update the question.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1632091,
+      "reputation" : 330,
+      "user_id" : 1506428,
+      "user_type" : "registered",
+      "accept_rate" : 67,
+      "profile_image" : "https://www.gravatar.com/avatar/8eeec44e25433f4aac7d834564a90c20?s=256&d=identicon&r=PG",
+      "display_name" : "Candlejack",
+      "link" : "https://stackoverflow.com/users/1506428/candlejack"
+    },
+    "creation_date" : 1752782259,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140596720,
+    "post_id" : 79703764,
+    "body" : "It looks like <code>pack()</code> is computing an incorrect size because the JInternalFrame’s border is <code>java.awt.Insets[top=3,left=5,bottom=6,right=6]</code>, which obviously does not properly account for the title bar height.  I suspect the left, right, and bottom values are also off.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 2053598,
+      "reputation" : 44936,
+      "user_id" : 1831987,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/38b1c37530189ec4471a43a618e33f67?s=256&d=identicon&r=PG",
+      "display_name" : "VGR",
+      "link" : "https://stackoverflow.com/users/1831987/vgr"
+    },
+    "creation_date" : 1752752455,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140596659,
+    "post_id" : 79703764,
+    "body" : "I am able to reproduce this in Debian/Gnome, using Java 24.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2053598,
+      "reputation" : 44936,
+      "user_id" : 1831987,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/38b1c37530189ec4471a43a618e33f67?s=256&d=identicon&r=PG",
+      "display_name" : "VGR",
+      "link" : "https://stackoverflow.com/users/1831987/vgr"
+    },
+    "creation_date" : 1752750775,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140595435,
+    "post_id" : 79703764,
+    "body" : "Hello Candlejack, there is a possibility that your problem will be solved if you manually determine the font type and size.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10843443,
+      "reputation" : 916,
+      "user_id" : 20882864,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+      "display_name" : "Marce Puente",
+      "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+    },
+    "creation_date" : 1752708773,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140594843,
+    "post_id" : 79703764,
+    "body" : "Post an <a href=\"https://stackoverflow.com/help/minimal-reproducible-example\">minimal reproducible example</a> demonstrating the problem.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 44852,
+      "reputation" : 324701,
+      "user_id" : 131872,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/a0ced8e21d2a761db718acb6362b9225?s=256&d=identicon&r=PG",
+      "display_name" : "camickr",
+      "link" : "https://stackoverflow.com/users/131872/camickr"
+    },
+    "creation_date" : 1752690769,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140594803,
+    "post_id" : 79703764,
+    "body" : "There are a few reasons and in fact this is standard behavior for this particular implementation. Ubuntu uses different font sizes which influences Swing calculation of Layout, Look and Feel of the platform which influences controls sizes as well, DPI Settings Ubuntu usually apply higher scaling factors. One way I can think of to solve this is to use a cross platform Look and Feel, see this thread about LaF <a href=\"https://stackoverflow.com/questions/9541045/how-to-set-jframe-look-and-feel\" title=\"how to set jframe look and feel\">stackoverflow.com/questions/9541045/&hellip;</a>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 209503,
+      "reputation" : 23867,
+      "user_id" : 460557,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/b4565f97815833390c9c880e9e8522e4?s=256&d=identicon&r=PG",
+      "display_name" : "Jorge Campos",
+      "link" : "https://stackoverflow.com/users/460557/jorge-campos"
+    },
+    "creation_date" : 1752689845,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79707250" : [ {
+      "comment_id" : 140622089,
+      "post_id" : 79707250,
+      "body" : "Sorry for not replying sooner, just now got around to test your proposed fix and it seems to work perfectly fine. Thank you very much",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1632091,
+        "reputation" : 330,
+        "user_id" : 1506428,
+        "user_type" : "registered",
+        "accept_rate" : 67,
+        "profile_image" : "https://www.gravatar.com/avatar/8eeec44e25433f4aac7d834564a90c20?s=256&d=identicon&r=PG",
+        "display_name" : "Candlejack",
+        "link" : "https://stackoverflow.com/users/1506428/candlejack"
+      },
+      "creation_date" : 1753639442,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140613478,
+      "post_id" : 79707250,
+      "body" : "interesting, i had sizes logged out before and  after pack where they were the same. So the size change happens at another time. Thx for your effort I will look into this and see ir it fixes my problem.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1632091,
+        "reputation" : 330,
+        "user_id" : 1506428,
+        "user_type" : "registered",
+        "accept_rate" : 67,
+        "profile_image" : "https://www.gravatar.com/avatar/8eeec44e25433f4aac7d834564a90c20?s=256&d=identicon&r=PG",
+        "display_name" : "Candlejack",
+        "link" : "https://stackoverflow.com/users/1506428/candlejack"
+      },
+      "creation_date" : 1753309745,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140613477,
+      "post_id" : 79707250,
+      "body" : "interesting, i had sizes logged out before and  after pack where they were the same. So the size change happens at another time.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1632091,
+        "reputation" : 330,
+        "user_id" : 1506428,
+        "user_type" : "registered",
+        "accept_rate" : 67,
+        "profile_image" : "https://www.gravatar.com/avatar/8eeec44e25433f4aac7d834564a90c20?s=256&d=identicon&r=PG",
+        "display_name" : "Candlejack",
+        "link" : "https://stackoverflow.com/users/1506428/candlejack"
+      },
+      "creation_date" : 1753309745,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140609723,
+      "post_id" : 79707250,
+      "body" : "@Candlejack Updated answer.  Looks like the JComboBoxes don’t have the right preferred sizes at the time <code>pack()</code> is called, so the solution is to call pack() when they do have their correct preferred sizes.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2053598,
+        "reputation" : 44936,
+        "user_id" : 1831987,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/38b1c37530189ec4471a43a618e33f67?s=256&d=identicon&r=PG",
+        "display_name" : "VGR",
+        "link" : "https://stackoverflow.com/users/1831987/vgr"
+      },
+      "creation_date" : 1753202450,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140604418,
+      "post_id" : 79707250,
+      "body" : "@Candlejack I see.  So it&#39;s apparently an issue with the look-and-feel&#39;s determination of preferred sizes for JComboBoxes.  (And perhaps also the title bar height issue that I found.)  I&#39;ll keep investigating.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2053598,
+        "reputation" : 44936,
+        "user_id" : 1831987,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/38b1c37530189ec4471a43a618e33f67?s=256&d=identicon&r=PG",
+        "display_name" : "VGR",
+        "link" : "https://stackoverflow.com/users/1831987/vgr"
+      },
+      "creation_date" : 1753039160,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140604282,
+      "post_id" : 79707250,
+      "body" : "Probably missed my edit, the offest grows larger the more elements are added. So adding the fixed title height to the total hight is not a suitable fix. It seems to work in this case as the offest incidently about the same height as the title bar. Still thanks for looking into this and the effort you put in",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1632091,
+        "reputation" : 330,
+        "user_id" : 1506428,
+        "user_type" : "registered",
+        "accept_rate" : 67,
+        "profile_image" : "https://www.gravatar.com/avatar/8eeec44e25433f4aac7d834564a90c20?s=256&d=identicon&r=PG",
+        "display_name" : "Candlejack",
+        "link" : "https://stackoverflow.com/users/1506428/candlejack"
+      },
+      "creation_date" : 1753034385,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

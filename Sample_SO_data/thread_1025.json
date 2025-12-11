@@ -1,0 +1,293 @@
+{
+  "question" : {
+    "question_id" : 79750346,
+    "title" : "Making tests pass if they fail",
+    "body" : "<p><em>Related: <a href=\"https://stackoverflow.com/questions/79750309/rethrowing-throwables-from-edt\">Rethrowing Throwables from EDT</a></em></p>\n<p>I want to test my <code>InvocationInterceptor</code> that runs tests in <a href=\"https://en.m.wikipedia.org/wiki/Event_dispatching_thread\" rel=\"nofollow noreferrer\">event dispatching thread (EDT)</a>.</p>\n<p>Among other things, it shouldn't swallow any <code>Throwable</code>s. I wrote a test for that.</p>\n<pre class=\"lang-java prettyprint-override\"><code>    @ExtendWith(EdtExtension.class) // my custom extension that I test\n    class AnnotatedPerMethod {\n\n        @Test\n        @EdtRun // I test processing of this custom annotation\n        void ifThrowablesThrown_theyGetRethrown_notSwallowed() {\n            assumeTrue(EventQueue.isDispatchThread());\n            throw new AssertionError();\n        }\n</code></pre>\n<p>Cool, it fails.</p>\n<p>But from the standpoint of my build, it should actually pass.</p>\n<p>In other words, I need to <strong>write a test that passes build-wise if it fails execution-wise</strong>.</p>\n<p>Here's a simplistic MRE. You're not allowed to remove the throw. The error should actually get thrown from the test method. <strong>It means you can't <a href=\"https://stackoverflow.com/questions/156503/how-do-you-assert-that-a-certain-exception-is-thrown-in-junit-tests\">wrap</a> it in <code>assertThrows()</code></strong>. The test sort of tests <em>itself</em> instead of testing something that happens inside the curly braces.</p>\n<pre class=\"lang-java prettyprint-override\"><code>    @Test\n    void shouldPass_byFailing() {\n        throw new AssertionError();\n    }\n</code></pre>\n<p>Java 8.</p>\n",
+    "tags" : [ "java", "junit5" ],
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2683,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "is_answered" : true,
+    "view_count" : 222,
+    "answer_count" : 1,
+    "score" : -4,
+    "last_activity_date" : 1756628518,
+    "creation_date" : 1756474513,
+    "link" : "https://stackoverflow.com/questions/79750346/making-tests-pass-if-they-fail",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79750810,
+    "question_id" : 79750346,
+    "body" : "<p>If I understand correctly, you're trying to test <em>the extension itself</em> to ensure it works correctly when used in your &quot;real&quot; tests. The JUnit Platform provides a <a href=\"https://docs.junit.org/current/user-guide/#testkit\" rel=\"nofollow noreferrer\">test kit</a> for this.</p>\n<hr />\n<h1>Example</h1>\n<p>For example, let's say we want to test the <code>@SwingSetup</code> annotation and <code>EdtExtension</code> class from <a href=\"https://stackoverflow.com/a/79750770/6395627\">my answer to your previous question</a>. You'd first write a test class that uses the extension. Then you'd write another test class that <em>executes</em> the previous test class using the <em>JUnit Platform Test Kit</em>. And you'd set up your build (e.g., Maven, Gradle, etc.) so that only the latter test class is executed &quot;for real&quot;.</p>\n<h2>Versions</h2>\n<ul>\n<li><p>Java 24.0.2</p>\n</li>\n<li><p>JUnit 5.13.4</p>\n</li>\n<li><p>Gradle 8.14.3</p>\n</li>\n</ul>\n<h2>Gradle scripts</h2>\n<p><strong>settings.gradle.kts</strong></p>\n<pre class=\"lang-kotlin prettyprint-override\"><code>plugins {\n  id(&quot;org.gradle.toolchains.foojay-resolver-convention&quot;) version &quot;1.0.0&quot;\n}\nrootProject.name = &quot;example&quot;\n</code></pre>\n<p><strong>build.gradle.kts</strong></p>\n<pre class=\"lang-kotlin prettyprint-override\"><code>plugins {\n  java\n}\n\ngroup = &quot;com.example&quot;\nversion = &quot;0.1.0-SNAPSHOT&quot;\n\njava.toolchain {\n  languageVersion = JavaLanguageVersion.of(24)\n}\n\nrepositories {\n  mavenCentral()\n}\n\ndependencies {\n  testImplementation(platform(&quot;org.junit:junit-bom:5.13.4&quot;))\n  testImplementation(&quot;org.junit.jupiter:junit-jupiter&quot;)\n  testImplementation(&quot;org.junit.platform:junit-platform-testkit&quot;)\n}\n\ntasks {\n  // Register new Test task for testing only extensions.\n  val testExtensions by registering(Test::class) {\n    useJUnitPlatform {\n      includeTags(&quot;extension-test&quot;)\n    }\n    \n    val test by sourceSets\n    classpath = test.runtimeClasspath\n    testClassesDirs = test.output.classesDirs\n\n    // Enable console logging to show output in Stack Overflow answer; not\n    // needed in a real project.\n    testLogging {\n      events(&quot;passed&quot;, &quot;skipped&quot;, &quot;failed&quot;)\n    }\n  }\n\n  // Configure 'test' task to exclude tests for extensions. It will otherwise\n  // function as normal.\n  test {\n    // Doesn't require testing extensions, but should run those tests first if\n    // both tasks are requested.\n    mustRunAfter(testExtensions)\n    useJUnitPlatform {\n      excludeTags(&quot;extension-test&quot;, &quot;testkit-test&quot;)\n    }\n  }\n\n  check {\n    // Include testing extensions when running full check.\n    dependsOn(testExtensions)\n  }\n}\n\n</code></pre>\n<h2>Source code</h2>\n<h3>Extension Implementation</h3>\n<p><strong>SwingSetup.java</strong></p>\n<pre class=\"lang-java prettyprint-override\"><code>package com.example;\n\nimport java.lang.annotation.Documented;\nimport java.lang.annotation.ElementType;\nimport java.lang.annotation.Retention;\nimport java.lang.annotation.RetentionPolicy;\nimport java.lang.annotation.Target;\n\n@Documented\n@Retention(RetentionPolicy.RUNTIME)\n@Target({ElementType.ANNOTATION_TYPE, ElementType.METHOD})\npublic @interface SwingSetup {}\n</code></pre>\n<p><strong>EdtExtension.java</strong></p>\n<pre class=\"lang-java prettyprint-override\"><code>package com.example;\n\nimport static org.junit.platform.commons.support.AnnotationSupport.findAnnotatedMethods;\nimport static org.junit.platform.commons.support.HierarchyTraversalMode.TOP_DOWN;\nimport static org.junit.platform.commons.util.ExceptionUtils.throwAsUncheckedException;\n\nimport java.awt.AWTException;\nimport java.awt.Robot;\nimport java.lang.reflect.InvocationTargetException;\nimport java.lang.reflect.Method;\nimport java.util.List;\nimport javax.swing.SwingUtilities;\nimport org.junit.jupiter.api.extension.BeforeEachCallback;\nimport org.junit.jupiter.api.extension.DynamicTestInvocationContext;\nimport org.junit.jupiter.api.extension.ExecutableInvoker;\nimport org.junit.jupiter.api.extension.ExtensionContext;\nimport org.junit.jupiter.api.extension.ExtensionContext.Namespace;\nimport org.junit.jupiter.api.extension.InvocationInterceptor;\nimport org.junit.jupiter.api.extension.ReflectiveInvocationContext;\nimport org.junit.platform.commons.support.ModifierSupport;\n\npublic class EdtExtension implements BeforeEachCallback, InvocationInterceptor {\n\n  private static final Namespace NAMESPACE = Namespace.create(EdtExtension.class);\n  private static final Object ROBOT_KEY = Robot.class;\n\n  @Override\n  public void beforeEach(ExtensionContext context) throws Exception {\n    // Invoke all instance @SwingSetup methods\n    Object instance = context.getRequiredTestInstance();\n    List&lt;Method&gt; methods = getSetupMethods(context);\n    ExecutableInvoker invoker = context.getExecutableInvoker();\n    for (Method method : methods) {\n      // Using ExecutableInvoker allows parameter injection\n      SwingUtilities.invokeAndWait(() -&gt; invoker.invoke(method, instance));\n    }\n    getAwtRobot(context).waitForIdle();\n  }\n\n  @SuppressWarnings(&quot;unchecked&quot;)\n  private List&lt;Method&gt; getSetupMethods(ExtensionContext context) {\n    Class&lt;?&gt; testClass = context.getRequiredTestClass();\n    ExtensionContext.Store store = context.getRoot().getStore(NAMESPACE);\n    return store.getOrComputeIfAbsent(\n        testClass,\n        key -&gt; {\n          List&lt;Method&gt; methods = findAnnotatedMethods(key, SwingSetup.class, TOP_DOWN);\n          return methods.stream().filter(ModifierSupport::isNotStatic).toList();\n        },\n        List.class);\n  }\n\n  @Override\n  public void interceptTestMethod(\n      Invocation&lt;Void&gt; invocation,\n      ReflectiveInvocationContext&lt;Method&gt; invocationContext,\n      ExtensionContext extensionContext)\n      throws Throwable {\n    // Invoke @Test methods on EDT\n    invokeOnEdt(invocation, extensionContext);\n  }\n\n  @Override\n  public void interceptDynamicTest(\n      Invocation&lt;Void&gt; invocation,\n      DynamicTestInvocationContext invocationContext,\n      ExtensionContext extensionContext)\n      throws Throwable {\n    // Invoke DynamicNode tests on EDT\n    invokeOnEdt(invocation, extensionContext);\n  }\n\n  @Override\n  public void interceptTestTemplateMethod(\n      Invocation&lt;Void&gt; invocation,\n      ReflectiveInvocationContext&lt;Method&gt; invocationContext,\n      ExtensionContext extensionContext)\n      throws Throwable {\n    // Invoke @TestTemplate (e.g., @ParameterizedTest) methods on EDT\n    invokeOnEdt(invocation, extensionContext);\n  }\n\n  private void invokeOnEdt(Invocation&lt;Void&gt; invocation, ExtensionContext context) throws Throwable {\n    Robot robot = getAwtRobot(context);\n    try {\n      SwingUtilities.invokeAndWait(() -&gt; {\n        try {\n          invocation.proceed();\n        } catch (Throwable t) {\n          // Note: ExceptionUtils is considered internal JUnit API\n          throw throwAsUncheckedException(t);\n        }\n      });\n    } catch (InvocationTargetException ex) {\n      Throwable cause = ex.getCause();\n      throw cause != null ? cause : ex;\n    } finally {\n      robot.waitForIdle();\n    }\n  }\n\n  private Robot getAwtRobot(ExtensionContext context) {\n    ExtensionContext.Store store = context.getRoot().getStore(NAMESPACE);\n    return store.getOrComputeIfAbsent(ROBOT_KEY, this::createAwtRobot, Robot.class);\n  }\n\n  private Robot createAwtRobot(Object unused) {\n    try {\n      return new Robot();\n    } catch (AWTException ex) {\n      // Note: ExceptionUtils is considered internal JUnit API\n      throw throwAsUncheckedException(ex);\n    }\n  }\n}\n</code></pre>\n<h3>Mock Tests</h3>\n<p><strong>MockSwingTests.java</strong></p>\n<pre class=\"lang-java prettyprint-override\"><code>package com.example;\n\nimport static org.junit.jupiter.api.Assertions.assertFalse;\nimport static org.junit.jupiter.api.Assertions.assertTrue;\nimport static org.junit.jupiter.api.Assertions.fail;\n\nimport java.util.List;\nimport javax.swing.SwingUtilities;\nimport org.junit.jupiter.api.DisplayName;\nimport org.junit.jupiter.api.DynamicNode;\nimport org.junit.jupiter.api.DynamicTest;\nimport org.junit.jupiter.api.Tag;\nimport org.junit.jupiter.api.Test;\nimport org.junit.jupiter.api.TestFactory;\nimport org.junit.jupiter.api.extension.ExtendWith;\nimport org.junit.jupiter.params.ParameterizedTest;\nimport org.junit.jupiter.params.provider.ValueSource;\n\n@Tag(&quot;testkit-test&quot;)\n@ExtendWith(EdtExtension.class)\n@DisplayName(&quot;Test EdtExtension&quot;)\npublic class MockSwingTests {\n\n  private boolean setupGuiCalled;\n\n  @SwingSetup\n  void setupGui() {\n    assertTrue(SwingUtilities.isEventDispatchThread(), &quot;isEventDispatchThread&quot;);\n    assertFalse(setupGuiCalled, &quot;setupGui called previously&quot;);\n    setupGuiCalled = true;\n  }\n\n  @Test\n  @DisplayName(&quot;with @Test method&quot;)\n  void test() {\n    assertTrue(SwingUtilities.isEventDispatchThread(), &quot;isEventDispatchThread&quot;);\n    assertTrue(setupGuiCalled, &quot;setupGui was not called before test&quot;);\n  }\n\n  @TestFactory\n  List&lt;DynamicNode&gt; dynamicTest() {\n    assertFalse(SwingUtilities.isEventDispatchThread(), &quot;isEventDispatchThread&quot;);\n    assertTrue(setupGuiCalled, &quot;setupGuiCalled before dynamic test creation&quot;);\n    return List.of(DynamicTest.dynamicTest(&quot;with DynamicTest&quot;, () -&gt; {\n      assertTrue(SwingUtilities.isEventDispatchThread(), &quot;isEventDispatchThread&quot;);\n    }));\n  }\n\n  @ParameterizedTest(name = &quot;with @ParameterizedTest&quot;)\n  @ValueSource(strings = &quot;foo&quot;)\n  void templateTest(String param) {\n    assertTrue(SwingUtilities.isEventDispatchThread(), &quot;isEventDispatchThread&quot;);\n    assertTrue(setupGuiCalled, &quot;setupGui was not called before test&quot;);\n  }\n\n  @Test\n  @DisplayName(&quot;with failing test (FAILURE EXPECTED)&quot;)\n  void failingTest() {\n    fail(&quot;This should fail the test&quot;);\n  }\n}\n</code></pre>\n<h3>Extension Tests</h3>\n<p><strong>EdtExtensionTests.java</strong></p>\n<pre class=\"lang-java prettyprint-override\"><code>package com.example;\n\nimport static org.junit.platform.engine.discovery.DiscoverySelectors.selectClass;\nimport static org.junit.platform.testkit.engine.EventConditions.event;\nimport static org.junit.platform.testkit.engine.EventConditions.finishedSuccessfully;\nimport static org.junit.platform.testkit.engine.EventConditions.finishedWithFailure;\nimport static org.junit.platform.testkit.engine.EventConditions.test;\n\nimport java.util.function.Predicate;\nimport org.assertj.core.api.Condition;\nimport org.junit.jupiter.api.BeforeAll;\nimport org.junit.jupiter.api.DisplayName;\nimport org.junit.jupiter.api.Tag;\nimport org.junit.jupiter.api.Test;\nimport org.junit.jupiter.api.TestInstance;\nimport org.junit.jupiter.api.TestInstance.Lifecycle;\nimport org.junit.platform.testkit.engine.EngineExecutionResults;\nimport org.junit.platform.testkit.engine.EngineTestKit;\nimport org.junit.platform.testkit.engine.Events;\nimport org.opentest4j.AssertionFailedError;\n\n@Tag(&quot;extension-test&quot;)\n@TestInstance(Lifecycle.PER_CLASS)\n@DisplayName(&quot;Test MockSwingTests&quot;)\nclass EdtExtensionTests {\n\n  EngineExecutionResults results;\n  Events testEvents;\n\n  @BeforeAll\n  void executeTests() {\n    results = EngineTestKit.engine(&quot;junit-jupiter&quot;)\n        .selectors(selectClass(MockSwingTests.class))\n        .execute();\n    testEvents = results.testEvents();\n  }\n\n  @Test\n  @DisplayName(&quot;had 3 successful tests and 1 failed test&quot;)\n  void verifyStatistics() {\n    testEvents.assertStatistics(stats -&gt; stats.succeeded(3).failed(1));\n  }\n\n  @Test\n  @DisplayName(&quot;had test() succeed&quot;)\n  void verifyTest() {\n    var uniqueIdSubstring = &quot;method:test()&quot;;\n    testEvents\n        .assertThatEvents()\n        .haveExactly(1, event(test(uniqueIdSubstring), finishedSuccessfully()));\n  }\n\n  @Test\n  @DisplayName(&quot;had dynamicTest() succeed&quot;)\n  void verifyDynamicTest() {\n    var uniqueIdSubstring = &quot;test-factory:dynamicTest()&quot;;\n    testEvents\n        .assertThatEvents()\n        .haveExactly(1, event(test(uniqueIdSubstring), finishedSuccessfully()));\n  }\n\n  @Test\n  @DisplayName(&quot;had templateTest(String) succeed&quot;)\n  void verifyTemplateTest() {\n    var uniqueIdSubstring = &quot;test-template:templateTest(java.lang.String)&quot;;\n    testEvents\n        .assertThatEvents()\n        .haveExactly(1, event(test(uniqueIdSubstring), finishedSuccessfully()));\n  }\n\n  @Test\n  @DisplayName(&quot;had failingTest() fail&quot;)\n  void verifyFailingTest() {\n    var uniqueIdSubstring = &quot;method:failingTest()&quot;;\n    testEvents\n        .assertThatEvents()\n        .haveExactly(1, event(test(uniqueIdSubstring), finishedWithFailure(unwrappedError())));\n  }\n\n  private Condition&lt;Throwable&gt; unwrappedError() {\n    Predicate&lt;Throwable&gt; predicate = th -&gt; th instanceof AssertionFailedError;\n    String description = &quot;unwrapped test failure from InvocationTargetException&quot;;\n    return new Condition&lt;&gt;(predicate, description);\n  }\n}\n\n</code></pre>\n<h2>Output</h2>\n<p>From executing <code>./gradlew check --console plain</code>:</p>\n<pre class=\"lang-none prettyprint-override\"><code>&gt; Task :compileJava\n&gt; Task :processResources NO-SOURCE\n&gt; Task :classes\n&gt; Task :compileTestJava\n&gt; Task :processTestResources NO-SOURCE\n&gt; Task :testClasses\n\n&gt; Task :testExtensions\n\nTest MockSwingTests &gt; had 3 successful tests and 1 failed test PASSED\n\nTest MockSwingTests &gt; had test() succeed PASSED\n\nTest MockSwingTests &gt; had dynamicTest() succeed PASSED\n\nTest MockSwingTests &gt; had failingTest() fail PASSED\n\nTest MockSwingTests &gt; had templateTest(String) succeed PASSED\n\n&gt; Task :test\n&gt; Task :check\n\nBUILD SUCCESSFUL in 5s\n4 actionable tasks: 4 executed\n</code></pre>\n<hr />\n<h1>Maven</h1>\n<p>Here's a POM that's roughly equivalent to the above Gradle build script:</p>\n<pre class=\"lang-xml prettyprint-override\"><code>&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;\n\n&lt;project xmlns=&quot;http://maven.apache.org/POM/4.0.0&quot; xmlns:xsi=&quot;http://www.w3.org/2001/XMLSchema-instance&quot;\n  xsi:schemaLocation=&quot;http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd&quot;&gt;\n  &lt;modelVersion&gt;4.0.0&lt;/modelVersion&gt;\n\n  &lt;groupId&gt;com.example&lt;/groupId&gt;\n  &lt;artifactId&gt;example&lt;/artifactId&gt;\n  &lt;version&gt;0.1.0-SNAPSHOT&lt;/version&gt;\n\n  &lt;properties&gt;\n    &lt;project.build.sourceEncoding&gt;UTF-8&lt;/project.build.sourceEncoding&gt;\n    &lt;maven.compiler.release&gt;24&lt;/maven.compiler.release&gt;\n  &lt;/properties&gt;\n\n  &lt;dependencyManagement&gt;\n    &lt;dependencies&gt;\n      &lt;dependency&gt;\n        &lt;groupId&gt;org.junit&lt;/groupId&gt;\n        &lt;artifactId&gt;junit-bom&lt;/artifactId&gt;\n        &lt;version&gt;5.13.4&lt;/version&gt;\n        &lt;scope&gt;import&lt;/scope&gt;\n        &lt;type&gt;pom&lt;/type&gt;\n      &lt;/dependency&gt;\n    &lt;/dependencies&gt;\n  &lt;/dependencyManagement&gt;\n\n  &lt;dependencies&gt;\n    &lt;dependency&gt;\n      &lt;groupId&gt;org.junit.jupiter&lt;/groupId&gt;\n      &lt;artifactId&gt;junit-jupiter&lt;/artifactId&gt;\n      &lt;scope&gt;test&lt;/scope&gt;\n    &lt;/dependency&gt;\n    &lt;dependency&gt;\n      &lt;groupId&gt;org.junit.platform&lt;/groupId&gt;\n      &lt;artifactId&gt;junit-platform-testkit&lt;/artifactId&gt;\n      &lt;scope&gt;test&lt;/scope&gt;\n    &lt;/dependency&gt;\n  &lt;/dependencies&gt;\n\n  &lt;build&gt;\n    &lt;plugins&gt;\n      &lt;plugin&gt;\n        &lt;groupId&gt;org.apache.maven.plugins&lt;/groupId&gt;\n        &lt;artifactId&gt;maven-surefire-plugin&lt;/artifactId&gt;\n        &lt;version&gt;3.5.3&lt;/version&gt;\n        &lt;executions&gt;\n\n          &lt;execution&gt;\n            &lt;id&gt;test-extensions&lt;/id&gt;\n            &lt;phase&gt;test&lt;/phase&gt;\n            &lt;goals&gt;\n              &lt;goal&gt;test&lt;/goal&gt;\n            &lt;/goals&gt;\n            &lt;configuration&gt;\n              &lt;groups&gt;extension-test&lt;/groups&gt;\n            &lt;/configuration&gt;\n          &lt;/execution&gt;\n\n          &lt;execution&gt;\n            &lt;id&gt;default-test&lt;/id&gt;\n            &lt;configuration&gt;\n              &lt;excludedGroups&gt;extension-test,testkit-test&lt;/excludedGroups&gt;\n            &lt;/configuration&gt;\n          &lt;/execution&gt;\n\n        &lt;/executions&gt;\n      &lt;/plugin&gt;\n    &lt;/plugins&gt;\n  &lt;/build&gt;\n&lt;/project&gt;\n</code></pre>\n<p>It creates separate configurations to separate testing the extensions from running the &quot;real&quot; tests. However, I don't know how to get the <em>default</em> execution to run after a custom execution when both are tied to the same phase. Though in Maven 4 you can make use of the <code>test[N]</code> phase syntax, where <code>N</code> is an integer that specifies execution order. Or you can use the <code>before:test</code> phase. Neither approach works in Maven 3.</p>\n",
+    "score" : 2,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 8532578,
+      "reputation" : 49884,
+      "user_id" : 6395627,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Slaw",
+      "link" : "https://stackoverflow.com/users/6395627/slaw"
+    },
+    "creation_date" : 1756505203,
+    "last_activity_date" : 1756548138,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140702837,
+    "post_id" : 79750346,
+    "body" : "@S&#246;ren  The <i>Vintage</i> engine is meant to be a temporary device for transitioning old tests written in JUnit 3 or 4 to <i>Jupiter</i> or other JUnit 5/6 compatible engine. In JUnit 6, use of <i>Vintage</i> trigger warnings of deprecation. See <a href=\"https://docs.junit.org/6.0.0-M1/release-notes/#release-notes-6.0.0-M1-junit-vintage\" rel=\"nofollow noreferrer\">Release Notes</a>.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 322981,
+      "reputation" : 346951,
+      "user_id" : 642706,
+      "user_type" : "registered",
+      "accept_rate" : 58,
+      "profile_image" : "https://i.sstatic.net/ZWEI3.jpg?s=256",
+      "display_name" : "Basil Bourque",
+      "link" : "https://stackoverflow.com/users/642706/basil-bourque"
+    },
+    "creation_date" : 1756505967,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140702834,
+    "post_id" : 79750346,
+    "body" : "Title is vague. Rewrite to be specific and descriptive. The first sentence of <a href=\"https://stackoverflow.com/a/79750810/642706\">this Answer</a> should not be necessary.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 322981,
+      "reputation" : 346951,
+      "user_id" : 642706,
+      "user_type" : "registered",
+      "accept_rate" : 58,
+      "profile_image" : "https://i.sstatic.net/ZWEI3.jpg?s=256",
+      "display_name" : "Basil Bourque",
+      "link" : "https://stackoverflow.com/users/642706/basil-bourque"
+    },
+    "creation_date" : 1756505620,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140702831,
+    "post_id" : 79750346,
+    "body" : "Reminder: Define your terms and abbreviations on first use. I made an edit to do so for you.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 322981,
+      "reputation" : 346951,
+      "user_id" : 642706,
+      "user_type" : "registered",
+      "accept_rate" : 58,
+      "profile_image" : "https://i.sstatic.net/ZWEI3.jpg?s=256",
+      "display_name" : "Basil Bourque",
+      "link" : "https://stackoverflow.com/users/642706/basil-bourque"
+    },
+    "creation_date" : 1756505574,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140702420,
+    "post_id" : 79750346,
+    "body" : "@pebbleunit <i>&quot;you have no choice&quot;</i> <code>EngineTestKit</code> looks promising. <i>&quot;other options&quot;</i> I&#39;m not sure what exactly you meant by &quot;other options&quot;",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2683,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "creation_date" : 1756492076,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140702416,
+    "post_id" : 79750346,
+    "body" : "@S&#246;ren I can, but I don&#39;t believe I should. The artifact you mentioned, it believe, is for backwards compatibility only, not for using discontinued features",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2683,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "creation_date" : 1756491937,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140702414,
+    "post_id" : 79750346,
+    "body" : "@talex I don&#39;t get you. My annotation processor simply runs test code in the EDT. It has nothing to do with how JUnit defines test failure (nor can it affect it). How else are you supposed to test a JUnit extension like that?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2683,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "creation_date" : 1756491852,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140701973,
+    "post_id" : 79750346,
+    "body" : "Your problem is that you test is designed wrong. You either need to change Your annotation to configure it with expected exception. Or get rid of it completely and wrap tested code in runnable and pass to test harness.",
+    "score" : 3,
+    "owner" : {
+      "account_id" : 4497436,
+      "reputation" : 20786,
+      "user_id" : 3656904,
+      "user_type" : "registered",
+      "accept_rate" : 67,
+      "profile_image" : "https://www.gravatar.com/avatar/8bdbd1f89f8907e8e8b15ab88c084c65?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "talex",
+      "link" : "https://stackoverflow.com/users/3656904/talex"
+    },
+    "creation_date" : 1756480543,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140701917,
+    "post_id" : 79750346,
+    "body" : "You have no choice but to mix it if you want this functionality that is discontinued in JUnit5. Otherwise, remove JUnit5 entirely and use JUnit4. There are some other options to consider <a href=\"https://stackoverflow.com/a/53831306/16034206\">stackoverflow.com/a/53831306/16034206</a> <a href=\"https://medium.com/@igorski/mixing-junit-4-and-junit-5-tests-3a702f1842ae\" rel=\"nofollow noreferrer\">medium.com/@igorski/&hellip;</a>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 21724606,
+      "reputation" : 1431,
+      "user_id" : 16034206,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/MRBdT.jpg?s=256",
+      "display_name" : "pebble unit",
+      "link" : "https://stackoverflow.com/users/16034206/pebble-unit"
+    },
+    "creation_date" : 1756479791,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140701785,
+    "post_id" : 79750346,
+    "body" : "take a look <a href=\"https://stackoverflow.com/a/44774816/214525\">here</a> for how this is done in junit5.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 74704,
+      "reputation" : 11970,
+      "user_id" : 214525,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/7684a686e233476c6713ced10a9cef41?s=256&d=identicon&r=PG",
+      "display_name" : "f1sh",
+      "link" : "https://stackoverflow.com/users/214525/f1sh"
+    },
+    "creation_date" : 1756477071,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140701729,
+    "post_id" : 79750346,
+    "body" : "@pebbleunit what if we have JUnit 5? It seems a bad idea to mix two JUnit libraries together",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2683,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "creation_date" : 1756475911,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140701710,
+    "post_id" : 79750346,
+    "body" : "I think you ll need to use Junit4 for that. It allowed you to provide an expected exception in the Test annotation, but seems to be removed in Junit5 <code>@Test(expected = NullPointerException.class)</code>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 21724606,
+      "reputation" : 1431,
+      "user_id" : 16034206,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/MRBdT.jpg?s=256",
+      "display_name" : "pebble unit",
+      "link" : "https://stackoverflow.com/users/16034206/pebble-unit"
+    },
+    "creation_date" : 1756475548,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79750810" : [ {
+      "comment_id" : 140710307,
+      "post_id" : 79750810,
+      "body" : "I would say the tests are still worth something. They would at least indicate to you that other failing tests may be due to a fault in the extension instead of your production code. Though if you can&#39;t guarantee the extension tests run first then you may just want to run all unit test at the same time.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 8532578,
+        "reputation" : 49884,
+        "user_id" : 6395627,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Slaw",
+        "link" : "https://stackoverflow.com/users/6395627/slaw"
+      },
+      "creation_date" : 1756845141,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140708852,
+      "post_id" : 79750810,
+      "body" : "Too bad, we use Maven 3. I guess I would have to do without those tests after all, wouldn&#39;t I?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10187542,
+        "reputation" : 2683,
+        "user_id" : 20692967,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+        "display_name" : "Sergey Zolotarev",
+        "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+      },
+      "creation_date" : 1756808669,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140703321,
+      "post_id" : 79750810,
+      "body" : "I&#39;ve updated the <code>build.gradle.kts</code> file to show how you can create different tasks to run different tests. That&#39;s at least one way to do it in Gradle. I also added a Maven POM to the end of my answer showing a similar way to do this in Maven.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 8532578,
+        "reputation" : 49884,
+        "user_id" : 6395627,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Slaw",
+        "link" : "https://stackoverflow.com/users/6395627/slaw"
+      },
+      "creation_date" : 1756548491,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140703242,
+      "post_id" : 79750810,
+      "body" : "Thank you. Does it mean I have to involve my build automation tool? Can it be done with Maven?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10187542,
+        "reputation" : 2683,
+        "user_id" : 20692967,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+        "display_name" : "Sergey Zolotarev",
+        "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+      },
+      "creation_date" : 1756543327,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

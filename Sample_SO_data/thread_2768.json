@@ -1,0 +1,124 @@
+{
+  "question" : {
+    "question_id" : 79596890,
+    "title" : "Durable subscriptions using fully-qualified-queue-names in ActiveMQ Artemis",
+    "body" : "<p>I am using an FQQN to subscribe to a wildcard address. My goal is essentially to mimic the behavior of a durable, shared subscription to a JMS topic by using an FQQN. I have been able to get the behavior of a shared subscription, but I can't find a way to make the subscription durable. I am using the Artemis Core Java client library, and it seems that when it closes a consumer of a FQQN, it explicitly deletes the subscription queue.</p>\n<p>Is there a way around this behavior? How do I make a &quot;persistent&quot; subscription queue?</p>\n<p>The client lib is <code>org.apache.activemq:artemis-core-client:2.40.0</code>. To create the subscription queue I am calling:</p>\n<pre><code>var myTopic = session.createTopic(&quot;application.event.#::application.processor&quot;);\n...\nsession.createConsumer(myTopic);\n</code></pre>\n<p>The relevant <code>broker.xml</code> configuration options: (I am using the <code>apache/activemq-artemis:latest-alpine</code> Docker container with the default configuration. The current <code>latest-alpine</code> is 2.40.0.)</p>\n<pre class=\"lang-xml prettyprint-override\"><code>&lt;auto-create-queues&gt;true&lt;/auto-create-queues&gt;\n&lt;auto-create-addresses&gt;true&lt;/auto-create-addresses&gt;\n&lt;auto-delete-queues&gt;false&lt;/auto-delete-queues&gt;\n&lt;auto-delete-addresses&gt;false&lt;/auto-delete-addresses&gt;\n</code></pre>\n<p>I see in the <a href=\"https://activemq.apache.org/components/artemis/documentation/2.0.0/address-model.html\" rel=\"nofollow noreferrer\">address model documentation</a> that it is possible to make the subscription queues durable by pre-configuring them in <code>broker.xml</code>. Is it possible to make them durable when they are automatically created by a client?</p>\n<p>Edit: Here is a snippet demonstrating that the created subscriptions are not durable.</p>\n<pre class=\"lang-java prettyprint-override\"><code>import jakarta.jms.JMSException;\nimport jakarta.jms.Message;\nimport jakarta.jms.MessageListener;\nimport org.apache.activemq.artemis.jms.client.ActiveMQConnectionFactory;\n\nclass Scratch {\n    public static void main(String[] args) {\n        try {\n            testMessagesDeliveredWhileConsumerActive(args);\n            testMessagesDeliveredWhileConsumerNotActive(args);\n        } catch (Exception e) {\n            e.printStackTrace();\n        }\n    }\n\n    public static void testMessagesDeliveredWhileConsumerActive(String[] args) throws Exception {\n        var connectionFactory = new ActiveMQConnectionFactory(&quot;tcp://localhost:61616&quot;, &quot;admin&quot;, &quot;admin&quot;);\n        var connection = connectionFactory.createConnection();\n        var session = connection.createSession();\n\n        //Create the topic + subscription queue FQQN\n        var wildcardTopic = session.createTopic(&quot;application.event.#::application.processor&quot;);\n\n        connection.start();\n\n        //Set up the consumer\n        var wildcardConsumer = session.createConsumer(wildcardTopic);\n        wildcardConsumer.setMessageListener(new MessageListener() {\n            @Override\n            public void onMessage(Message message) {\n                try {\n                    //Something is printed\n                    System.out.println(&quot;Consumer first: &quot; + message.getJMSMessageID());\n                } catch (JMSException e) {\n                    throw new RuntimeException(e);\n                }\n            }\n        });\n\n        //Set up the producer\n        var producer = session.createProducer(session.createTopic(&quot;application.event.notification.test&quot;));\n        producer.send(session.createTextMessage(&quot;Hello World!&quot;));\n\n        //Just to make sure the listener processes all messages\n        Thread.sleep(5000);\n\n        //Simulate application closing\n        wildcardConsumer.close();\n        session.close();\n        connection.stop();\n    }\n\n    public static void testMessagesDeliveredWhileConsumerNotActive(String[] args) throws Exception {\n        var connectionFactory = new ActiveMQConnectionFactory(&quot;tcp://localhost:61616&quot;, &quot;admin&quot;, &quot;admin&quot;);\n        var connection = connectionFactory.createConnection();\n        var session = connection.createSession();\n\n        // Create the topic to produce to (the wildcard address already exists on the broker from our previous test)\n        // If the subscription queue was durable, messages sent to this topic should end up on the application.processor queue\n        var eventTopic = session.createTopic(&quot;application.event.notification.test&quot;);\n\n        connection.start();\n\n        // Setup the producer\n        var producer = session.createProducer(eventTopic);\n        producer.send(session.createTextMessage(&quot;Hello World!&quot;));\n\n        //Set up the consumer\n        var wildcardConsumer = session.createConsumer(session.createTopic(&quot;application.event.#::application.processor&quot;));\n        wildcardConsumer.setMessageListener(new MessageListener() {\n            @Override\n            public void onMessage(Message message) {\n                try {\n                    //Nothing is printed\n                    System.out.println(&quot;Producer first: &quot; + message.getJMSMessageID());\n                } catch (JMSException e) {\n                    throw new RuntimeException(e);\n                }\n            }\n        });\n\n        //Just to make sure the listener processes all messages\n        Thread.sleep(5000);\n\n        wildcardConsumer.close();\n        session.close();\n        connection.stop();\n    }\n}\n</code></pre>\n",
+    "tags" : [ "java", "activemq-artemis" ],
+    "owner" : {
+      "account_id" : 21214520,
+      "reputation" : 33,
+      "user_id" : 15602394,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-CV96HxvAHtg/AAAAAAAAAAI/AAAAAAAAAAA/AMZuucl5E7NoLiMbz6SDGMYdu_SMms87-g/s96-c/s256-rj/photo.jpg",
+      "display_name" : "Apion",
+      "link" : "https://stackoverflow.com/users/15602394/apion"
+    },
+    "is_answered" : false,
+    "view_count" : 134,
+    "answer_count" : 0,
+    "score" : 0,
+    "last_activity_date" : 1746813068,
+    "creation_date" : 1745856987,
+    "link" : "https://stackoverflow.com/questions/79596890/durable-subscriptions-using-fully-qualified-queue-names-in-activemq-artemis",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140411986,
+    "post_id" : 79596890,
+    "body" : "(Out of curiosity, I did reproduce your CLI stuff though)  I did some poking into the actual code of the Core client a bit ago, and I believe the issue is that when a FQQN subscription is made via the Core client, it saves the name of the subscription queue, and when closing the message consumer (<code>MessageConsumer.close</code>) it does an explicit <code>deleteQueue</code> call on the saved address. Best guess as to why it doesn&#39;t happen with the CLI is the consumer close method isn&#39;t actually called when doing a CTRL+C.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 21214520,
+      "reputation" : 33,
+      "user_id" : 15602394,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-CV96HxvAHtg/AAAAAAAAAAI/AAAAAAAAAAA/AMZuucl5E7NoLiMbz6SDGMYdu_SMms87-g/s96-c/s256-rj/photo.jpg",
+      "display_name" : "Apion",
+      "link" : "https://stackoverflow.com/users/15602394/apion"
+    },
+    "creation_date" : 1746813181,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140411972,
+    "post_id" : 79596890,
+    "body" : "I did not attempt to reproduce your cli example, since its not an acceptable solution in  my environment, and I found 2 other solutions that I think would suit me better. I have edited my original post to show a snippet from my testing that suggested they were not durable. This is a much simpler version of the &quot;real&quot; code I am using, but it shows the issue just as well",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 21214520,
+      "reputation" : 33,
+      "user_id" : 15602394,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-CV96HxvAHtg/AAAAAAAAAAI/AAAAAAAAAAA/AMZuucl5E7NoLiMbz6SDGMYdu_SMms87-g/s96-c/s256-rj/photo.jpg",
+      "display_name" : "Apion",
+      "link" : "https://stackoverflow.com/users/15602394/apion"
+    },
+    "creation_date" : 1746812842,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140396964,
+    "post_id" : 79596890,
+    "body" : "I discovered that doing the queue creation through the management API allows them to be durable. We decided to either migrate to the JMS 2.0 methods, or use the management API.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 21214520,
+      "reputation" : 33,
+      "user_id" : 15602394,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-CV96HxvAHtg/AAAAAAAAAAI/AAAAAAAAAAA/AMZuucl5E7NoLiMbz6SDGMYdu_SMms87-g/s96-c/s256-rj/photo.jpg",
+      "display_name" : "Apion",
+      "link" : "https://stackoverflow.com/users/15602394/apion"
+    },
+    "creation_date" : 1746450720,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140377316,
+    "post_id" : 79596890,
+    "body" : "I would prefer not to have to specify a client ID for every instance of the application. More opportunities for misconfiguration. I will do that if I must though.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 21214520,
+      "reputation" : 33,
+      "user_id" : 15602394,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-CV96HxvAHtg/AAAAAAAAAAI/AAAAAAAAAAA/AMZuucl5E7NoLiMbz6SDGMYdu_SMms87-g/s96-c/s256-rj/photo.jpg",
+      "display_name" : "Apion",
+      "link" : "https://stackoverflow.com/users/15602394/apion"
+    },
+    "creation_date" : 1745858884,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140377269,
+    "post_id" : 79596890,
+    "body" : "Auto create queues and auto create addresses are set to true, auto delete queues and auto delete addresses are set to false (I am using the alpine docker container with default conf)",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 21214520,
+      "reputation" : 33,
+      "user_id" : 15602394,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-CV96HxvAHtg/AAAAAAAAAAI/AAAAAAAAAAA/AMZuucl5E7NoLiMbz6SDGMYdu_SMms87-g/s96-c/s256-rj/photo.jpg",
+      "display_name" : "Apion",
+      "link" : "https://stackoverflow.com/users/15602394/apion"
+    },
+    "creation_date" : 1745857981,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140377261,
+    "post_id" : 79596890,
+    "body" : "The client lib is <code>org.apache.activemq:artemis-core-client:2.40.0</code>.   To create the subscription queue, I am calling <code>session.createTopic(application.event.#::application.process&zwnj;&#8203;or)</code>, then calling <code>session.createConsumer()</code> on the created topic.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 21214520,
+      "reputation" : 33,
+      "user_id" : 15602394,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-CV96HxvAHtg/AAAAAAAAAAI/AAAAAAAAAAA/AMZuucl5E7NoLiMbz6SDGMYdu_SMms87-g/s96-c/s256-rj/photo.jpg",
+      "display_name" : "Apion",
+      "link" : "https://stackoverflow.com/users/15602394/apion"
+    },
+    "creation_date" : 1745857853,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

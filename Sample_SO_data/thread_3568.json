@@ -1,0 +1,292 @@
+{
+  "question" : {
+    "question_id" : 79540005,
+    "title" : "Does Java &quot;type erasure&quot; make it impossible to eliminate unchecked calls for e.g. Consumer&lt;Boolean&gt;?",
+    "body" : "<p>I am designing a follow-on course to AP <em>Computer Science A</em> (which is taught in Java). My goal is to teach high school seniors how to implement a simple programming language from the ground up.</p>\n<p>I am a professional Lisp and embedded systems engineer. I learned Java before it had Generics or Lambda expressions.</p>\n<p>While porting my BASIC byte-code interpreter from Python to Java, I found that <em>calling</em> Lambda expressions invariably leads to &quot;unchecked call&quot; warnings. So, I enhanced my dispatcher to know about the 13 function types it could <code>run</code>, <code>get</code>, <code>accept</code>, or <code>apply</code>. But, try as I might, I couldn't figure out how to make Java's type system happy.</p>\n<p>LLM offers a truly questionable solution: Google Gemini offers a bogus definition of <code>accept_boolean_consumer</code> (see code below) and goes on to &quot;explain&quot; that because of &quot;type erasure,&quot; I would need to write a dozen &quot;helper functions&quot; like this.</p>\n<p>Is it even possible to avoid an &quot;unchecked cast&quot; when dealing with types like <code>Consumer&lt;Boolean&gt;</code> whose specifics are erased before runtime?</p>\n<pre class=\"lang-java prettyprint-override\"><code>// Minimum viable example of trying to avoid &quot;unchecked cast&quot;\n\nimport java.util.Arrays;\nimport java.util.ArrayList;\nimport java.util.Collections;\nimport java.util.HashMap;\nimport java.util.List;\nimport java.util.Map;\nimport java.lang.Runnable;\nimport java.util.function.Consumer;\nimport java.util.function.Function;\n\npublic class MinimumViableExample {\n\n    private static final int VM_STACK_SIZE = 64;\n\n    // Argument stack\n    private static Object[] vm_stack = new Object[VM_STACK_SIZE];\n    private static int vm_stack_ptr = 0;\n\n    // Function type signatures (not all used in this example)\n    private enum Type {SIG_____, SIG_b___, SIG_i___, SIG_o___,\n                       SIG_ii__, SIG_so__, SIG_sii_, SIG_Iii_,\n                       SIG____s, SIG_s__i, SIG_i__i, SIG_i__O,\n                       SIG_s__o, SIG_ii_i, SIG_si_o} //signatures\n\n    // Main: push 2 ints on stack, multiply them, leave result on stack\n    public static void main (String[] args) {\n        Object[] bcode = new Object[]{&quot;sequence&quot;,\n                                  new Object[]{&quot;vm-push-lit&quot;, 10},\n                                  new Object[]{&quot;vm-push-lit&quot;, 2},\n                                  new Object[]{&quot;vm-funcall&quot;, &quot;*&quot;}};\n\n        eval_bcode(bcode);\n        System.out.printf(&quot;10*2 = %d\\n&quot;, (Integer) vm_stack[0]);\n    }\n\n    // This is the &quot;helper function&quot; proposed as solution by LLM\n    private static void accept_boolean_consumer (Object function, Object first_arg)\n    {\n        if (function instanceof Consumer) {\n            Consumer c_function = (Consumer) function;\n            //if (c_function instanceof Consumer&lt;Boolean&gt;) { // Bogus instanceof type\n                ((Consumer&lt;Boolean&gt;) c_function).accept((Boolean) first_arg);\n                //}                                                            \n        }}\n\n    // This is the core of the interpreter\n    private static void eval_bcode (Object bcode) {\n        if (bcode == null || ((Object[]) bcode).length == 0) {\n            return;\n        } else if (bcode instanceof Object) {\n            Object operator = ((Object[]) bcode)[0];\n            switch (operator.toString()) {\n                case &quot;sequence&quot;:    //Execute sequence of commands\n                    eval_bcode_sequence(get_bcode_list(bcode));\n                    break;\n                case &quot;vm-push-lit&quot;: //Push literal onto the stack\n                    vm_push_lit(((Object[]) bcode)[1]);\n                    break;\n                case &quot;vm-funcall&quot;:  //Call function, push result\n                    vm_funcall(((Object[]) bcode)[1].toString());\n                    break;\n            }}}\n\n    // Returns copy of bcode argument, stripped of first element\n    private static Object[] get_bcode_list (Object bcode) {\n        Object[] bcodeList = new Object[((Object[]) bcode).length -1];\n        System.arraycopy(((Object)bcode), 1, bcodeList, 0, ((Object[]) bcode).length -1);\n        return bcodeList;\n    }\n\n    // Evaluate a list of code commands\n    private static void eval_bcode_sequence (Object[] bcode_list) {\n        for (Object bcode : bcode_list) {\n            eval_bcode(bcode);\n        }}\n\n    //Push literal trampoline (vm_push shared by functions not in this example)\n    private static void vm_push_lit (Object x) {\n        vm_push(x);\n    }\n\n    //Does actual work of stack push\n    private static void vm_push (Object x) {\n        vm_stack[vm_stack_ptr++] = x;\n    }\n\n    //Does actual work of stack pop\n    private static Object vm_pop () {\n        return vm_stack[--vm_stack_ptr];\n    }\n\n    //Core of function dispatch, where all the unchecked casts are\n    private static void vm_funcall (String fun_name) {\n        Object[] fun_data        = (Object[]) fun_n_args(fun_name);\n        int n_args               = (int)      fun_data[0];\n        Type typesig             = (Type)     fun_data[1];\n        boolean side_effect_only = (boolean)  fun_data[2];\n        Object function          = (Object)   fun_data[3];\n        Object[] arglist         = new Object[n_args];\n        for (int x = 0; x &lt; n_args; x++) {\n            arglist[x] = vm_pop();\n        }\n        Object value = null;\n        if (side_effect_only) {\n            switch (typesig) {\n                case SIG_____:\n                    ((Runnable) function).run();\n                    break;\n                case SIG_b___:\n                    accept_boolean_consumer(function, arglist[0]);   \n                    break;\n                //Several more cases omitted...\n            }\n        } else {\n            // These functions return a value (push onto stack below)\n            switch (typesig) {\n                case SIG_i__i:\n                    value = (Integer) ((Function) function).apply((Integer) arglist[0]);\n                    break;\n                case SIG_ii_i:\n                    value = (Integer) ((BiFunction) function).apply((Integer) arglist[0], (Integer) arglist[1]);\n                    break;\n                //Several more cases omitted...\n            }}\n        if (!side_effect_only) {\n            vm_push(value);\n        }}\n\n    //Table maps function names to {n_args, type_sig, no_return_val, implementation}\n    private static Object[] fun_n_args (String fun_name) {\n        switch (fun_name) {\n            case &quot;1-&quot;:  //pop, subtract 1, push result\n                return new Object[] {1, Type.SIG_i__i, false, (Function&lt;Integer, Integer&gt;) (x) -&gt; x - 1 };\n            case &quot;*&quot;:   //pop2, multiply, push result\n                return new Object[] {2, Type.SIG_ii_i, false, (BiFunction&lt;Integer, Integer, Integer&gt;) (x, y) -&gt; x * y };\n            // Many cases omitted...\n            default:\n                System.out.println(fun_name + &quot; is not supported&quot;);\n                return null;\n        }}\n\n    @FunctionalInterface\n    private interface BiFunction&lt;T, U, R&gt; {\n        R apply(T t, U u);\n    }\n}\n</code></pre>\n",
+    "tags" : [ "java", "lambda", "type-erasure", "unchecked-cast" ],
+    "owner" : {
+      "account_id" : 4542244,
+      "reputation" : 25,
+      "user_id" : 6047455,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2f81699f742167c3b70bae8c0bec303c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "mcpublic",
+      "link" : "https://stackoverflow.com/users/6047455/mcpublic"
+    },
+    "is_answered" : true,
+    "view_count" : 141,
+    "closed_date" : 1743163032,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1743162510,
+    "creation_date" : 1743108358,
+    "link" : "https://stackoverflow.com/questions/79540005/does-java-type-erasure-make-it-impossible-to-eliminate-unchecked-calls-for-e-g",
+    "closed_reason" : "Needs details or clarity"
+  },
+  "answers" : [ {
+    "answer_id" : 79541344,
+    "question_id" : 79540005,
+    "body" : "<p>The code you pasted is incredibly non-java like. It's code that java as a programming language just doesn't cater to. It's highly untyped and smells of python/javascript style coding. Which is fine enough, but.. you want a language like python or javascript when writing in that style.</p>\n<p>Java is highly nominal. Specifically in regards to the code you pasted:</p>\n<ul>\n<li>Types <strong>should always have names if possible</strong></li>\n<li>You really don't want to ever delve into <strong>a stringly based type system</strong>.</li>\n<li>Data structures should be <strong>homogenous</strong> - they should contain the same type.</li>\n</ul>\n<p>Your <code>bcode</code> array fails all these rules. The type of them is <code>Object</code> which is essentially useless, the operation represented by a bcode is stringly typed, and the data structure isn't homogenous; some commands are a string, others are an array of objects. And those arrays aren't homogenous either; it's a combination of an operation name such as <code>&quot;vm-push-lit&quot;</code> and its parameters.</p>\n<p>I made a logical leap here: Technically, the point is that <em>semantically</em> it has to be homogenous. If you can explain it to another human in a single sentence then it probably is homogenous, even if technically it isn't. For example, while <code>new Object[] { &quot;operation-name&quot;, someIntParam, someDoubleParam }</code> certainly isn't homogenous, just <code>new Object[] { someIntParam, someDoubleParam }</code> probably is - even though the params aren't homogenous either (one is an int, the other a double), conceptually it's &quot;an array containing the parameters&quot;, i.e. every element inside it is a parameter: Semantically it's homogenous.</p>\n<p>Taking these lessons into account requires a complete redesign. Once you do that right, the generics issues disappear as a side-effect. There's a lesson in that: Generally if generics get in the way and there is no obvious way to solve it, that usually means the entire design is problematic.</p>\n<p>A few other minor niggles have been fixed. We write <code>identifierNamesLikeThis</code> in java, not <code>like_this</code>. When in rome, write like romans do. If I write some python code and start <code>namingLikeThis</code> I would get rightfully chewed out about failure to adhere to the conventions over there just the same.</p>\n<pre class=\"lang-java prettyprint-override\"><code>import java.util.List;\nimport java.util.function.*;\n\npublic class FixedMinimumViableExample {\n    private static final int VM_STACK_SIZE = 64;\n    \n    // Argument stack\n    static final class VmStack {\n        private Object[] vmStack = new Object[VM_STACK_SIZE];\n        private int vmStackPtr = 0;\n        \n        public int getInt(int idx) {\n            return (Integer) vmStack[idx];\n        }\n        \n        public void pushInt(int lit) {\n            vmStack[vmStackPtr++] = lit;\n        }\n        \n        public int popInt() {\n            return (Integer) vmStack[--vmStackPtr];\n        }\n    }\n    \n    interface InstrProcessor {\n        void apply(VmStack stack);\n    }\n    \n    static InstrProcessor ii2i(IntBinaryOperator op) {\n        return stack -&gt; {\n            int b = stack.popInt();\n            int a = stack.popInt();\n            stack.pushInt(op.applyAsInt(a, b));\n        };\n    }\n    \n    static InstrProcessor i2i(IntUnaryOperator op) {\n        return stack -&gt; stack.pushInt(op.applyAsInt(stack.popInt()));\n    }\n    \n    static InstrProcessor i(IntConsumer op) {\n        return stack -&gt; op.accept(stack.popInt());\n    }\n    \n    static final class Program {\n        private List&lt;Instruction&gt; instructions;\n        private int instrPointer;\n        \n        public Program(List&lt;Instruction&gt; instructions) {\n            this.instructions = instructions;\n        }\n        \n        public Instruction next() {\n            if (instrPointer &gt;= instructions.size()) return null;\n            return instructions.get(instrPointer++);\n        }\n        \n        public void evalNext(VmStack stack) {\n            next().eval(this, stack);\n        }\n    }\n    \n    sealed interface Instruction {\n        void eval(Program program, VmStack vmStack);\n    }\n    \n    record Sequence() implements Instruction {\n        @Override public void eval(Program program, VmStack vmStack) {\n            while (true) {\n                Instruction next = program.next();\n                if (next == null) break;\n                System.out.println(&quot;EVAL: &quot; + next); // for debugging\n                next.eval(program, vmStack);\n            }\n        }\n    }\n    \n    record VmPushLit(int lit) implements Instruction {\n        @Override public void eval(Program program, VmStack vmStack) {\n            vmStack.pushInt(lit);\n        }\n    }\n    \n    record VmFuncAll(String funcName) implements Instruction {\n        @Override public void eval(Program program, VmStack vmStack) {\n            fun(funcName).apply(vmStack);\n        }\n    }\n    \n    // Main: push 2 ints on stack, multiply them, leave result on stack\n    public static void main(String[] args) {\n        List&lt;Instruction&gt; bCode = List.of(new Sequence(), new VmPushLit(10), new VmPushLit(2), new VmFuncAll(&quot;*&quot;));\n        \n        var program = new Program(bCode);\n        var stack = new VmStack();\n        \n        program.evalNext(stack);\n        System.out.printf(&quot;10*2 = %d\\n&quot;, stack.getInt(0));\n    }\n    \n    private static InstrProcessor fun(String funName) {\n        return switch (funName) {\n        case &quot;1-&quot; -&gt; i2i(x -&gt; x - 1);                    // pop, subtract 1, push result\n        case &quot;*&quot; -&gt; ii2i((x, y) -&gt; x * y);               // pop2, multiply, push result\n        case &quot;print&quot; -&gt; i(x -&gt; System.out.println(x));   // pop, print.\n        default -&gt; throw new UnsupportedOperationException(&quot;Unmapped function name: &quot; + funName);\n        };\n    }\n}\n</code></pre>\n<p>From this example, you can see:</p>\n<ul>\n<li>Lots of named types everywhere.</li>\n<li>This code is intentionally not 'golfed'. It could be waaay shorter. It's optimized for readability. Shorter tends to be more readable but if you take that too far it ceases to be true. Nevertheless, it's still about as long as your attempt.</li>\n<li>It's fully typed; when writing a function such as <code>*</code>, you have to explicitly decree the type. But, by doing so, the compiler will help you: If you attempt to pass a binary operator to <code>i2i</code> for example, your editor will instantly tell you that this is an error.</li>\n<li>You should use exceptions more. Exceptions are for exceptional situations. When you run into, for example, a function name your table of function impls doesn't know about, you should throw, not 'print something and return null, thus continuing as if nothing happened'. It's 2025; the days of <code>ON ERROR RESUME NEXT</code> should be well behind us by now one would hope.</li>\n<li>The system is needlessly convoluted by having that function table thing; why not just have more opcodes? But presumably you wanted it this way and e.g. you're gearing up to have the concept of 'functions to apply to the VmStack' to be a pluggable system. If there's no need for that, going via 'functions are strings' and 'there is a method that looks up impls based on the string' is needlessly sacrificing type safety. You can sac type safety but do it because you have some user interactive model where type safety isn't possible. For example because, I dunno, the implementations are loaded at runtime, or impls are in WASM and can be dynamically added and removed in a web interface or some such.</li>\n</ul>\n",
+    "score" : 2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 401843,
+      "reputation" : 107186,
+      "user_id" : 768644,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+      "display_name" : "rzwitserloot",
+      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+    },
+    "creation_date" : 1743162510,
+    "last_activity_date" : 1743162510,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140277525,
+    "post_id" : 79540005,
+    "body" : "P.S. Errata: my &quot;can&#39;t distinguish between&quot; claim immediately above is not accurate.  I guess only a longtime Lisp programmer would be surprised that the Java compiler insists that you cast Object to Object[] before you are allowed to use a[i] vector notation.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 4542244,
+      "reputation" : 25,
+      "user_id" : 6047455,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2f81699f742167c3b70bae8c0bec303c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "mcpublic",
+      "link" : "https://stackoverflow.com/users/6047455/mcpublic"
+    },
+    "creation_date" : 1743271011,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140277108,
+    "post_id" : 79540005,
+    "body" : "It is true that I come from a world reliant on runtime type tags. In my professional work, zero compile-time type enforcement causes me lots of stress. But thinking about code/functions as data is a natural for me. Perhaps my mistake here was allowing the <b>fun_n_args</b> table to allow so many different argument / return types and number of arguments. Also, the pervasive use of Object and Object[] was admittedly a relic of translating Python code to Java. I see the error of my ways there, but it also exposed the revelation that Java&#39;s runtime type system can&#39;t distinguish scalars from arrays.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 4542244,
+      "reputation" : 25,
+      "user_id" : 6047455,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2f81699f742167c3b70bae8c0bec303c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "mcpublic",
+      "link" : "https://stackoverflow.com/users/6047455/mcpublic"
+    },
+    "creation_date" : 1743258978,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140275337,
+    "post_id" : 79540005,
+    "body" : "Lambda expressions are great and useful all the time.  Just not for this.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 465573,
+      "reputation" : 200423,
+      "user_id" : 869736,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/ae7bb06b9a23a4dd7eea69e853d47d12?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Louis Wasserman",
+      "link" : "https://stackoverflow.com/users/869736/louis-wasserman"
+    },
+    "creation_date" : 1743191586,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140274528,
+    "post_id" : 79540005,
+    "body" : "@mcpublic Rather than &quot;Professional Java programmers rarely use Lambda expressions&quot;, I think it&#39;s more fair to say that they rarely use Lambda expressions outside certain contexts.  For example, lambda expressions are frequently used in with <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/util/stream/Stream.html\" rel=\"nofollow noreferrer\"><code>java.util.stream.Stream</code></a>.  I&#39;d say they&#39;re mostly used with API methods that are designed around functional interfaces.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 1119690,
+      "reputation" : 23270,
+      "user_id" : 1108305,
+      "user_type" : "registered",
+      "accept_rate" : 47,
+      "profile_image" : "https://www.gravatar.com/avatar/4c16849c5f9444a685f62cdc2a15c3ac?s=256&d=identicon&r=PG",
+      "display_name" : "M. Justin",
+      "link" : "https://stackoverflow.com/users/1108305/m-justin"
+    },
+    "creation_date" : 1743177689,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140274139,
+    "post_id" : 79540005,
+    "body" : "Summary: Thanks for suggesting I post an MRE. This was useful feedback, even though my request for help with a specific compiler warning resulted in lectures on un-Java-like coding style. (So maybe it&#39;s okay that the moderator closed the topic.) I have very specific things I want to teach in this course. I chose Java because that&#39;s what high school students learn to pass the AP exam. Maybe Python <b>is</b> the way to go. Conclusion: Professional Java programmers rarely use Lambda expressions, so solving &quot;unchecked cast&quot; problems with get, accept, and apply methods is not a high priority.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 4542244,
+      "reputation" : 25,
+      "user_id" : 6047455,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2f81699f742167c3b70bae8c0bec303c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "mcpublic",
+      "link" : "https://stackoverflow.com/users/6047455/mcpublic"
+    },
+    "creation_date" : 1743171719,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140273248,
+    "post_id" : 79540005,
+    "body" : "Ah, I failed to notice the question has been updated when I posted the above 2 comments. It&#39;s.. less impossible to try to figure out what you need from here. Question is probably answerable as is, that was a good update!",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 401843,
+      "reputation" : 107186,
+      "user_id" : 768644,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+      "display_name" : "rzwitserloot",
+      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+    },
+    "creation_date" : 1743157864,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140273235,
+    "post_id" : 79540005,
+    "body" : "@mcpublic No, what you need is a well designed system for your task that isn&#39;t onerous, doesn&#39;t cause a ton of warnings, doesn&#39;t require mindless copying of boilerplate code, but does work correctly. A few steps ago you were at a crossroads and picked the dead end, and you&#39;re now asking questions that boil down to &quot;I just need to get past this dead end&quot;. <b>You are at a dead end</b> - you can&#39;t &#39;fix&#39; it from where you are now. You need to back up, but your question doesn&#39;t contain sufficient detail to explain to you where you need to back up to.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 401843,
+      "reputation" : 107186,
+      "user_id" : 768644,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+      "display_name" : "rzwitserloot",
+      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+    },
+    "creation_date" : 1743157710,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140272078,
+    "post_id" : 79540005,
+    "body" : "@rzwitserloot What I need is to make the overall &quot;Note: MinimumViableExample.java uses unchecked or unsafe operations. Note: Recompile with -Xlint:unchecked for details.&quot; and all the individual &quot;warning: [unchecked] unchecked cast&quot; go away.  The code runs fine, but &quot;throwing caution to the wind&quot; is not part of my vocabulary. If I&#39;m going to use a strongly typed language, might as well make the compiler happy.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 4542244,
+      "reputation" : 25,
+      "user_id" : 6047455,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2f81699f742167c3b70bae8c0bec303c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "mcpublic",
+      "link" : "https://stackoverflow.com/users/6047455/mcpublic"
+    },
+    "creation_date" : 1743127367,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140271850,
+    "post_id" : 79540005,
+    "body" : "Agreed. Like ChatGPT, Google Gemini is not to be trusted to make any sense. Had me briefly fooled because Java didn&#39;t even have Generics when I first learned the language.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 4542244,
+      "reputation" : 25,
+      "user_id" : 6047455,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2f81699f742167c3b70bae8c0bec303c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "mcpublic",
+      "link" : "https://stackoverflow.com/users/6047455/mcpublic"
+    },
+    "creation_date" : 1743118753,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140271784,
+    "post_id" : 79540005,
+    "body" : "Looking at what you have, you&#39;ve zoomed in too far. You&#39;re clearing not heading in the right direction but you&#39;ve zoomed in so far, we don&#39;t really understand what you need at this point. For what its worth, you can always just ditch type safety completely and get it as short as python, but that won&#39;t be idiomatic java at all, and probably isn&#39;t the right answer.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 401843,
+      "reputation" : 107186,
+      "user_id" : 768644,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+      "display_name" : "rzwitserloot",
+      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+    },
+    "creation_date" : 1743116201,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140271774,
+    "post_id" : 79540005,
+    "body" : "The code ChatGPT produced is <b>horrible</b>. It <i>looks</i> like it makes sense, but it doesn&#39;t. For example, checking if an expression of type <code>Consumer</code> is an instanceof <code>Consumer&lt;Boolean&gt;</code> is completely broken as a concept. Generics are erased, erasure means: That info is no longer there at runtime, and <code>instanceof</code> is a runtime-only check. Hence, a warning when you try this: Javac is telling you: This does literally absolutely nothing. The check always passes; even if passed a Consumer that isn&#39;t actually a boolean. vibe coding is usually stupid, and doubly so if you don&#39;t know about the domain.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 401843,
+      "reputation" : 107186,
+      "user_id" : 768644,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+      "display_name" : "rzwitserloot",
+      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+    },
+    "creation_date" : 1743115848,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140271669,
+    "post_id" : 79540005,
+    "body" : "This may be easier to understand with a <a href=\"https://stackoverflow.com/help/minimal-reproducible-example\">minimal reproducible example</a> in Java. <code>instanceOf</code> and <code>Object</code> are IMHO code smells.",
+    "score" : 3,
+    "owner" : {
+      "account_id" : 1535561,
+      "reputation" : 9056,
+      "user_id" : 1431720,
+      "user_type" : "registered",
+      "accept_rate" : 89,
+      "profile_image" : "https://www.gravatar.com/avatar/f5a1388d4d3b2bf03b11bb5658c68c29?s=256&d=identicon&r=PG",
+      "display_name" : "Robert",
+      "link" : "https://stackoverflow.com/users/1431720/robert"
+    },
+    "creation_date" : 1743113093,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140271608,
+    "post_id" : 79540005,
+    "body" : "The presumption is that you always know exactly what signature you&#39;re dealing with, and should be using a lambda clearly named for that use case and that use case alone.  Even better than using one of those four is using one specific to your use case with a more-specific name.",
+    "score" : 3,
+    "owner" : {
+      "account_id" : 465573,
+      "reputation" : 200423,
+      "user_id" : 869736,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/ae7bb06b9a23a4dd7eea69e853d47d12?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Louis Wasserman",
+      "link" : "https://stackoverflow.com/users/869736/louis-wasserman"
+    },
+    "creation_date" : 1743111427,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140271599,
+    "post_id" : 79540005,
+    "body" : "I&#39;m not attached to the Python style.  I&#39;m starting to think that lambda expressions are perhaps best avoided in Java, but maybe someone will tell me otherwise.  Incidentally, I was not expecting that Java lambda expressions would be called using four different methods ( <code>run</code>, <code>get</code>, <code>accept</code>, <code>apply</code>), depending on the lambda&#39;s signature. There must be some rationale I&#39;m missing.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 4542244,
+      "reputation" : 25,
+      "user_id" : 6047455,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2f81699f742167c3b70bae8c0bec303c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "mcpublic",
+      "link" : "https://stackoverflow.com/users/6047455/mcpublic"
+    },
+    "creation_date" : 1743111194,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140271558,
+    "post_id" : 79540005,
+    "body" : "Good design that works smoothly and without warnings in Java&#39;s type system is going to look very different from idiomatic Python.  An idiomatic program in Java is not going to need all those helper functions, no, but it&#39;s also going to look pretty different.",
+    "score" : 7,
+    "owner" : {
+      "account_id" : 465573,
+      "reputation" : 200423,
+      "user_id" : 869736,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/ae7bb06b9a23a4dd7eea69e853d47d12?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Louis Wasserman",
+      "link" : "https://stackoverflow.com/users/869736/louis-wasserman"
+    },
+    "creation_date" : 1743109989,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

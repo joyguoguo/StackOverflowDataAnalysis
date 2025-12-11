@@ -1,0 +1,166 @@
+{
+  "question" : {
+    "question_id" : 79532806,
+    "title" : "Java does not allow using private final class member in lambda under certain pattern",
+    "body" : "<p>A private lambda function is accessing a <code>private final</code> class member that is initialised in the class constructor. However, this code pattern compiles with error: <code>variable num might not have been initialized</code></p>\n<pre><code>public class Main {\n    private final int num;\n    public Main() {num = 7;}\n    private java.util.function.Supplier getNum = () -&gt; num;\n    public void printNum() {\n        System.out.println(getNum.get());\n    }\n    public static void main(String[] args) {\n        Main main = new Main();\n        main.printNum();\n    }\n}\n</code></pre>\n<p>However, the following patterns are fine:</p>\n<p>i. Move lambda definition inside a method</p>\n<pre><code>public class Main {\n    private final int num;\n    public Main() {num = 7;}\n    private java.util.function.Supplier getNum;\n    public void printNum() {\n        getNum = () -&gt; num;\n        System.out.println(getNum.get());\n    }\n    public static void main(String[] args) {\n        Main main = new Main();\n        main.printNum();\n    }\n}\n</code></pre>\n<p>ii. Local lambda inside a method</p>\n<pre><code>public class Main {\n    private final int num;\n    public Main() {num = 7;}\n    public void printNum() {\n        java.util.function.Supplier getNum = () -&gt; num;\n        System.out.println(getNum.get());\n    }\n    public static void main(String[] args) {\n        Main main = new Main();\n        main.printNum();\n    }\n}\n</code></pre>\n<p>iii. Add <code>this</code> before the class member and cast <code>this</code> to the class name</p>\n<pre><code>public class Main {\n    private final int num;\n    public Main() {num = 7;}\n    private java.util.function.Supplier getNum = () -&gt; ((Main) this).num;\n    public void printNum() {\n        System.out.println(getNum.get());\n    }\n    public static void main(String[] args) {\n        Main main = new Main();\n        main.printNum();\n    }\n}\n</code></pre>\n<p>Could someone please explain what is going on above for each case? If it is compiler specific, I was testing on OpenJDK 11. Thank you.</p>\n<p>P.S. a solution so that no <code>this</code> casting while the lambda can be shared among class methods is to also initialise it inside the class constructor</p>\n<pre><code>public class Main {\n    private final int num;\n    private final java.util.function.Supplier getNum;\n    public Main() {num = 7; getNum = () -&gt; num;}\n\n    public void printNum() {\n        System.out.println(getNum.get());\n    }\n    public static void main(String[] args) {\n        Main main = new Main();\n        main.printNum();\n    }\n}\n</code></pre>\n",
+    "tags" : [ "java", "design-patterns", "lambda", "initialization", "java-11" ],
+    "owner" : {
+      "account_id" : 1736824,
+      "reputation" : 5788,
+      "user_id" : 1589188,
+      "user_type" : "registered",
+      "accept_rate" : 66,
+      "profile_image" : "https://www.gravatar.com/avatar/cdecfbddde74f80213b245bef0df1b23?s=256&d=identicon&r=PG",
+      "display_name" : "user1589188",
+      "link" : "https://stackoverflow.com/users/1589188/user1589188"
+    },
+    "is_answered" : true,
+    "view_count" : 160,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1742921741,
+    "creation_date" : 1742882676,
+    "link" : "https://stackoverflow.com/questions/79532806/java-does-not-allow-using-private-final-class-member-in-lambda-under-certain-pat",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79532881,
+    "question_id" : 79532806,
+    "body" : "<p>The rules specified in <a href=\"https://docs.oracle.com/javase/specs/jls/se22/html/jls-16.html\" rel=\"noreferrer\">Chapter 16 - Definite Assignment</a> of the language specification are relevant here.</p>\n<blockquote>\n<p>An access to its value consists of the simple name of the variable (or, for a field, the simple name of the field qualified by <code>this</code>) occurring anywhere in an expression except as the left-hand operand of the simple assignment operator <code>=</code>.</p>\n<p>For every access of a local variable declared by a statement <code>x</code>, or blank final field <code>x</code>, <code>x</code> must be definitely assigned before the access, or a compile-time error occurs.</p>\n</blockquote>\n<p>Just from the first paragraph, we can see that the expression <code>((Main) this).num</code> is not considered an &quot;access&quot; of a blank final field, as far as definite assignment is concerned, and therefore definite assignment analysis does not apply to it. Just writing <code>num</code>, or <code>this.num</code> <em>are</em> &quot;accesses&quot;.</p>\n<p>We will show that in the first code snippet, <code>num</code> is not definitely assigned before the access in <code>() -&gt; num</code>.</p>\n<p><a href=\"https://docs.oracle.com/javase/specs/jls/se22/html/jls-16.html#jls-16.9\" rel=\"noreferrer\">16.9</a>:</p>\n<blockquote>\n<p>Let <code>C</code> be a class, and let <code>V</code> be a blank final non-static member\nfield of <code>C</code>, declared in <code>C</code>. Then:</p>\n<ul>\n<li><code>V</code> is definitely unassigned (and moreover is not definitely assigned) before the leftmost instance initializer or instance\nvariable initializer of <code>C</code>.</li>\n</ul>\n</blockquote>\n<p><code>() -&gt; num</code> is the variable initialiser for the field <code>getNum</code>. This is also the first (leftmost) variable initialiser of <code>Main</code>. Therefore, <code>num</code> is not definitely assigned before <code>() -&gt; num</code>.</p>\n<p>Then <a href=\"https://docs.oracle.com/javase/specs/jls/se22/html/jls-16.html#jls-16.1.10\" rel=\"noreferrer\">16.1.10</a> says:</p>\n<blockquote>\n<p>If an expression is a lambda expression, then the following rules\napply:</p>\n<ul>\n<li><code>V</code> is definitely assigned before the expression or block that is the lambda body iff <code>V</code> is definitely assigned before the lambda\nexpression.</li>\n</ul>\n</blockquote>\n<p>Notice that this is &quot;iff&quot;, not just &quot;if&quot;. As we have established, <code>num</code> is not definitely assigned before the lambda expression, so <code>num</code> is not definitely assigned before the lambda body expression, where the access occurs.</p>\n<hr>\n<p>In cases i and ii, the access occurs in a method. <a href=\"https://docs.oracle.com/javase/specs/jls/se22/html/jls-16.html#jls-16.2.2\" rel=\"noreferrer\">16.2.2</a> says:</p>\n<blockquote>\n<p>A blank final member field <code>V</code> is definitely assigned (and moreover is not definitely unassigned) before the block that is the body of any method in the scope of <code>V</code> and before the declaration of any class declared within the scope of <code>V</code>.</p>\n</blockquote>\n<p>Therefore, <code>num</code> is already definitely assigned even before the method body. From here you can easily derive that it is definitely assigned before <code>() -&gt; num</code>, and therefore definitely assigned before the access.</p>\n",
+    "score" : 6,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 6651855,
+      "reputation" : 292025,
+      "user_id" : 5133585,
+      "user_type" : "registered",
+      "accept_rate" : 96,
+      "profile_image" : "https://i.sstatic.net/dfqcw.png?s=256",
+      "display_name" : "Sweeper",
+      "link" : "https://stackoverflow.com/users/5133585/sweeper"
+    },
+    "creation_date" : 1742886068,
+    "last_activity_date" : 1742886068,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79532881" : [ {
+      "comment_id" : 140273858,
+      "post_id" : 79532881,
+      "body" : "@user1589188 just consider that a lambda expression referring to a <code>final</code> field is not a like a method. Rather <code>private java.util.function.Supplier getNum = () -&gt; num;</code> is like <code>private java.util.function.Supplier getNum = new SupplierAlwaysReturing(num);</code> Then, as said before, the rules are not lambda specific. Using <code>new SupplierAlwaysReturing(((Main) this).num);</code> would bypass the check and allow accessing the uninitialized field.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 3211603,
+        "reputation" : 300981,
+        "user_id" : 2711488,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+        "display_name" : "Holger",
+        "link" : "https://stackoverflow.com/users/2711488/holger"
+      },
+      "creation_date" : 1743167713,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140271839,
+      "post_id" : 79532881,
+      "body" : "@Holger its quite straight forward to me and as illustrated in my examples my intentions: first example placed the lambda among where class methods are traditionally (surely just a coding style, nothing to do with execution ordering), expecting java to treat it just like methods (i.e. having <code>num</code> inside is fine). Last example placed the lambda among where class members are traditionally, to show how java expects us to treat it like them and initialise it there in the constructor.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1736824,
+        "reputation" : 5788,
+        "user_id" : 1589188,
+        "user_type" : "registered",
+        "accept_rate" : 66,
+        "profile_image" : "https://www.gravatar.com/avatar/cdecfbddde74f80213b245bef0df1b23?s=256&d=identicon&r=PG",
+        "display_name" : "user1589188",
+        "link" : "https://stackoverflow.com/users/1589188/user1589188"
+      },
+      "creation_date" : 1743118278,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140270918,
+      "post_id" : 79532881,
+      "body" : "@user1589188 You’d be even more confused if language rules were that complicated. I’m not even sure whether you understood that the order you wrote the members in the source code is misleading. You wrote <code>private final int num; public Main() {num = 7;} private java.util.function.Supplier getNum = () -&gt; num;</code> but the placement of the constructor between the field declarations does not change the fact that the field initializers are executed after the super constructor call but before the body of the constructor is executed. In your last code example you swapped the order, again without effect.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 3211603,
+        "reputation" : 300981,
+        "user_id" : 2711488,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+        "display_name" : "Holger",
+        "link" : "https://stackoverflow.com/users/2711488/holger"
+      },
+      "creation_date" : 1743097845,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140267686,
+      "post_id" : 79532881,
+      "body" : "@Holger I guess what you said makes sense is based on &quot;You surely do not expect the compiler to re-check...&quot;. My sense tells me otherwise. But it might just be too complicate and they took an easy route as the comment above said.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1736824,
+        "reputation" : 5788,
+        "user_id" : 1589188,
+        "user_type" : "registered",
+        "accept_rate" : 66,
+        "profile_image" : "https://www.gravatar.com/avatar/cdecfbddde74f80213b245bef0df1b23?s=256&d=identicon&r=PG",
+        "display_name" : "user1589188",
+        "link" : "https://stackoverflow.com/users/1589188/user1589188"
+      },
+      "creation_date" : 1743046682,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140266170,
+      "post_id" : 79532881,
+      "body" : "@user1589188 it perfectly makes sense to say that a lambda accesses the variable at the point it is defined, because nothing stops you from using the lambda after that point. Just consider <code>private java.util.function.Supplier getNum = () -&gt; num; private Object otherVariable = getNum.supply();</code> The second field declaration is valid as it only accesses an already initialized field. You surely do not expect the compiler to re-check the first field’s declaration at the point of the second. Using a qualified <code>this.num</code> is deliberately suppressing the field initialization check (even without lambda)",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 3211603,
+        "reputation" : 300981,
+        "user_id" : 2711488,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+        "display_name" : "Holger",
+        "link" : "https://stackoverflow.com/users/2711488/holger"
+      },
+      "creation_date" : 1743010217,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140259671,
+      "post_id" : 79532881,
+      "body" : "@user1589188 I understand your points, but they obviously have to make a compromise <i>somewhere</i>, or else the compiler would get ridiculously complicated. Many things can be done, but not all of those things are worth the effort.",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 6651855,
+        "reputation" : 292025,
+        "user_id" : 5133585,
+        "user_type" : "registered",
+        "accept_rate" : 96,
+        "profile_image" : "https://i.sstatic.net/dfqcw.png?s=256",
+        "display_name" : "Sweeper",
+        "link" : "https://stackoverflow.com/users/5133585/sweeper"
+      },
+      "creation_date" : 1742889038,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140259637,
+      "post_id" : 79532881,
+      "body" : "Thanks. So basically they are all working as designed, though not everyone would agree these definitions make sense. For one, <code>((Main) this).num</code> is definitely accessing the member. And saying a lambda is accessing a class member at the point it is defined rather than at the point it is called is another.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 1736824,
+        "reputation" : 5788,
+        "user_id" : 1589188,
+        "user_type" : "registered",
+        "accept_rate" : 66,
+        "profile_image" : "https://www.gravatar.com/avatar/cdecfbddde74f80213b245bef0df1b23?s=256&d=identicon&r=PG",
+        "display_name" : "user1589188",
+        "link" : "https://stackoverflow.com/users/1589188/user1589188"
+      },
+      "creation_date" : 1742888457,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

@@ -1,0 +1,77 @@
+{
+  "question" : {
+    "question_id" : 79724775,
+    "title" : "Java web-socket ssl certificate error while cert is valid",
+    "body" : "<p>Hello I've been facing a weird problem the past few days.\nI send out a demo of my app to a few people. however for around 75% of the people the demo didn't work, while for the other 25% it works great. (even for myself)</p>\n<p>so I investigated and found the issue. the mayority is getting the following error when connecting to the web-socket:  <code>Caused by: java.security.cert.CertificateException: No subject alternative names matching IP address 45.116.104.89 found</code></p>\n<p>Full stack trace:</p>\n<pre><code>[21:48:31] [pool-4-thread-1/INFO]: [com.heckvision.bingosplash.web.WebSocketManager:lambda$tryStartConnection$0:48]: Attempting to connect to WebSocket...\n[21:48:32] [WebSocketConnectReadThread-106/INFO]: [com.heckvision.bingosplash.web.WebSocketManager$1:onError:77]: WebSocket error:\n[21:48:32] [WebSocketWriteThread-107/INFO]: [com.heckvision.bingosplash.web.WebSocketManager$1:onError:77]: WebSocket error:\n[21:48:32] [WebSocketConnectReadThread-106/INFO]: [com.heckvision.bingosplash.web.WebSocketManager$1:onError:78]: javax.net.ssl.SSLHandshakeException: java.security.cert.CertificateException: No subject alternative names matching IP address 45.116.104.89 found\n[21:48:32] [WebSocketConnectReadThread-106/INFO]: [com.heckvision.bingosplash.web.WebSocketManager$1:onError:78]:   at sun.security.ssl.Alerts.getSSLException(Alerts.java:192)\n[21:48:32] [WebSocketConnectReadThread-106/INFO]: [com.heckvision.bingosplash.web.WebSocketManager$1:onError:78]:   at sun.security.ssl.SSLSocketImpl.fatal(SSLSocketImpl.java:1949)\n[21:48:32] [WebSocketConnectReadThread-106/INFO]: [com.heckvision.bingosplash.web.WebSocketManager$1:onError:78]:   at sun.security.ssl.Handshaker.fatalSE(Handshaker.java:302)\n[21:48:32] [WebSocketConnectReadThread-106/INFO]: [com.heckvision.bingosplash.web.WebSocketManager$1:onError:78]:   at sun.security.ssl.Handshaker.fatalSE(Handshaker.java:296)\n[21:48:32] [WebSocketConnectReadThread-106/INFO]: [com.heckvision.bingosplash.web.WebSocketManager$1:onError:78]:   at sun.security.ssl.ClientHandshaker.serverCertificate(ClientHandshaker.java:1497)\n[21:48:32] [WebSocketConnectReadThread-106/INFO]: [com.heckvision.bingosplash.web.WebSocketManager$1:onError:78]:   at sun.security.ssl.ClientHandshaker.processMessage(ClientHandshaker.java:212)\n[21:48:32] [WebSocketConnectReadThread-106/INFO]: [com.heckvision.bingosplash.web.WebSocketManager$1:onError:78]:   at sun.security.ssl.Handshaker.processLoop(Handshaker.java:979)\n[21:48:32] [WebSocketConnectReadThread-106/INFO]: [com.heckvision.bingosplash.web.WebSocketManager$1:onError:78]:   at sun.security.ssl.Handshaker.process_record(Handshaker.java:914)\n[21:48:32] [WebSocketConnectReadThread-106/INFO]: [com.heckvision.bingosplash.web.WebSocketManager$1:onError:78]:   at sun.security.ssl.SSLSocketImpl.readRecord(SSLSocketImpl.java:1062)\n[21:48:32] [WebSocketConnectReadThread-106/INFO]: [com.heckvision.bingosplash.web.WebSocketManager$1:onError:78]:   at sun.security.ssl.SSLSocketImpl.performInitialHandshake(SSLSocketImpl.java:1375)\n[21:48:32] [WebSocketConnectReadThread-106/INFO]: [com.heckvision.bingosplash.web.WebSocketManager$1:onError:78]:   at sun.security.ssl.SSLSocketImpl.readDataRecord(SSLSocketImpl.java:928)\n[21:48:32] [WebSocketConnectReadThread-106/INFO]: [com.heckvision.bingosplash.web.WebSocketManager$1:onError:78]:   at sun.security.ssl.AppInputStream.read(AppInputStream.java:105)\n[21:48:32] [WebSocketConnectReadThread-106/INFO]: [com.heckvision.bingosplash.web.WebSocketManager$1:onError:78]:   at java.io.InputStream.read(InputStream.java:101)\n[21:48:32] [WebSocketConnectReadThread-106/INFO]: [com.heckvision.bingosplash.web.WebSocketManager$1:onError:78]:   at com.heckvision.shadowed.java_websocket.client.WebSocketClient.run(WebSocketClient.java:543)\n[21:48:32] [WebSocketConnectReadThread-106/INFO]: [com.heckvision.bingosplash.web.WebSocketManager$1:onError:78]:   at java.lang.Thread.run(Thread.java:745)\n[21:48:32] [WebSocketConnectReadThread-106/INFO]: \n</code></pre>\n<p>after researching I found out that this error means that the SSL certificate is not valid. this is weird since I have a valid 'lets encrypt' cert and domain. and the other 25% can connect proving the cert is valid.</p>\n<p>the error shows I'm connecting directly to a raw IP but I'm not. im using wss://testserver.heckvision.com this domain is linked to a freshly setup test server for this demo. running nginx (for upgrading to wss) and docker (to host the web-socket)</p>\n<p>the project is on JAVA 8. I've tried multiple versions of JAVA 8 and sorts, but nothing seems to help.</p>\n<p>even weirder is that when I used the same class in a JAVA 21 project it works great and for 100% of the people.</p>\n<p>I use the following java class to connect to the web-socket:</p>\n<pre><code>package com.heckvision.bingosplash.web;\n\nimport org.java_websocket.client.WebSocketClient;\nimport org.java_websocket.enums.ReadyState;\nimport org.java_websocket.handshake.ServerHandshake;\n\nimport javax.net.ssl.SSLContext;\nimport java.net.URI;\nimport java.util.concurrent.Executors;\nimport java.util.concurrent.ScheduledExecutorService;\nimport java.util.concurrent.TimeUnit;\n\npublic class WebSocketManager {\n    private final URI serverUri;\n    private volatile WebSocketClient client; // Made volatile for thread safety\n    private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();\n    private volatile boolean shouldConnect = false; // Made volatile for thread safety\n    private volatile boolean connecting = false; // Made volatile for thread safety\n\n    private MessageListener messageListener;\n\n    public void setMessageListener(MessageListener listener) {\n        this.messageListener = listener;\n    }\n\n    public WebSocketManager(String serverUrl) {\n        this.serverUri = URI.create(serverUrl);\n    }\n\n    public void setShouldConnect(boolean shouldConnect) {\n        this.shouldConnect = shouldConnect;\n\n        if (shouldConnect) {\n            tryStartConnection();\n        } else {\n            disconnect();\n        }\n    }\n\n    private void tryStartConnection() {\n        if (client != null &amp;&amp; client.getReadyState() == ReadyState.OPEN) return;\n        if (connecting) return;\n\n        connecting = true;\n\n        executor.execute(() -&gt; {\n            try {\n                System.out.println(&quot;Attempting to connect to WebSocket...&quot;);\n                WebSocketClient socket = new WebSocketClient(serverUri) {\n                    @Override\n                    public void onOpen(ServerHandshake handshakedata) {\n                        System.out.println(&quot;WebSocket connected.&quot;);\n                        connecting = false; // Connection successful, clear connecting flag\n                    }\n\n                    @Override\n                    public void onMessage(String message) {\n                        System.out.println(&quot;Received: &quot; + message);\n                        if (messageListener != null) {\n                            messageListener.onMessage(message);\n                        }\n                    }\n\n                    @Override\n                    public void onClose(int code, String reason, boolean remote) {\n                        System.out.println(&quot;WebSocket closed: &quot; + reason);\n                        client = null;\n                        connecting = false;\n                        if (shouldConnect) {\n                            scheduleReconnect();\n                        }\n                    }\n\n                    @Override\n                    public void onError(Exception ex) {\n                        System.err.println(&quot;WebSocket error:&quot;);\n                        ex.printStackTrace();\n                        client = null;\n                        connecting = false;\n                        if (shouldConnect) {\n                            scheduleReconnect();\n                        }\n                    }\n                };\n\n                SSLContext sslContext = SSLContext.getDefault();\n                socket.setSocketFactory(sslContext.getSocketFactory());\n\n                client = socket;\n                socket.connect(); // Non-blocking\n\n            } catch (Exception e) {\n                System.err.println(&quot;WebSocket connect exception:&quot;);\n                e.printStackTrace();\n                connecting = false;\n                // FIX: Only reconnect if we should still be connecting\n                if (shouldConnect) {\n                    scheduleReconnect();\n                }\n            }\n        });\n    }\n\n    private void scheduleReconnect() {\n        executor.schedule(this::tryStartConnection, 5, TimeUnit.SECONDS);\n    }\n\n    private void disconnect() {\n        if (client != null &amp;&amp; (client.getReadyState() == ReadyState.OPEN || client.getReadyState() == ReadyState.NOT_YET_CONNECTED)) {\n            try {\n                client.close();\n                System.out.println(&quot;WebSocket disconnected by request.&quot;);\n            } catch (Exception e) {\n                System.err.println(&quot;WebSocket disconnect exception:&quot;);\n                e.printStackTrace();\n            }\n        }\n        client = null;\n    }\n\n    public void shutdown() {\n        shouldConnect = false;\n        disconnect();\n        executor.shutdownNow();\n    }\n}\n</code></pre>\n<ul>\n<li>multiple versions and sorts of java - did not help</li>\n<li>multiple pc and operating systems - did not help</li>\n<li>adding custom ssl handshake checker - did not work and eventually came back wit the same error</li>\n<li>hosting websocket on another server - did not work same error</li>\n</ul>\n",
+    "tags" : [ "java", "ssl", "websocket", "java-8", "java-websocket" ],
+    "owner" : {
+      "account_id" : 38535065,
+      "reputation" : 21,
+      "user_id" : 28823010,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b618664e2800eb0bec642a4178b83914?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Christian2B",
+      "link" : "https://stackoverflow.com/users/28823010/christian2b"
+    },
+    "is_answered" : false,
+    "view_count" : 103,
+    "answer_count" : 0,
+    "score" : 2,
+    "last_activity_date" : 1754376709,
+    "creation_date" : 1754303345,
+    "link" : "https://stackoverflow.com/questions/79724775/java-web-socket-ssl-certificate-error-while-cert-is-valid",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140641572,
+    "post_id" : 79724775,
+    "body" : "@Robert yes it&#39;s the same audience for both projects",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 38535065,
+      "reputation" : 21,
+      "user_id" : 28823010,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b618664e2800eb0bec642a4178b83914?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Christian2B",
+      "link" : "https://stackoverflow.com/users/28823010/christian2b"
+    },
+    "creation_date" : 1754331802,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140641353,
+    "post_id" : 79724775,
+    "body" : "Has your Java 8 project the same audience than the Java 21 project? To me this looks like a client-side error like a TLS intercepting proxy that does something wrong causing a redirect to <code>https:&#47;&#47;45.116.104.89</code>.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 50585,
+      "reputation" : 43459,
+      "user_id" : 150978,
+      "user_type" : "registered",
+      "accept_rate" : 78,
+      "profile_image" : "https://www.gravatar.com/avatar/feadc214792e2581c3c750140e3eb2c7?s=256&d=identicon&r=PG",
+      "display_name" : "Robert",
+      "link" : "https://stackoverflow.com/users/150978/robert"
+    },
+    "creation_date" : 1754326369,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140640441,
+    "post_id" : 79724775,
+    "body" : "This question is similar to: <a href=\"https://stackoverflow.com/questions/50928061/certificate-for-localhost-doesnt-match-any-of-the-subject-alternative-names\">Certificate for &lt;localhost&gt; doesn&#39;t match any of the subject alternative names</a>. If you believe it’s different, please <a href=\"https://stackoverflow.com/posts/79724775/edit\">edit</a> the question, make it clear how it’s different and/or how the answers on that question are not helpful for your problem.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 9107988,
+      "reputation" : 4077,
+      "user_id" : 6777695,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/82120153a9fce415fd4983897d45d441?s=256&d=identicon&r=PG",
+      "display_name" : "Hakan54",
+      "link" : "https://stackoverflow.com/users/6777695/hakan54"
+    },
+    "creation_date" : 1754304917,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

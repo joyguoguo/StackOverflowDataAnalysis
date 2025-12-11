@@ -1,0 +1,273 @@
+{
+  "question" : {
+    "question_id" : 79647835,
+    "title" : "Asserting against DB state in Spring Boot integration test",
+    "body" : "<p>How do I check the DB state in an integration test? Is injecting a <code>JdbcTemplate</code> the only option?</p>\n<p>For example, you test a <code>PATCH</code> that, if successful, should update certain table cells.</p>\n<p>I can't use a repository. This microservice can't select the entities it modifies. Adding select methods just for tests feels wrong.</p>\n<pre class=\"lang-java prettyprint-override\"><code>import com.example.pixel_money_transfer_api.data.dto.request.TransferRequestDto;\nimport com.fasterxml.jackson.databind.ObjectMapper;\nimport org.junit.jupiter.api.Test;\nimport org.springframework.beans.factory.annotation.Autowired;\nimport org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;\nimport org.springframework.boot.test.context.SpringBootTest;\nimport org.springframework.boot.testcontainers.service.connection.ServiceConnection;\nimport org.springframework.http.MediaType;\nimport org.springframework.test.context.jdbc.Sql;\nimport org.springframework.test.web.servlet.MockMvc;\nimport org.testcontainers.containers.PostgreSQLContainer;\nimport org.testcontainers.junit.jupiter.Container;\nimport org.testcontainers.junit.jupiter.Testcontainers;\n\nimport java.math.BigDecimal;\n\nimport static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;\nimport static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;\nimport static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;\n\n@Testcontainers\n@AutoConfigureMockMvc\n@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)\nclass TransferControllerIntegrationTest {\n\n    @Container\n    @ServiceConnection\n    static PostgreSQLContainer&lt;?&gt; postgres = new PostgreSQLContainer&lt;&gt;(&quot;postgres:16.0&quot;);\n    @Autowired\n    MockMvc mockMvc;\n    @Autowired\n    ObjectMapper objectMapper;\n\n    @Test\n    @Sql(statements = &quot;TRUNCATE \\&quot;user\\&quot; CASCADE;&quot;)\n    @Sql(statements = &quot;&quot;&quot;\n            INSERT INTO &quot;user&quot; (id, name) VALUES (15, 'Sasha');\n            INSERT INTO &quot;user&quot; (id, name) VALUES (16, 'Alex');\n            INSERT INTO account (id, user_id, balance) VALUES (1, 15, 10);\n            INSERT INTO account (id, user_id, balance) VALUES (2, 16, 0);\n            &quot;&quot;&quot;)\n    void performTransfer_ifUserHasSufficientBalance_recipientHasAccount_returns200() throws Exception {\n        TransferRequestDto transferDto = new TransferRequestDto();\n        transferDto.setRecipientId(16L);\n        transferDto.setAmount(BigDecimal.valueOf(10L));\n\n        mockMvc.perform(patch(&quot;/api/money-transfer&quot;)\n                        .with(jwt().jwt(jwt -&gt; jwt\n                                .claim(&quot;userid&quot;, 15L)))\n                        .contentType(MediaType.APPLICATION_JSON)\n                        .content(objectMapper.writeValueAsString(transferDto)))\n                .andExpect(status().isOk());\n        // now I should somehow assert against the DB state\n    }\n}\n</code></pre>\n",
+    "tags" : [ "java", "spring-boot", "spring-data-jpa", "spring-test", "testcontainers" ],
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2681,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "is_answered" : false,
+    "view_count" : 116,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1748965427,
+    "creation_date" : 1748803597,
+    "link" : "https://stackoverflow.com/questions/79647835/asserting-against-db-state-in-spring-boot-integration-test",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79648523,
+    "question_id" : 79647835,
+    "body" : "<p>You're right to avoid adding select methods just for testing — doing so can introduce unnecessary coupling and violate encapsulation.</p>\n<p>In Spring Boot integration tests, <strong>injecting <code>JdbcTemplate</code> is a practical and acceptable way</strong> to verify DB state when repositories aren't available or appropriate.</p>\n<pre><code>@Autowired\nJdbcTemplate jdbcTemplate;\n\n@Test\nvoid performTransfer_ifUserHasSufficientBalance_recipientHasAccount_returns200() throws Exception {\n    // Arrange\n    TransferRequestDto transferDto = new TransferRequestDto();\n    transferDto.setRecipientId(16L);\n    transferDto.setAmount(BigDecimal.valueOf(10L));\n\n    // Act\n    mockMvc.perform(patch(&quot;/api/money-transfer&quot;)\n                    .with(jwt().jwt(jwt -&gt; jwt.claim(&quot;userid&quot;, 15L)))\n                    .contentType(MediaType.APPLICATION_JSON)\n                    .content(objectMapper.writeValueAsString(transferDto)))\n            .andExpect(status().isOk());\n\n    // Assert\n    BigDecimal senderBalance = jdbcTemplate.queryForObject(\n            &quot;SELECT balance FROM account WHERE user_id = ?&quot;,\n            new Object[]{15L},\n            BigDecimal.class\n    );\n\n    BigDecimal recipientBalance = jdbcTemplate.queryForObject(\n            &quot;SELECT balance FROM account WHERE user_id = ?&quot;,\n            new Object[]{16L},\n            BigDecimal.class\n    );\n\n    assertEquals(new BigDecimal(&quot;0.00&quot;), senderBalance);\n    assertEquals(new BigDecimal(&quot;10.00&quot;), recipientBalance);\n}\n</code></pre>\n",
+    "score" : -1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 42323731,
+      "reputation" : 1,
+      "user_id" : 30695795,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/JJ5iH2C9.jpg?s=256",
+      "display_name" : "Diman",
+      "link" : "https://stackoverflow.com/users/30695795/diman"
+    },
+    "creation_date" : 1748858552,
+    "last_activity_date" : 1748858552,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140482397,
+    "post_id" : 79647835,
+    "body" : "Do you have an <code>EntityManager</code> or not?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 9842376,
+      "reputation" : 2313,
+      "user_id" : 7465516,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/5e167bc0e9829e026d8c9a4bad92e94b?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "julaine",
+      "link" : "https://stackoverflow.com/users/7465516/julaine"
+    },
+    "creation_date" : 1748935755,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140482392,
+    "post_id" : 79647835,
+    "body" : "@SergeyZolotarev with an ORM you always select and then mutate. With something like jooq or raw jdbc you could issue a raw update-statement but with JPA you typically select and mutate the entity in Java, making the update implicit. No?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 9842376,
+      "reputation" : 2313,
+      "user_id" : 7465516,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/5e167bc0e9829e026d8c9a4bad92e94b?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "julaine",
+      "link" : "https://stackoverflow.com/users/7465516/julaine"
+    },
+    "creation_date" : 1748935580,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140478838,
+    "post_id" : 79647835,
+    "body" : "@julaine other services select. This one only mutates",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2681,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "creation_date" : 1748858938,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140478748,
+    "post_id" : 79647835,
+    "body" : "how do you even use JPA without <code>select</code>ing?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 9842376,
+      "reputation" : 2313,
+      "user_id" : 7465516,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/5e167bc0e9829e026d8c9a4bad92e94b?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "julaine",
+      "link" : "https://stackoverflow.com/users/7465516/julaine"
+    },
+    "creation_date" : 1748857152,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140478723,
+    "post_id" : 79647835,
+    "body" : "@SergeyZolotarev You are using JPA, so yes, that could execute it. I mean, it looks like your application is making inserts and updates so you have some infrastucture for that - that infrastructure can probably read data too, no?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 9842376,
+      "reputation" : 2313,
+      "user_id" : 7465516,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/5e167bc0e9829e026d8c9a4bad92e94b?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "julaine",
+      "link" : "https://stackoverflow.com/users/7465516/julaine"
+    },
+    "creation_date" : 1748856743,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140478664,
+    "post_id" : 79647835,
+    "body" : "@julaine what would execute that <code>select * from user</code>? An autowired <code>EntityManager</code>?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2681,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "creation_date" : 1748855149,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140478636,
+    "post_id" : 79647835,
+    "body" : "What technologies are you using to write to DB in your application? Presumably it can handle simple reads. For the type of test you show, a simple <code>select * from user</code> would do, and you may not need much custom code to achieve that.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 9842376,
+      "reputation" : 2313,
+      "user_id" : 7465516,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/5e167bc0e9829e026d8c9a4bad92e94b?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "julaine",
+      "link" : "https://stackoverflow.com/users/7465516/julaine"
+    },
+    "creation_date" : 1748854743,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140478626,
+    "post_id" : 79647835,
+    "body" : "Is DbUnit still a think? You can write expectations on the dataset with DbUnit (so you can write the whole set you expect to be in there and DbUnit will do the verification and validation).",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126800,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1748854483,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140478092,
+    "post_id" : 79647835,
+    "body" : "@jaco0646 <i>&quot;You can also read the DB using your own repository object&quot;</i> this microservice can&#39;t select the entities it modifies. Adding select methods just for tests feels wrong",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2681,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "creation_date" : 1748834344,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140477941,
+    "post_id" : 79647835,
+    "body" : "<code>JdbcTemplate</code> is fine. You can also read the DB using your own repository object (presumably the same object that wrote to the DB during the test). You could even read the DB using whatever business API you have for reads.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1455702,
+      "reputation" : 17394,
+      "user_id" : 1371329,
+      "user_type" : "registered",
+      "accept_rate" : 64,
+      "profile_image" : "https://i.sstatic.net/oqbUC.png?s=256",
+      "display_name" : "jaco0646",
+      "link" : "https://stackoverflow.com/users/1371329/jaco0646"
+    },
+    "creation_date" : 1748825093,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79648523" : [ {
+      "comment_id" : 140486240,
+      "post_id" : 79648523,
+      "body" : "Using entityManager does sound cleaner then whipping out custom sql. If that is your solution, please post it as an answer for others to find.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 9842376,
+        "reputation" : 2313,
+        "user_id" : 7465516,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/5e167bc0e9829e026d8c9a4bad92e94b?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "julaine",
+        "link" : "https://stackoverflow.com/users/7465516/julaine"
+      },
+      "creation_date" : 1749033533,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140482456,
+      "post_id" : 79648523,
+      "body" : "I was talking about expanding the business API for the sake of tests (adding select methods in the repository). That is not happening if I inject an <code>EntityManager</code>",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 10187542,
+        "reputation" : 2681,
+        "user_id" : 20692967,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+        "display_name" : "Sergey Zolotarev",
+        "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+      },
+      "creation_date" : 1748937238,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140482396,
+      "post_id" : 79648523,
+      "body" : "I don&#39;t get it. You don&#39;t want to add selects just for testing, but then you add selects in your test.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 9842376,
+        "reputation" : 2313,
+        "user_id" : 7465516,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/5e167bc0e9829e026d8c9a4bad92e94b?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "julaine",
+        "link" : "https://stackoverflow.com/users/7465516/julaine"
+      },
+      "creation_date" : 1748935715,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140478842,
+      "post_id" : 79648523,
+      "body" : "Why not <code>EntityManager</code>?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10187542,
+        "reputation" : 2681,
+        "user_id" : 20692967,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+        "display_name" : "Sergey Zolotarev",
+        "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+      },
+      "creation_date" : 1748858993,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

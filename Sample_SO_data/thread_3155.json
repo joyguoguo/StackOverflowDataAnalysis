@@ -1,0 +1,285 @@
+{
+  "question" : {
+    "question_id" : 79568521,
+    "title" : "Glob *.* not working on paths with unicode in Java and macOS?",
+    "body" : "<p>It seems Java's glob path matcher isn't matching some unicode symbols as shown in this <code>jshell</code> session:</p>\n<pre><code>$ jshell\n|  Welcome to JShell -- Version 24\n|  For an introduction type: /help intro\n\njshell&gt;  var matcher = java.nio.file.FileSystems.getDefault().getPathMatcher(&quot;glob:*.*&quot;)\n   ...&gt;\nmatcher ==&gt; sun.nio.fs.UnixFileSystem$1@2328c243\n\njshell&gt;  matcher.matches(new java.io.File(&quot;Article.md&quot;).toPath())\n   ...&gt;\n$2 ==&gt; true\n\njshell&gt;  matcher.matches(new java.io.File(&quot;\uD83D\uDDDE️ Article.md&quot;).toPath())\n   ...&gt;\n$3 ==&gt; false\n</code></pre>\n<p>Is this a Java bug or is there a reasonable explanation for this?\nThis problem only seems to be there on macOS. On Windows and linux both expressions return true for me.</p>\n",
+    "tags" : [ "java", "macos", "glob" ],
+    "owner" : {
+      "account_id" : 4216,
+      "reputation" : 35070,
+      "user_id" : 6264,
+      "user_type" : "registered",
+      "accept_rate" : 88,
+      "profile_image" : "https://www.gravatar.com/avatar/bbb17eeeecd3d9d06f4db310ab630a12?s=256&d=identicon&r=PG",
+      "display_name" : "Michiel Borkent",
+      "link" : "https://stackoverflow.com/users/6264/michiel-borkent"
+    },
+    "is_answered" : true,
+    "view_count" : 270,
+    "answer_count" : 2,
+    "score" : 7,
+    "last_activity_date" : 1758873263,
+    "creation_date" : 1744364674,
+    "link" : "https://stackoverflow.com/questions/79568521/glob-not-working-on-paths-with-unicode-in-java-and-macos",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79569416,
+    "question_id" : 79568521,
+    "body" : "<h3>The issue</h3>\n<p>The string &quot;\uD83D\uDDDE️ Article.md&quot; contains a <strong>variation selector &quot;U+FE0F&quot;</strong>.<br />\nThis variation selector affects the glob matching.</p>\n<h3>Workarounds</h3>\n<p>If you remove the variation selector, then the matcher works as expected.<br />\nYou can remove variation selectors using regex:</p>\n<pre class=\"lang-java prettyprint-override\"><code>problematic.replaceAll(&quot;[\\uFE00-\\uFE0F]&quot;, &quot;&quot;)\n</code></pre>\n<p>Or without using regex:</p>\n<pre class=\"lang-java prettyprint-override\"><code>private static String removeVariantSelectors(String str) {\n    return str.chars()\n        .filter(cp -&gt; Character.UnicodeBlock.of(cp) != Character.UnicodeBlock.VARIATION_SELECTORS)\n        .collect(StringBuilder::new, StringBuilder::appendCodePoint, StringBuilder::append)\n        .toString();\n}\n</code></pre>\n<p>To test:</p>\n<pre class=\"lang-java prettyprint-override\"><code>var problematic = &quot;\uD83D\uDDDE️ Article.md&quot;; // with variation selector (\\\\uFE0F)\nvar notProblematic = &quot;\uD83D\uDDDE Article.md&quot;; // without variation selector (\\\\uFE0F)\nvar cleanProblematic = problematic.replaceAll(&quot;[\\uFE00-\\uFE0F]&quot;, &quot;&quot;); // remove variation selectors\n\nvar matcher = FileSystems.getDefault().getPathMatcher(&quot;glob:*.*&quot;);\n\nSystem.out.println(matcher.matches(new File(problematic).toPath())); // false\nSystem.out.println(matcher.matches(new File(notProblematic).toPath())); // true\nSystem.out.println(matcher.matches(new File(cleanProblematic).toPath())); // true\n</code></pre>\n<h3>The reason of the issue</h3>\n<p>I haven’t found the root reason why the matcher treats the <strong>variation selector</strong> this way.<br />\nBut I have found the following while reading the source code of <code>getPathMatcher</code>:</p>\n<p><code>glob:*.*</code> gets converted to a regular expression <code>^[^/]*\\.[^/]*$</code>.<br />\nThe default Unix implementation <code>UnixFileSystem</code> just uses this expression to create <code>Pattern</code>.<br />\nThe MacOS implementation <code>MacOSXFileSystem</code> also adds the <code>Pattern.CANON_EQ</code> flag.<br />\nAnd the enabling <strong>canonical equivalence</strong> causes the issue because Unix pattern matches the problematic string, while MacOs pattern does not.</p>\n<pre class=\"lang-java prettyprint-override\"><code>var problematic = &quot;\uD83D\uDDDE️ Article.md&quot;; // with variation selector (\\\\uFE0F)\n\nvar expr = &quot;^[^/]*\\\\.[^/]*$&quot;;\nvar unixPattern = Pattern.compile(expr);\nvar macPattern = Pattern.compile(expr, Pattern.CANON_EQ);\n\nSystem.out.println(unixPattern.matcher(problematic).matches()); // true\nSystem.out.println(macPattern.matcher(problematic).matches()); // false\n</code></pre>\n<p>It’s a bug that enabling <strong>canonical equivalence</strong> causes a pattern to not match a string with a <strong>variation selector</strong>.<br />\nIn Java 8 it did not exist.<br />\nSo I have reported the bug <a href=\"https://bugs.openjdk.org/browse/JDK-8354490\" rel=\"nofollow noreferrer\">JDK-8354490</a>.</p>\n<hr />\n<h3>Update:</h3>\n<p>The bug <a href=\"https://bugs.openjdk.org/browse/JDK-8354490\" rel=\"nofollow noreferrer\">JDK-8354490</a> has been fixed in Java 26.<br />\nI verified the fix using <a href=\"https://jdk.java.net/26/\" rel=\"nofollow noreferrer\">the OpenJDK 26 Early-Access builds</a>.</p>\n<p>So the question led to the fix of a JDK bug :)</p>\n",
+    "score" : 10,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 10320634,
+      "reputation" : 3398,
+      "user_id" : 7613649,
+      "user_type" : "registered",
+      "accept_rate" : 25,
+      "profile_image" : "https://www.gravatar.com/avatar/c95137fce225c304ac42743da3816d6c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Geba",
+      "link" : "https://stackoverflow.com/users/7613649/geba"
+    },
+    "creation_date" : 1744392025,
+    "last_activity_date" : 1758873263,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79569223,
+    "question_id" : 79568521,
+    "body" : "<p>Indeed fails on Mac when terminal environment variable LANG is not en_US\nbut once you change to<br />\n<code>LANG=en_US</code>\nbefore launching jshell it works...</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 6389739,
+      "reputation" : 5431,
+      "user_id" : 4956336,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/5b2Ij.png?s=256",
+      "display_name" : "p3consulting",
+      "link" : "https://stackoverflow.com/users/4956336/p3consulting"
+    },
+    "creation_date" : 1744385618,
+    "last_activity_date" : 1744385618,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140757515,
+    "post_id" : 79568521,
+    "body" : "Added update to my answer - the bug is fixed in Java 26",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10320634,
+      "reputation" : 3398,
+      "user_id" : 7613649,
+      "user_type" : "registered",
+      "accept_rate" : 25,
+      "profile_image" : "https://www.gravatar.com/avatar/c95137fce225c304ac42743da3816d6c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Geba",
+      "link" : "https://stackoverflow.com/users/7613649/geba"
+    },
+    "creation_date" : 1758732790,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140331812,
+    "post_id" : 79568521,
+    "body" : "I’ve attached the JDK ticket about the bug to my answer. The ticket focuses on the cause of your issue. But your macOS and <code>glob:*.*</code> case is mentioned in the description. I used a heart emoji as an example because it clearly shows the difference when a variant selector (U+FE0F) is present or not: &quot;❤&quot; + &quot;\\uFE0F&quot; = &quot;❤️&quot;",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10320634,
+      "reputation" : 3398,
+      "user_id" : 7613649,
+      "user_type" : "registered",
+      "accept_rate" : 25,
+      "profile_image" : "https://www.gravatar.com/avatar/c95137fce225c304ac42743da3816d6c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Geba",
+      "link" : "https://stackoverflow.com/users/7613649/geba"
+    },
+    "creation_date" : 1744617181,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140328667,
+    "post_id" : 79568521,
+    "body" : "@MichielBorkent, i tried all normalizer forms for your original string with &quot;\\\\uFE0F&quot;. And it did not lead to matching",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10320634,
+      "reputation" : 3398,
+      "user_id" : 7613649,
+      "user_type" : "registered",
+      "accept_rate" : 25,
+      "profile_image" : "https://www.gravatar.com/avatar/c95137fce225c304ac42743da3816d6c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Geba",
+      "link" : "https://stackoverflow.com/users/7613649/geba"
+    },
+    "creation_date" : 1744494752,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140326723,
+    "post_id" : 79568521,
+    "body" : "@Michiel Borkent,  Can you try the below.  Path path = Paths.get(&quot;Article.md&quot;); String normalized = Normalizer.normalize(path.getFileName().toString(), Normalizer.Form.NFC);  boolean matches = FileSystems.getDefault()     .getPathMatcher(&quot;glob:*.*&quot;)     .matches(Paths.get(normalized));",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7645025,
+      "reputation" : 440,
+      "user_id" : 5795975,
+      "user_type" : "registered",
+      "profile_image" : "https://lh6.googleusercontent.com/-6KwPUS4RnyA/AAAAAAAAAAI/AAAAAAAAC8w/auZqreI45x0/s256-rj/photo.jpg",
+      "display_name" : "Vijay",
+      "link" : "https://stackoverflow.com/users/5795975/vijay"
+    },
+    "creation_date" : 1744420079,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140326305,
+    "post_id" : 79568521,
+    "body" : "@Vijay Didn&#39;t work, still returns false. This is in Clojure but should be readable hopefully:  (.matches (.getPathMatcher (java.nio.file.FileSystems/getDefault) &quot;glob:*.*&quot;) (.toPath (clojure.java.io/file (java.text.Normalizer/normalize &quot;\uD83D\uDDDE️ Article.md&quot; java.text.Normalizer$Form/NFC))))",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 4216,
+      "reputation" : 35070,
+      "user_id" : 6264,
+      "user_type" : "registered",
+      "accept_rate" : 88,
+      "profile_image" : "https://www.gravatar.com/avatar/bbb17eeeecd3d9d06f4db310ab630a12?s=256&d=identicon&r=PG",
+      "display_name" : "Michiel Borkent",
+      "link" : "https://stackoverflow.com/users/6264/michiel-borkent"
+    },
+    "creation_date" : 1744406525,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140325104,
+    "post_id" : 79568521,
+    "body" : "Try using Normalizer.normalize(..., Form.NFC) before matching.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7645025,
+      "reputation" : 440,
+      "user_id" : 5795975,
+      "user_type" : "registered",
+      "profile_image" : "https://lh6.googleusercontent.com/-6KwPUS4RnyA/AAAAAAAAAAI/AAAAAAAAC8w/auZqreI45x0/s256-rj/photo.jpg",
+      "display_name" : "Vijay",
+      "link" : "https://stackoverflow.com/users/5795975/vijay"
+    },
+    "creation_date" : 1744385188,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140324259,
+    "post_id" : 79568521,
+    "body" : "That&#39;s not it. glob handles spaces properly btw.",
+    "score" : 3,
+    "owner" : {
+      "account_id" : 4216,
+      "reputation" : 35070,
+      "user_id" : 6264,
+      "user_type" : "registered",
+      "accept_rate" : 88,
+      "profile_image" : "https://www.gravatar.com/avatar/bbb17eeeecd3d9d06f4db310ab630a12?s=256&d=identicon&r=PG",
+      "display_name" : "Michiel Borkent",
+      "link" : "https://stackoverflow.com/users/6264/michiel-borkent"
+    },
+    "creation_date" : 1744370935,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140324082,
+    "post_id" : 79568521,
+    "body" : "The space before &quot;A&quot;?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 960307,
+      "reputation" : 110397,
+      "user_id" : 984823,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Z2KYN.jpg?s=256",
+      "display_name" : "Joop Eggen",
+      "link" : "https://stackoverflow.com/users/984823/joop-eggen"
+    },
+    "creation_date" : 1744367711,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79569223" : [ {
+      "comment_id" : 140325370,
+      "post_id" : 79569223,
+      "body" : "<code>LC_ALL</code> was <code>en_US.UTF-8</code>. But <code>LC_ALL=C LANG=C jshell</code> and <code>LC_ALL=C LANG=C jshell</code> and <code>LC_ALL=en_US  LANG=en_US  jshell</code> still produce <code>false</code> for the file name with the emoji. But if it works for others, that&#39;s already better than nothing, I guess.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1535561,
+        "reputation" : 9056,
+        "user_id" : 1431720,
+        "user_type" : "registered",
+        "accept_rate" : 89,
+        "profile_image" : "https://www.gravatar.com/avatar/f5a1388d4d3b2bf03b11bb5658c68c29?s=256&d=identicon&r=PG",
+        "display_name" : "Robert",
+        "link" : "https://stackoverflow.com/users/1431720/robert"
+      },
+      "creation_date" : 1744388856,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140325333,
+      "post_id" : 79569223,
+      "body" : "@Robert, do you maybe have <code>LC_ALL</code> set? That&#39;ll override many related settings (such as <code>LC_COLLATE</code>); <code>LANG</code> is fairly limited in terms of what it controls on its own.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 8002,
+        "reputation" : 299418,
+        "user_id" : 14122,
+        "user_type" : "registered",
+        "accept_rate" : 71,
+        "profile_image" : "https://www.gravatar.com/avatar/5e2861b08f37fa306fbf5384994af688?s=256&d=identicon&r=PG",
+        "display_name" : "Charles Duffy",
+        "link" : "https://stackoverflow.com/users/14122/charles-duffy"
+      },
+      "creation_date" : 1744388042,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140325287,
+      "post_id" : 79569223,
+      "body" : "Still fails for me with <code>LANG=en_US</code> and <code>LANG=C</code>.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1535561,
+        "reputation" : 9056,
+        "user_id" : 1431720,
+        "user_type" : "registered",
+        "accept_rate" : 89,
+        "profile_image" : "https://www.gravatar.com/avatar/f5a1388d4d3b2bf03b11bb5658c68c29?s=256&d=identicon&r=PG",
+        "display_name" : "Robert",
+        "link" : "https://stackoverflow.com/users/1431720/robert"
+      },
+      "creation_date" : 1744387323,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140325200,
+      "post_id" : 79569223,
+      "body" : "LANG=C works, and LANG=C.UTF-8 no. (default settings were fr_BE.UTF-8) - en_US was the default one on a Linux box I tested to compare.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 6389739,
+        "reputation" : 5431,
+        "user_id" : 4956336,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/5b2Ij.png?s=256",
+        "display_name" : "p3consulting",
+        "link" : "https://stackoverflow.com/users/4956336/p3consulting"
+      },
+      "creation_date" : 1744386323,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140325162,
+      "post_id" : 79569223,
+      "body" : "What about <code>LANG=C</code> (pure ASCII), or <code>LANG=C.UTF-8</code>? It doesn&#39;t make much sense that you&#39;d need en_US specifically.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 8002,
+        "reputation" : 299418,
+        "user_id" : 14122,
+        "user_type" : "registered",
+        "accept_rate" : 71,
+        "profile_image" : "https://www.gravatar.com/avatar/5e2861b08f37fa306fbf5384994af688?s=256&d=identicon&r=PG",
+        "display_name" : "Charles Duffy",
+        "link" : "https://stackoverflow.com/users/14122/charles-duffy"
+      },
+      "creation_date" : 1744385901,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

@@ -1,0 +1,301 @@
+{
+  "question" : {
+    "question_id" : 79747725,
+    "title" : "Virtual threads vs reactive database drivers",
+    "body" : "<p>There is a typical task: consume data from Kafka (or REST/gRPC), process it, and persist it in the DB.</p>\n<p>The database has always been our weak point. We usually have hundreds or thousands of messages to process per minute and are allowed to use only a dozen DB connections. Most of the queries work fast (milliseconds), but some can take a connection for a few seconds.</p>\n<p>Our typical solution is:</p>\n<ul>\n<li>Semaphore with a capacity of <code>N</code></li>\n<li>ThreadPoolExecutor with the number of threads <code>N</code></li>\n<li>Connection pool of <code>N + 1</code> and JDBC (1 connection is reserved for heartbeat/liveness probe)</li>\n</ul>\n<p>If the message has passed the semaphore, it is processed in a separate thread and eventually takes a separate JDBC connection from the pool. The Semaphore is needed to smooth out the load peaks: it rejects or sends messages back to a retry topic, preventing excessive accumulation in the thread pool queue (saves memory) and protects from losing too many messages when pods are shut down forcibly.</p>\n<p>This works well enough, but now it's time to scale - we're going to handle millions of messages and I wonder what would help us to utilize resources better. We still have the limitations of 10-50 simultaneous DB connections, and should process messages as quickly as possible, ideally with the same CPU/memory utilization, but as I said before the bottleneck is the limited connection pool, not the lack of resources in the application layer.</p>\n<p>I consider 2 solutions and possibly a mix of them:</p>\n<ol>\n<li><strong>Virtual Threads + blocking JDBC</strong></li>\n<li><strong>Reactive DB driver</strong> (Vert.x pg client, as a neighboring team has experience with it, but other solutions are also possible)</li>\n</ol>\n<p><strong>Virtual threads</strong> are said to be the silver bullet for all blocking API problems (in particular, JDBC). They are said to kill reactive programming, which was just a transitional technology... In my understanding, VTs can easily replace the ThreadPoolExecutor; they're cheaper and all that stuff. But would they really solve the problem of the limited connection pool?</p>\n<p>What happens when a virtual thread sends a request to the database and suspends? Will the JDBC connection be freed to handle other requests/responses while waiting for the response for the first request? Or will it still be busy because of the blocking nature of the JDBC driver (so the platform threads are ready to consume more tasks, but the connection pool is not, because all connections are busy)?</p>\n<p>It's not clear to me how <strong>reactive database drivers</strong> really work either. What happens when they send a request to the DB (send last byte to the network) - will the connection be returned to the pool? If yes, how does the DB manage session contexts for many requests and responses, detached from each other in this asynchronous interaction?..</p>\n",
+    "tags" : [ "java", "jdbc", "vert.x", "virtual-threads", "project-loom" ],
+    "owner" : {
+      "account_id" : 6496402,
+      "reputation" : 301,
+      "user_id" : 5028874,
+      "user_type" : "registered",
+      "profile_image" : "https://graph.facebook.com/10153396666613713/picture?type=large",
+      "display_name" : "Alexander Ishmuradov",
+      "link" : "https://stackoverflow.com/users/5028874/alexander-ishmuradov"
+    },
+    "is_answered" : true,
+    "view_count" : 302,
+    "answer_count" : 3,
+    "score" : 1,
+    "last_activity_date" : 1756332771,
+    "creation_date" : 1756283337,
+    "link" : "https://stackoverflow.com/questions/79747725/virtual-threads-vs-reactive-database-drivers",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79748358,
+    "question_id" : 79747725,
+    "body" : "<blockquote>\n<p>This works well enough, but now it's time to scale - we're going to handle millions of messages and I wonder what would help us to utilize resources better. We still have the limitations of 10-50 simultaneous DB connections, and should process messages as quickly as possible, ideally with the same CPU/memory utilization, but as I said before the bottleneck is the limited connection pool, not the lack of resources in the application layer.</p>\n</blockquote>\n<p>That whole idea is absurd.  From thousands of messages to millions of messages is a 1000x scale up. Then,</p>\n<ul>\n<li><p>CPU utilization is a measure of how much actual work is performed (not just wall time consumed). To achieve a 1000x increase in throughput without increased CPU utilization would require reducing the amount of actual work required to process each message by 99.9% on average.  There may be room for efficiency improvement, but it is simply not believable that you could achieve the same processing objectives for only 0.1% of the same work.</p>\n</li>\n<li><p>To achieve a 1000x increase in throughput without increased memory usage would probably require holding constant the number of messages concurrently in flight, and therefore processing each one 1000x faster on average.  Even if your app were presently written horrifically poorly, it's unlikely that it would have anywhere near that much room for performance improvement.</p>\n</li>\n<li><p>To achieve 1000x increase in throughput without increasing or improving DB resources would require expending 99.9% fewer DB resources (I/O bandwidth, processing resources, etc) to process each message.  Even if your application were ridiculously wasteful in its usage of DB resources, it is just not plausible that there is anywhere near that much room for improvement.</p>\n</li>\n</ul>\n<blockquote>\n<p><strong>Virtual threads</strong> are said to be the silver bullet for all blocking API problems (in particular, JDBC).</p>\n</blockquote>\n<p>You should stop listening to whoever told you that.  There are no silver bullets.</p>\n<p>Virtual threads do help with scaling up use of blocking APIs, by increasing the number of blocking calls that can be in flight at the same time for each platform thread (from one).  This is often cheaper than using more platform threads in service to such workloads, up to a point, because context switching among platform threads is somewhat expensive, especially when there are large numbers of them.  But virtual threads do nothing to increase the resources or performance on the other end of those blocking APIs.</p>\n<blockquote>\n<p>But would they really solve the problem of the limited connection pool?</p>\n</blockquote>\n<p>No, not at all.  JDBC connections can be re-used by multiple threads, but they cannot be used <em>concurrently</em> by different threads.</p>\n<blockquote>\n<p>What happens when a virtual thread sends a request to the database and suspends?</p>\n</blockquote>\n<p>Nothing different than when code running directly in a platform thread sends a request to the database and blocks on a response.</p>\n<blockquote>\n<p>Will the JDBC connection be freed to handle other requests/responses while waiting for the response for the first request?</p>\n</blockquote>\n<p>No.  There is nothing magic about virtual threads.  To the greatest extent achievable (which is very great), their semantics are the same as those of platform threads.  If a virtual thread checks out a <code>Connection</code> from your pool, then that <code>Connection</code> is reserved for that [virtual] thread's use until the thread releases it.  And even if that didn't need to be so for other reasons, it needs to be so because any given connection supports only one database transaction at a time.  This isn't so much about blocking vs. non-blocking as about reserving resources for one purpose at a time.</p>\n<blockquote>\n<p>It's not clear to me how <strong>reactive database drivers</strong> really work either.</p>\n</blockquote>\n<p>Reactive database drivers provide an asynchronous API for accessing DB services.  That does nothing to increase the throughput of the DB.  Rather, it allows for the client to do other work while queries are being processed, but that helps only if there's something else <em>to</em> do before the query results are available. In principle, that might be something like receiving more inbound requests or dispatching some outbound responses, but if the DB is the bottleneck then that doesn't improve throughput.</p>\n<p>Moreover, reactive database APIs have a fundamentally different design than JDBC.  You cannot discuss them using the same terminology, and one is not a drop-in replacement for the other.  Changing from one to the other -- at least in any useful way --  would involve significant code changes.  You would definitely want to re-qualify the application after such a change.  As such, this sort of thing has no place in a scaling effort for an existing (version of an) application.  It's the sort of thing you explore for an entirely new version.</p>\n",
+    "score" : 3,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 2792262,
+      "reputation" : 190832,
+      "user_id" : 2402272,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+      "display_name" : "John Bollinger",
+      "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+    },
+    "creation_date" : 1756320277,
+    "last_activity_date" : 1756320277,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79748114,
+    "question_id" : 79747725,
+    "body" : "<blockquote>\n<p>What happens when a virtual thread sends a request to the database and suspends? Will the JDBC connection be freed to handle other requests/responses while waiting for the response for the first request?</p>\n</blockquote>\n<p>No. It will not be available for other requests.</p>\n<p>Whole point of having limit on connection is to limit load on DB. You can't circumvent that and if you find a way you shouldn't.</p>\n<p>I can suggest you to check what non DB related activity (accessing other services, pushing messages to kafka, etc.) you performing while you holding DB connection.</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 4497436,
+      "reputation" : 20786,
+      "user_id" : 3656904,
+      "user_type" : "registered",
+      "accept_rate" : 67,
+      "profile_image" : "https://www.gravatar.com/avatar/8bdbd1f89f8907e8e8b15ab88c084c65?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "talex",
+      "link" : "https://stackoverflow.com/users/3656904/talex"
+    },
+    "creation_date" : 1756305487,
+    "last_activity_date" : 1756305487,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79748503,
+    "question_id" : 79747725,
+    "body" : "<p>Few clarifications on fundamental difference between virtual thread and reactive programming in respect of thread management.</p>\n<p>Reactive paradigm is based on the concept of Event Loop. A dedicated Event Loop thread handles events (e.g. HTTP requests) and immediately executes <em>on itself, without switching thread context</em> the tasks that could be done <em>quickly</em> at the same time delegating the <em>slow</em> tasks to the (pool of) threads, dedicated for this purpose. If quick tasks are plenty, then the event loop thread could do most of the work by itself without <em>thread context switching</em>, which is somehow expensive. Event Loop threads are very few.</p>\n<p>Instead, a virtual thread <em>mounts on</em> a Carrier (platform) thread when it has something to do, and <em>dismounts from</em> this Carrier when it waits for something, thus making this Carrier available to other virtual threads to mount on it. Virtual thread management entices intensive context switching, that's why it is <a href=\"https://docs.oracle.com/en/java/javase/21/core/virtual-threads.html#GUID-68216B85-7B43-423E-91BA-11489B1ACA61\" rel=\"nofollow noreferrer\">not advisable to use</a> <code>ThreadLocal</code> s extensively, special replacement <code>ScopedValue</code> has been devised to replace it and so on. One of the main advantages of virtual threads is <a href=\"https://docs.oracle.com/en/java/javase/21/core/virtual-threads.html#GUID-A0E4C745-6BC3-4DAE-87ED-E4A094D20A38\" rel=\"nofollow noreferrer\">simplicity of programming</a>: create as many as you want, execute them, and <code>join</code> them.</p>\n<p>As it is easy to see from the above, virtual threads <em>are not a drop-in replacement</em> for Reactive programming, not only in the terms of design and coding, but in terms of threads management. If highly concurrent application is concerned, Reactive programming <a href=\"https://dzone.com/articles/demystifying-virtual-thread-performance-unveiling\" rel=\"nofollow noreferrer\">could be significantly faster</a>. SO thread <a href=\"https://stackoverflow.com/questions/78318131/do-java-21-virtual-threads-address-the-main-reason-to-switch-to-reactive-single\">Do Java 21 virtual threads address the main reason to switch to reactive single-thread frameworks?</a> discusses this topic in details.</p>\n<p>As the other answerers correctly pointed out, none of the above matters if, like you said, &quot;the database has always been our weak point&quot; and first the database should be scaled appropriately. But the devil is in the details, and it is difficult to say what kind of thread management could help your issue without knowing these details. For example, I might frown at the design:</p>\n<ul>\n<li><p><code>Semaphore</code> with a capacity of <code>N</code></p>\n</li>\n<li><p><code>ThreadPoolExecutor</code> with the number of threads <code>N</code></p>\n</li>\n</ul>\n<p>suspecting that if amount of threads equals to amount of permits it might leave some permits marginally unclaimed, but, like I said above, very detailed measurement should be done on your application to spot the enhancement opportunity <em>other than</em> database enhancement.</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 2745991,
+      "reputation" : 2794,
+      "user_id" : 2366397,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/24ee2b89e9791e936235b16af77ebda4?s=256&d=identicon&r=PG",
+      "display_name" : "igor.zh",
+      "link" : "https://stackoverflow.com/users/2366397/igor-zh"
+    },
+    "creation_date" : 1756332771,
+    "last_activity_date" : 1756332771,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140709298,
+    "post_id" : 79747725,
+    "body" : "Okey, so, what you could do is to post the data into some other queue table (with a blob containing the message) and then process it on the side with another thread/threads. This would speed up your incoming request speed and also make sure the messages are persisted somewhere resumable on restart",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 17972905,
+      "reputation" : 10131,
+      "user_id" : 13061224,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/GyOMS.jpg?s=256",
+      "display_name" : "siggemannen",
+      "link" : "https://stackoverflow.com/users/13061224/siggemannen"
+    },
+    "creation_date" : 1756819145,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140709266,
+    "post_id" : 79747725,
+    "body" : "@siggemannen Currently Oracle, migrating to PostgreSQL. The total number of connections is several thousand. One application is allowed to use one or several dozen, as we are not the only users of the database - this is a way to manage the growing load. I do not know which tables are being used; we only call stored procedures, which act as an API for us. So, bulk operations are possible (and they are), but we don&#39;t have control over them behind the API.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 6496402,
+      "reputation" : 301,
+      "user_id" : 5028874,
+      "user_type" : "registered",
+      "profile_image" : "https://graph.facebook.com/10153396666613713/picture?type=large",
+      "display_name" : "Alexander Ishmuradov",
+      "link" : "https://stackoverflow.com/users/5028874/alexander-ishmuradov"
+    },
+    "creation_date" : 1756818479,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140706890,
+    "post_id" : 79747725,
+    "body" : "What kind of toy database are you using with 50 connections limit, Access? Do the messages go into different tables or same? Could you use whatever bulk insert possibilities you have in the database to collate multiple messages into same db?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 17972905,
+      "reputation" : 10131,
+      "user_id" : 13061224,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/GyOMS.jpg?s=256",
+      "display_name" : "siggemannen",
+      "link" : "https://stackoverflow.com/users/13061224/siggemannen"
+    },
+    "creation_date" : 1756730640,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140696319,
+    "post_id" : 79747725,
+    "body" : "... and on scaling DB capabilities.  If DB is the bottleneck <i>now</i> (and you say it is) then there&#39;s no reason to expect to be able to scale up without scaling DB capabilities proportionally.  Unless you&#39;re being obscenely wasteful at present, you cannot expect to get anywhere near enough scale improvement just by changing how you organize your DB use.  Four times as many concurrent connections <i>will not</i> be sufficient for a thousand times as many DB transactions.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 2792262,
+      "reputation" : 190832,
+      "user_id" : 2402272,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+      "display_name" : "John Bollinger",
+      "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+    },
+    "creation_date" : 1756306774,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140696244,
+    "post_id" : 79747725,
+    "body" : "&quot;Virtual threads are said to be the silver bullet&quot; shot anyone who say that :) Speaking seriously non of those solution will help you. You should concentrate your effort on limiting amount of non DB work while holding DB connection.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 4497436,
+      "reputation" : 20786,
+      "user_id" : 3656904,
+      "user_type" : "registered",
+      "accept_rate" : 67,
+      "profile_image" : "https://www.gravatar.com/avatar/8bdbd1f89f8907e8e8b15ab88c084c65?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "talex",
+      "link" : "https://stackoverflow.com/users/3656904/talex"
+    },
+    "creation_date" : 1756305240,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79748114" : [ {
+      "comment_id" : 140699026,
+      "post_id" : 79748114,
+      "body" : "@AlexanderIshmuradov no, connection is not returned to pool until all objects are closed. So it will by unavailable until you read response.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 4497436,
+        "reputation" : 20786,
+        "user_id" : 3656904,
+        "user_type" : "registered",
+        "accept_rate" : 67,
+        "profile_image" : "https://www.gravatar.com/avatar/8bdbd1f89f8907e8e8b15ab88c084c65?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "talex",
+        "link" : "https://stackoverflow.com/users/3656904/talex"
+      },
+      "creation_date" : 1756394280,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140698707,
+      "post_id" : 79748114,
+      "body" : "In fact, we&#39;re only limited by the number of connections (set by the DB team). It&#39;s not a lack of CPU/memory; it&#39;s just their way of managing load from many consumers.    As for non DB related activity, we do almost nothing inside the try-with-resources block when obtaining a connection: prepare logging data, create a simple POJO, and send a query.    I&#39;m currently trying to understand if reactive drivers actually work asynchronously. Specifically, do they return the connection to the pool after sending the request and only reacquire it when the response is ready?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 6496402,
+        "reputation" : 301,
+        "user_id" : 5028874,
+        "user_type" : "registered",
+        "profile_image" : "https://graph.facebook.com/10153396666613713/picture?type=large",
+        "display_name" : "Alexander Ishmuradov",
+        "link" : "https://stackoverflow.com/users/5028874/alexander-ishmuradov"
+      },
+      "creation_date" : 1756388129,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79748358" : [ {
+      "comment_id" : 140701992,
+      "post_id" : 79748358,
+      "body" : "@MarkRotteveel I knew it was a risk being that specific.  But as you observe, it comes down to almost the same thing: transaction execution is synchronous.  And even if there were a database that provided for asynchronous transactions, or if you use an asynchronous driver, there&#39;s necessarily still a practical limit on how much work the DB can handle at once, and possibly even a hard limit on concurrent transactions.  If the OP&#39;s DBA is unwilling to provide more concurrent connections then that reflects an unwillingness to commit to supporting more work than those connections will handle.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 2792262,
+        "reputation" : 190832,
+        "user_id" : 2402272,
+        "user_type" : "registered",
+        "accept_rate" : 85,
+        "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+        "display_name" : "John Bollinger",
+        "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+      },
+      "creation_date" : 1756480985,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140701481,
+      "post_id" : 79748358,
+      "body" : "@JohnBollinger There are database systems that do support multiple transactions on a single connection (e.g. Firebird, Interbase), but that would help little to none for scaling as operations within those separate transactions are generally still blocking (e.g. executing a statement), and it would be cheaper <i>and</i> simpler (from a programming perspective) to scale by increasing the number of connections.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 213468,
+        "reputation" : 110282,
+        "user_id" : 466862,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/d873f397779db38cd510d9ee5416fd43?s=256&d=identicon&r=PG",
+        "display_name" : "Mark Rotteveel",
+        "link" : "https://stackoverflow.com/users/466862/mark-rotteveel"
+      },
+      "creation_date" : 1756470568,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140698955,
+      "post_id" : 79748358,
+      "body" : "@AlexanderIshmuradov If 40% of your transactions are in a class that takes 100x as long to process as the others, then these are consuming almost all of your DB resources. Since DB is your bottleneck and you&#39;re getting about 1000 transactions per minute overall, about 400 of these slow transactions per minute is your current limit.  Even if you converted all of them to 10ms transactions, that would get you only to 40000 per minute, which is still about 25x below the scale you&#39;re after. So I repeat: you need more DB throughput.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 2792262,
+        "reputation" : 190832,
+        "user_id" : 2402272,
+        "user_type" : "registered",
+        "accept_rate" : 85,
+        "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+        "display_name" : "John Bollinger",
+        "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+      },
+      "creation_date" : 1756393131,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140698906,
+      "post_id" : 79748358,
+      "body" : "@AlexanderIshmuradov No, reactive drivers do not work that way, because databases don&#39;t work that way.  At the database level, connections support only one transaction at a time (not considering nested transactions as separate from their containing transactions).  Reactive drivers decouple clients from connections, and this may provide for more efficient utilization of the available connections, but they do not increase the number of concurrent transactions that can be supported.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 2792262,
+        "reputation" : 190832,
+        "user_id" : 2402272,
+        "user_type" : "registered",
+        "accept_rate" : 85,
+        "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+        "display_name" : "John Bollinger",
+        "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+      },
+      "creation_date" : 1756392300,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140698624,
+      "post_id" : 79748358,
+      "body" : "And yes, we are actually developing a new project with a different data flow (which we know will be significantly larger), and we just want to reuse or somehow improve the existing Java code. Given that the neighboring team has experience with Vert.x, switching to the reactive stack shouldn&#39;t be a big problem.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 6496402,
+        "reputation" : 301,
+        "user_id" : 5028874,
+        "user_type" : "registered",
+        "profile_image" : "https://graph.facebook.com/10153396666613713/picture?type=large",
+        "display_name" : "Alexander Ishmuradov",
+        "link" : "https://stackoverflow.com/users/5028874/alexander-ishmuradov"
+      },
+      "creation_date" : 1756386580,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140698617,
+      "post_id" : 79748358,
+      "body" : "We can raise CPU/memory, but the connection limit is set by the DB team.    It looks like our pool is used inefficiently because of long queries. For example, if 4 of 10 connections handle slow requests (&gt;1s), it depletes the pool. Even though the other 6 (&lt;10ms) are freed quickly, this means only 60% of the pool is ready to consume new requests.    I think performance would improve if a connection were returned to the pool immediately after a request is sent, and taken again only when the response is ready. Don&#39;t reactive drivers work this way?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 6496402,
+        "reputation" : 301,
+        "user_id" : 5028874,
+        "user_type" : "registered",
+        "profile_image" : "https://graph.facebook.com/10153396666613713/picture?type=large",
+        "display_name" : "Alexander Ishmuradov",
+        "link" : "https://stackoverflow.com/users/5028874/alexander-ishmuradov"
+      },
+      "creation_date" : 1756386400,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

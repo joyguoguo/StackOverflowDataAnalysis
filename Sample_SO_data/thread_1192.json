@@ -1,0 +1,312 @@
+{
+  "question" : {
+    "question_id" : 79733518,
+    "title" : "How do I properly invalidate and clear a Caffeine cache",
+    "body" : "<p>I am struggling to properly invalidate the cache.</p>\n<pre class=\"lang-java prettyprint-override\"><code>import com.github.benmanes.caffeine.cache.Caffeine;\nimport com.github.benmanes.caffeine.cache.LoadingCache;\n\nimport java.util.*;\nimport java.util.concurrent.locks.ReentrantLock;\n\nclass Trial2 {\n    public static void main(String[] args) {\n        LoadingCache&lt;Integer, Temp&gt; cache = Caffeine.newBuilder()\n                .maximumSize(5)\n                .removalListener( (key, value, cause) -&gt; {\n                    try {\n                        ((AutoCloseable) value).close();\n                    } catch (Exception e) {\n                        throw new RuntimeException(e);\n                    }\n                })\n                .build(Trial2::getObj);\n\n        Random random = new Random();\n        for (int i = 0; i &lt; 1000000; i++) {\n            int value = random.nextInt(1000);\n            var found = cache.get(value);\n            if (found.isClosed) {\n                cache.invalidate(value);\n                cache.cleanUp();\n                found = cache.get(value);\n            }\n            if (found.getValue() != value) {\n                throw new IllegalStateException(&quot;Value mismatch: expected &quot; + value + &quot;, got &quot; + found.getValue());\n            }\n        }\n        System.out.println(&quot;All values matched successfully!&quot;);\n    }\n\n    private static Temp getObj(int value) {\n        System.out.println(&quot;Creating obj for value: &quot; + value);\n        return new Temp(value);\n    }\n}\n\nclass Temp implements AutoCloseable {\n    private final int value;\n    public volatile boolean isClosed = false;\n    private ReentrantLock lock = new ReentrantLock();\n\n    public Temp(int value) {\n        this.value = value;\n    }\n\n    public int getValue() {\n        lock.lock();\n        try {\n            if (isClosed) {\n                throw new IllegalStateException(&quot;This object is closed&quot;);\n            }\n            return value;\n        }finally {\n            lock.unlock();\n        }\n    }\n\n    @Override\n    public void close() throws Exception {\n        lock.lock();\n        try {\n            System.out.println(&quot;Closing class with value: &quot; + value);\n            isClosed = true;\n        } finally {\n            lock.unlock();\n        }\n    }\n}\n</code></pre>\n<p>i even tried</p>\n<pre><code> if (found.isClosed) {\n    cache.asMap().remove(value);\n    found = cache.get(value);\n }\n</code></pre>\n<p>Still</p>\n<pre class=\"lang-none prettyprint-override\"><code>Exception in thread &quot;main&quot; java.lang.IllegalStateException: This object is closed\n    at Temp.getValue(idk.java:57)\n    at Trial2.main(idk.java:31)\n</code></pre>\n<p>I was planning on using the cache in a multi-threaded environment too.</p>\n<p>I tried some of the solutions provided on the internet, like, to remove the key from the map, <code>cache.asMap().remove(value)</code>;</p>\n<p>I'm still puzzled on what am I doing wrong. Is it to do with object being stateful?</p>\n",
+    "tags" : [ "java", "caching", "caffeine-cache" ],
+    "owner" : {
+      "account_id" : 19814361,
+      "reputation" : 1,
+      "user_id" : 14512430,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/1905fe62ca65ce8325849b4877dc042a?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "theuntamed000",
+      "link" : "https://stackoverflow.com/users/14512430/theuntamed000"
+    },
+    "is_answered" : false,
+    "view_count" : 256,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1755072142,
+    "creation_date" : 1755021758,
+    "link" : "https://stackoverflow.com/questions/79733518/how-do-i-properly-invalidate-and-clear-a-caffeine-cache",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79733566,
+    "question_id" : 79733518,
+    "body" : "<p>You <em>can't</em> have what you want and have a <code>maximumSize</code>.</p>\n<p>The presence of a <code>maximumSize</code> means that there is always a possibility that an entry you load into the cache gets evicted <em>immediately,</em> before it even gets stored.  Caffeine has a variety of tools to reason intelligently about what values are likely to be kept in the cache -- this is the fancy W-TinyLFU thing in its documentation.</p>\n<p>As a result, your removal listener is sometimes called immediately, before your <code>get</code> even returns, and you don't get the value until it's already closed.</p>\n<p>Fundamentally, you have built your design around the assumption that if you get a value out of the cache, there will be at least some period where the value is &quot;safe to use&quot; and hasn't been evicted from the cache.  There is no way to get that and have a <code>maximumSize</code>, even with a single thread.  There is no way to configure Caffeine to let you keep a value alive due to some external stimulus, such as having a clever weigher or anything like that.  Caffeine is allowed to call the weigher only when a value is added to a cache, for example, and never again.  You might be able to achieve <em>something</em> by using <code>asMap().replace</code> to replace a weightless value by a weightful value when it might be evictable, but I'm not sure how you would do that with concurrency and values shifting in and out of evictability as you use them or if that's even possible.</p>\n<p>(To be clear, I don't consider this a bug in Caffeine; I only consider this a bug in your expectations about how it can be used.)</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 465573,
+      "reputation" : 200423,
+      "user_id" : 869736,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/ae7bb06b9a23a4dd7eea69e853d47d12?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Louis Wasserman",
+      "link" : "https://stackoverflow.com/users/869736/louis-wasserman"
+    },
+    "creation_date" : 1755024964,
+    "last_activity_date" : 1755025298,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140661747,
+    "post_id" : 79733518,
+    "body" : "Caffeine allows for entry pinning to mark/unmark a stateful entry as evictable. The Weigher is called on create or update, so a <code>compute</code> can mark the entry and give it a weight of zero to be skipped by size eviction (as it takes no capacity), or restore it with a size (e.g. 1). By default eviction is asynchronous so it happens concurrently to your main thread. An object pool instead checks in/out objects for exclusive use, like a database connection, to reuse an expensive resource. A simple one is <a href=\"https://www.vibur.org/vibur-object-pool/\" rel=\"nofollow noreferrer\">Vibur</a> if that better suites your needs.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10326,
+      "reputation" : 9711,
+      "user_id" : 19450,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/40d9bb2e8df635f2f598b7577c5b3eb9?s=256&d=identicon&r=PG",
+      "display_name" : "Ben Manes",
+      "link" : "https://stackoverflow.com/users/19450/ben-manes"
+    },
+    "creation_date" : 1755065191,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140661030,
+    "post_id" : 79733518,
+    "body" : "@BenManes can you give some clarity on object pooling ?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 19814361,
+      "reputation" : 1,
+      "user_id" : 14512430,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/1905fe62ca65ce8325849b4877dc042a?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "theuntamed000",
+      "link" : "https://stackoverflow.com/users/14512430/theuntamed000"
+    },
+    "creation_date" : 1755025478,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140661006,
+    "post_id" : 79733518,
+    "body" : "i tried removing the maximumSize, exception didn&#39;t occur but the estimatedSize shot up, that&#39;s not something i want.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 19814361,
+      "reputation" : 1,
+      "user_id" : 14512430,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/1905fe62ca65ce8325849b4877dc042a?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "theuntamed000",
+      "link" : "https://stackoverflow.com/users/14512430/theuntamed000"
+    },
+    "creation_date" : 1755024733,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140660995,
+    "post_id" : 79733518,
+    "body" : "What I asked originally was what happened when you removed <code>maximumSize</code> entirely, whether you still got the same issue, and you haven&#39;t yet answered that question.  If my guess is right, you could get this exception if you have <i>any</i> <code>maximumSize</code>, and then the correct fix is in your assumptions.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 465573,
+      "reputation" : 200423,
+      "user_id" : 869736,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/ae7bb06b9a23a4dd7eea69e853d47d12?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Louis Wasserman",
+      "link" : "https://stackoverflow.com/users/869736/louis-wasserman"
+    },
+    "creation_date" : 1755024463,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140660992,
+    "post_id" : 79733518,
+    "body" : "@LouisWasserman what would you suggest the max size to be ? is there any article referencing on what the size should be ?  i tried maxsize of 100 and random.nextInt bound of 1000, that&#39;s 10% and still the exception occured.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 19814361,
+      "reputation" : 1,
+      "user_id" : 14512430,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/1905fe62ca65ce8325849b4877dc042a?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "theuntamed000",
+      "link" : "https://stackoverflow.com/users/14512430/theuntamed000"
+    },
+    "creation_date" : 1755024379,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140660990,
+    "post_id" : 79733518,
+    "body" : "(It could be called once when the value is added to the cache and never again, every time eviction is considered, whatever.)",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 465573,
+      "reputation" : 200423,
+      "user_id" : 869736,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/ae7bb06b9a23a4dd7eea69e853d47d12?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Louis Wasserman",
+      "link" : "https://stackoverflow.com/users/869736/louis-wasserman"
+    },
+    "creation_date" : 1755024360,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140660978,
+    "post_id" : 79733518,
+    "body" : "I would not expect the semantics of when the weigher method is called to be well-defined.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 465573,
+      "reputation" : 200423,
+      "user_id" : 869736,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/ae7bb06b9a23a4dd7eea69e853d47d12?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Louis Wasserman",
+      "link" : "https://stackoverflow.com/users/869736/louis-wasserman"
+    },
+    "creation_date" : 1755023964,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140660976,
+    "post_id" : 79733518,
+    "body" : "@BenManes is the weigher method called every time eviction needs to be done ? I tried.  <code>.weigher((Integer key, Temp value) -&gt; {                     if (value.inUse()) {                         return 0;                     }                     return 1;                 })</code>  `    public boolean inUse() {         return lock.isLocked() || !isClosed;     }` but the end estimated size is quite huge, when i increased the bounds of random.nextInt",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 19814361,
+      "reputation" : 1,
+      "user_id" : 14512430,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/1905fe62ca65ce8325849b4877dc042a?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "theuntamed000",
+      "link" : "https://stackoverflow.com/users/14512430/theuntamed000"
+    },
+    "creation_date" : 1755023903,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140660970,
+    "post_id" : 79733518,
+    "body" : "The issue is being exhibited in a single-threaded environment, so that&#39;s not the issue.  I suspect that the <code>maximumSize</code> is so small the entry is being evicted immediately upon construction, which I think would explain the symptoms.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 465573,
+      "reputation" : 200423,
+      "user_id" : 869736,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/ae7bb06b9a23a4dd7eea69e853d47d12?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Louis Wasserman",
+      "link" : "https://stackoverflow.com/users/869736/louis-wasserman"
+    },
+    "creation_date" : 1755023551,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140660968,
+    "post_id" : 79733518,
+    "body" : "i tried weak references, didn&#39;t help.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 19814361,
+      "reputation" : 1,
+      "user_id" : 14512430,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/1905fe62ca65ce8325849b4877dc042a?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "theuntamed000",
+      "link" : "https://stackoverflow.com/users/14512430/theuntamed000"
+    },
+    "creation_date" : 1755023467,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140660953,
+    "post_id" : 79733518,
+    "body" : "it is a size-based cache so when eviction occurs another thread may still have a reference to it and its read races with the close. You might consider weak references, <a href=\"https://github.com/ben-manes/caffeine/wiki/Faq#pinning-entries\" rel=\"nofollow noreferrer\">pinning</a>, or using an object pool.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10326,
+      "reputation" : 9711,
+      "user_id" : 19450,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/40d9bb2e8df635f2f598b7577c5b3eb9?s=256&d=identicon&r=PG",
+      "display_name" : "Ben Manes",
+      "link" : "https://stackoverflow.com/users/19450/ben-manes"
+    },
+    "creation_date" : 1755022917,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140660926,
+    "post_id" : 79733518,
+    "body" : "What happens if you remove <code>.maximumSize</code>?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 465573,
+      "reputation" : 200423,
+      "user_id" : 869736,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/ae7bb06b9a23a4dd7eea69e853d47d12?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Louis Wasserman",
+      "link" : "https://stackoverflow.com/users/869736/louis-wasserman"
+    },
+    "creation_date" : 1755022181,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79733566" : [ {
+      "comment_id" : 140661141,
+      "post_id" : 79733566,
+      "body" : "You are right on this, which is why it makes it difficult to work with stateful objects in the cache. The outcome could be unpredictable.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 19814361,
+        "reputation" : 1,
+        "user_id" : 14512430,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/1905fe62ca65ce8325849b4877dc042a?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "theuntamed000",
+        "link" : "https://stackoverflow.com/users/14512430/theuntamed000"
+      },
+      "creation_date" : 1755028411,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140661113,
+      "post_id" : 79733566,
+      "body" : "You can certainly use stateful objects in a cache, you just have to be very conscious of how the lifetime of those stateful objects interacts with the lifetime of its entry in the cache.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 465573,
+        "reputation" : 200423,
+        "user_id" : 869736,
+        "user_type" : "registered",
+        "accept_rate" : 82,
+        "profile_image" : "https://www.gravatar.com/avatar/ae7bb06b9a23a4dd7eea69e853d47d12?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Louis Wasserman",
+        "link" : "https://stackoverflow.com/users/869736/louis-wasserman"
+      },
+      "creation_date" : 1755027207,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140661093,
+      "post_id" : 79733566,
+      "body" : "In what sense do you believe the value &quot;wasn&#39;t removed&quot;?  What I&#39;m saying is that you successfully removed the entry from the cache if it was present, and then it was gone as you wanted -- and then you called <code>get</code> again, which loaded a fresh value to go into the cache, which then got evicted immediately <i>again</i>.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 465573,
+        "reputation" : 200423,
+        "user_id" : 869736,
+        "user_type" : "registered",
+        "accept_rate" : 82,
+        "profile_image" : "https://www.gravatar.com/avatar/ae7bb06b9a23a4dd7eea69e853d47d12?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Louis Wasserman",
+        "link" : "https://stackoverflow.com/users/869736/louis-wasserman"
+      },
+      "creation_date" : 1755026982,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140661060,
+      "post_id" : 79733566,
+      "body" : "Basically, you’re saying not to use stateful objects in the cache—which I was already skeptical about and had already asked about earlier.  Secondly, the real problem was that even after closing the object, it wasn’t removed, even after calling invalidate and cleanup on the cache, as well as cache.asMap().remove(value).  Thirdly, I never thought this was a bug in Caffeine; I knew something I was doing was off, which is why I asked in the first place.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 19814361,
+        "reputation" : 1,
+        "user_id" : 14512430,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/1905fe62ca65ce8325849b4877dc042a?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "theuntamed000",
+        "link" : "https://stackoverflow.com/users/14512430/theuntamed000"
+      },
+      "creation_date" : 1755026292,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

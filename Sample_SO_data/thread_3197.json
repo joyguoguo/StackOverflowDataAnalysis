@@ -1,0 +1,194 @@
+{
+  "question" : {
+    "question_id" : 79566003,
+    "title" : "GitLab CI Integration Tests for Spring Maven Project with PSQL Database in Docker Container",
+    "body" : "<p><strong>TLDR:</strong>\nI have a Spring Boot application which connects locally to a database in a docker container and want to run some integration tests in the CI pipeline but can't connect to the db when I run my GitLab pipeline.</p>\n<hr />\n<p>So I'm fairly new to the topic of GitLab CI pipelines.</p>\n<p>For my project setup for which I want to make a CI pipeline with GitLab:</p>\n<ul>\n<li>Java Spring Boot Application with Maven</li>\n<li>PSQL Database that locally runs in a docker container, this db is started via a Dockerfile that also runs some startup scripts on it (to initialize the most basic tables)</li>\n<li>The Project contains some unit and integration test that test the application (integrations also connect to the db)</li>\n</ul>\n<p>Now I want to make a basic CI pipeline that firstly compiles the maven project and tests if this works. And afterwards it should execute the maven tests to test the application. Following the <code>.gitlab-ci.yml</code> file I currently have:</p>\n<pre><code>variables:\n  DOCKERFILE_DIR: src/main/resources/docker\n\nstages:\n  - .pre\n  - build\n  - test\n\nBuild DB docker-container:\n  stage: .pre\n  image: docker:28.0.4\n  rules:\n    - changes:\n        - $DOCKERFILE_DIR/**\n  services:\n    - docker:28.0.4-dind\n  script:\n    - cd $DOCKERFILE_DIR\n    - echo $CI_REGISTRY_PASSWORD | docker login $CI_REGISTRY -u $CI_REGISTRY_USER --password-stdin\n    - docker build -f Dockerfile -t $CI_REGISTRY_IMAGE/cookbook-db .\n    - docker push $CI_REGISTRY_IMAGE/cookbook-db\n\nmvn compile:\n  stage: build\n  image: maven:3.9.9-eclipse-temurin-21\n  script:\n    - mvn clean compile\n  artifacts:\n    paths:\n      - target/\n\nmvn test:\n  stage: test\n  image: maven:3.9.9-eclipse-temurin-21\n  services:\n    - name: $CI_REGISTRY_IMAGE/cookbook-db\n      alias: cookbook-db\n  script:\n    - mvn verify -Dspring.profiles.active=ci\n  artifacts:\n    when: always\n    reports:\n      junit: target/surefire-reports/*.xml\n</code></pre>\n<p>And my application.properties are as follows (2 separate files, one basic and one for the ci-profile to run against the correct db)</p>\n<p>application.properties</p>\n<pre><code>spring.datasource.url=jdbc:postgresql://localhost:5432/cookbook-db\nspring.datasource.username=&lt;username&gt;\nspring.datasource.password=&lt;password&gt;\nspring.datasource.driver-class-name=org.postgresql.Driver\n</code></pre>\n<p>application-ci.properties (to override the datasource url for the pipeline)</p>\n<pre><code>spring.datasource.url=jdbc:postgresql://cookbook-db:5432/cookbook-db\n</code></pre>\n<p>My Dockerfile I currently have:</p>\n<pre><code>FROM postgres\nENV POSTGRES_DB=cookbook-db\nCOPY 01_init-db.sql /docker-entrypoint-initdb.d/\nCOPY 02_load-data-db.sql /docker-entrypoint-initdb.d/\n\nENTRYPOINT [&quot;docker-entrypoint.sh&quot;]\n</code></pre>\n<p>Now if the pipeline runs, it fails at the test-stage wihtin the integration tests (unit tests run perfectly). The error I get is that no connection to the query metadata can be made and therefore no connection to the db can be established and the integration tests fail, because the application context can not be started.</p>\n",
+    "tags" : [ "java", "spring", "docker", "maven", "gitlab" ],
+    "owner" : {
+      "account_id" : 16904286,
+      "reputation" : 143,
+      "user_id" : 12224899,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Lzz6x.png?s=256",
+      "display_name" : "Sven J&#228;ger",
+      "link" : "https://stackoverflow.com/users/12224899/sven-j%c3%a4ger"
+    },
+    "is_answered" : false,
+    "view_count" : 106,
+    "answer_count" : 2,
+    "score" : 0,
+    "last_activity_date" : 1744784181,
+    "creation_date" : 1744270490,
+    "link" : "https://stackoverflow.com/questions/79566003/gitlab-ci-integration-tests-for-spring-maven-project-with-psql-database-in-docke",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79568184,
+    "question_id" : 79566003,
+    "body" : "<p>I don't know very well gitlab services but I tried to reproduce your case : <a href=\"https://framagit.org/FBibonne/discover-gitlab-services\" rel=\"nofollow noreferrer\">https://framagit.org/FBibonne/discover-gitlab-services</a></p>\n<ol>\n<li>Tests run with a containered postgres DB. They work locally and, after a few difficulties, they also work in CI with the postgres container started as a gitlab CI service. While I was trying to make it work, I noticed to be aware of : 1. The entrypoint must be exactly [&quot;docker-entrypoint.sh&quot;]</li>\n<li>The command must be exactly [&quot;postgres&quot;] (if you want default behaviour)</li>\n</ol>\n<p>See code at <a href=\"https://framagit.org/FBibonne/discover-gitlab-services/-/blob/main/.gitlab-ci.yml?ref_type=heads#L12\" rel=\"nofollow noreferrer\">https://framagit.org/FBibonne/discover-gitlab-services/-/blob/main/.gitlab-ci.yml?ref_type=heads#L12</a></p>\n<p>Hope this helps</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 19234071,
+      "reputation" : 91,
+      "user_id" : 14055401,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/6bf3171bbad35e7b596621ca4241d54a?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "FBibonne",
+      "link" : "https://stackoverflow.com/users/14055401/fbibonne"
+    },
+    "creation_date" : 1744354340,
+    "last_activity_date" : 1744784181,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79572850,
+    "question_id" : 79566003,
+    "body" : "<p>i am not experienced gitlab-ci but it works for on same project. You can use argument</p>\n<pre><code>--env-file .env\n</code></pre>\n<p>when you run your <code>docker compose up\\docker run</code></p>\n<p>env.example:</p>\n<pre><code>PG_DB_HOST=!!!\nPG_DB_PORT=!!!\nPG_DB_NAME=!!!\nPG_DB_USER=!!!\nPG_DB_PASSWORD=!!!\n</code></pre>\n<p><strong>ofc do not add your original .env ti github\\gitlab repo.</strong></p>\n<p>and you need a minor change your application.properties (subs by vars):</p>\n<pre><code>spring.datasource.url=jdbc:postgresql://${PG_DB_HOST}:${PG_DB_PORT}/${PG_DB_NAME}\nspring.datasource.driver-class-name=org.postgresql.Driver\nspring.datasource.username=${PG_DB_USER}\nspring.datasource.password=${PG_DB_PASSWORD}\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 14131150,
+      "reputation" : 71,
+      "user_id" : 20051329,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/p0TKb.jpg?s=256",
+      "display_name" : "Firdaus",
+      "link" : "https://stackoverflow.com/users/20051329/firdaus"
+    },
+    "creation_date" : 1744624392,
+    "last_activity_date" : 1744624392,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79568184" : [ {
+      "comment_id" : 140333872,
+      "post_id" : 79568184,
+      "body" : "Pipeline working : <a href=\"https://framagit.org/FBibonne/discover-gitlab-services/-/pipelines/952203\" rel=\"nofollow noreferrer\">framagit.org/FBibonne/discover-gitlab-services/-/pipelines/&hellip;</a>",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 19234071,
+        "reputation" : 91,
+        "user_id" : 14055401,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/6bf3171bbad35e7b596621ca4241d54a?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "FBibonne",
+        "link" : "https://stackoverflow.com/users/14055401/fbibonne"
+      },
+      "creation_date" : 1744650852,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140333759,
+      "post_id" : 79568184,
+      "body" : "It works locally and it  fails on CI (pipeline #952176)  because of bad data initilisation. Nevertheless,  I noticed to be aware of :  1.\tThe entrypoint must be exactly <code>[&quot;docker-entrypoint.sh&quot;]</code> 2.\tThe command must be exactly <code>[&quot;postgres&quot;]</code> (if you want default behaviour)  Maybe it could work for you if you used the same entrypoint and command.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 19234071,
+        "reputation" : 91,
+        "user_id" : 14055401,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/6bf3171bbad35e7b596621ca4241d54a?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "FBibonne",
+        "link" : "https://stackoverflow.com/users/14055401/fbibonne"
+      },
+      "creation_date" : 1744648732,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140333718,
+      "post_id" : 79568184,
+      "body" : "I tried with an image locally and in gitlab (<a href=\"https://framagit.org/FBibonne/discover-gitlab-services\" rel=\"nofollow noreferrer\">framagit.org/FBibonne/discover-gitlab-services</a>) :",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 19234071,
+        "reputation" : 91,
+        "user_id" : 14055401,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/6bf3171bbad35e7b596621ca4241d54a?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "FBibonne",
+        "link" : "https://stackoverflow.com/users/14055401/fbibonne"
+      },
+      "creation_date" : 1744647888,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140331586,
+      "post_id" : 79568184,
+      "body" : "Thank you very much for the suggestion. This could be very much the case since I don&#39;t have an entrypoint. But I tested it with the entrypoint and it seams to not make any difference, I still get the same error. I have added my current Dockerfile (with the added entrypoint) to the original question, so you can also see the content of this. I have also tried with &quot;CMD [&quot;docker-entrypoint.sh&quot;, &quot;postgres&quot;]&quot;",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 16904286,
+        "reputation" : 143,
+        "user_id" : 12224899,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/Lzz6x.png?s=256",
+        "display_name" : "Sven J&#228;ger",
+        "link" : "https://stackoverflow.com/users/12224899/sven-j%c3%a4ger"
+      },
+      "creation_date" : 1744613302,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140325413,
+      "post_id" : 79568184,
+      "body" : "Assuming your gitlab ci script is right (I don&#39;t see any mistake),  the java  log line &quot;java.net.UnknownHostException: cookbook-db&quot; sounds like if the service is already stoped when java is starting. Did you include an entrypoint statement in your dockerfile such as &#39;ENTRYPOINT [&quot;docker-entrypoint.sh&quot;]&#39; ?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 19234071,
+        "reputation" : 91,
+        "user_id" : 14055401,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/6bf3171bbad35e7b596621ca4241d54a?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "FBibonne",
+        "link" : "https://stackoverflow.com/users/14055401/fbibonne"
+      },
+      "creation_date" : 1744389655,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140324178,
+      "post_id" : 79568184,
+      "body" : "I created a Pastebin file for the Stacktrace, this is only a part of it but I hope it is enough. I thought that the startup of the app is the most importatnt part of the stack trace to analyse the problem. <a href=\"https://pastebin.com/KVz1HpY6\" rel=\"nofollow noreferrer\">pastebin.com/KVz1HpY6</a> &lt;-- Link to the pastebin",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 16904286,
+        "reputation" : 143,
+        "user_id" : 12224899,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/Lzz6x.png?s=256",
+        "display_name" : "Sven J&#228;ger",
+        "link" : "https://stackoverflow.com/users/12224899/sven-j%c3%a4ger"
+      },
+      "creation_date" : 1744369460,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140323473,
+      "post_id" : 79568184,
+      "body" : "oups. my bad. I didn&#39;t read the good application.properties. So this is the right property value for the CI context.  Unfortunately, I do not know what is going wrong. Could you share stack trace error in the CI ?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 19234071,
+        "reputation" : 91,
+        "user_id" : 14055401,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/6bf3171bbad35e7b596621ca4241d54a?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "FBibonne",
+        "link" : "https://stackoverflow.com/users/14055401/fbibonne"
+      },
+      "creation_date" : 1744356630,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140323407,
+      "post_id" : 79568184,
+      "body" : "You mean this for in my application.properties? Exactly for this I have the separate ci-properties file and as far as I know if I specify a profile in my mvn-Command the properties from this profile owerride the basic properties right?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 16904286,
+        "reputation" : 143,
+        "user_id" : 12224899,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/Lzz6x.png?s=256",
+        "display_name" : "Sven J&#228;ger",
+        "link" : "https://stackoverflow.com/users/12224899/sven-j%c3%a4ger"
+      },
+      "creation_date" : 1744355383,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

@@ -1,0 +1,212 @@
+{
+  "question" : {
+    "question_id" : 79568301,
+    "title" : "Can&#39;t add Java to system path in Dockerized Alpine Linux",
+    "body" : "<p>So I am trying to build a really small docker image, where I can run my java codes with latest version. I have tried with ubuntu, but I really want to play with alpine.</p>\n<p>So I wrote the following <code>Dockerfile</code>:</p>\n<pre><code>FROM alpine:20250108\n\nCOPY jdk-22.0.1_linux-x64_bin.tar.gz /tmp/\nRUN mkdir -p /usr/lib/jvm/java-22 &amp;&amp; \\\n    tar -xzf /tmp/jdk-22.0.1_linux-x64_bin.tar.gz -C /usr/lib/jvm/java-22 --strip-components=1 &amp;&amp; \\\n    chmod -R +x /usr/lib/jvm/java-22/bin &amp;&amp; \\\n    rm /tmp/jdk-22.0.1_linux-x64_bin.tar.gz\n\nENV JAVA_HOME=/usr/lib/jvm/java-22\nENV PATH=&quot;${JAVA_HOME}/bin/:${PATH}&quot;\n\nWORKDIR /app\nCOPY Main.java .\n\nRUN java --version\n# it fails here on this line\n\nCMD [&quot;java&quot;, &quot;Main.java&quot;]\n</code></pre>\n<p>But the thing is, I can't add Java to path correctly.</p>\n<p>I have tried like everything</p>\n<ul>\n<li><code>glibc@2.35-r1</code></li>\n<li>writing to <code>/etc/profile</code></li>\n<li>writing to <code>/etc/profile2</code></li>\n<li><code>source</code></li>\n<li><code>su</code></li>\n<li><code>export</code></li>\n<li>directly calling <code>/usr/lib/jvm/java-22/bin/java</code></li>\n<li><code>workdir</code> to bin directory directly</li>\n</ul>\n<p>But nothing works. I followed many stackoverflow articles as well, and it doesn't seem to work. Like this one:</p>\n<ul>\n<li><a href=\"https://stackoverflow.com/q/52056387/10305444\">How to install Go in alpine linux</a></li>\n</ul>\n<p>And that specific tar can we downloaded from the following link. I am not using wget not to spam their site.</p>\n<ul>\n<li><a href=\"https://download.oracle.com/java/22/archive/jdk-22.0.1_linux-x64_bin.tar.gz\" rel=\"nofollow noreferrer\">https://download.oracle.com/java/22/archive/jdk-22.0.1_linux-x64_bin.tar.gz</a></li>\n</ul>\n<p>Any solution to my problem?</p>\n",
+    "tags" : [ "java", "docker", "alpine-linux", "java-22" ],
+    "owner" : {
+      "account_id" : 14266486,
+      "reputation" : 4689,
+      "user_id" : 10305444,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/cdffaf7c0a3d7d398e9b004acd125cd6?s=256&d=identicon&r=PG",
+      "display_name" : "Maifee Ul Asad",
+      "link" : "https://stackoverflow.com/users/10305444/maifee-ul-asad"
+    },
+    "is_answered" : true,
+    "view_count" : 248,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1744362703,
+    "creation_date" : 1744357813,
+    "link" : "https://stackoverflow.com/questions/79568301/cant-add-java-to-system-path-in-dockerized-alpine-linux",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79568340,
+    "question_id" : 79568301,
+    "body" : "<p>If you must use Oracle JDK, you'll need to install <strong>glibc</strong> manually, because Oracle JDK doesn't run on musl.</p>\n<p>Also, Alpine Linux uses <strong>musl libc</strong>, which isn't binary-compatible with glibc binaries.</p>\n<p>The Dockerfile should seem to something like this:</p>\n<pre><code>FROM alpine:20250108\n\n# glibc, bin, others\nRUN apk add --no-cache curl ca-certificates bash tar binutils \\\n    &amp;&amp; curl -fsSL -o /etc/apk/keys/sgerrand.rsa.pub https://alpine-pkgs.sgerrand.com/sgerrand.rsa.pub \\\n    &amp;&amp; curl -fsSL -O https://github.com/sgerrand/alpine-pkg-glibc/releases/download/2.35-r1/glibc-2.35-r1.apk \\\n    &amp;&amp; curl -fsSL -O https://github.com/sgerrand/alpine-pkg-glibc/releases/download/2.35-r1/glibc-bin-2.35-r1.apk \\\n    &amp;&amp; apk add --no-cache glibc-2.35-r1.apk glibc-bin-2.35-r1.apk \\\n    &amp;&amp; rm glibc-2.35-r1.apk glibc-bin-2.35-r1.apk\n\n# Explicitly update dynamic linker cache\nRUN /usr/glibc-compat/sbin/ldconfig /lib /usr/glibc-compat/lib\n\n# Oracle JDK\nCOPY jdk-22.0.1_linux-x64_bin.tar.gz /tmp/\nRUN mkdir -p /usr/lib/jvm/java-22 \\\n    &amp;&amp; tar -xzf /tmp/jdk-22.0.1_linux-x64_bin.tar.gz -C /usr/lib/jvm/java-22 --strip-components=1 \\\n    &amp;&amp; rm /tmp/jdk-22.0.1_linux-x64_bin.tar.gz\n\n\nENV JAVA_HOME=/usr/lib/jvm/java-22\nENV PATH=&quot;${JAVA_HOME}/bin:${PATH}&quot;\n\nWORKDIR /app\nCOPY Main.java .\n\n\nRUN java --version\n\nCMD [&quot;java&quot;, &quot;Main.java&quot;]\n</code></pre>\n<p>This will be a headache, for sure..At this point, you would rather choose another type of image instead of putting all these layers to a minimal one.</p>\n<hr />\n<p>I'd try the simple way, which is using an <code>openjdk:alpine</code> image. It is based on OpenJDK, but unless you need some specific testing on OracleJDK it will do the job.</p>\n<p><strong><a href=\"https://pkgs.alpinelinux.org/package/edge/testing/x86_64/openjdk22-jdk\" rel=\"nofollow noreferrer\">Alpine Linux OpenJDK 22</a> , for example</strong></p>\n<p>New <code>Dockerfile</code> with alpine-java image:</p>\n<pre><code>FROM openjdk:22-alpine\n\n### Even if you know it...\nRUN java --version \n###\n\nWORKDIR /app\nCOPY Main.java .\n\nCMD [&quot;java&quot;, &quot;Main.java&quot;]\n</code></pre>\n<p>This Alpine image has Java already installed, just give it a try.</p>\n<p>The other option is just headache. If you <strong>must use Oracle JDK</strong> on Alpine, you'll need to install <strong>glibc</strong> manually, because Oracle JDK doesn't run on musl.</p>\n",
+    "score" : 2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 2465829,
+      "reputation" : 13577,
+      "user_id" : 2148953,
+      "user_type" : "registered",
+      "accept_rate" : 96,
+      "profile_image" : "https://i.sstatic.net/DVHoP84E.jpg?s=256",
+      "display_name" : "aran",
+      "link" : "https://stackoverflow.com/users/2148953/aran"
+    },
+    "creation_date" : 1744358983,
+    "last_activity_date" : 1744362703,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140323846,
+    "post_id" : 79568301,
+    "body" : "Yes, you could use <code>eclipse-temurin:22-alpine</code>  ( same size )",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 481437,
+      "reputation" : 5327,
+      "user_id" : 895279,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/5cc8354b6c084f50364db5bd2cfe9904?s=256&d=identicon&r=PG",
+      "display_name" : "Mate",
+      "link" : "https://stackoverflow.com/users/895279/mate"
+    },
+    "creation_date" : 1744363076,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140323802,
+    "post_id" : 79568301,
+    "body" : "@Mate that&#39;s deprecated, regarding <code>openjdk:22-alpine</code>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 14266486,
+      "reputation" : 4689,
+      "user_id" : 10305444,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/cdffaf7c0a3d7d398e9b004acd125cd6?s=256&d=identicon&r=PG",
+      "display_name" : "Maifee Ul Asad",
+      "link" : "https://stackoverflow.com/users/10305444/maifee-ul-asad"
+    },
+    "creation_date" : 1744362527,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140323760,
+    "post_id" : 79568301,
+    "body" : "Read about &quot;multi stage&quot; dockerfiles. Then you could use a build stage and runtime stage. <a href=\"https://docs.docker.com/build/building/multi-stage/\" rel=\"nofollow noreferrer\">docs.docker.com/build/building/multi-stage</a>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 481437,
+      "reputation" : 5327,
+      "user_id" : 895279,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/5cc8354b6c084f50364db5bd2cfe9904?s=256&d=identicon&r=PG",
+      "display_name" : "Mate",
+      "link" : "https://stackoverflow.com/users/895279/mate"
+    },
+    "creation_date" : 1744361725,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140323753,
+    "post_id" : 79568301,
+    "body" : "@MaifeeUlAsad Edited the answer, even thou will be headache",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2465829,
+      "reputation" : 13577,
+      "user_id" : 2148953,
+      "user_type" : "registered",
+      "accept_rate" : 96,
+      "profile_image" : "https://i.sstatic.net/DVHoP84E.jpg?s=256",
+      "display_name" : "aran",
+      "link" : "https://stackoverflow.com/users/2148953/aran"
+    },
+    "creation_date" : 1744361634,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140323720,
+    "post_id" : 79568301,
+    "body" : "@aran , so there are two things, first of all I am trying to learn docker more, so i need to make it work.. and in all my projects for some unknown reason (started from university days), i am using oracle..",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 14266486,
+      "reputation" : 4689,
+      "user_id" : 10305444,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/cdffaf7c0a3d7d398e9b004acd125cd6?s=256&d=identicon&r=PG",
+      "display_name" : "Maifee Ul Asad",
+      "link" : "https://stackoverflow.com/users/10305444/maifee-ul-asad"
+    },
+    "creation_date" : 1744361149,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140323589,
+    "post_id" : 79568301,
+    "body" : "did you try <code>FROM openjdk:22-alpine</code> ?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 481437,
+      "reputation" : 5327,
+      "user_id" : 895279,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/5cc8354b6c084f50364db5bd2cfe9904?s=256&d=identicon&r=PG",
+      "display_name" : "Mate",
+      "link" : "https://stackoverflow.com/users/895279/mate"
+    },
+    "creation_date" : 1744358931,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140323583,
+    "post_id" : 79568301,
+    "body" : "Hey, still getting problems? Do you need Oracle&#39;s JDK or you are OK with openJDK?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2465829,
+      "reputation" : 13577,
+      "user_id" : 2148953,
+      "user_type" : "registered",
+      "accept_rate" : 96,
+      "profile_image" : "https://i.sstatic.net/DVHoP84E.jpg?s=256",
+      "display_name" : "aran",
+      "link" : "https://stackoverflow.com/users/2148953/aran"
+    },
+    "creation_date" : 1744358819,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79568340" : [ {
+      "comment_id" : 140323812,
+      "post_id" : 79568340,
+      "body" : "@MaifeeUlAsad Seems like the current Dockerfile installs only the basic glibc library without glibc-bin. Editting",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 2465829,
+        "reputation" : 13577,
+        "user_id" : 2148953,
+        "user_type" : "registered",
+        "accept_rate" : 96,
+        "profile_image" : "https://i.sstatic.net/DVHoP84E.jpg?s=256",
+        "display_name" : "aran",
+        "link" : "https://stackoverflow.com/users/2148953/aran"
+      },
+      "creation_date" : 1744362621,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140323799,
+      "post_id" : 79568340,
+      "body" : "@HansKilian +1, and @aran I tried the <code>Dockerfile</code> you just provided, it is still giving me <code>&#47;bin&#47;sh: java: not found</code> on <code>RUN java --version</code>",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 14266486,
+        "reputation" : 4689,
+        "user_id" : 10305444,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/cdffaf7c0a3d7d398e9b004acd125cd6?s=256&d=identicon&r=PG",
+        "display_name" : "Maifee Ul Asad",
+        "link" : "https://stackoverflow.com/users/10305444/maifee-ul-asad"
+      },
+      "creation_date" : 1744362480,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140323785,
+      "post_id" : 79568340,
+      "body" : "The OpenJDK images are <a href=\"https://hub.docker.com/_/openjdk/\" rel=\"nofollow noreferrer\">deprecated</a> so using them is not an ideal solution either.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 4866881,
+        "reputation" : 26596,
+        "user_id" : 3924803,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/M8lVF.jpg?s=256",
+        "display_name" : "Hans Kilian",
+        "link" : "https://stackoverflow.com/users/3924803/hans-kilian"
+      },
+      "creation_date" : 1744362253,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

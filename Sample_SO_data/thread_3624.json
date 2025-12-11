@@ -1,0 +1,65 @@
+{
+  "question" : {
+    "question_id" : 79536020,
+    "title" : "Handling IBM MQ transactions via Spring Integration",
+    "body" : "<p>A Java <strong>spring boot</strong> micro-service is required to consume messages from an IBM point-to-point message queue. After processing some transformations and enrichments, the resultant messages need to be sent to different IBM queues.</p>\n<p>This entire operation needs to be handled as a <strong>transaction</strong> to ensure data integrity.</p>\n<p>I have decided to use <strong>Spring Integration</strong> for this purpose instead of using pure java JMS library as it offers a rich set of features and support a large number of message adaptors. However, I was unable to find good documentation or any sample code that demonstrates the transaction support. Can someone please advise whether Spring Integration is a good technology selection where there is a requirement for transaction?</p>\n",
+    "tags" : [ "java", "spring-boot", "spring-integration", "ibm-mq" ],
+    "owner" : {
+      "account_id" : 4766376,
+      "reputation" : 711,
+      "user_id" : 3852385,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/799a765a22f0e7e04db84f9aa2a8ae46?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "dGayand",
+      "link" : "https://stackoverflow.com/users/3852385/dgayand"
+    },
+    "is_answered" : true,
+    "view_count" : 247,
+    "answer_count" : 2,
+    "score" : 1,
+    "last_activity_date" : 1743409137,
+    "creation_date" : 1742983227,
+    "link" : "https://stackoverflow.com/questions/79536020/handling-ibm-mq-transactions-via-spring-integration",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79541914,
+    "question_id" : 79536020,
+    "body" : "<p>You can use sessionTransactions to read and write to queues in an IntegrationFlow within a single transaction.</p>\n<p>This works because as per the Spring Documentation,</p>\n<blockquote>\n<p>If a transaction exists (perhaps from an upstream <code>message-driven-channel-adapter</code>), the send operation is performed within the same transaction. Otherwise, a new transaction is started.</p>\n</blockquote>\n<pre><code>@Bean\n    public IntegrationFlow transactedIntegrationFlow(ConnectionFactory connectionFactory,\n                                                          @Value(&quot;${test.input.queue}&quot;) String inputQueue,\n                                                          @Value(&quot;${test.output.queue}&quot;) String outputQueue) {\n        return IntegrationFlow\n                .from(Jms.messageDrivenChannelAdapter(connectionFactory)\n                        .configureListenerContainer(c -&gt; c.sessionTransacted(true))\n                        .destination(inputQueue))\n                .transform(dummyTransformer)\n                .handle(Jms.outboundAdapter(connectionFactory)\n                        .destination(outputQueue))\n                .get();\n    }\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 16215505,
+      "reputation" : 95,
+      "user_id" : 11708441,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/85824d9ee2d37de35770f49146006b47?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Chandula",
+      "link" : "https://stackoverflow.com/users/11708441/chandula"
+    },
+    "creation_date" : 1743178216,
+    "last_activity_date" : 1743409137,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79539683,
+    "question_id" : 79536020,
+    "body" : "<p>You would need some JMS bridge for IBM MQ and use Spring Integration JMS module.\nThe JMS message-driven channel adapter is based on Spring JMS and its <code>MessageListenerContainer</code> API. Where we have this option on the <code>AbstractPollingMessageListenerContainer</code>:</p>\n<pre><code>/**\n * Specify the Spring {@link org.springframework.transaction.PlatformTransactionManager}\n * to use for transactional wrapping of message receipt plus listener execution.\n * &lt;p&gt;Default is none, not performing any transactional wrapping.\n * If specified, this will usually be a Spring\n * {@link org.springframework.transaction.jta.JtaTransactionManager} or one\n * of its subclasses, in combination with a JTA-aware ConnectionFactory that\n * this message listener container obtains its Connections from.\n * &lt;p&gt;&lt;b&gt;Note: Consider the use of local JMS transactions instead.&lt;/b&gt;\n * Simply switch the {@link #setSessionTransacted &quot;sessionTransacted&quot;} flag\n * to &quot;true&quot; in order to use a locally transacted JMS Session for the entire\n * receive processing, including any Session operations performed by a\n * {@link SessionAwareMessageListener} (for example, sending a response message). This\n * allows for fully synchronized Spring transactions based on local JMS\n * transactions, similar to what\n * {@link org.springframework.jms.connection.JmsTransactionManager} provides. Check\n * {@link AbstractMessageListenerContainer}'s javadoc for\n * a discussion of transaction choices and message redelivery scenarios.\n * @see #setSessionTransacted(boolean)\n * @see org.springframework.transaction.jta.JtaTransactionManager\n * @see org.springframework.jms.connection.JmsTransactionManager\n */\npublic void setTransactionManager(@Nullable PlatformTransactionManager transactionManager) {\n</code></pre>\n<p>So, or you configure such a container and inject it into the <code>JmsMessageDrivenEndpoint</code> or just use Java DSL:</p>\n<pre><code>    @Bean\n    public IntegrationFlow jmsMessageDrivenRedeliveryFlow() {\n        return IntegrationFlow\n                .from(Jms.messageDrivenChannelAdapter(amqFactory)\n                        .role(&quot;someRole&quot;)\n                        .errorChannel(&quot;errorChannelForRedelivery&quot;)\n                        .destination(&quot;jmsMessageDrivenRedelivery&quot;)\n                        .configureListenerContainer(c -&gt; c\n                                .transactionManager(mock(PlatformTransactionManager.class))\n                                .subscriptionDurable(false)\n                                .subscriptionShared(false)\n                                .id(&quot;jmsMessageDrivenRedeliveryFlowContainer&quot;)))\n                .&lt;String, String&gt;transform(p -&gt; {\n                    throw new RuntimeException(&quot;intentional&quot;);\n                })\n                .get();\n    }\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 3273937,
+      "reputation" : 122596,
+      "user_id" : 2756547,
+      "user_type" : "registered",
+      "accept_rate" : 75,
+      "profile_image" : "https://www.gravatar.com/avatar/2158ce6e7c048277890eb64458864c1c?s=256&d=identicon&r=PG",
+      "display_name" : "Artem Bilan",
+      "link" : "https://stackoverflow.com/users/2756547/artem-bilan"
+    },
+    "creation_date" : 1743098137,
+    "last_activity_date" : 1743098137,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : { }
+}

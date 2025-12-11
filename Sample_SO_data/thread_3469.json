@@ -1,0 +1,160 @@
+{
+  "question" : {
+    "question_id" : 79547485,
+    "title" : "JTextArea has wrong number of columns",
+    "body" : "<p>Extremely simple problem, as the title says: For a small project, I was trying to see how close I could get to a console look with a GUI application, and I did something like this as a test:</p>\n<pre class=\"lang-java prettyprint-override\"><code>    public static void main(String[] args) {\n        JFrame f = new JFrame();\n        f.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);\n        \n        JTextArea text = new JTextArea(25, 80);\n        text.setFont(new Font(&quot;Consolas&quot;, Font.PLAIN, 12));\n        \n        f.add(text);\n        f.pack();\n        f.setVisible(true);\n    }\n</code></pre>\n<p>But, despite initializing the JTextArea with 80 columns, in the actual application, it fits only 75 characters:</p>\n<p><a href=\"https://i.sstatic.net/tCgojaoy.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/tCgojaoy.png\" alt=\"an image of the resulting Java application; one row contains a repeating string of the digits 0 to 9, making it easy to count that the text area is only 75 characters wide\" /></a></p>\n<p>The issue persists similarly with different numbers of columns, different fonts, and different font sizes, with the singular exception of Consolas size 14 somehow. The number of rows is always correct. The Java version I'm using is Java 17.</p>\n<p>EDIT:<br />\nI have found at least a reason for these errors to happen. I had set my desktop to scale the size of text, apps etc. by 125%. If I set this to the standard 100%, then the text area does indeed fit 80 characters on a row exactly - or, it fits 80 without line wrap and 79 with line wrap, but I can simply increase its width by 1 pixel so it fits 80 characters in either case.<br />\nObviously though, I don't want to change my screen settings (which Java evidently is not aware of) every time I run this one application, so I'd still be happy to hear an <em>actual</em> solution, if such a thing is possible.<br />\nFunny sidenote, after I changed my screen setting from 100% back to 125%, the text area is suddenly made to fit 87 characters instead of 80 or 75. But trying my actual code, not this minimal example, will still have 75. (Both after rebuilds.) Could it be that Java is doing some weird form of cross-execution cashing of window data?</p>\n",
+    "tags" : [ "java", "swing", "jtextarea" ],
+    "owner" : {
+      "account_id" : 12828859,
+      "reputation" : 145,
+      "user_id" : 10465255,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/7b3ae5a96ab4caa0558b3f7abfa36171?s=256&d=identicon&r=PG",
+      "display_name" : "Cecilia",
+      "link" : "https://stackoverflow.com/users/10465255/cecilia"
+    },
+    "is_answered" : true,
+    "view_count" : 105,
+    "answer_count" : 1,
+    "score" : 3,
+    "last_activity_date" : 1743591676,
+    "creation_date" : 1743467518,
+    "link" : "https://stackoverflow.com/questions/79547485/jtextarea-has-wrong-number-of-columns",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79550431,
+    "question_id" : 79547485,
+    "body" : "<p>The <code>JTextArea</code> calculates the preferred size by simply multiplying the <a href=\"https://docs.oracle.com/en/java/javase/23/docs/api/java.desktop/javax/swing/JTextArea.html#getColumnWidth()\" rel=\"noreferrer\">column width</a> with the specified number of columns. This property is an <code>int</code> value but the actual value is a fractional number. The font rendering will usually adjust certain features to physical pixels for a better appearance, so no differences will show up, as long as the unit of the column width matches physical pixels.</p>\n<p>The problems start when screen scaling is used and thus, the unit used for the calculation is “logical pixels” which do not match the physical pixels.</p>\n<p>When I run the following program</p>\n<pre class=\"lang-java prettyprint-override\"><code>JFrame f = new JFrame();\n\nJTextArea text = new JTextArea(25, 80);\ntext.setFont(new Font(&quot;Consolas&quot;, Font.PLAIN, 12));\n\nf.add(text);\nf.pack();\nFontMetrics m = text.getFontMetrics(text.getFont());\nSystem.out.println(&quot;m.charWidth('m'): &quot; + m.charWidth('m')\n    + &quot;, m.getMaxAdvance(): &quot; + m.getMaxAdvance()\n    + &quot;, actual: &quot; + m.getMaxCharBounds(text.getGraphics()).getWidth());\nSystem.out.print(&quot;getPreferredSize().width: &quot;\n    + text.getPreferredSize().width + &quot;, &quot;);\nSystem.out.println(&quot;stringWidth(...): &quot; + m.stringWidth(&quot;m&quot;.repeat(80)));\n\nSystem.out.println();\nf.dispose();\n</code></pre>\n<p>I get the following results:</p>\n<h5>100%</h5>\n<pre class=\"lang-none prettyprint-override\"><code>m.charWidth('m'): 7, m.getMaxAdvance(): 7, actual: 7.0\ngetPreferredSize().width: 560, stringWidth(...): 560\n</code></pre>\n<h5>125%</h5>\n<pre class=\"lang-none prettyprint-override\"><code>m.charWidth('m'): 6, m.getMaxAdvance(): 7, actual: 6.400000095367432\ngetPreferredSize().width: 480, stringWidth(...): 512\n</code></pre>\n<h5>150%</h5>\n<pre class=\"lang-none prettyprint-override\"><code>m.charWidth('m'): 7, m.getMaxAdvance(): 7, actual: 6.666666507720947\ngetPreferredSize().width: 560, stringWidth(...): 533\n</code></pre>\n<h5>200%</h5>\n<pre class=\"lang-none prettyprint-override\"><code>m.charWidth('m'): 7, m.getMaxAdvance(): 7, actual: 6.5\ngetPreferredSize().width: 560, stringWidth(...): 520\n</code></pre>\n<p>We can see how the actual width differs despite given in the same logical unit, due to the fitting of the glyphs to the different grid of physical pixels. It’s also shown that everything looks fine when no scaling is active, your problem is reproduced with 125% scaling whilst using other scaling can reproduce the issue reported by others of having larger text areas than necessary.</p>\n<p>Changing the font to Consolas 14 will indeed result in an integer number for the actual size in most environments. This might be just luck, due to the interaction of the actual glyph shapes and the grid of physical pixels but it’s also possible that the font has <a href=\"https://en.wikipedia.org/wiki/Font_hinting\" rel=\"noreferrer\">hints</a> for this specific size, to better fit the glyphs to pixels.</p>\n<p>If <a href=\"https://docs.oracle.com/en/java/javase/23/docs/api/java.desktop/javax/swing/JTextArea.html#getColumnWidth()\" rel=\"noreferrer\"><code>getColumnWidth()</code></a> used <code>getMaxAdvance()</code> instead of <code>m.charWidth('m')</code> it would never become too small because <code>getMaxAdvance()</code> (almost) always rounds up, but it still could be to large and potentially way too large when using proportional fonts.</p>\n<p>But for a fixed width font you could set the preferred size to ⟨max advance times number of columns⟩ for a quick fix. Or use a precise calculation using <code>getMaxCharBounds</code>, only rounding the end result.</p>\n<p>Note that the component must be bound to the actual screen to get the right rendering attributes. This is especially important when you have multiple monitors with different scaling options and can’t derive the attributes from the default screen. That’s why the code above queries the values after the <code>pack()</code> call.</p>\n",
+    "score" : 6,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 3211603,
+      "reputation" : 300981,
+      "user_id" : 2711488,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+      "display_name" : "Holger",
+      "link" : "https://stackoverflow.com/users/2711488/holger"
+    },
+    "creation_date" : 1743591676,
+    "last_activity_date" : 1743591676,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140287682,
+    "post_id" : 79547485,
+    "body" : "@MarkRotteveel I added a possible source of this error. Could you maybe check whether this applies on your system as well?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 12828859,
+      "reputation" : 145,
+      "user_id" : 10465255,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/7b3ae5a96ab4caa0558b3f7abfa36171?s=256&d=identicon&r=PG",
+      "display_name" : "Cecilia",
+      "link" : "https://stackoverflow.com/users/10465255/cecilia"
+    },
+    "creation_date" : 1743538444,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140287667,
+    "post_id" : 79547485,
+    "body" : "@GilbertLeBlanc Pass; I obviously do not want to have to hardcode window size, font, and font size.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 12828859,
+      "reputation" : 145,
+      "user_id" : 10465255,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/7b3ae5a96ab4caa0558b3f7abfa36171?s=256&d=identicon&r=PG",
+      "display_name" : "Cecilia",
+      "link" : "https://stackoverflow.com/users/10465255/cecilia"
+    },
+    "creation_date" : 1743538307,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140286962,
+    "post_id" : 79547485,
+    "body" : "Pick a monospace font size.  Adjust the <code>JTextArea</code> column number until you get 80 columns.  It should be around 86 or 87.  Simple problem solved.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 114128,
+      "reputation" : 51685,
+      "user_id" : 300257,
+      "user_type" : "registered",
+      "accept_rate" : 89,
+      "profile_image" : "https://i.sstatic.net/gWeJr.jpg?s=256",
+      "display_name" : "Gilbert Le Blanc",
+      "link" : "https://stackoverflow.com/users/300257/gilbert-le-blanc"
+    },
+    "creation_date" : 1743512045,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140286259,
+    "post_id" : 79547485,
+    "body" : "I can reproduce the behaviour (Windows 11), and if I comment out the font so it uses the default font, I get a wider screen (wide enough for about 124 columns). I guess there might be something off with font metrics or HiDPI calculations or something.",
+    "score" : 3,
+    "owner" : {
+      "account_id" : 213468,
+      "reputation" : 110282,
+      "user_id" : 466862,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/d873f397779db38cd510d9ee5416fd43?s=256&d=identicon&r=PG",
+      "display_name" : "Mark Rotteveel",
+      "link" : "https://stackoverflow.com/users/466862/mark-rotteveel"
+    },
+    "creation_date" : 1743501736,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140286209,
+    "post_id" : 79547485,
+    "body" : "@camickr Consolas is a monospaced font.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 213468,
+      "reputation" : 110282,
+      "user_id" : 466862,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/d873f397779db38cd510d9ee5416fd43?s=256&d=identicon&r=PG",
+      "display_name" : "Mark Rotteveel",
+      "link" : "https://stackoverflow.com/users/466862/mark-rotteveel"
+    },
+    "creation_date" : 1743501133,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140285312,
+    "post_id" : 79547485,
+    "body" : "The above code creates a window with 124 columns, and the text area would allow even more to go into one line. So it does not work on Ubuntu 24 LTS with OpenJDK 21.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 5289146,
+      "reputation" : 9940,
+      "user_id" : 4222206,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/416696430ab23f397a5dbeda73e72896?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "queeg",
+      "link" : "https://stackoverflow.com/users/4222206/queeg"
+    },
+    "creation_date" : 1743484268,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140284915,
+    "post_id" : 79547485,
+    "body" : "Works for me with Java version 11 on Windows 11. So maybe a version/platform issue? Make sure you are using a monospaced font (maybe try &quot;Monospaced&quot;) and make sure the Swing components are created on the Event Dispatch Thread by using SwingUtilities.invokeLater().",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 44852,
+      "reputation" : 324701,
+      "user_id" : 131872,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/a0ced8e21d2a761db718acb6362b9225?s=256&d=identicon&r=PG",
+      "display_name" : "camickr",
+      "link" : "https://stackoverflow.com/users/131872/camickr"
+    },
+    "creation_date" : 1743471680,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

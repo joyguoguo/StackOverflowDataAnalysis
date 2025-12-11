@@ -1,0 +1,80 @@
+{
+  "question" : {
+    "question_id" : 79611929,
+    "title" : "Reactive Sink - Avoiding the OverflowException",
+    "body" : "<p>I have this sink configured in my app:</p>\n<pre class=\"lang-java prettyprint-override\"><code>createdSink = Sinks.many().multicast().onBackpressureBuffer(4096);\n\npublic void activityCreated(ActivityResource createdActivity) {\n    try {\n        var notification = new ActivityCreatedNotification(createdActivity);\n        createdSink.emitNext(notification, getFailureHandler());\n    } catch (Exception e) {\n        log.error(&quot;Emit activity created notification for activity id {} failed&quot;, createdActivity.getId(), e);\n    }\n}\n\nprivate static Sinks.EmitFailureHandler getFailureHandler() {\n    return Sinks.EmitFailureHandler.busyLooping(Duration.ofSeconds(5));\n}\n</code></pre>\n<p>Now unfortunately I'm not sure if I understand what my failure handler does, or how I can configure it to do what I want.</p>\n<p>But I was hoping to get some help from here.</p>\n<p>I'm sometimes observing an overflow excpetion like this:</p>\n<pre><code>2025-05-05T05:46:01.312Z ERROR [] [reactor-http-epoll-25]\n[00000000-0000-4000-a000-000000000000][][][TRACE_ID:b42fa551661d9427][][c.e.d.p.a.e.ActivityExternalNotificationService.lambda$prepareExternalNotifications$3(79)]\n - Error while processing activity notification     \nreactor.core.Exceptions$OverflowException: Backpressure overflow during Sinks.Many#emitNext\nat reactor.core.Exceptions.failWithOverflow(Exceptions.java:249)\n</code></pre>\n<p>This is even though I have the backpressure configured, so it probably means that the backpressure queue was already full and elements kept on being emitted to the sink, while one of the subscribers could not handle the rate, right?</p>\n<p>So what I would like in that case is to drop elements, and to avoid the sink from collapsing/terminating.</p>\n<p>Basically I must have this hot publisher, the sink, to be infinite, it can't stop working.</p>\n<p>So for dropping elements all I saw was that there is this <code>directBestEffort()</code> method in reactive:</p>\n<pre class=\"lang-java prettyprint-override\"><code>Sinks.many().multicast().directBestEffort()\n</code></pre>\n<p>Which, if I understood correctly, would just drop elements if my subscribers can't handle the rate in which elements are being emitted to the sink.\nSo that could be a solution, but as it seems, this does not let me also have a backpressure queue like today.</p>\n<p>So I guess the question is: How can I configure a backpressure queue like the one I have today which is nice to have (buffer some elements instead of dropping right away) but to also avoid the overflow error and to drop instead?</p>\n<p>Is there a way to configure this using the errorHandler? Or by different means?\nThanks!</p>\n",
+    "tags" : [ "java", "project-reactor" ],
+    "owner" : {
+      "account_id" : 20363973,
+      "reputation" : 1,
+      "user_id" : 14937729,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/548b1451b2465447e85ff9088e7f71a4?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Nick",
+      "link" : "https://stackoverflow.com/users/14937729/nick"
+    },
+    "is_answered" : true,
+    "view_count" : 224,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1746704079,
+    "creation_date" : 1746690193,
+    "link" : "https://stackoverflow.com/questions/79611929/reactive-sink-avoiding-the-overflowexception",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79612017,
+    "question_id" : 79611929,
+    "body" : "<blockquote>\n<p>how can I configure a backpressure queue like the one I have today which is nice to have (buffer some elements instead of dropping right away) but to also avoid the overflow error and to drop instead?</p>\n</blockquote>\n<p>As far as I know the <code>Sinks.many().multicast().onBackpressureBuffer(4096)</code> does <strong>not drop on overflow</strong> — it throws.</p>\n<p>And if you like to stay with multicast you have to explicitly handle the exception. I would rather use <code>tryEmitNext()</code> than <code>emitNext()</code>  and check whether there is a failure or not. With all these in mind you should have next one method body for  <code>activityCreated(),</code> I guess</p>\n<pre><code>public void activityCreated(ActivityResource createdActivity) {\n       var notification = new ActivityCreatedNotification(createdActivity);\n       var result = createdSink.tryEmitNext(notification);\n    if (result.isFailure()) {\n       System.out.println(&quot;Dropping activity created event due to backpressure&quot;);\n     // or here you can have a fallback handler\n    }\n}\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 24440940,
+      "reputation" : 5259,
+      "user_id" : 18364656,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/70eb650df3e935255b17e62942f30620?s=256&d=identicon&r=PG",
+      "display_name" : "Andrei Lisa",
+      "link" : "https://stackoverflow.com/users/18364656/andrei-lisa"
+    },
+    "creation_date" : 1746694226,
+    "last_activity_date" : 1746700280,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79612017" : [ {
+      "comment_id" : 140416919,
+      "post_id" : 79612017,
+      "body" : "Have you tried to use <code>.serialize()</code> when creating the sink yet? after <code>.onBackpressureBuffer(4096)</code>",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 24440940,
+        "reputation" : 5259,
+        "user_id" : 18364656,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/70eb650df3e935255b17e62942f30620?s=256&d=identicon&r=PG",
+        "display_name" : "Andrei Lisa",
+        "link" : "https://stackoverflow.com/users/18364656/andrei-lisa"
+      },
+      "creation_date" : 1747034950,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140415010,
+      "post_id" : 79612017,
+      "body" : "Thanks for the reply! I tried your suggestion but I&#39;m getting FAIL_NON_SERIALIZED. It seems that because I&#39;m emitting concurrently from multiple threads, the tryEmitNext is not the way to go. Do you have a suggestion what I can do to avoid the overflow exception?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 20363973,
+        "reputation" : 1,
+        "user_id" : 14937729,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/548b1451b2465447e85ff9088e7f71a4?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Nick",
+        "link" : "https://stackoverflow.com/users/14937729/nick"
+      },
+      "creation_date" : 1746953451,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

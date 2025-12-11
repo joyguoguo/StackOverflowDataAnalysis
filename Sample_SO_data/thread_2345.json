@@ -1,0 +1,96 @@
+{
+  "question" : {
+    "question_id" : 79627168,
+    "title" : "How to dynamically find an available port in Spring Boot when the configured port is already in use?",
+    "body" : "<p>I'm building a Spring Boot starter and want it to automatically try ports sequentially (8080, 8081, etc.) when the default port is already in use, instead of crashing.</p>\n<p>I know <code>server.port=0</code> selects a random port, but this is inconvenient for development.</p>\n<p>My current code logs the server URL on startup:</p>\n<pre class=\"lang-java prettyprint-override\"><code>\n@Bean\n\npublic ApplicationListener&lt;ApplicationReadyEvent&gt; logWhenReadyEvent(LoggingProperties properties, Environment environment) {\n\n    return event -&gt; {\n\n        String port = environment.getProperty(&quot;server.port&quot;, &quot;8080&quot;);\n\n        // Log server URL\n\n    };\n\n}\n\n</code></pre>\n<h2>Tried to do it this way</h2>\n<pre class=\"lang-java prettyprint-override\"><code>\n@Component\n\npublic class PortFinder implements ApplicationListener&lt;ApplicationEnvironmentPreparedEvent&gt; {\n\n    @Override\n\n    public void onApplicationEvent(ApplicationEnvironmentPreparedEvent event) {\n\n        // Try to set available port - doesn't work\n\n    }\n\n}\n\n</code></pre>\n<p>Thanks for the suggestion. I need to catch the <code>BindException</code>\nAdd it as a bean. My applications are now autoconfigured to change their ports dynamically.</p>\n<p>I don't have to put the <code>server.port</code> every time! Thanks! <a href=\"https://stackoverflow.com/users/16769477/jay-yadav\">credits</a></p>\n<h3>Working solution</h3>\n<pre><code>@Bean\npublic WebServerFactoryCustomizer&lt;ConfigurableWebServerFactory&gt; webServerFactoryCustomizer() {\n    return new SpringPortSolver();\n}\n\npublic static class SpringPortSolver implements WebServerFactoryCustomizer&lt;ConfigurableWebServerFactory&gt; {\n    private static final Logger logger = LoggerFactory.getLogger(SpringPortSolver.class);\n    \n    @Value(&quot;${server.port:8080}&quot;)\n    String serverPort;\n    \n    @Override\n    public void customize(ConfigurableWebServerFactory factory) {\n        int port;\n        try {\n            port = Integer.parseInt(serverPort);\n        } catch (NumberFormatException e) {\n            logger.error(&quot;Invalid server.port value: {}. Using default port 8080 instead.&quot;, serverPort);\n            port = 8080;\n        }\n        \n        int originalPort = port;\n        int maxPortToTry = port + 100; // Limit how far we'll search to avoid infinite loops\n        \n        logger.info(&quot;Attempting to find available port starting from {}&quot;, port);\n        \n        while (port &lt; maxPortToTry) {\n            try (ServerSocket socket = new ServerSocket()) {\n                // Use bind with InetSocketAddress to better handle binding issues\n                socket.setReuseAddress(true);\n                socket.bind(new InetSocketAddress(&quot;localhost&quot;, port));\n                \n                int availablePort = socket.getLocalPort();\n                logger.info(&quot;Port {} is available. Using port {} for server.&quot;, availablePort, availablePort);\n                factory.setPort(availablePort);\n                return;\n            } catch (BindException e) {\n                logger.warn(&quot;Port {} is already in use. Trying port {} instead.&quot;, port, port + 1);\n                port += 1;\n            } catch (IOException e) {\n                logger.error(&quot;Failed to test port {}: {}&quot;, port, e.getMessage());\n                // Try next port anyway\n                port += 1;\n            }\n        }\n        \n        // If we've exhausted all ports in our range, use a random port\n        logger.warn(&quot;Unable to find available port in range {}-{}. Using random port instead.&quot;, originalPort, maxPortToTry);\n        factory.setPort(0);\n    }\n}\n</code></pre>\n<p><a href=\"https://i.sstatic.net/cWfctUPg.png\" rel=\"nofollow noreferrer\">Log</a></p>\n",
+    "tags" : [ "java", "spring-boot", "spring-boot-autoconfiguration" ],
+    "owner" : {
+      "account_id" : 20612750,
+      "reputation" : 33,
+      "user_id" : 15131555,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/515004b42de8591b080899d99eede859?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "joshuasalcedo-dev",
+      "link" : "https://stackoverflow.com/users/15131555/joshuasalcedo-dev"
+    },
+    "is_answered" : true,
+    "view_count" : 116,
+    "answer_count" : 1,
+    "score" : 3,
+    "last_activity_date" : 1747553321,
+    "creation_date" : 1747545445,
+    "link" : "https://stackoverflow.com/questions/79627168/how-to-dynamically-find-an-available-port-in-spring-boot-when-the-configured-por",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79627182,
+    "question_id" : 79627168,
+    "body" : "<p>In <code>SpringBoot</code> in order to customize the default behavior of embedded Tomcat,  you need to implement <code>WebServerFactoryCustomizer</code> interface and override the property as per your needs.\nFollowing steps should work for you.</p>\n<p>Here we are starting from port 8080 &amp; trying port till 8095(Increase as you wish), and as soon as we find a free port we break the while loop and set the Port for WebServer.</p>\n<pre class=\"lang-java prettyprint-override\"><code>@SpringBootApplication\npublic class SpringEcaApplication implements WebServerFactoryCustomizer&lt;ConfigurableWebServerFactory&gt; {\n    public static void main(String[] args) {\n        SpringApplication.run(SpringEcaApplication.class, args);\n    }\n\n    @Override\n    public void customize(ConfigurableWebServerFactory factory) {\n        int serverPorts = 8080;\n        int range = 8095;  \n        int availablePort = 0;\n        while (serverPorts &lt; range) {\n            try (ServerSocket socket = new ServerSocket(serverPorts)) { // checks if port is available\n                availablePort = serverPorts;  // available port break the loop\n                break;\n            } catch (IOException e) {\n                serverPorts++;  //  this is executed if port is already bind.\n            }\n        }\n        factory.setPort(availablePort);  // Sets the available port\n    }\n}\n</code></pre>\n",
+    "score" : 2,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 22585429,
+      "reputation" : 672,
+      "user_id" : 16769477,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/xL5xi.jpg?s=256",
+      "display_name" : "Jay Yadav",
+      "link" : "https://stackoverflow.com/users/16769477/jay-yadav"
+    },
+    "creation_date" : 1747547658,
+    "last_activity_date" : 1747547658,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79627182" : [ {
+      "comment_id" : 140436387,
+      "post_id" : 79627182,
+      "body" : "It did! Thanks. Just needed some minor adjustments!",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 20612750,
+        "reputation" : 33,
+        "user_id" : 15131555,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/515004b42de8591b080899d99eede859?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "joshuasalcedo-dev",
+        "link" : "https://stackoverflow.com/users/15131555/joshuasalcedo-dev"
+      },
+      "creation_date" : 1747553083,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140436306,
+      "post_id" : 79627182,
+      "body" : "Yes. Checking it out rn",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 20612750,
+        "reputation" : 33,
+        "user_id" : 15131555,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/515004b42de8591b080899d99eede859?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "joshuasalcedo-dev",
+        "link" : "https://stackoverflow.com/users/15131555/joshuasalcedo-dev"
+      },
+      "creation_date" : 1747548301,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140436304,
+      "post_id" : 79627182,
+      "body" : "Thanks. I guess I&#39;ll change the catch to the specific error. Since it will catch the none  server port errors.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 20612750,
+        "reputation" : 33,
+        "user_id" : 15131555,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/515004b42de8591b080899d99eede859?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "joshuasalcedo-dev",
+        "link" : "https://stackoverflow.com/users/15131555/joshuasalcedo-dev"
+      },
+      "creation_date" : 1747548144,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

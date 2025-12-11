@@ -1,0 +1,111 @@
+{
+  "question" : {
+    "question_id" : 79568543,
+    "title" : "File based lock to control read-only or read-write access to a file or directory",
+    "body" : "<p>I am writing a Kotlin/JVM Gradle plugin that stores data in an application-cache directory, so the data can be shared across separate projects. I need to ensure the contents are not modified while they are being used.</p>\n<p>I am looking for a cross-process read-write lock.</p>\n<h4>Use case</h4>\n<p>For context, one example of the data is executables used to compile C/C++ code. I'm basically implementing a custom toolchain manager.</p>\n<p>The shared directory is only used by my plugin, so I'm not concerned about verifying access generally, across <em>all</em> processes. I just need a tool to use internally.</p>\n<h5>Read/write access</h5>\n<p>Usually my plugin only requires read-access to the data (typically over the lifetime of a Gradle Task). I want to permit concurrent read-only access.</p>\n<p>Sometimes my plugin needs to modify the data (for example, to reinstall the data from scratch). Modification could be performed as part of a task, or during a configuration-phase setup action.</p>\n<p>Since Gradle tasks run in parallel, and (particularly on CI) across completely distinct Gradle instances, an in-memory lock is not sufficient since the state won't be shared across separate processes or classloaders.</p>\n<p>The application usually only requires read-only access to the directory, so obtaining read-only locks should be prioritised. But this is not strictly necessary.</p>\n<h5>Graceful error handling</h5>\n<p>Using a pure file-based approach, I am concerned about handling unexpected</p>\n<h4>Prior art</h4>\n<h5>Java stdlib locks</h5>\n<p>I looked into <code>java.nio.channels.FileLock</code>, which does support cross-process locking. However, it doesn't support locking within the same JVM process. See <a href=\"https://docs.oracle.com/javase/8/docs/api/java/nio/channels/FileLock.html\" rel=\"nofollow noreferrer\">the FileLock Javadoc</a>:</p>\n<blockquote>\n<p>File locks are held on behalf of the entire Java virtual machine. They are not suitable for controlling access to a file by multiple threads within the same virtual machine.</p>\n</blockquote>\n<p>This makes this answer unsuitable: <a href=\"https://stackoverflow.com/questions/128038/how-can-i-lock-a-file-using-java-if-possible\">How can I lock a file using java (if possible)</a></p>\n<p>An in-memory lock, like ReentrantLock, works within a single process, but cannot be shared across processes or classloaders, so it isn't suitable.</p>\n<p>I thought maybe the two could be combined: using FileLock for inter-process exclusion and ReentrantLock for intra-process coordination, but this caused deadlocks due to inconsistent lock acquisition order.</p>\n<h5>Gradle Shared Build Service</h5>\n<p>Using a BuildService to <a href=\"https://docs.gradle.org/8.13/userguide/build_services.html#accessing_the_build_service_concurrently\" rel=\"nofollow noreferrer\">control parallel task execution</a> isn't suitable, because the locks need to be obtainable during the configuration phase, and also across entirely distinct Gradle builds (e.g. multiple independent builds run on CI).</p>\n<h5>External libraries</h5>\n<p>The closest implementation I've found is an internal Gradle utility (<a href=\"https://github.com/gradle/gradle/blob/de9730c7014087919bd0134afc8d37cbcb0cd4d1/platforms/core-execution/persistent-cache/src/main/java/org/gradle/cache/FileLockManager.java#L27-L35\" rel=\"nofollow noreferrer\">FileLockManager</a>) that uses socket-communication to obtain locks on cache directories and grant access when requested. However, I cannot use it because <a href=\"https://github.com/gradle/gradle/issues/25803\" rel=\"nofollow noreferrer\">it is internal</a>.</p>\n<p>I'm a little surprised I couldn't find an existing generic file-locking library in any language. If there was a C library maybe I could interop with it.</p>\n<h4>Requirements</h4>\n<ul>\n<li>Lock a file, across threads and processes, to prevent concurrent modification.</li>\n<li>Correct and accurate behaviour is preferred over performance.</li>\n<li>Lock behaviour:\n<ul>\n<li>Multiple concurrent readers.</li>\n<li>Only one writer, and no readers while the writer holds the lock.</li>\n<li>The writer waits until all readers finish.</li>\n<li>Readers wait if a writer is active.</li>\n<li>(Soft requirement) Read-locks should be preferred.</li>\n</ul>\n</li>\n<li>Kotlin/JVM using Java 17.</li>\n<li>Works reliably on Linux, macOS, and Windows (but only needs to work on one machine at a time, no networking).</li>\n<li>Cannot use external processes to manage locking (like Redis).</li>\n<li>Ideally no external dependencies are required, but if they are, they should be lightweight can be shadowed (to avoid polluting the Gradle buildscript classpath).</li>\n</ul>\n",
+    "tags" : [ "java", "kotlin", "gradle", "concurrency", "locking" ],
+    "owner" : {
+      "account_id" : 4623673,
+      "reputation" : 7567,
+      "user_id" : 4161471,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/087044167d22fba7e2a7864732e21ff0?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "aSemy",
+      "link" : "https://stackoverflow.com/users/4161471/asemy"
+    },
+    "is_answered" : false,
+    "view_count" : 122,
+    "answer_count" : 1,
+    "score" : 2,
+    "last_activity_date" : 1744392865,
+    "creation_date" : 1744365330,
+    "link" : "https://stackoverflow.com/questions/79568543/file-based-lock-to-control-read-only-or-read-write-access-to-a-file-or-directory",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79568721,
+    "question_id" : 79568543,
+    "body" : "<p>You're looking for <code>Files.createFile(lockFilePath)</code>. Or, if instead of creating you want to write to it(i.e. use <code>Files.newOutputStream</code> for example), or move it (<code>Files.move</code>), add the flag <code>StandardOpenOption.CREATE_NEW</code>, and when moving, <code>StandardMoveOption.ATOMIC_MOVE</code>.</p>\n<p>These calls all are specced to guarantee the following behaviour:</p>\n<ul>\n<li>The operation fails (with an exception) if the file already exists.</li>\n<li>The operation is atomic. If 2 applications both attempt to make the same file in this way, one of them will succeed, the other one will fail. It is <strong>guaranteed</strong>.</li>\n</ul>\n<p>This is the basis upon which you can build a file based lock system.</p>\n<p>There are a few caveats:</p>\n<ul>\n<li>Creation/moving is atomic, but writing never is. You cannot 'atomically write these 500 bytes to a file'.</li>\n<li>When your process dies the file remains. This results in the nasty behaviour that an app cannot start / is in a broken state even if you completely reboot the machine, if e.g. someone stumbles over a power cord or your app otherwise is hard-killed. One 'fix' is to attempt to store some sort of process ID in there, or have a rule that the file is to be updated every minute (you can refresh the timestamp), thus letting you conclude that a lock file older than 5 minutes is stale and can be removed.</li>\n<li><code>Runtime.getRuntime().addShutdownHook()</code> is a way to write a thing that will delete that file 'on the way out the door'. It does not work if you get <code>kill -9</code>ed, or the JVM coredumps, or the system is hard rebooted / shut down. File has a 'deleteOnExit' - it works the same way and has the same caveats.</li>\n<li>You're going to have to cook up a scheme for using this for both read locks as well as write locks.</li>\n<li>Because writing cannot be atomic, if one of these lock files needs to have some data in it (say, your own process ID), then the only way to do it right is to make a temporary file, write it until you're happy with it, and then move it with <code>ATOMIC_MOVE</code>. Now you have an atomic operation: In one instant in time that file is not there at all, the next instant, it is there, and the data in it is complete.</li>\n</ul>\n<p>The answer you disregarded is fine. The reason it says 'not appropriate for in-process locking' is because it's a stupid solution with all these caveats <em>in contrast to</em> other solutions that have none of these caveats.. but only work within process.</p>\n<p>In other words, you can use file based locks within a single process. It'll work fine. It's silly overengineering, but it would work. In your case, you really do need that: You want these locks <strong>both</strong> to apply within one process <strong>and</strong> to apply to other concurrent processes, which means you can't use the in-process-only mechanisms (such as <code>new ReentrantLock()</code> or <code>synchronized</code>, or a whole bunch of stuff in the <code>java.util.concurrent</code> package such as latches - all of those only work within a single JVM).. so file locks it is.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 401843,
+      "reputation" : 107186,
+      "user_id" : 768644,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+      "display_name" : "rzwitserloot",
+      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+    },
+    "creation_date" : 1744370440,
+    "last_activity_date" : 1744370440,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140326377,
+    "post_id" : 79568543,
+    "body" : "You could use a database just for obtaining the lock even if you don&#39;t think it&#39;s an appropriate way to access your data.  But if you step back and rethink your approach you might find that a database could work for the data too, and databases are already quite attuned to locking problems.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 4060,
+      "reputation" : 309879,
+      "user_id" : 5987,
+      "user_type" : "registered",
+      "accept_rate" : 55,
+      "profile_image" : "https://www.gravatar.com/avatar/2a1f9f4986b58015691eb2014e78869f?s=256&d=identicon&r=PG",
+      "display_name" : "Mark Ransom",
+      "link" : "https://stackoverflow.com/users/5987/mark-ransom"
+    },
+    "creation_date" : 1744408014,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140324135,
+    "post_id" : 79568543,
+    "body" : "@tyg The information is above, but in short: I&#39;m working with files, not key-value data.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 4623673,
+      "reputation" : 7567,
+      "user_id" : 4161471,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/087044167d22fba7e2a7864732e21ff0?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "aSemy",
+      "link" : "https://stackoverflow.com/users/4161471/asemy"
+    },
+    "creation_date" : 1744368688,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140324077,
+    "post_id" : 79568543,
+    "body" : "@aled The linked question is about locking across processes. This question is about locking across <i>both</i> processes and within a single process.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 4623673,
+      "reputation" : 7567,
+      "user_id" : 4161471,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/087044167d22fba7e2a7864732e21ff0?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "aSemy",
+      "link" : "https://stackoverflow.com/users/4161471/asemy"
+    },
+    "creation_date" : 1744367661,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140324019,
+    "post_id" : 79568543,
+    "body" : "Only glanced at it, but can you clarify why you don&#39;t use a database for this, f.e. SQLite?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 8120254,
+      "reputation" : 21012,
+      "user_id" : 6216216,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/e8c2dc279acf2025292412366e8eb72a?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "tyg",
+      "link" : "https://stackoverflow.com/users/6216216/tyg"
+    },
+    "creation_date" : 1744366226,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

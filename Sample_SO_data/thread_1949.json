@@ -1,0 +1,117 @@
+{
+  "question" : {
+    "question_id" : 79661418,
+    "title" : "How to calculate distance from baseline of one Label to the top of text in another Label in JavaFX?",
+    "body" : "<p>I have two Labels placed one below the other. Both labels contain text in UPPERCASE letters. I need to calculate the exact distance from the baseline of the top Label to the top of the text in the bottom Label. This is my code:</p>\n<pre><code>public class TestFx extends Application {\n\n    @Override\n    public void start(Stage primaryStage) {\n        var text = &quot;ABCDEFGHIJKLMNOPQRSTUVWXYZ&quot;;\n        var font = Font.font(&quot;System&quot;, 24);\n        Label topLabel = new Label(text);\n        topLabel.setFont(font);\n        topLabel.setStyle(&quot;-fx-background-color: yellow&quot;);\n\n        Label bottomLabel = new Label(text);\n        bottomLabel.setFont(font);\n        bottomLabel.setStyle(&quot;-fx-background-color: orange&quot;);\n\n        // Calculate the distance from the baseline of topLabel\n        // to the top of the bottomLabel\n\n        //double baselineToTop = ???; // What should go here?\n\n        VBox root = new VBox(topLabel, bottomLabel);\n        Scene scene = new Scene(root, 600, 200);\n        primaryStage.setScene(scene);\n        primaryStage.show();\n    }\n\n    public static void main(String[] args) {\n        launch(args);\n    }\n}\n</code></pre>\n<p><a href=\"https://i.sstatic.net/4PR7BLjL.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/4PR7BLjL.png\" alt=\"enter image description here\" /></a></p>\n<p>Could anyone say how to do it?</p>\n",
+    "tags" : [ "java", "javafx" ],
+    "owner" : {
+      "account_id" : 34599290,
+      "reputation" : 1188,
+      "user_id" : 26656564,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/882f996623517814360ba4bb403102e7?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "SilverCube",
+      "link" : "https://stackoverflow.com/users/26656564/silvercube"
+    },
+    "is_answered" : true,
+    "view_count" : 101,
+    "answer_count" : 2,
+    "score" : 3,
+    "last_activity_date" : 1749708756,
+    "creation_date" : 1749618582,
+    "link" : "https://stackoverflow.com/questions/79661418/how-to-calculate-distance-from-baseline-of-one-label-to-the-top-of-text-in-anoth",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79663003,
+    "question_id" : 79661418,
+    "body" : "<h1>Text Visual Bounds</h1>\n<p>To build off of <a href=\"https://stackoverflow.com/a/79662222/6395627\">SedJ601's answer</a> and <a href=\"https://stackoverflow.com/questions/79661418/how-to-calculate-distance-from-baseline-of-one-label-to-the-top-of-text-in-anoth/79662222#comment140506360_79662222\">DaveB's comment</a>, you can implement a utility method for getting the text's visual bounds from any <code>Text</code>, including <code>Text</code> that's &quot;wrapped&quot; by a <code>Labeled</code>. Though to get the <code>Text</code> from a <code>Labeled</code> will likely require relying on implementation details of the labeled's skin.</p>\n<p>Once you have the visual bounds you can compute the distances between them (e.g., the distance from the <code>maxY</code> of one bounds to the <code>minY</code> of another). Just make sure to convert each of the bounds into a common coordinate space first.</p>\n<p>Note the visual bounds are not necessarily the text's baseline or ascent.</p>\n<p>Here's some example utility methods:</p>\n<pre class=\"lang-java prettyprint-override\"><code>package com.example;\n\nimport java.util.Objects;\nimport javafx.geometry.Bounds;\nimport javafx.scene.control.Labeled;\nimport javafx.scene.text.Text;\nimport javafx.scene.text.TextBoundsType;\n\npublic final class TextUtil {\n\n  /*\n   * Assumes the skin of 'labeled' has already been initialized to its *default* skin,\n   * which will be an instance of LabeledSkinBase. That base skin class gives its internal\n   * Text node a style class of &quot;text&quot;. This method uses 'lookup' to get said node.\n   */\n  public static Bounds getTextVisualBounds(Labeled labeled) {\n    Objects.requireNonNull(labeled, &quot;labeled&quot;);\n\n    // If the skin is not initialized then 'lookup' will return null and the\n    // instanceof check will return false.\n    var node = labeled.lookup(&quot;.text&quot;);\n    if (!(node instanceof Text text)) {\n      var msg = &quot;labeled has no Text descendant with a style class of 'text'&quot;;\n      throw new IllegalStateException(msg);\n    }\n\n    var bounds = getVisualBounds(text);\n    // convert bounds to be in labeled's coordinate space\n    if (text.getParent() == labeled) {\n      return text.localToParent(bounds);\n    } else {\n      return labeled.sceneToLocal(text.localToScene(bounds));\n    }\n  }\n\n  public static Bounds getVisualBounds(Text text) {\n    Objects.requireNonNull(text, &quot;text&quot;);\n\n    if (text.getBoundsType() == TextBoundsType.VISUAL) {\n      return text.getLayoutBounds();\n    } else {\n      // temporarily set bounds type to VISUAL to get bounds\n      var originalBoundsType = text.getBoundsType();\n      try {\n        text.setBoundsType(TextBoundsType.VISUAL);\n        return text.getLayoutBounds();\n      } finally {\n        text.setBoundsType(originalBoundsType);\n      }\n    }\n  }\n\n  private TextUtil() {}\n}\n</code></pre>\n<hr />\n<h1>Demo</h1>\n<p>Here's a demo application showcasing the above <code>TextUtil</code> class. It simply uses rectangles to show the visual bounds of each label and a line to show the distance between them. The line's length is the distance you want to calculate. You can compute the distance without the line in your real application.</p>\n<h2>Versions</h2>\n<p>I tested this demo application with:</p>\n<ul>\n<li><p>Java 24.0.1</p>\n</li>\n<li><p>JavaFX 24.0.1</p>\n</li>\n<li><p>Maven 3.9.9</p>\n</li>\n</ul>\n<h2>Source Code</h2>\n<p><strong>TextUtil.java</strong></p>\n<p><em>Same as above.</em></p>\n<p><strong>Main.java</strong></p>\n<pre class=\"lang-java prettyprint-override\"><code>package com.example;\n\nimport javafx.application.Application;\nimport javafx.scene.Scene;\nimport javafx.scene.text.Font;\nimport javafx.stage.Stage;\n\npublic class Main extends Application {\n\n  @Override\n  public void start(Stage primaryStage) {\n    var text = &quot;Lorem ipsum dolor sit amet.&quot;;\n    var font = Font.font(&quot;System&quot;, 32);\n\n    var root = new TextBoundsRegion(text, font);\n    primaryStage.setScene(new Scene(root));\n    primaryStage.show();\n  }\n}\n</code></pre>\n<p><strong>TextBoundsRegion.java</strong></p>\n<pre class=\"lang-java prettyprint-override\"><code>package com.example;\n\nimport javafx.geometry.Bounds;\nimport javafx.geometry.HPos;\nimport javafx.geometry.Insets;\nimport javafx.geometry.Pos;\nimport javafx.geometry.VPos;\nimport javafx.scene.control.Label;\nimport javafx.scene.layout.Background;\nimport javafx.scene.layout.Region;\nimport javafx.scene.layout.VBox;\nimport javafx.scene.paint.Color;\nimport javafx.scene.shape.Line;\nimport javafx.scene.shape.Rectangle;\nimport javafx.scene.text.Font;\n\npublic class TextBoundsRegion extends Region {\n\n  private final Label top;\n  private final Label bottom;\n\n  private final VBox labelBox;\n\n  private final Rectangle topRect;\n  private final Rectangle bottomRect;\n  private final Line distLine;\n\n  public TextBoundsRegion(String text, Font font) {\n    top = createLabel(text, font);\n    bottom = createLabel(text, font);\n\n    topRect = createRectangle();\n    bottomRect = createRectangle();\n    distLine = createLine();\n\n    labelBox = new VBox(10, top, bottom);\n    labelBox.setAlignment(Pos.CENTER);\n\n    setBackground(Background.fill(Color.BLACK));\n    setPadding(new Insets(10));\n    getChildren().addAll(labelBox, topRect, bottomRect, distLine);\n  }\n\n  private Label createLabel(String text, Font font) {\n    var label = new Label(text);\n    label.setFont(font);\n    label.setTextFill(Color.WHITE);\n    label.setBackground(Background.fill(Color.rgb(80, 80, 80)));\n    return label;\n  }\n\n  private Rectangle createRectangle() {\n    var rect = new Rectangle();\n    rect.setManaged(false);\n    rect.setMouseTransparent(true);\n    rect.setFill(Color.TRANSPARENT);\n    rect.setStroke(Color.RED);\n    rect.setStrokeWidth(2);\n    rect.getStrokeDashArray().add(3.0);\n    return rect;\n  }\n\n  private Line createLine() {\n    var line = new Line();\n    line.setManaged(false);\n    line.setMouseTransparent(true);\n    line.setStroke(Color.YELLOW);\n    line.setStrokeWidth(2);\n    line.getStrokeDashArray().add(3.0);\n    return line;\n  }\n\n  @Override\n  protected void layoutChildren() {\n    double x = snappedLeftInset();\n    double y = snappedTopInset();\n    double w = snapSizeX(getWidth() - snappedRightInset() - x);\n    double h = snapSizeY(getHeight() - snappedBottomInset() - y);\n\n    layoutInArea(labelBox, x, y, w, h, -1, HPos.CENTER, VPos.CENTER);\n\n    var topBounds = getVisualBounds(top);\n    var bottomBounds = getVisualBounds(bottom);\n\n    positionRect(topRect, topBounds);\n    positionRect(bottomRect, bottomBounds);\n    positionLine(topBounds, bottomBounds);\n  }\n\n  private void positionRect(Rectangle rect, Bounds bounds) {\n    rect.setX(bounds.getMinX());\n    rect.setY(bounds.getMinY());\n    rect.setWidth(bounds.getWidth());\n    rect.setHeight(bounds.getHeight());\n  }\n\n  private void positionLine(Bounds topBounds, Bounds bottomBounds) {\n    distLine.setStartX(topBounds.getCenterX());\n    distLine.setEndX(distLine.getStartX());\n\n    distLine.setStartY(topBounds.getMaxY());\n    distLine.setEndY(bottomBounds.getMinY());\n  }\n\n  private Bounds getVisualBounds(Label label) {\n    var bounds = TextUtil.getTextVisualBounds(label);\n    return labelBox.localToParent(label.localToParent(bounds));\n  }\n}\n</code></pre>\n<h2>Maven POM</h2>\n<pre class=\"lang-xml prettyprint-override\"><code>&lt;?xml version=&quot;1.0&quot; encoding=&quot;UTF-8&quot;?&gt;\n\n&lt;project xmlns=&quot;http://maven.apache.org/POM/4.0.0&quot; \n         xmlns:xsi=&quot;http://www.w3.org/2001/XMLSchema-instance&quot; \n         xsi:schemaLocation=&quot;http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd&quot;&gt;\n  &lt;modelVersion&gt;4.0.0&lt;/modelVersion&gt;\n\n  &lt;groupId&gt;com.example&lt;/groupId&gt;\n  &lt;artifactId&gt;app&lt;/artifactId&gt;\n  &lt;version&gt;0.1.0-SNAPSHOT&lt;/version&gt;\n\n  &lt;properties&gt;\n    &lt;project.build.sourceEncoding&gt;UTF-8&lt;/project.build.sourceEncoding&gt;\n    &lt;maven.compiler.release&gt;24&lt;/maven.compiler.release&gt;\n\n    &lt;javafx.version&gt;24.0.1&lt;/javafx.version&gt;\n  &lt;/properties&gt;\n\n  &lt;dependencies&gt;\n    &lt;dependency&gt;\n      &lt;groupId&gt;org.openjfx&lt;/groupId&gt;\n      &lt;artifactId&gt;javafx-controls&lt;/artifactId&gt;\n      &lt;version&gt;${javafx.version}&lt;/version&gt;\n    &lt;/dependency&gt;\n  &lt;/dependencies&gt;\n\n  &lt;build&gt;\n    &lt;plugins&gt;\n      &lt;plugin&gt;\n        &lt;groupId&gt;org.openjfx&lt;/groupId&gt;\n        &lt;artifactId&gt;javafx-maven-plugin&lt;/artifactId&gt;\n        &lt;version&gt;0.0.8&lt;/version&gt;\n        &lt;configuration&gt;\n          &lt;mainClass&gt;com.example.Main&lt;/mainClass&gt;\n        &lt;/configuration&gt;\n      &lt;/plugin&gt;\n    &lt;/plugins&gt;\n  &lt;/build&gt;\n&lt;/project&gt;\n</code></pre>\n<h2>Output</h2>\n<p><a href=\"https://i.sstatic.net/lni3Ap9F.jpg\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/lni3Ap9F.jpg\" alt=\"Screenshot of demo application GUI.\" /></a></p>\n<p>The yellow dashed line is the distance between the bottom of the top text and the top of the bottom text. The red dashed rectangles are the visual bounds of each text. The lighter grey &quot;rectangles&quot; are the background of each label to show the their &quot;full&quot; bounds (which is based on the <em>logical</em> bounds of the text).</p>\n",
+    "score" : 3,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 8532578,
+      "reputation" : 49884,
+      "user_id" : 6395627,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Slaw",
+      "link" : "https://stackoverflow.com/users/6395627/slaw"
+    },
+    "creation_date" : 1749708756,
+    "last_activity_date" : 1749708756,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79662222,
+    "question_id" : 79661418,
+    "body" : "<p>I don't know the answer to your question, but I did do some digging. I found out that for something like this, it's probabaly best to use <code>Text</code> over <code>Label</code>. I also found out that <code>Text</code>  has <code>TextBoundsType</code>. <a href=\"https://docs.oracle.com/javase/9/docs/api/javafx/scene/text/TextBoundsType.html\" rel=\"nofollow noreferrer\"><code>TextBoundsType</code></a> specifies the behaviour of bounds reporting by Text nodes. You can see the test I ran below. You can investigate further to see if this information is what you are looking for.</p>\n<pre><code>import javafx.application.Application;\nimport javafx.scene.Scene;\nimport javafx.scene.control.Control;\nimport javafx.scene.layout.VBox;\nimport javafx.scene.text.Font;\nimport javafx.scene.text.Text;\nimport javafx.scene.text.TextBoundsType;\nimport javafx.stage.Stage;\n\npublic class App extends Application {\n\n    @Override\n    public void start(Stage stage) \n    {   \n        var text = &quot;ABCDEFGHIJKLMNOPQRSTUVWXYZ&quot;;\n        var font = Font.font(&quot;System&quot;, 24);\n        Text topLabel = new Text(text);\n        topLabel.setFont(font);\n        topLabel.setStyle(&quot;-fx-background-color: yellow&quot;);\n\n        Text bottomLabel = new Text(text);\n        bottomLabel.setFont(font);\n        bottomLabel.setStyle(&quot;-fx-background-color: orange&quot;);\n\n        \n        \n        // Calculate the distance from the baseline of topLabel\n        // to the top of the bottomLabel\n\n        //double baselineToTop = ???; // What should go here?\n\n        \n        VBox root = new VBox(topLabel, bottomLabel);\n        //root.setStyle(&quot;-fx-background-color: blue;&quot;);\n        root.setMaxHeight(Control.USE_PREF_SIZE);\n        Scene scene = new Scene(root, 600, 200);\n        stage.setScene(scene);\n        stage.show();\n        \n        \n        System.out.println(&quot;VISUAL:&quot;);\n        topLabel.setBoundsType(TextBoundsType.VISUAL);\n        bottomLabel.setBoundsType(TextBoundsType.VISUAL);\n        System.out.println(&quot;Bounds in parent: \\n\\t\\t&quot; + topLabel.getBoundsInParent() + &quot;\\n\\t\\t&quot; + bottomLabel.getBoundsInParent());\n        System.out.println(&quot;\\tBounds in local: \\n\\t\\t&quot; + topLabel.getBoundsInLocal() + &quot;\\n\\t\\t&quot; + bottomLabel.getBoundsInLocal());\n        System.out.println(&quot;\\tLayout Bounds: \\n\\t\\t&quot; + topLabel.getLayoutBounds() + &quot;\\n\\t\\t&quot; + bottomLabel.getLayoutBounds());\n        \n        \n        System.out.println(&quot;LOGICAL:&quot;);\n        topLabel.setBoundsType(TextBoundsType.LOGICAL);\n        bottomLabel.setBoundsType(TextBoundsType.LOGICAL);\n        System.out.println(&quot;\\tBounds in parent: \\n\\t\\t&quot; + topLabel.getBoundsInParent() + &quot;\\n\\t\\t&quot; + bottomLabel.getBoundsInParent());\n        System.out.println(&quot;\\tBounds in local: \\n\\t\\t&quot; + topLabel.getBoundsInLocal() + &quot;\\n\\t\\t&quot; + bottomLabel.getBoundsInLocal());\n        System.out.println(&quot;\\tLayout Bounds: \\n\\t\\t&quot; + topLabel.getLayoutBounds() + &quot;\\n\\t\\t&quot; + bottomLabel.getLayoutBounds());        \n    }\n\n    public static void main(String[] args)\n    {\n        launch(args);\n    }\n}\n</code></pre>\n<p>Output:</p>\n<pre><code>VISUAL:\n    Bounds in parent: \n        BoundingBox [minX:0.2578125, minY:8.8125, minZ:0.0, width:381.421875, height:19.34765625, depth:0.0, maxX:381.6796875, maxY:28.16015625, maxZ:0.0]\n        BoundingBox [minX:0.2578125, minY:40.8125, minZ:0.0, width:381.421875, height:19.34765625, depth:0.0, maxX:381.6796875, maxY:60.16015625, maxZ:0.0]\n    Bounds in local: \n        BoundingBox [minX:0.2578125, minY:-17.0859375, minZ:0.0, width:381.421875, height:19.34765625, depth:0.0, maxX:381.6796875, maxY:2.26171875, maxZ:0.0]\n        BoundingBox [minX:0.2578125, minY:-17.0859375, minZ:0.0, width:381.421875, height:19.34765625, depth:0.0, maxX:381.6796875, maxY:2.26171875, maxZ:0.0]\n    Layout Bounds: \n        BoundingBox [minX:0.2578125, minY:-17.0859375, minZ:0.0, width:381.421875, height:19.34765625, depth:0.0, maxX:381.6796875, maxY:2.26171875, maxZ:0.0]\n        BoundingBox [minX:0.2578125, minY:-17.0859375, minZ:0.0, width:381.421875, height:19.34765625, depth:0.0, maxX:381.6796875, maxY:2.26171875, maxZ:0.0]\nLOGICAL:\n    Bounds in parent: \n        BoundingBox [minX:0.0, minY:0.0, minZ:0.0, width:382.1953125, height:31.921875, depth:0.0, maxX:382.1953125, maxY:31.921875, maxZ:0.0]\n        BoundingBox [minX:0.0, minY:32.0, minZ:0.0, width:382.1953125, height:31.921875, depth:0.0, maxX:382.1953125, maxY:63.921875, maxZ:0.0]\n    Bounds in local: \n        BoundingBox [minX:0.0, minY:-25.8984375, minZ:0.0, width:382.1953125, height:31.921875, depth:0.0, maxX:382.1953125, maxY:6.0234375, maxZ:0.0]\n        BoundingBox [minX:0.0, minY:-25.8984375, minZ:0.0, width:382.1953125, height:31.921875, depth:0.0, maxX:382.1953125, maxY:6.0234375, maxZ:0.0]\n    Layout Bounds: \n        BoundingBox [minX:0.0, minY:-25.8984375, minZ:0.0, width:382.1953125, height:31.921875, depth:0.0, maxX:382.1953125, maxY:6.0234375, maxZ:0.0]\n        BoundingBox [minX:0.0, minY:-25.8984375, minZ:0.0, width:382.1953125, height:31.921875, depth:0.0, maxX:382.1953125, maxY:6.0234375, maxZ:0.0]\n</code></pre>\n<p>View JDS discussion <a href=\"https://coderanch.com/t/689275/java/calculate-real-text-layoutbounds-label\" rel=\"nofollow noreferrer\">here</a>. It looks like he also posted a solution to make this work with <code>Label</code>.</p>\n",
+    "score" : 2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 2819940,
+      "reputation" : 14002,
+      "user_id" : 2423906,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://i.sstatic.net/rkpYv.jpg?s=256",
+      "display_name" : "SedJ601",
+      "link" : "https://stackoverflow.com/users/2423906/sedj601"
+    },
+    "creation_date" : 1749654295,
+    "last_activity_date" : 1749654634,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140505763,
+    "post_id" : 79661418,
+    "body" : "Hello xx, maybe you can use <b>labelPadding</b> see <a href=\"https://docs.oracle.com/javase/8/javafx/api/javafx/scene/control/Labeled.html#labelPaddingProperty\" rel=\"nofollow noreferrer\">here</a>.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10843443,
+      "reputation" : 916,
+      "user_id" : 20882864,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+      "display_name" : "Marce Puente",
+      "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+    },
+    "creation_date" : 1749651229,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79662222" : [ {
+      "comment_id" : 140506360,
+      "post_id" : 79662222,
+      "body" : "A Label contains a Text element internally, but you might need lookup() to get a reference to it.  Once you have it, though, you can do anything you would do with any other Text.  So it should be possible to apply this solution to Label.",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 16559,
+        "reputation" : 2173,
+        "user_id" : 36223,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/bh9Vd.png?s=256",
+        "display_name" : "DaveB",
+        "link" : "https://stackoverflow.com/users/36223/daveb"
+      },
+      "creation_date" : 1749661854,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79663003" : [ {
+      "comment_id" : 140508917,
+      "post_id" : 79663003,
+      "body" : "Very nice answer!",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 2819940,
+        "reputation" : 14002,
+        "user_id" : 2423906,
+        "user_type" : "registered",
+        "accept_rate" : 100,
+        "profile_image" : "https://i.sstatic.net/rkpYv.jpg?s=256",
+        "display_name" : "SedJ601",
+        "link" : "https://stackoverflow.com/users/2423906/sedj601"
+      },
+      "creation_date" : 1749738462,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}
