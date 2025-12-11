@@ -1,127 +1,156 @@
 {
   "question" : {
-    "question_id" : 79801951,
-    "title" : "Spring-Web OOM when streaming after update from 6.0.23 to version 6.1.4 and above",
-    "body" : "<p>We have an application where we are streaming files from the filesystem and are PUTting them to an endpoint.\nThis worked fine up to spring-web version 6.0.23.</p>\n<p>After updating to version 6.1.4, we persistently encountered the following OutOfMemoryError:</p>\n<pre><code>10:48:11,632 ERROR org.springframework.scheduling.support.TaskUtils$LoggingErrorHandler   %NHET service - ourCloudUnawareScheduler-6 - Unexpected error occurred in scheduled task\njava.lang.OutOfMemoryError: Java heap space\n    at org.springframework.util.FastByteArrayOutputStream.addBuffer(FastByteArrayOutputStream.java:325) ~[spring-core-6.1.4.jar:6.1.4]\n    at org.springframework.util.FastByteArrayOutputStream.write(FastByteArrayOutputStream.java:126) ~[spring-core-6.1.4.jar:6.1.4]\n    at org.apache.commons.io.output.ProxyOutputStream.write(ProxyOutputStream.java:92) ~[commons-io-2.11.0.jar:2.11.0]\n    at java.base/java.security.DigestOutputStream.write(DigestOutputStream.java:143) ~[?:?]\n    at java.base/java.util.zip.DeflaterOutputStream.deflate(DeflaterOutputStream.java:261) ~[?:?]\n    at java.base/java.util.zip.DeflaterOutputStream.write(DeflaterOutputStream.java:210) ~[?:?]\n    at java.base/java.util.zip.GZIPOutputStream.write(GZIPOutputStream.java:148) ~[?:?]\n    at org.apache.commons.compress.utils.CountingOutputStream.write(CountingOutputStream.java:62) ~[commons-compress-1.23.0.jar:1.23.0]\n    at org.apache.commons.compress.utils.FixedLengthBlockOutputStream$BufferAtATimeOutputChannel.write(FixedLengthBlockOutputStream.java:91) ~[commons-compress-1.23.0.jar:1.23.0]\n    at org.apache.commons.compress.utils.FixedLengthBlockOutputStream.writeBlock(FixedLengthBlockOutputStream.java:259) ~[commons-compress-1.23.0.jar:1.23.0]\n    at org.apache.commons.compress.utils.FixedLengthBlockOutputStream.maybeFlush(FixedLengthBlockOutputStream.java:169) ~[commons-compress-1.23.0.jar:1.23.0]\n    at org.apache.commons.compress.utils.FixedLengthBlockOutputStream.write(FixedLengthBlockOutputStream.java:206) ~[commons-compress-1.23.0.jar:1.23.0]\n    at org.apache.commons.compress.archivers.tar.TarArchiveOutputStream.write(TarArchiveOutputStream.java:713) ~[commons-compress-1.23.0.jar:1.23.0]\n</code></pre>\n<p>After a lot of digging we found that the implementation was refactored quite significantly from version 6.0.23 to version 6.1.4\nespecially in the commit <a href=\"https://github.com/spring-projects/spring-framework/commit/033bebf8cd4a2933788e1ea3540404aefdac2cf7\" rel=\"nofollow noreferrer\">033bebf</a>.</p>\n<p>Any version of spring-web starting with 6.1.x is using a <code>FastByteArrayOutputStream</code> while processing a request at:\n<code>AbstractClientHttpRequest:getBody -&gt; AbstractStreamingClientHttpRequest:getBodyInternal -&gt; new FastByteArrayOutputStream</code></p>\n<p>Before (e.g. spring-web version 6.0.23),\n<code>AbstractClientHttpRequest:getBody -&gt; SimpleStreamingClientHttpRequest:getBodyInternal -&gt; HttpURLConnection:getOutputStream</code></p>\n<p>The implementation using the <code>FastByteArrayOutputStream</code> is buffering the whole request in memory which will trigger an\nOOM exception at some point when the request is too large.</p>\n<h1>Related Questions</h1>\n<p>There was a similar question but this one went into a totally different direction:</p>\n<p><a href=\"https://stackoverflow.com/questions/70454126/spring-boot-java-heap-space-for-downloading-large-files\">Spring boot Java heap space for downloading large files</a></p>\n<h1>Reproducer</h1>\n<p>To show this OOM live, I created a <a href=\"https://github.com/Manveroo/spring-web-streaming\" rel=\"nofollow noreferrer\">reproducer</a> so anyone can experience it.\nI copied in some of the 6.0.23 classes so both working and broken implementations can be shown in parallel.</p>\n<p>In the reproducer, I trimmed down the streams compared to our own implementation so it just uses a FileInputStream\nto stream some mock data to the OutputStream from the request body.\nAnd the receiving endpoint just drains the stream.</p>\n<p>The details can be found in <a href=\"https://github.com/Manveroo/spring-web-streaming/blob/main/src/main/java/com/github/manveroo/spring_web_streaming/Controller.java#L78\" rel=\"nofollow noreferrer\">this java class</a>.</p>\n<p>Don't forget to limit the available memory by adding <code>-Xmx500m</code> when running the reproducer.</p>\n<h2>Relevant code</h2>\n<p>Triggering the streaming over the RestTemplate works the same for old and new.\nIn the reproducer the RestTemplate is instantiated differently since we want to have both old and new in the same project.</p>\n<pre class=\"lang-java prettyprint-override\"><code>  @PostMapping(&quot;/startBroken&quot;)\n  public void startBroken() throws IOException {\n    Path sourcePath = createTestFile();\n    RequestCallback requestCallback =\n        request -&gt; {\n          try (OutputStream os = request.getBody();\n              FileInputStream fis = new FileInputStream(sourcePath.toFile())) {\n            doStream(fis, os);\n          }\n        };\n\n    // The important difference is the version of the restTemplate\n    restClientBroken()\n        .execute(&quot;http://localhost:8080/putData&quot;, HttpMethod.PUT, requestCallback, null);\n    deleteTestFile(sourcePath);\n  }\n\n  private void doStream(InputStream inputStream, OutputStream outputStream) throws IOException {\n    byte[] buffer = new byte[65536];\n    int bytesRead;\n    long totalBytesProcessed = 0;\n    while ((bytesRead = inputStream.read(buffer)) != -1) {\n      totalBytesProcessed += bytesRead;\n      outputStream.write(buffer, 0, bytesRead);\n      System.out.println(&quot;Processed &quot; + totalBytesProcessed + &quot; bytes&quot;);\n    }\n    outputStream.flush();\n  }\n</code></pre>\n<h3>RestTemplate</h3>\n<p>We did not change the instantiation of the two RestTemplates.\nBut in the reproducer you'll find <a href=\"https://github.com/Manveroo/spring-web-streaming/blob/main/src/main/java/com/github/manveroo/spring_web_streaming/Controller.java#L182\" rel=\"nofollow noreferrer\"><code>restClientBroken</code></a> and <a href=\"https://github.com/Manveroo/spring-web-streaming/blob/main/src/main/java/com/github/manveroo/spring_web_streaming/Controller.java#L200\" rel=\"nofollow noreferrer\"><code>restClientWorking</code></a> where the working one uses local copies of the old spring web implementation:</p>\n<pre class=\"lang-java prettyprint-override\"><code>  private RestTemplate restClientBroken() {\n    SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();\n    requestFactory.setConnectTimeout(2_000);\n    requestFactory.setReadTimeout(29_000);\n    requestFactory.setBufferRequestBody(false);\n    requestFactory.setChunkSize(4096);\n\n    RestTemplate restTemplate = new RestTemplate();\n    restTemplate.setRequestFactory(requestFactory);\n    return restTemplate;\n  }\n</code></pre>\n<h3>Test file</h3>\n<p>Any large enough file will do (with -Xmx500m a 800MB file is enough):</p>\n<pre class=\"lang-java prettyprint-override\"><code>  private Path createTestFile() throws IOException {\n    Path path = Files.createTempFile(&quot;streaming-test-source-&quot;, &quot;.tmp&quot;);\n    try (final BufferedWriter bufferedWriter = Files.newBufferedWriter(path)) {\n      for (int i = 0; i &lt; 30_000; i++) {\n        int outerCount = i * 1000;\n        for (int j = 0; j &lt; 1_000; j++) {\n          bufferedWriter.write(&quot;This is line &quot; + outerCount + i + &quot;\\n&quot;);\n        }\n        bufferedWriter.flush();\n      }\n    }\n    return path;\n  }\n</code></pre>\n<h3>Streaming sink</h3>\n<p>The example just drains the stream to simulate a consumer:</p>\n<pre class=\"lang-java prettyprint-override\"><code>  @PutMapping(&quot;/putData&quot;)\n  public void receiver(HttpServletRequest request) throws IOException {\n    StreamUtils.drain(request.getInputStream());\n  }\n</code></pre>\n<h1>Questions</h1>\n<p>Now, my questions are:</p>\n<ul>\n<li>Did I miss an obvious mistake?</li>\n<li>Was there a conceptual change? Aka, is there a better way to stream data which does not use a <code>FastByteArrayOutputStream</code>?</li>\n<li>Or is this a bug I should file in <a href=\"https://github.com/spring-projects/spring-framework/issues\" rel=\"nofollow noreferrer\">spring-framework</a></li>\n</ul>\n",
-    "tags" : [ "java", "spring", "spring-mvc" ],
+    "question_id" : 79807426,
+    "title" : "Priority of Java&#39;s conditional ? : operator",
+    "body" : "<p>The conditional <code>? :</code> operator in Java is right-associative.</p>\n<p>So the expression</p>\n<pre><code>a&lt;b ? c&lt;d ? 1 : 2 : 3 ;\n</code></pre>\n<p>is evaluated as</p>\n<pre><code>a&lt;b ? (c&lt;d ? 1 : 2) : 3 ;\n</code></pre>\n<p>Does this mean that the expression <code>(c&lt;d ? 1: 2)</code> is evaluated first or is the boolean <code>a&lt;b</code> evaluated and the expression <code>(c&lt;d ? 1: 2)</code> is only evaluated afterwards iff <code>a&lt;b</code> is true?</p>\n<p>In other words: assume <code>c&lt;d</code> is true, is the evaluation then:</p>\n<ol>\n<li><code>a&lt;b ? 1: 3;</code>                 or</li>\n<li><code>a&lt;b ? (c&lt;d ? 1 : 2) : 3 ;</code></li>\n</ol>\n",
+    "tags" : [ "java", "operators", "operator-precedence", "expression-evaluation" ],
     "owner" : {
-      "account_id" : 44438261,
-      "reputation" : 23,
-      "user_id" : 31752773,
+      "account_id" : 3434578,
+      "reputation" : 91,
+      "user_id" : 7729735,
       "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/e082e1157ba0696dd6d2925b24677d59?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "Manveru",
-      "link" : "https://stackoverflow.com/users/31752773/manveru"
+      "profile_image" : "https://graph.facebook.com/666469372/picture?type=large",
+      "display_name" : "Sebastian Mueller",
+      "link" : "https://stackoverflow.com/users/7729735/sebastian-mueller"
     },
     "is_answered" : true,
-    "view_count" : 106,
-    "answer_count" : 1,
-    "score" : 2,
-    "last_activity_date" : 1761649094,
-    "creation_date" : 1761577124,
-    "link" : "https://stackoverflow.com/questions/79801951/spring-web-oom-when-streaming-after-update-from-6-0-23-to-version-6-1-4-and-abov",
+    "view_count" : 155,
+    "answer_count" : 7,
+    "score" : 1,
+    "last_activity_date" : 1762166592,
+    "creation_date" : 1762124635,
+    "link" : "https://stackoverflow.com/questions/79807426/priority-of-javas-conditional-operator",
     "content_license" : "CC BY-SA 4.0"
   },
   "answers" : [ {
-    "answer_id" : 79802700,
-    "question_id" : 79801951,
-    "body" : "<p>Not sure if that is an intentional change or not, but you could work around it by directly setting the body instead of getting the <code>OutputStream</code>.</p>\n<pre class=\"lang-java prettyprint-override\"><code>@PostMapping(&quot;/startBroken&quot;)\npublic void startBroken() throws IOException {\n  Path sourcePath = createTestFile();\n  RequestCallback requestCallback =\n    request -&gt; {\n      if (request instanceof StreamingHttpOutputMessage shom) {\n            System.out.println(&quot;Using Body&quot;);\n            shom.setBody(out -&gt;\n            {\n              try (var fis = new BufferedInputStream(new FileInputStream(sourcePath.toFile()))) {\n                doStream(fis, out);\n              }\n            });\n          } else {\n            System.out.println(&quot;Using OutputStream&quot;);\n            try (var fis = new BufferedInputStream(new FileInputStream(sourcePath.toFile()))) {\n              doStream(fis, request.getBody());\n            }\n          }\n        };\n    // The important difference is in the restClient\n    restClientBroken()\n        .execute(&quot;http://localhost:8080/putData&quot;, HttpMethod.PUT, requestCallback, null);\n    deleteTestFile(sourcePath);\n  }\n\n  private void doStream(InputStream in, OutputStream out) throws IOException {\n    StreamUtils.copy(in, out);\n  }\n</code></pre>\n<p>Nonetheless I would probably still register an issue explaining the situation.</p>\n",
-    "score" : 2,
-    "is_accepted" : true,
+    "answer_id" : 79807457,
+    "question_id" : 79807426,
+    "body" : "<p>If you run <a href=\"https://onlinegdb.com/H4h7KQMcIo\" rel=\"nofollow noreferrer\">https://onlinegdb.com/H4h7KQMcIo</a> which uses <code>A() ? B() ? C() : D() : E()</code> it prints <code>A</code> first and then <code>B</code> and then <code>C</code></p>\n",
+    "score" : 5,
+    "is_accepted" : false,
     "owner" : {
-      "account_id" : 3192259,
-      "reputation" : 126777,
-      "user_id" : 2696260,
+      "account_id" : 2524320,
+      "reputation" : 9693,
+      "user_id" : 2193968,
       "user_type" : "registered",
-      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
-      "display_name" : "M. Deinum",
-      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+      "profile_image" : "https://www.gravatar.com/avatar/1beed39f2b04409ff584a0af1d59325c?s=256&d=identicon&r=PG",
+      "display_name" : "Jerry Jeremiah",
+      "link" : "https://stackoverflow.com/users/2193968/jerry-jeremiah"
     },
-    "creation_date" : 1761649094,
-    "last_activity_date" : 1761649094,
-    "content_license" : "CC BY-SA 4.0"
-  } ],
-  "question_comments" : [ {
-    "comment_id" : 140835670,
-    "post_id" : 79801951,
-    "body" : "Thanks. I will mark your answer as the &quot;answer&quot;. And let&#39;s hope that we get an official response in the linked issue.",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 44438261,
-      "reputation" : 23,
-      "user_id" : 31752773,
-      "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/e082e1157ba0696dd6d2925b24677d59?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "Manveru",
-      "link" : "https://stackoverflow.com/users/31752773/manveru"
-    },
-    "creation_date" : 1762260792,
+    "creation_date" : 1762130611,
+    "last_activity_date" : 1762130611,
     "content_license" : "CC BY-SA 4.0"
   }, {
-    "comment_id" : 140822900,
-    "post_id" : 79801951,
-    "body" : "I took the liberty to create <a href=\"https://github.com/spring-projects/spring-framework/issues/35700\" rel=\"nofollow noreferrer\">an issue</a> for it.",
-    "score" : 2,
-    "owner" : {
-      "account_id" : 3192259,
-      "reputation" : 126777,
-      "user_id" : 2696260,
-      "user_type" : "registered",
-      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
-      "display_name" : "M. Deinum",
-      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
-    },
-    "creation_date" : 1761662610,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140822666,
-    "post_id" : 79801951,
-    "body" : "Yes, it seems very odd. @m-deinum &#39;s workaround works, but it seems as this was not on the radar when the refactoring occurred. And I just checked. Even with 6.2.12 it is still broken.",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 44438261,
-      "reputation" : 23,
-      "user_id" : 31752773,
-      "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/e082e1157ba0696dd6d2925b24677d59?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "Manveru",
-      "link" : "https://stackoverflow.com/users/31752773/manveru"
-    },
-    "creation_date" : 1761657873,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140821166,
-    "post_id" : 79801951,
-    "body" : "The API docs for <a href=\"https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/http/client/SimpleClientHttpRequestFactory.html#setBufferRequestBody(boolean)\" rel=\"nofollow noreferrer\">SimpleClientHttpRequestFactory.html#setBufferRequestBody(boo&zwnj;&#8203;lean)</a> claim that requests are never buffered, so that this method, now deprecated, is unneeded. Inasmuch as you seem to have demonstrated that that is not true in practice in v6.1.4, I take that to be a flaw. Current is 6.2.12, however, so it would be worthwhile to test against that version before filing a ticket.",
+    "answer_id" : 79807598,
+    "question_id" : 79807426,
+    "body" : "<p>Java Language Specification <a href=\"https://docs.oracle.com/javase/specs/jls/se25/html/jls-15.html#jls-15.25-500\" rel=\"nofollow noreferrer\">15.25. Conditional Operator <code>? :</code></a> says:</p>\n<blockquote>\n<p>At run time, the first operand expression of the conditional expression is evaluated first. ...</p>\n<p>The resulting boolean value is then used to choose either the second or the third operand expression:</p>\n<p>If the value of the first operand is true, then the second operand expression is chosen.</p>\n<p>If the value of the first operand is false, then the third operand expression is chosen.</p>\n<p>The chosen operand expression is then evaluated and the resulting value is converted to ...</p>\n<p>The operand expression not chosen is not evaluated for that particular evaluation of the conditional expression</p>\n</blockquote>\n<p>That means:</p>\n<ul>\n<li>the condition is evaluated first,</li>\n<li>only one of the second or third operand is evaluated</li>\n</ul>\n<hr />\n<p>Note: the Conditional Operator (<code>? :</code>,) as its name suggest, is a normal operator, it is <strong>not</strong> only valid in assignments!<br />\nIt can be used in any expressions: assignment, array index, method arguments, conditionals [<code>if</code>, <code>for</code>, <code>switch</code>] ... (assignment is also an Expression, <code>=</code> is the <a href=\"https://docs.oracle.com/javase/specs/jls/se25/html/jls-15.html#jls-15.26.1\" rel=\"nofollow noreferrer\">Simple Assignment Operator</a>.)</p>\n",
     "score" : 4,
+    "is_accepted" : false,
     "owner" : {
-      "account_id" : 2792262,
-      "reputation" : 190712,
-      "user_id" : 2402272,
+      "account_id" : 31180,
+      "reputation" : 29752,
+      "user_id" : 85421,
       "user_type" : "registered",
-      "accept_rate" : 85,
-      "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
-      "display_name" : "John Bollinger",
-      "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+      "profile_image" : "https://i.sstatic.net/kKvXH.gif?s=256",
+      "display_name" : "user85421",
+      "link" : "https://stackoverflow.com/users/85421/user85421"
     },
-    "creation_date" : 1761591318,
+    "creation_date" : 1762153279,
+    "last_activity_date" : 1762155289,
     "content_license" : "CC BY-SA 4.0"
   }, {
-    "comment_id" : 140820888,
-    "post_id" : 79801951,
-    "body" : "Have you tried restClient instead of restTemplate?",
-    "score" : 0,
+    "answer_id" : 79807454,
+    "question_id" : 79807426,
+    "body" : "<p>The first thing evaluated is <code>a&lt;b</code>. If (and only if) <code>a&lt;b</code> will <code>c&lt;d</code> be evaluated. If <code>a&gt;=b</code> it will not be evaluated at all and the expression will terminate with <code>3</code> being assigned. The ternary operator <code>? :</code> is only valid for assignment in Java.</p>\n",
+    "score" : 2,
+    "is_accepted" : false,
     "owner" : {
-      "account_id" : 17553626,
-      "reputation" : 508,
-      "user_id" : 12733532,
+      "account_id" : 3557625,
+      "reputation" : 201916,
+      "user_id" : 2970947,
       "user_type" : "registered",
-      "profile_image" : "https://lh3.googleusercontent.com/-EAww28wDCxk/AAAAAAAAAAI/AAAAAAAAAAA/ACHi3rcgKS9dXdmUh-hOQPlZYZygBUfLwQ/s256-rj/photo.jpg",
-      "display_name" : "Max",
-      "link" : "https://stackoverflow.com/users/12733532/max"
+      "profile_image" : "https://i.sstatic.net/HLTev.png?s=256",
+      "display_name" : "Elliott Frisch",
+      "link" : "https://stackoverflow.com/users/2970947/elliott-frisch"
     },
-    "creation_date" : 1761581552,
+    "creation_date" : 1762130053,
+    "last_activity_date" : 1762130053,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79807760,
+    "question_id" : 79807426,
+    "body" : "<p>@marce-puente you have to be very careful with replacing the conditional ?: operator with if/else, because it can behave in subtle and potentially surprising ways.</p>\n<p>For example:</p>\n<pre><code>Number n = true ? Integer.valueOf(0) : Double.valueOf(0);\nSystem.out.println(n instanceof Integer);  // prints false\n</code></pre>\n<p><a href=\"https://ideone.com/C3PaoA\" rel=\"nofollow noreferrer\">ideone demo</a>; whereas:</p>\n<pre><code>Number n;\nif (true) {\n  n = Integer.valueOf(0);\n} else {\n  n = Double.valueOf(0);\n}\nSystem.out.println(n instanceof Integer);  // prints true\n</code></pre>\n<p><a href=\"https://ideone.com/iKLHMy\" rel=\"nofollow noreferrer\">ideone demo</a>.</p>\n<p>(If you've not seen this before, this behavior of the conditional ?: operator is because of binary numeric promotion)</p>\n<p>I would suggest that you don't want to focus on the semantics of the conditional ?: operator specifically, but rather remember <a href=\"https://docs.oracle.com/javase/specs/jls/se25/html/jls-15.html#jls-15.7\" rel=\"nofollow noreferrer\">the much simpler rule</a>:</p>\n<blockquote>\n<p>The Java programming language guarantees that the operands of operators appear to be evaluated in a specific evaluation order, namely, from left to right.</p>\n</blockquote>\n",
+    "score" : 2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 162699,
+      "reputation" : 141035,
+      "user_id" : 3788176,
+      "user_type" : "registered",
+      "accept_rate" : 54,
+      "profile_image" : "https://www.gravatar.com/avatar/44c841338e1646af9a977f1fa0e23948?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Andy Turner",
+      "link" : "https://stackoverflow.com/users/3788176/andy-turner"
+    },
+    "creation_date" : 1762166226,
+    "last_activity_date" : 1762166592,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79807484,
+    "question_id" : 79807426,
+    "body" : "<p>Operator precedence and evaluation order are two different concepts. Try if you can keep them apart. Evaluation order is left to right regardless of precedence.</p>\n<p>So the latter:</p>\n<blockquote>\n<p>the boolean <code>a&lt;b</code> (is) evaluated and the expression <code>(c&lt;d ? 1: 2)</code> is only evaluated afterwards iff <code>a&lt;b</code> is true</p>\n</blockquote>\n<p>@EliottFrisch what do you mean that <code>? :</code> is only valid for assignment? I can pass <code>b ? m : n</code> to a method any time.</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 7612423,
+      "reputation" : 87400,
+      "user_id" : 5772882,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Anonymous",
+      "link" : "https://stackoverflow.com/users/5772882/anonymous"
+    },
+    "creation_date" : 1762135964,
+    "last_activity_date" : 1762136335,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79807504,
+    "question_id" : 79807426,
+    "body" : "<p>And associativity, operator precedence, and evaluation order are <em>three</em> different concepts.</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 71739,
+      "reputation" : 311869,
+      "user_id" : 207421,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/5cfe5f7d64f44be04f147295f5c7b88e?s=256&d=identicon&r=PG",
+      "display_name" : "user207421",
+      "link" : "https://stackoverflow.com/users/207421/user207421"
+    },
+    "creation_date" : 1762139089,
+    "last_activity_date" : 1762139089,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79807525,
+    "question_id" : 79807426,
+    "body" : "<p>The ternary operator is syntactic sugar and is used to simplify an <strong>if/else</strong> structure.   In this particular case, we have two nested ternary operators, so for analysis purposes, it is best to replace them with that structure:</p>\n<pre><code>if( a &lt; b ) {\n   return 3;\n}\nelse {\n   if( c &lt; d ) {\n      return 1;\n   }\n   else {\n      return 2; \n   }\n}\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 10843443,
+      "reputation" : 916,
+      "user_id" : 20882864,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+      "display_name" : "Marce Puente",
+      "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+    },
+    "creation_date" : 1762142534,
+    "last_activity_date" : 1762142534,
     "content_license" : "CC BY-SA 4.0"
   } ],
+  "question_comments" : [ ],
   "answer_comments" : { }
 }

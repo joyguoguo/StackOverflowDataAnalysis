@@ -1,215 +1,60 @@
 {
   "question" : {
-    "question_id" : 79769338,
-    "title" : "Executing lambda functions inside transactionExecutor threads for unit tests",
-    "body" : "<p>i have few methods that need to be iterated in new transactions but facing errors when i try to write unit tests for them</p>\n<pre><code>@Inject\n  private SchedulerUtil schedulerUtil;\n  @Inject\n  private CompletableSelfReferralFilter filter;\n  @Inject\n  private SelfReferralAutoCloseHandler handler;\n  @Inject\n  private DemandForCareDAO demandForCareDAO;\n  @Inject\n  private AutoClosedSelfReferralInformationHelper autoClosedSelfReferralInformationHelper;\n  @Inject\n  private TransactionExecutor transactionExecutor;\n\n  private int closedCount = 0;\n  private int totalCount = 0;\n  private Stopwatch stopwatch;\n  private DateTime initialStartedTime;\n  private DateTime lastProcessedReferralDateTime;\n\n@Override\n  public void schedule(SelfReferralAutoCloseConfigurationData configuration)\n  {\n    stopwatch = Stopwatch.createStarted();\n\n    lastProcessedReferralDateTime = autoClosedSelfReferralInformationHelper.getCreatedDateTime(configuration);\n    initialStartedTime = lastProcessedReferralDateTime;\n    long pageTotalCount;\n    long pageCount;\n\n    do\n    {\n      final long[] pageTotalCountHolder = new long[1];\n      final long[] pageCountHolder = new long[1];\n\n      transactionExecutor.runInNewReadOnlyTransaction(() -&gt; {\n        final Page&lt;DemandForCare&gt; demandForCarePage = loadDemandForCarePage(configuration);\n        List&lt;DemandForCare&gt; openRequests = demandForCarePage.getContent();\n\n        pageTotalCountHolder[0] = demandForCarePage.getTotal();\n        pageCountHolder[0] = demandForCarePage.getContent().size();\n\n        complete(configuration, openRequests);\n      });\n\n      pageTotalCount = pageTotalCountHolder[0];\n      pageCount = pageCountHolder[0];\n    }\n    while (\n      schedulerUtil.isWithinExecutionTimeLimit(configuration.getExecutionTime(), stopwatch.elapsed(TimeUnit.HOURS)) &amp;&amp;\n      pageTotalCount &gt; pageCount);\n\n    infoLogs(configuration, pageTotalCount == pageCount);\n\n    totalCount = 0;\n    closedCount = 0;\n  }\n\n  private void complete(SelfReferralAutoCloseConfigurationData configuration, List&lt;DemandForCare&gt; openRequests)\n  {\n    transactionExecutor.runInNewReadOnlyTransaction(() -&gt; {\n      System.out.println(&quot;Processing &quot; + openRequests.size() + &quot; self referrals to complete.&quot;);\n      for (DemandForCare dfc : openRequests)\n      {\n        try\n        {\n          if (filter.filter(dfc, configuration))\n          {\n            handler.autoComplete(dfc.getId(), configuration.getCloseReason(), configuration.getMode());\n            closedCount++;\n            LOG.debug(&quot;Completed referral Id: {}&quot;, dfc.getId());\n          }\n        }\n        catch (Exception e)\n        {\n          if (e.getMessage() != null)\n          {\n            LOG.debug(&quot;Couldn't complete referral Id: {} and throws the error as {}&quot;, dfc.getId(), e.getMessage());\n          }\n          else\n          {\n            LOG.debug(&quot;Couldn't complete referral Id: {} and throws the error as &quot;, dfc.getId(), e);\n          }\n        }\n        totalCount++;\n        lastProcessedReferralDateTime = dfc.getCreationInfo().getCreatedDateTime();\n      }\n    });\n  }\n\n  private Page&lt;DemandForCare&gt; loadDemandForCarePage(SelfReferralAutoCloseConfigurationData configurationData)\n  {\n    return demandForCareDAO.findInProgressSelfReferralsCreatedAfter(lastProcessedReferralDateTime,\n                                                                    new PagingParameters(0,\n                                                                                         configurationData.getPageSize(),\n                                                                                         Collections.emptyList()));\n  }\n</code></pre>\n<pre><code>public class TransactionExecutor {\n  private static TransactionExecutor instance;\n\n  public TransactionExecutor() {\n  }\n\n  public static TransactionExecutor getInstance() {\n    return instance;\n  }\n\n  @Inject\n  public void setInstance(TransactionExecutor transactionExecutor) {\n    instance = transactionExecutor;\n  }\n\n  @Transactional(\n    propagation = Propagation.REQUIRES_NEW\n  )\n  public void runInNewTransaction(ThrowingRunnable&lt;Exception&gt; runnable) {\n    ExceptionWrapper.uncheck(runnable);\n  }\n\n  @Transactional(\n    propagation = Propagation.REQUIRES_NEW\n  )\n  public &lt;V&gt; V runInNewTransaction(Callable&lt;V&gt; callable) {\n    return ExceptionWrapper.uncheck(callable);\n  }\n\n  @Transactional(\n    readOnly = true,\n    propagation = Propagation.REQUIRES_NEW\n  )\n  public void runInNewReadOnlyTransaction(ThrowingRunnable&lt;Exception&gt; runnable) {\n    ExceptionWrapper.uncheck(runnable);\n  }\n\n  @Transactional(\n    readOnly = true,\n    propagation = Propagation.REQUIRES_NEW\n  )\n  public &lt;V&gt; V runInNewReadOnlyTransaction(Callable&lt;V&gt; callable) {\n    return ExceptionWrapper.uncheck(callable);\n  }\n\n  @Transactional(\n    propagation = Propagation.REQUIRED\n  )\n  public void runInTransaction(ThrowingRunnable&lt;Exception&gt; runnable) {\n    ExceptionWrapper.uncheck(runnable);\n  }\n\n  @Transactional(\n    propagation = Propagation.REQUIRED\n  )\n  public &lt;V&gt; V runInTransaction(Callable&lt;V&gt; callable) {\n    return ExceptionWrapper.uncheck(callable);\n  }\n}\n</code></pre>\n<p>These methods are the focus of unit tests and my current test looks like this</p>\n<pre><code>@Mock\n  private SelfReferralAutoCloseHandler handler;\n  @Mock\n  private DemandForCareDAO demandForCareDAO;\n  @Mock\n  private CompletableSelfReferralFilter filter;\n  @Mock\n  private TermDAO termDAO;\n  @Mock\n  private AutoClosedSelfReferralInformationHelper autoClosedSelfReferralInformationHelper;\n  @Mock\n  private SchedulerUtil schedulerUtil;\n  @Mock\n  private TransactionExecutor transactionExecutor;\n  @InjectMocks\n  private SelfReferralAutoCloseScheduler scheduler;\n\n@BeforeMethod\n  public void setUp()\n  {\n    MockitoAnnotations.initMocks(this);\n\n    when(autoClosedSelfReferralInformationHelper.getCreatedDateTime(any())).thenReturn(new DateTime());\n\n\n//    reset(transactionExecutor);\n//    when(transactionExecutor.runInNewReadOnlyTransaction(any(Callable.class)))\n//      .thenAnswer(invocation -&gt; {\n//        Callable&lt;?&gt; callable = invocation.getArgument(0);\n//        return callable.call();\n//      });\n  }\n\n  @Test\n  public void testAutoComplete_whenReachingExecutionTime_thenCallingToComplete() throws Exception {\n    when(schedulerUtil.isWithinExecutionTimeLimit(anyInt(), anyLong())).thenReturn(true).thenReturn(false);\n    final SelfReferralAutoCloseConfigurationData configurationData = mock(SelfReferralAutoCloseConfigurationData.class);\n    when(configurationData.getExecutionTime()).thenReturn(1);\n    final Term closeReason = mock(Term.class);\n    when(configurationData.getCloseReason()).thenReturn(closeReason);\n    when(closeReason.getValue()).thenReturn(&quot;closeReason&quot;);\n    when(configurationData.getMode()).thenReturn(SelfReferralAutoClosureSchedulerMode.CLOSE_PAST_REFERRALS);\n    when(configurationData.getPageSize()).thenReturn(3);\n\n    List&lt;DemandForCare&gt; demandForCares = List.of(\n      getDemandForCare(getDFCId(&quot;123&quot;)),\n      getDemandForCare(getDFCId(&quot;234&quot;)),\n      getDemandForCare(getDFCId(&quot;345&quot;))\n    );\n    Page&lt;DemandForCare&gt; demandForCarePage = new PageImpl&lt;&gt;(demandForCares, 9, 0);\n\n    List&lt;DemandForCare&gt; demandForCares2 = List.of(\n      getDemandForCare(getDFCId(&quot;1231&quot;)),\n      getDemandForCare(getDFCId(&quot;2341&quot;)),\n      getDemandForCare(getDFCId(&quot;3451&quot;))\n    );\n    Page&lt;DemandForCare&gt; demandForCarePage2 = new PageImpl&lt;&gt;(demandForCares, 6, 0);\n\n    doReturn(Collections.singletonList(closeReason)).when(termDAO).findByValues(any(String[].class));\n    doReturn(demandForCarePage, demandForCarePage2).when(demandForCareDAO).findInProgressSelfReferralsCreatedAfter(any(DateTime.class), any(PagingParameters.class));\n    when(filter.filter(any(DemandForCare.class), any(SelfReferralAutoCloseConfigurationData.class))).thenReturn(true);\n    doNothing().when(handler).autoComplete(any(DemandForCare.Id.class), any(Term.class), any(SelfReferralAutoClosureSchedulerMode.class));\n\n    ArgumentCaptor&lt;Callable&lt;?&gt;&gt; callableCaptor = ArgumentCaptor.forClass(Callable.class);\n\n    // Capture the lambda passed to transactionExecutor\n    doAnswer(invocation -&gt; {\n      Callable&lt;?&gt; callable = callableCaptor.getValue();\n      return callable.call();\n    }).when(transactionExecutor).runInNewReadOnlyTransaction(callableCaptor.capture());\n\n    scheduler.schedule(configurationData);\n\n    verify(transactionExecutor, times(4)).runInNewReadOnlyTransaction(any(Callable.class));\n    verify(handler, times(3)).autoComplete(any(DemandForCare.Id.class), eq(closeReason), eq(SelfReferralAutoClosureSchedulerMode.CLOSE_PAST_REFERRALS));\n  }\n</code></pre>\n<p>I have tried different ways to make the mocks work for transactionExecutor but seems like its trying to match the argument passed into the lambda instead of executing them. since a good portion of methods are not executed because they are inside the thread and because of that verifies fail. Following is the error stack i received after executing the code.</p>\n<pre><code>Argument(s) are different! Wanted:\ntransactionExecutor.runInNewReadOnlyTransaction(\n    &lt;any java.util.concurrent.Callable&gt;\n);\n-&gt; at se.cambio.platform.sdk.server.util.TransactionExecutor.runInNewReadOnlyTransaction(TransactionExecutor.java:84)\nActual invocations have different arguments:\ntransactionExecutor.runInNewReadOnlyTransaction(\n    se.cambio.referral.taskservice.selfreferral.SelfReferralAutoCloseScheduler$$Lambda$202/0x0000011f63366650@119290b9\n);\n-&gt; at se.cambio.referral.taskservice.selfreferral.SelfReferralAutoCloseScheduler.schedule(SelfReferralAutoCloseScheduler.java:70)\n\n    at se.cambio.platform.sdk.server.util.TransactionExecutor.runInNewReadOnlyTransaction(TransactionExecutor.java:84)\n    at se.cambio.referral.taskservice.selfreferral.SelfReferralAutoCloseSchedulerTest.testSchedule_whenExecutionTimeLimitExceeded_thenProcessingStops_test(SelfReferralAutoCloseSchedulerTest.java:99)\n    at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)\n    at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:77)\n    at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)\n    at java.base/java.lang.reflect.Method.invoke(Method.java:568)\n    at org.testng.internal.MethodInvocationHelper.invokeMethod(MethodInvocationHelper.java:124)\n    at org.testng.internal.Invoker.invokeMethod(Invoker.java:583)\n    at org.testng.internal.Invoker.invokeTestMethod(Invoker.java:719)\n    at org.testng.internal.Invoker.invokeTestMethods(Invoker.java:989)\n    at org.testng.internal.TestMethodWorker.invokeTestMethods(TestMethodWorker.java:125)\n    at org.testng.internal.TestMethodWorker.run(TestMethodWorker.java:109)\n    at org.testng.TestRunner.privateRun(TestRunner.java:648)\n    at org.testng.TestRunner.run(TestRunner.java:505)\n    at org.testng.SuiteRunner.runTest(SuiteRunner.java:455)\n    at org.testng.SuiteRunner.runSequentially(SuiteRunner.java:450)\n    at org.testng.SuiteRunner.privateRun(SuiteRunner.java:415)\n    at org.testng.SuiteRunner.run(SuiteRunner.java:364)\n    at org.testng.SuiteRunnerWorker.runSuite(SuiteRunnerWorker.java:52)\n    at org.testng.SuiteRunnerWorker.run(SuiteRunnerWorker.java:84)\n    at org.testng.TestNG.runSuitesSequentially(TestNG.java:1208)\n    at org.testng.TestNG.runSuitesLocally(TestNG.java:1137)\n    at org.testng.TestNG.runSuites(TestNG.java:1049)\n    at org.testng.TestNG.run(TestNG.java:1017)\n    at com.intellij.rt.testng.IDEARemoteTestNG.run(IDEARemoteTestNG.java:65)\n    at com.intellij.rt.testng.RemoteTestNGStarter.main(RemoteTestNGStarter.java:105)\n</code></pre>\n<p>how can i fix this?</p>\n<p>edit : also included dependency injections of fields</p>\n",
-    "tags" : [ "java", "hibernate", "transactions", "mockito" ],
+    "question_id" : 79774870,
+    "title" : "Include header on all pages except on page 1, converting html to pdf using chromium playwright",
+    "body" : "<p>We are using chromium playwright for converting html to pdf where header footer watermark are being set on pdf. But header need to be added on all pages except on page 1. Following is the snipped from method for setting headertemplate</p>\n<pre><code>// Header\npdfOptions.setHeaderTemplate(\n        header.map(h -&gt;\n                &quot;&lt;div style='font-size:12px; padding-left:40px; text-align:left; width:100%;'&gt;&quot; +\n                        &quot;&lt;b&gt;&quot; + h + &quot;&lt;/b&gt;&quot; +\n                        &quot;&lt;script&gt;&quot; +\n                        &quot;if (parseInt(document.querySelector('.pageNumber').textContent) === 1) {&quot; +\n                        &quot;  document.currentScript.parentElement.style.display='none';&quot; +\n                        &quot;}&quot; +\n                        &quot;&lt;/script&gt;&quot; +\n                        &quot;&lt;/div&gt;&quot;\n        ).orElse(&quot;&lt;div&gt;&lt;/div&gt;&quot;)\n);\n// Footer\npdfOptions.setFooterTemplate(\n        footer.map(f -&gt;\n                &quot;&lt;div style='width:100%; font-size:10px; &quot; +\n                        &quot;position: relative; &quot; +\n                        &quot;display: flex; justify-content: flex-end; &quot; +\n                        &quot;padding-right: 30px; &quot; +\n                        &quot;padding-top: 10px; &quot; +\n                        &quot;box-sizing: border-box;'&gt;&quot; +\n                        f + &quot; | Page&amp;nbsp;&lt;span class='pageNumber'&gt;&lt;/span&gt;&amp;nbsp;of&amp;nbsp;&lt;span class='totalPages'&gt;&lt;/span&gt;&quot; +\n                        &quot;&lt;/div&gt;&quot;\n        ).orElse(\n                &quot;&lt;div style='width:100%; font-size:10px; &quot; +\n                        &quot;position: relative; &quot; +\n                        &quot;display: flex; justify-content: flex-end; &quot; +\n                        &quot;padding-right: 30px; &quot; +\n                        &quot;padding-top: 10px; &quot; +\n                        &quot;box-sizing: border-box;'&gt;&quot; +\n                        &quot;Page&amp;nbsp;&lt;span class='pageNumber'&gt;&lt;/span&gt;&amp;nbsp;of&amp;nbsp;&lt;span class='totalPages'&gt;&lt;/span&gt;&quot; +\n                        &quot;&lt;/div&gt;&quot;\n        )\n);\n</code></pre>\n",
+    "tags" : [ "java", "html", "pdf", "chromium", "html-to-pdf" ],
     "owner" : {
-      "account_id" : 18079902,
-      "reputation" : 27,
-      "user_id" : 13142340,
+      "account_id" : 14628298,
+      "reputation" : 25,
+      "user_id" : 10564972,
       "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/933f6aaec1db89eb2633cb0d22d10717?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "Udara Nayana",
-      "link" : "https://stackoverflow.com/users/13142340/udara-nayana"
+      "profile_image" : "https://lh6.googleusercontent.com/-XTBxuH8oGJQ/AAAAAAAAAAI/AAAAAAAAAAA/ABtNlbBrxl3HWsilFN1ahAePE0SxSlam_Q/mo/s256-rj/photo.jpg",
+      "display_name" : "raj",
+      "link" : "https://stackoverflow.com/users/10564972/raj"
     },
-    "is_answered" : true,
-    "view_count" : 100,
-    "answer_count" : 1,
-    "score" : 0,
-    "last_activity_date" : 1758563084,
-    "creation_date" : 1758273519,
-    "link" : "https://stackoverflow.com/questions/79769338/executing-lambda-functions-inside-transactionexecutor-threads-for-unit-tests",
+    "is_answered" : false,
+    "view_count" : 69,
+    "answer_count" : 0,
+    "score" : 1,
+    "last_activity_date" : 1758807619,
+    "creation_date" : 1758806020,
+    "link" : "https://stackoverflow.com/questions/79774870/include-header-on-all-pages-except-on-page-1-converting-html-to-pdf-using-chrom",
     "content_license" : "CC BY-SA 4.0"
   },
-  "answers" : [ {
-    "answer_id" : 79769449,
-    "question_id" : 79769338,
-    "body" : "<p>Your lambdas do not return anything. Consequently, they cannot be assigned to the SAM type <code>Callable&lt;V&gt;</code> (method <code>V call()</code>).</p>\n<p>It looks like you are calling a different overload:  <code>TransactionExecutor.runInNewReadOnlyTransaction(ThrowingRunnable)</code></p>\n<p>This code looks fishy as well – you want to access the arguments through <code>invocation</code> instead:</p>\n<pre><code>    doAnswer(invocation -&gt; {\n      Callable&lt;?&gt; callable = callableCaptor.getValue();\n      return callable.call();\n    }).when(transactionExecutor).runInNewReadOnlyTransaction(callableCaptor.capture());\n</code></pre>\n<p>I don't see the captor used elsewhere for verification, so you might want to remove it altogether.</p>\n<p>The fix is probably trivial – migrate to the correct type and access the actual method argument:</p>\n<pre><code>// Invoke the lambda passed to transactionExecutor\ndoAnswer(invocation -&gt; {\n        invocation.&lt;ThrowingRunnable&gt;getArgument(0).run();\n        return null;\n    })\n    .when(transactionExecutor)\n    .runInNewReadOnlyTransaction(any(ThrowingRunnable.class));\n\nscheduler.schedule(configurationData);\n\nverify(transactionExecutor, times(4))\n    .runInNewReadOnlyTransaction(any(ThrowingRunnable.class));\n</code></pre>\n",
-    "score" : 1,
-    "is_accepted" : true,
-    "owner" : {
-      "account_id" : 39208,
-      "reputation" : 269277,
-      "user_id" : 112968,
-      "user_type" : "registered",
-      "accept_rate" : 68,
-      "profile_image" : "https://i.sstatic.net/zHTaT.png?s=256",
-      "display_name" : "knittl",
-      "link" : "https://stackoverflow.com/users/112968/knittl"
-    },
-    "creation_date" : 1758281255,
-    "last_activity_date" : 1758563084,
-    "content_license" : "CC BY-SA 4.0"
-  } ],
+  "answers" : [ ],
   "question_comments" : [ {
-    "comment_id" : 140747005,
-    "post_id" : 79769338,
-    "body" : "@knittl hey!! thanks for your reply. i have included the information you have asked. the executor works as an singleton instance and is injected to the scheduler class. we use Mockito as the mock tool in tests",
+    "comment_id" : 140761335,
+    "post_id" : 79774870,
+    "body" : "Take a look to <a href=\"https://stackoverflow.com/questions/41038989/css-print-header-only-on-first-page-width-css\" title=\"css print header only on first page width css\">stackoverflow.com/questions/41038989/&hellip;</a>",
     "score" : 0,
     "owner" : {
-      "account_id" : 18079902,
-      "reputation" : 27,
-      "user_id" : 13142340,
+      "account_id" : 24946458,
+      "reputation" : 536,
+      "user_id" : 18811731,
       "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/933f6aaec1db89eb2633cb0d22d10717?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "Udara Nayana",
-      "link" : "https://stackoverflow.com/users/13142340/udara-nayana"
+      "profile_image" : "https://www.gravatar.com/avatar/62d94e645dd7d281d234138d60bd0acd?s=256&d=identicon&r=PG",
+      "display_name" : "Gicu Aftene",
+      "link" : "https://stackoverflow.com/users/18811731/gicu-aftene"
     },
-    "creation_date" : 1758279156,
+    "creation_date" : 1758875999,
     "content_license" : "CC BY-SA 4.0"
   }, {
-    "comment_id" : 140746867,
-    "post_id" : 79769338,
-    "body" : "Please <a href=\"https://stackoverflow.com/posts/79769338/edit\">edit</a> your question to show where <code>transactionExecutor</code> is defined in your test and how it&#39;s assigned. Also show the test class definition, including any annotations",
-    "score" : 1,
-    "owner" : {
-      "account_id" : 39208,
-      "reputation" : 269277,
-      "user_id" : 112968,
-      "user_type" : "registered",
-      "accept_rate" : 68,
-      "profile_image" : "https://i.sstatic.net/zHTaT.png?s=256",
-      "display_name" : "knittl",
-      "link" : "https://stackoverflow.com/users/112968/knittl"
-    },
-    "creation_date" : 1758275873,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140746818,
-    "post_id" : 79769338,
-    "body" : "How do you inject <code>transactionExecutor</code> into your class? How do you initialize it in your test? Do you have any of the Mockito annotations in your test? (You are calling <code>initMocks</code> which is incompatible with the MockitoRunner and MockitoExtension)",
+    "comment_id" : 140760112,
+    "post_id" : 79774870,
+    "body" : "Two comments: (1) Why is this question tagged with <code>java</code>? There is no Java here. (2) What else have you tried? For example, have you tried the <a href=\"https://developer.mozilla.org/en-US/docs/Web/CSS/@page\" rel=\"nofollow noreferrer\">CSS <code>@page :first</code> style rule</a>? (Not sure how well supported it is in different browsers and versions).",
     "score" : 0,
     "owner" : {
-      "account_id" : 39208,
-      "reputation" : 269277,
-      "user_id" : 112968,
+      "account_id" : 12743722,
+      "reputation" : 22621,
+      "user_id" : 12567365,
       "user_type" : "registered",
-      "accept_rate" : 68,
-      "profile_image" : "https://i.sstatic.net/zHTaT.png?s=256",
-      "display_name" : "knittl",
-      "link" : "https://stackoverflow.com/users/112968/knittl"
+      "profile_image" : "https://i.sstatic.net/zNR3x.png?s=256",
+      "display_name" : "andrewJames",
+      "link" : "https://stackoverflow.com/users/12567365/andrewjames"
     },
-    "creation_date" : 1758274644,
+    "creation_date" : 1758819522,
     "content_license" : "CC BY-SA 4.0"
   } ],
-  "answer_comments" : {
-    "79769449" : [ {
-      "comment_id" : 140752731,
-      "post_id" : 79769449,
-      "body" : "Ah, right. Because <code>doAnswer</code> requires a return value, but <code>(Throwing)Runnable#run</code> does not return anything. I have edited my answer to include compilable code.",
-      "score" : 0,
-      "owner" : {
-        "account_id" : 39208,
-        "reputation" : 269277,
-        "user_id" : 112968,
-        "user_type" : "registered",
-        "accept_rate" : 68,
-        "profile_image" : "https://i.sstatic.net/zHTaT.png?s=256",
-        "display_name" : "knittl",
-        "link" : "https://stackoverflow.com/users/112968/knittl"
-      },
-      "creation_date" : 1758563125,
-      "content_license" : "CC BY-SA 4.0"
-    }, {
-      "comment_id" : 140752723,
-      "post_id" : 79769449,
-      "body" : "This was really close to what i wanted. this code snippet prompts and compile error  &quot;Bad return type in lambda expression: void cannot be converted to Object&quot;  by updating the snippet like this, it worked like a charm    doAnswer(invocation -&gt; {        ThrowingRunnable runnable = invocation.getArgument(0);        runnable.run();        return null;      }).when(transactionExecutor).runInNewReadOnlyTransaction(any&zwnj;&#8203;(ThrowingRunnable.cl&zwnj;&#8203;ass));    thanks for your help!!!",
-      "score" : 0,
-      "owner" : {
-        "account_id" : 18079902,
-        "reputation" : 27,
-        "user_id" : 13142340,
-        "user_type" : "registered",
-        "profile_image" : "https://www.gravatar.com/avatar/933f6aaec1db89eb2633cb0d22d10717?s=256&d=identicon&r=PG&f=y&so-version=2",
-        "display_name" : "Udara Nayana",
-        "link" : "https://stackoverflow.com/users/13142340/udara-nayana"
-      },
-      "creation_date" : 1758562761,
-      "content_license" : "CC BY-SA 4.0"
-    }, {
-      "comment_id" : 140749449,
-      "post_id" : 79769449,
-      "body" : "@UdaraNayana Not sure what else you want to fix. I have already updated my answer to reflect your types. Is it still not working with the code from the answer? <code>invocation.&lt;ThrowingRunnable&gt;getArgument(0).run()</code> invokes the lambda (executing its body)",
-      "score" : 0,
-      "owner" : {
-        "account_id" : 39208,
-        "reputation" : 269277,
-        "user_id" : 112968,
-        "user_type" : "registered",
-        "accept_rate" : 68,
-        "profile_image" : "https://i.sstatic.net/zHTaT.png?s=256",
-        "display_name" : "knittl",
-        "link" : "https://stackoverflow.com/users/112968/knittl"
-      },
-      "creation_date" : 1758391764,
-      "content_license" : "CC BY-SA 4.0"
-    }, {
-      "comment_id" : 140748131,
-      "post_id" : 79769449,
-      "body" : "@UdaraNayana not sure what you are asking. I have already updated my answer to reflect your types. Does it still not work? <code>invocation.&lt;ThrowingRunnable&gt;getArgument(0).run()</code> invokes the lambda (executing its body)",
-      "score" : 0,
-      "owner" : {
-        "account_id" : 39208,
-        "reputation" : 269277,
-        "user_id" : 112968,
-        "user_type" : "registered",
-        "accept_rate" : 68,
-        "profile_image" : "https://i.sstatic.net/zHTaT.png?s=256",
-        "display_name" : "knittl",
-        "link" : "https://stackoverflow.com/users/112968/knittl"
-      },
-      "creation_date" : 1758313442,
-      "content_license" : "CC BY-SA 4.0"
-    }, {
-      "comment_id" : 140747985,
-      "post_id" : 79769449,
-      "body" : "thanks for the clarification. Can you point me in the direction how to fix this from the test? is there a way to let lambda actually run the function body without being blocked from the argument error?",
-      "score" : 0,
-      "owner" : {
-        "account_id" : 18079902,
-        "reputation" : 27,
-        "user_id" : 13142340,
-        "user_type" : "registered",
-        "profile_image" : "https://www.gravatar.com/avatar/933f6aaec1db89eb2633cb0d22d10717?s=256&d=identicon&r=PG&f=y&so-version=2",
-        "display_name" : "Udara Nayana",
-        "link" : "https://stackoverflow.com/users/13142340/udara-nayana"
-      },
-      "creation_date" : 1758307823,
-      "content_license" : "CC BY-SA 4.0"
-    }, {
-      "comment_id" : 140747881,
-      "post_id" : 79769449,
-      "body" : "@UdaraNayana @UdaraNayana Thanks, with that it becomes clear. The method accepts neither a <code>Callable</code> nor a <code>Runnable</code>, but your own class <code>ThrowingRunnable</code>.",
-      "score" : 0,
-      "owner" : {
-        "account_id" : 39208,
-        "reputation" : 269277,
-        "user_id" : 112968,
-        "user_type" : "registered",
-        "accept_rate" : 68,
-        "profile_image" : "https://i.sstatic.net/zHTaT.png?s=256",
-        "display_name" : "knittl",
-        "link" : "https://stackoverflow.com/users/112968/knittl"
-      },
-      "creation_date" : 1758303743,
-      "content_license" : "CC BY-SA 4.0"
-    }, {
-      "comment_id" : 140747506,
-      "post_id" : 79769449,
-      "body" : "i switched out the invocation to the one you suggested but still keeps getting the same error from above. The TransactionExecutor is one of our own util classes. here i will paste the code for that too in the question",
-      "score" : 0,
-      "owner" : {
-        "account_id" : 18079902,
-        "reputation" : 27,
-        "user_id" : 13142340,
-        "user_type" : "registered",
-        "profile_image" : "https://www.gravatar.com/avatar/933f6aaec1db89eb2633cb0d22d10717?s=256&d=identicon&r=PG&f=y&so-version=2",
-        "display_name" : "Udara Nayana",
-        "link" : "https://stackoverflow.com/users/13142340/udara-nayana"
-      },
-      "creation_date" : 1758292791,
-      "content_license" : "CC BY-SA 4.0"
-    } ]
-  }
+  "answer_comments" : { }
 }

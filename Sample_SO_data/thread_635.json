@@ -1,82 +1,93 @@
 {
   "question" : {
-    "question_id" : 79780754,
-    "title" : "How to do dynamic projection including related rows in jOOQ",
-    "body" : "<p>Context: I'm building an HTTP API wrapping a normalized database schema. The database access layer is using jOOQ. For most queries, I have no issues. The problem begins with this type of read access:</p>\n<pre><code>GET /foo/123\nGET /foo/123?include=bars&amp;include=baz\n</code></pre>\n<p>where foo, bar and baz are resource types in the model, each represented by a table. Foo might-have Baz, and Foo has-many Bar, so this is what a Foo resource can look like when everything is included:</p>\n<pre class=\"lang-json prettyprint-override\"><code>{&quot;id&quot;: 123,\n &quot;fooname&quot;: &quot;the foo&quot;,\n &quot;and more&quot;: &quot;foo fields&quot;,\n &quot;baz_id&quot;: 456,\n &quot;baz&quot;: {&quot;id&quot;: 456, &quot;and more&quot;: &quot;baz fields&quot;},\n &quot;bars&quot;: [{&quot;id&quot;: 789, &quot;foo_id&quot;: 123, &quot;and more&quot;: &quot;bar fields&quot;},\n          {...}]}\n</code></pre>\n<p>The user might also set the <code>?include</code> parameter to something else or omit it entirely in which case the <code>baz</code> and <code>bars</code> fields would be omitted from the Foo resource representation. If the relationships are requested, but there are no matching rows, the expectation is that the fields are present in the response but with a null or empty array value. Wrangling Jackson so it does this correctly is a bit of a pain but doable. Think GraphQL level of control over the representation (obviously not as much), but for various reasons, not using GraphQL.</p>\n<p>Now to build the jOOQ query:</p>\n<pre class=\"lang-java prettyprint-override\"><code>// I will also have to build the Page version of this for returning multiple Foos,\n// with the same kind of issues. note not using the generated FooRecord because we\n// do not need all the fields in the response \nFoo foo = this.dsl.select(\n    some, foo, fields,\n    include.contains(&quot;baz&quot;) ? BAZ_INCLUDE : null,\n    include.contains(&quot;bars&quot;) ? BARS_INCLUDE : null)\n  .from(FOOS)\n  .where(FOOS.ID.equal(fooId))\n  .fetchSingle(Records.mapping(Foo::new));\n</code></pre>\n<p>where Foo is a Java record <code>(some, foo, fields, @Nullable Baz, @Nullable List&lt;Bar&gt;)</code>. It has to be that dynamic; some resource types have 5 or 6 of these optional relationships, sometimes across multi-level joins.</p>\n<p>I have defined the Baz and Bars projections like this:</p>\n<pre class=\"lang-java prettyprint-override\"><code>// we're actually using the Foo table's Bar and Baz relations here since they carry\n// the information about the relationship, and will cause an implicit join, which\n// saves some work when building the query. e.g. FOO.bar().ID\n// Foo has 0 or 1 Baz\nprivate static SelectField&lt;Baz&gt; BAZ_INCLUDE = row(some, baz, fields)\n  .mapping(Baz::new)\n  .as(&quot;baz&quot;);\n// Foo has 0 to N Bars\nprivate static SelectField&lt;List&lt;Bar&gt;&gt; BARS_INCLUDE = multiset(select(some, bar, fields))\n  .convertFrom(r -&gt; r.map(Records.mapping(Bar::new))\n  .as(&quot;bars&quot;);\n</code></pre>\n<p>and miraculously, it works!... when using the full projection (<code>include={baz,bars}</code>). When one or more of the relationships is not followed, I get a runtime ClassCastException as jOOQ doesn't like the nulls in the select, apparently: <code>class org.jooq.impl.RecordImpl3 cannot be cast to class org.jooq.Record5</code> (3 is the arity of the select when <code>include</code> is empty, 5 when it is full, and also of the Foo ctor).</p>\n<p>I've also tried <code>include.contains(&quot;baz&quot;) ? BAZ_INCLUDE : inline(null, BAZ_INCLUDE.getDataType())</code>, but I get org.jooq.exception.DataTypeException: Conversion function not implemented. I feel like there must be a way to get over this one (mapping a NULL to a Java null should be simple?), but I'm sort of lost in the conversion features.</p>\n<p>How do I do dynamic projections across joins, and still get the nice type safety features so that I am reasonably confident that I haven't forgotten a field in the Foo record or in the SELECT?</p>\n<p>This is, I think, one of the last things I need to achieve feature parity with our existing Hibernate+QueryDSL+EntityGraph tooling (as well as improve some stuff over it!).</p>\n",
-    "tags" : [ "java", "jooq" ],
+    "question_id" : 79787515,
+    "title" : "new verison of chromedriver returns org.openqa.selenium.SessionNotCreatedException: Could not start a new session",
+    "body" : "<p>I moved the application to a new server and now the following error occurs every time you use selenium</p>\n<p><code>e=org.openqa.selenium.SessionNotCreatedException: Could not start a new session. Response code 500. Message: session not created: probably user data directory is already in use, please specify a unique value for --user-data-dir argument, or don't use --user-data-dir </code></p>\n<p><code>Google Chrome 140.0.7339.127 ChromeDriver 140.0.7339.207 group: 'org.seleniumhq.selenium', name: 'selenium-java', version: '4.13.0'</code></p>\n<pre><code>        System.setProperty(&quot;webdriver.chrome.driver&quot;, chromeDriverPath) ChromeDriverService driverService= ChromeDriverService.createDefaultService() \nChromeOptions options = prepareOptions() \nWebDriver driver = new ChromeDriver(driverService, options) \ntry { return crawl.apply(driver) \n} finally { \ndriver.close() driver.quit() driverService.stop() \n}\n\nprivate ChromeOptions prepareOptions() { ChromeOptions chromeOptions = new ChromeOptions() chromeOptions.addArguments(&quot;--headless=new&quot;) \n// modified, was just --headless \nchromeOptions.addArguments(&quot;user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.88 Safari/537.36&quot;) \nchromeOptions.addArguments(&quot;--window-size=1920,1080&quot;) chromeOptions.addArguments('--no-sandbox') // also added\n    \nreturn chromeOptions\n}\n</code></pre>\n<p><strong>UPDATE:</strong></p>\n<p>I have now added these options and it has led to another error.</p>\n<p>chromeOptions.addArguments(&quot;--incognito&quot;)\nchromeOptions.addArguments(&quot;--user-data-dir=/tmp/profiles&quot;)</p>\n<pre><code>org.openqa.selenium.SessionNotCreatedException: Could not start a new session. Response code 500. Message: session not created from unknown error: cannot create default profile directory\n</code></pre>\n<p><strong>UPDATE 2:</strong>\nIt's happens again))</p>\n",
+    "tags" : [ "java", "google-chrome", "selenium-webdriver", "selenium-chromedriver" ],
     "owner" : {
-      "account_id" : 6932189,
-      "reputation" : 440,
-      "user_id" : 5321341,
+      "account_id" : 30082555,
+      "reputation" : 1,
+      "user_id" : 23053888,
       "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/926171279c9a7b096d08ab9266ee2cec?s=256&d=identicon&r=PG",
-      "display_name" : "Fabrice Gabolde",
-      "link" : "https://stackoverflow.com/users/5321341/fabrice-gabolde"
+      "profile_image" : "https://lh3.googleusercontent.com/a/ACg8ocK9lxpqeLWWVkVFDc9uvREx3nC814E6P_CneOBPy3hVeQ=k-s256",
+      "display_name" : "Ryan ",
+      "link" : "https://stackoverflow.com/users/23053888/ryan"
     },
-    "is_answered" : true,
-    "view_count" : 88,
-    "answer_count" : 1,
-    "score" : 3,
-    "last_activity_date" : 1759482229,
-    "creation_date" : 1759396227,
-    "link" : "https://stackoverflow.com/questions/79780754/how-to-do-dynamic-projection-including-related-rows-in-jooq",
+    "is_answered" : false,
+    "view_count" : 72,
+    "answer_count" : 0,
+    "score" : 0,
+    "last_activity_date" : 1760366085,
+    "creation_date" : 1760112066,
+    "link" : "https://stackoverflow.com/questions/79787515/new-verison-of-chromedriver-returns-org-openqa-selenium-sessionnotcreatedexcepti",
     "content_license" : "CC BY-SA 4.0"
   },
-  "answers" : [ {
-    "answer_id" : 79781590,
-    "question_id" : 79780754,
-    "body" : "<h3>Why the <code>ClassCastException</code>?</h3>\n<p>The behaviour of passing <code>null</code> to the <code>select()</code> method is undocumented. It currently (jOOQ 3.20) behaves as if you hadn't passed the field, but that's inconsistent with the reported type in the compiler. The <code>ClassCastException</code> arises because with this:</p>\n<pre class=\"lang-java prettyprint-override\"><code>ctx.select(T.A, null).from(T).fetch();\n</code></pre>\n<p>... jOOQ expects to get <code>Record2&lt;T1, T2&gt;</code> of some sort, but at runtime, given that the <code>null</code> expression is removed, a <code>Record1&lt;T1&gt;</code> type is effectively projected. This should obviously be fixed at some point, but backwards compatibility prevents a simple fix.</p>\n<h3>How to add dynamic nested collections?</h3>\n<p>What you're looking for is to provide a &quot;typed null&quot; of some sort, similar as is being requested here:</p>\n<ul>\n<li><a href=\"https://github.com/jOOQ/jOOQ/issues/14462\" rel=\"nofollow noreferrer\">https://github.com/jOOQ/jOOQ/issues/14462</a></li>\n</ul>\n<p>As of jOOQ 3.20.8, that doesn't work yet, so as a workaround until #14462 is fixed you'll have to replace your <code>MULTISET</code> subquery by a dummy query that returns an empty result of the same type, e.g.:</p>\n<pre class=\"lang-java prettyprint-override\"><code>BARS_INCLUDE = multiset(select(some, bar, fields))\n  .convertFrom(r -&gt; r.map(Records.mapping(Bar::new))\n  .as(&quot;bars&quot;);\nBARS_EMPTY = multiset(select(some, bar, fields).where(falseCondition()))\n  .convertFrom(r -&gt; r.map(Records.mapping(Bar::new))\n  .as(&quot;bars&quot;);\n</code></pre>\n",
-    "score" : 1,
-    "is_accepted" : true,
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140830204,
+    "post_id" : 79787515,
+    "body" : "not real sure why you are creating a service there either.  I&#39;d simplify things by using no options/service first... ex: WebDriver driver = new ChromeDriver();  If the exception is still thrown there&#39;s probably some permissions issues when launching the browser.",
+    "score" : 0,
     "owner" : {
-      "account_id" : 247217,
-      "reputation" : 223472,
-      "user_id" : 521799,
+      "account_id" : 6077817,
+      "reputation" : 1362,
+      "user_id" : 4744568,
       "user_type" : "registered",
-      "accept_rate" : 89,
-      "profile_image" : "https://www.gravatar.com/avatar/eb96efa7a5664ba1c4ebf586abd4121f?s=256&d=identicon&r=PG",
-      "display_name" : "Lukas Eder",
-      "link" : "https://stackoverflow.com/users/521799/lukas-eder"
+      "profile_image" : "https://www.gravatar.com/avatar/125cdb7d43927756913b920de016f420?s=256&d=identicon&r=PG",
+      "display_name" : "browsermator",
+      "link" : "https://stackoverflow.com/users/4744568/browsermator"
     },
-    "creation_date" : 1759481788,
-    "last_activity_date" : 1759482229,
+    "creation_date" : 1761949720,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140830192,
+    "post_id" : 79787515,
+    "body" : "the try/finally bit there looks odd.  Returning ? in try, and then calling finally?  Your &quot;finally&quot; will probably run before you return anything... which means you&#39;ll close the browser, quit the driver, etc...  Not sure that explains your exception though.  Check to be sure you can run the browser manually.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 6077817,
+      "reputation" : 1362,
+      "user_id" : 4744568,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/125cdb7d43927756913b920de016f420?s=256&d=identicon&r=PG",
+      "display_name" : "browsermator",
+      "link" : "https://stackoverflow.com/users/4744568/browsermator"
+    },
+    "creation_date" : 1761949270,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140791679,
+    "post_id" : 79787515,
+    "body" : "@ozkanpakdil Thanks for the link. I can&#39;t share the entire config because there&#39;s too much, but the selenium version is ext[&#39;selenium.version&#39;] = &#39;4.13.0&#39;. If we talking about OS, it was Centos 7 and now it&#39;s AlmaLinux 9.6.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 30082555,
+      "reputation" : 1,
+      "user_id" : 23053888,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/ACg8ocK9lxpqeLWWVkVFDc9uvREx3nC814E6P_CneOBPy3hVeQ=k-s256",
+      "display_name" : "Ryan ",
+      "link" : "https://stackoverflow.com/users/23053888/ryan"
+    },
+    "creation_date" : 1760297564,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140789952,
+    "post_id" : 79787515,
+    "body" : "According to <a href=\"https://stackoverflow.com/questions/71571616/org-openqa-selenium-sessionnotcreatedexception-message-could-not-start-a-new-s\" title=\"org openqa selenium sessionnotcreatedexception message could not start a new s\">stackoverflow.com/questions/71571616/&hellip;</a> this can cme from anything, if you share the pom and reproducer, it would be easier to investigate.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 58650,
+      "reputation" : 4945,
+      "user_id" : 175554,
+      "user_type" : "registered",
+      "accept_rate" : 40,
+      "profile_image" : "https://i.sstatic.net/KmFczdGy.jpg?s=256",
+      "display_name" : "ozkanpakdil",
+      "link" : "https://stackoverflow.com/users/175554/ozkanpakdil"
+    },
+    "creation_date" : 1760182407,
     "content_license" : "CC BY-SA 4.0"
   } ],
-  "question_comments" : [ ],
-  "answer_comments" : {
-    "79781590" : [ {
-      "comment_id" : 140775649,
-      "post_id" : 79781590,
-      "body" : "@FabriceGabolde Ah, if you don&#39;t need the compile time type checking for the nested collections, then you can indeed project just a dummy <code>SELECT</code>. I don&#39;t think there&#39;s any significant peformance penalty on most RDBMS for such a dummy subquery, compared to omitting it, knowing that this is just a workaround. A long time ago, I explored what optimisers do with such &quot;provably&quot; dummy expressions, and most can handle it decently well: <a href=\"https://blog.jooq.org/10-cool-sql-optimisations-that-do-not-depend-on-the-cost-model/\" rel=\"nofollow noreferrer\">blog.jooq.org/&hellip;</a>",
-      "score" : 1,
-      "owner" : {
-        "account_id" : 247217,
-        "reputation" : 223472,
-        "user_id" : 521799,
-        "user_type" : "registered",
-        "accept_rate" : 89,
-        "profile_image" : "https://www.gravatar.com/avatar/eb96efa7a5664ba1c4ebf586abd4121f?s=256&d=identicon&r=PG",
-        "display_name" : "Lukas Eder",
-        "link" : "https://stackoverflow.com/users/521799/lukas-eder"
-      },
-      "creation_date" : 1759505828,
-      "content_license" : "CC BY-SA 4.0"
-    }, {
-      "comment_id" : 140774999,
-      "post_id" : 79781590,
-      "body" : "This looks very close to my current attempt, which is <code>multiset(selectOne().where(falseCondition())).convertFrom(r -&gt; null)</code>. I&#39;ll try your way and compare. It looks like there is no way currently to completely avoid building and running extra SQL? Do you think there is a significant performance hit with the extra subquery? Regarding the null projection issue, I had also hoped noField() would work, but no dice.",
-      "score" : 0,
-      "owner" : {
-        "account_id" : 6932189,
-        "reputation" : 440,
-        "user_id" : 5321341,
-        "user_type" : "registered",
-        "profile_image" : "https://www.gravatar.com/avatar/926171279c9a7b096d08ab9266ee2cec?s=256&d=identicon&r=PG",
-        "display_name" : "Fabrice Gabolde",
-        "link" : "https://stackoverflow.com/users/5321341/fabrice-gabolde"
-      },
-      "creation_date" : 1759485499,
-      "content_license" : "CC BY-SA 4.0"
-    } ]
-  }
+  "answer_comments" : { }
 }

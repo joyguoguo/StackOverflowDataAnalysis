@@ -1,98 +1,136 @@
 {
   "question" : {
-    "question_id" : 79753446,
-    "title" : "Asserting on displayed JDialogs",
-    "body" : "<p>How do I assert on Swing modal dialogs?</p>\n<p>The problem:</p>\n<ol>\n<li>I <em>can't</em> show a dialog synchronously —  it would block the thread indefinitely.</li>\n<li>I <em>can</em> pass it to <code>SwingUtilities#invokeLater</code>, but can neither assert on the dialog's contents immediately after (since it may not fully initialize at that point) nor <code>Robot#waitForIdle</code> (since it throws if invoked from the EDT — all Swing tests <a href=\"https://web.archive.org/web/20120825111857/http://docs.codehaus.org/display/FEST/Writing+EDT-safe+GUI+tests\" rel=\"nofollow noreferrer\">should</a> run in the EDT, I believe).</li>\n</ol>\n<p>MRE:</p>\n<pre class=\"lang-java prettyprint-override\"><code>import javax.swing.JDialog;\nimport javax.swing.JPanel;\nimport javax.swing.JTextField;\nimport java.awt.Window;\nimport java.awt.event.ComponentAdapter;\nimport java.awt.event.ComponentEvent;\n\npublic class SimpleDialog extends JDialog {\n\n    private JTextField textField;\n\n    public SimpleDialog(String title) {\n        this(null, title);\n    }\n\n    public SimpleDialog(Window owner, String title) {\n        super(owner, title);\n        add(createMainPanel());\n    }\n\n    // our dialogs have a unique showing method\n    public void doModal() {\n        /* \n         in a real case, it would typically contain some init logic \n         and return a constant (OK, CANCEL, etc.) \n        */\n        setVisible(true);\n    }\n\n    private JPanel createMainPanel() {\n        JPanel panel = new JPanel();\n        panel.add(createNameField());\n        // imagine there's an app requirement that the field should have focus right away\n        panel.addComponentListener(new ComponentAdapter() {\n            @Override\n            public void componentShown(ComponentEvent e) {\n                textField.requestFocus();\n            }\n        });\n        return panel;\n    }\n\n    private JTextField createNameField() {\n        textField = new JTextField(10);\n        textField.setName(&quot;nameField&quot;);\n        return textField;\n    }\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>import org.fest.swing.core.BasicRobot;\nimport org.fest.swing.core.ComponentFinder;\nimport org.fest.swing.core.Robot;\nimport org.fest.swing.core.matcher.JTextComponentMatcher;\nimport org.junit.jupiter.api.Test;\n\nimport javax.swing.SwingUtilities;\nimport javax.swing.text.JTextComponent;\n\nimport java.lang.reflect.InvocationTargetException;\n\nimport static org.junit.jupiter.api.Assertions.assertEquals;\nimport static org.junit.jupiter.api.Assertions.assertTrue;\n\nclass SimpleDialogTest {\n\n    Robot robot = BasicRobot.robotWithCurrentAwtHierarchy();\n    ComponentFinder finder = robot.finder();\n\n    @Test\n    void onceDialogDisplayed_nameFieldHasFocus() throws InterruptedException, InvocationTargetException {\n        SwingUtilities.invokeAndWait(() -&gt; {\n            SimpleDialog dialog = new SimpleDialog(&quot;Enter your name&quot;);\n            JTextComponent nameField = finder.find(JTextComponentMatcher.withName(&quot;nameField&quot;));\n\n            SwingUtilities.invokeLater(dialog::doModal);\n            assertTrue(nameField.hasFocus()); // fails\n        });\n    }\n}\n</code></pre>\n<pre class=\"lang-xml prettyprint-override\"><code>        &lt;dependency&gt;\n            &lt;groupId&gt;org.junit.jupiter&lt;/groupId&gt;\n            &lt;artifactId&gt;junit-jupiter-engine&lt;/artifactId&gt;\n            &lt;version&gt;5.9.3&lt;/version&gt;\n            &lt;scope&gt;test&lt;/scope&gt;\n        &lt;/dependency&gt;\n\n        &lt;dependency&gt;\n            &lt;groupId&gt;org.easytesting&lt;/groupId&gt;\n            &lt;artifactId&gt;fest-swing&lt;/artifactId&gt;\n            &lt;version&gt;1.2.1&lt;/version&gt;\n            &lt;scope&gt;test&lt;/scope&gt;\n        &lt;/dependency&gt;\n</code></pre>\n<p>Or is my whole idea of running entire tests in the EDT doomed from the start (I hoped to <a href=\"https://stackoverflow.com/questions/79749938/writing-safe-non-ugly-swing-tests\">annotate</a> a test class and forget about EDT-related issues altogether)?</p>\n<p>Keep in mind, our dialogs have a unique showing method, so a simple <code>fixture.show()</code> won't do anyway.</p>\n<pre class=\"lang-java prettyprint-override\"><code>// works, not executed in the EDT as a whole\n    @Test\n    void onceDialogDisplayed_nameFieldHasFocus() throws InterruptedException, InvocationTargetException {\n        DialogFixture dialogFixture = createDialogFixture();\n        dialogFixture.show();\n        JTextComponent nameField = finder.find(JTextComponentMatcher.withName(&quot;nameField&quot;));\n        assertTrue(nameField.hasFocus());\n    }\n\n    private DialogFixture createDialogFixture() {\n        SimpleDialog dialog = createDialog();\n        DialogFixture dialogFixture = new DialogFixture(robot, dialog);\n        return dialogFixture;\n    }\n\n    private static SimpleDialog createDialog() {\n        SimpleDialog dialog = GuiActionRunner.execute(new GuiQuery&lt;SimpleDialog&gt;() {\n            @Override\n            protected SimpleDialog executeInEDT() {\n                SimpleDialog dialog = new SimpleDialog(&quot;Enter your name&quot;);\n                return dialog;\n            }\n        });\n        return dialog;\n    }\n</code></pre>\n<p>Java 8.</p>\n",
-    "tags" : [ "java", "swing", "junit5", "fest" ],
+    "question_id" : 79758565,
+    "title" : "How to convert a JSON array to a Java list and handle JSON null values that&#39;s going to an int varible?",
+    "body" : "<p>TL;DR: when my JSON array is converted to a list of Java objects, the null values in the JSON string is converted to 0 instead of staying as null.</p>\n<p>I want to keep them as null in the Java object.</p>\n<hr />\n<p>I have the following API response:</p>\n<pre class=\"lang-json prettyprint-override\"><code>[\n    {\n        &quot;ID&quot;: 1,\n        &quot;MarginUpper&quot;: null\n    },\n    {\n        &quot;ID&quot;: 2,\n        &quot;MarginUpper&quot;: null\n    }\n]\n</code></pre>\n<p>I also have the following POJO</p>\n<pre class=\"lang-java prettyprint-override\"><code>package com.myapp.pojo;\n\nimport com.google.gson.annotations.SerializedName;\nimport lombok.Getter;\nimport lombok.Setter;\n\npublic class Margins {\n    @Getter\n    @Setter\n    @SerializedName(&quot;ID&quot;)\n    private int id;\n\n    @Getter\n    @Setter\n    @SerializedName(&quot;MarginUpper&quot;)\n    private int marginUpper;\n    // Constructor with all fields\n    public NaplanGain(int iId, int marginUpper) {\n        this.id = id;\n        this.marginUpper = marginUpper;\n    }\n}\n</code></pre>\n<p>Using this code, I can convert the JSON string into a list of Java objects.</p>\n<pre class=\"lang-json prettyprint-override\"><code>Type listType = new TypeToken&lt;List&lt;Margins&gt;&gt;() {}.getType();\nList&lt;Margins&gt; list = new GsonBuilder().serializeNulls().create().fromJson(apiResponse, listType);\n</code></pre>\n<p>ID=1 will have a marginUpper=0 when I inspect the value when debugging</p>\n",
+    "tags" : [ "java", "json", "gson" ],
     "owner" : {
-      "account_id" : 10187542,
-      "reputation" : 2667,
-      "user_id" : 20692967,
+      "account_id" : 1999161,
+      "reputation" : 2440,
+      "user_id" : 1790598,
       "user_type" : "registered",
-      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
-      "display_name" : "Sergey Zolotarev",
-      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+      "accept_rate" : 59,
+      "profile_image" : "https://www.gravatar.com/avatar/3c33b366ce192e4cefbe9db22f2ad7be?s=256&d=identicon&r=PG",
+      "display_name" : "mrjayviper",
+      "link" : "https://stackoverflow.com/users/1790598/mrjayviper"
     },
     "is_answered" : true,
-    "view_count" : 100,
-    "answer_count" : 2,
-    "score" : 2,
-    "last_activity_date" : 1756971442,
-    "creation_date" : 1756812945,
-    "link" : "https://stackoverflow.com/questions/79753446/asserting-on-displayed-jdialogs",
+    "view_count" : 112,
+    "answer_count" : 3,
+    "score" : 0,
+    "last_activity_date" : 1757403528,
+    "creation_date" : 1757312692,
+    "link" : "https://stackoverflow.com/questions/79758565/how-to-convert-a-json-array-to-a-java-list-and-handle-json-null-values-thats-go",
     "content_license" : "CC BY-SA 4.0"
   },
   "answers" : [ {
-    "answer_id" : 79755407,
-    "question_id" : 79753446,
-    "body" : "<blockquote>\n<p>Or is my whole idea of running entire tests in the EDT doomed from the start</p>\n</blockquote>\n<p>When it comes to modal dialogs, yes.</p>\n<blockquote>\n<p>How do I assert on Swing modal dialogs?</p>\n</blockquote>\n<p>Upon asynchronously calling a blocking showing method (e.g. with <code>SwingUtilities.invokeLater()</code>), you <code>waitForIdle()</code> outside of the EDT and then assert.</p>\n<p>All creations, mutations, access of Swing components, on the other hand, should be done in the EDT. See <a href=\"https://stackoverflow.com/a/79755391/20692967\">this answer</a> for an example.</p>\n",
-    "score" : 1,
+    "answer_id" : 79759174,
+    "question_id" : 79758565,
+    "body" : "<pre><code>package com.myapp.pojo;\n\nimport com.google.gson.annotations.SerializedName;\nimport lombok.Getter;\nimport lombok.Setter;\n\npublic class Margins {\n    @Getter\n    @Setter\n    @SerializedName(&quot;ID&quot;)\n    private int id;\n\n    @Getter\n    @Setter\n    @SerializedName(&quot;MarginUpper&quot;)\n    private Integer marginUpper;\n    // Constructor with all fields\n    public Margins(int iId, int marginUpper) {\n        this.id = id;\n        this.marginUpper = marginUpper;\n    }\n}\n</code></pre>\n<p>You used marginUpper value as int which is Primitive and cannot be null. If you want it to be same as json. Change it to Integer.</p>\n",
+    "score" : 2,
     "is_accepted" : false,
     "owner" : {
-      "account_id" : 10187542,
-      "reputation" : 2667,
-      "user_id" : 20692967,
+      "account_id" : 15356106,
+      "reputation" : 57,
+      "user_id" : 11078353,
       "user_type" : "registered",
-      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
-      "display_name" : "Sergey Zolotarev",
-      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+      "profile_image" : "https://www.gravatar.com/avatar/83341f91628c5f7268b47f7aa0326922?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Abhinav Karn",
+      "link" : "https://stackoverflow.com/users/11078353/abhinav-karn"
     },
-    "creation_date" : 1756971442,
-    "last_activity_date" : 1756971442,
+    "creation_date" : 1757351439,
+    "last_activity_date" : 1757351439,
     "content_license" : "CC BY-SA 4.0"
   }, {
-    "answer_id" : 79753586,
-    "question_id" : 79753446,
-    "body" : "<p>You could use a <a href=\"https://docs.oracle.com/javase/8/docs/api/java/util/concurrent/CountDownLatch.html\" rel=\"nofollow noreferrer\">CountDownLatch</a></p>\n<pre class=\"lang-java prettyprint-override\"><code>SimpleDialog dialog = new SimpleDialog(&quot;Enter your name&quot;);\nJTextComponent nameField = finder.find(JTextComponentMatcher.withName(&quot;nameField&quot;));\n\nCountDownLatch doneSignal = new CountDownLatch(1);\nSwingUtilities.invokeLater(() -&gt; {\n   dialog.doModal();\n   doneSignal.countDown();\n});\ndoneSignal.await();\nassertTrue(nameField.hasFocus());\n</code></pre>\n",
+    "answer_id" : 79759186,
+    "question_id" : 79758565,
+    "body" : "<p>if marginUpper can be null, you should use Integer instead of int</p>\n<pre><code>public class Margins {\n\n    private int id;\n\n    private Integer marginUpper;\n\n    // Getter Setter NoArgConstructor AllArgsConstructor\n}\n</code></pre>\n",
     "score" : 0,
     "is_accepted" : false,
     "owner" : {
-      "account_id" : 1096470,
-      "reputation" : 29415,
-      "user_id" : 1089967,
+      "account_id" : 20502750,
+      "reputation" : 27,
+      "user_id" : 15046305,
       "user_type" : "registered",
-      "accept_rate" : 59,
-      "profile_image" : "https://www.gravatar.com/avatar/1f256b904ff621d678598d8fa49f86c5?s=256&d=identicon&r=PG",
-      "display_name" : "lance-java",
-      "link" : "https://stackoverflow.com/users/1089967/lance-java"
+      "profile_image" : "https://www.gravatar.com/avatar/ca20fb19d15e622239ee1b8937c6470d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "wjfqvi",
+      "link" : "https://stackoverflow.com/users/15046305/wjfqvi"
     },
-    "creation_date" : 1756822092,
-    "last_activity_date" : 1756822092,
+    "creation_date" : 1757352159,
+    "last_activity_date" : 1757352159,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79759612,
+    "question_id" : 79758565,
+    "body" : "<h2>tl;dr</h2>\n<p>Use <code>Integer</code>, not <code>int</code>.</p>\n<pre class=\"lang-java prettyprint-override\"><code>record Margin( int id , Integer upper ) { }\n</code></pre>\n<h2>Details</h2>\n<p>The first two Answers <a href=\"https://stackoverflow.com/a/79759186/642706\">by wjfqvi</a> and <a href=\"https://stackoverflow.com/a/79759174/642706\">by Abhinav Karn</a> are both correct: <strong>Use <code>Integer</code> class</strong> rather than <code>int</code> primitive to accommodate <code>null</code> values. A primitive <code>int</code> in Java cannot be null, but an object reference can be null.</p>\n<h2>Example code</h2>\n<p>Here is some example code showing how to parse your JSON as Java <a href=\"https://openjdk.org/jeps/395\" rel=\"nofollow noreferrer\">record</a> objects.</p>\n<p>First, your sample data, modified slightly.</p>\n<pre class=\"lang-java prettyprint-override\"><code>String json = &quot;&quot;&quot;\n        [\n            {\n                &quot;id&quot;: 1,\n                &quot;upper&quot;: null\n            },\n            {\n                &quot;id&quot;: 2,\n                &quot;upper&quot;: 42\n            }\n        ]\n        &quot;&quot;&quot;;\n</code></pre>\n<p>Next, define the record class that we want instantiated while parsing our JSON.</p>\n<pre class=\"lang-java prettyprint-override\"><code>record Margin( int id , Integer upper ) { }\n</code></pre>\n<p>Launch GSON, tell it to parse.</p>\n<pre class=\"lang-java prettyprint-override\"><code>Gson gson = new Gson();\nMargin[] margins = gson.fromJson( json , Margin[].class );\n</code></pre>\n<p>Dump to console.</p>\n<pre class=\"lang-java prettyprint-override\"><code>Arrays.stream( margins ).forEach( IO :: println );\n</code></pre>\n<p>We find success.</p>\n<pre class=\"lang-none prettyprint-override\"><code>Margin[id=1, upper=null]\nMargin[id=2, upper=42]\n</code></pre>\n<hr />\n<p>I used Java 25, GSON 2.13.1.</p>\n",
+    "score" : -1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 322981,
+      "reputation" : 346951,
+      "user_id" : 642706,
+      "user_type" : "registered",
+      "accept_rate" : 58,
+      "profile_image" : "https://i.sstatic.net/ZWEI3.jpg?s=256",
+      "display_name" : "Basil Bourque",
+      "link" : "https://stackoverflow.com/users/642706/basil-bourque"
+    },
+    "creation_date" : 1757403190,
+    "last_activity_date" : 1757403528,
     "content_license" : "CC BY-SA 4.0"
   } ],
-  "question_comments" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140721193,
+    "post_id" : 79758565,
+    "body" : "@Jens let me try. Thanks!",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1999161,
+      "reputation" : 2440,
+      "user_id" : 1790598,
+      "user_type" : "registered",
+      "accept_rate" : 59,
+      "profile_image" : "https://www.gravatar.com/avatar/3c33b366ce192e4cefbe9db22f2ad7be?s=256&d=identicon&r=PG",
+      "display_name" : "mrjayviper",
+      "link" : "https://stackoverflow.com/users/1790598/mrjayviper"
+    },
+    "creation_date" : 1757312997,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140721187,
+    "post_id" : 79758565,
+    "body" : "Primitive datatypes like <code>int</code> can not be null. Use Objects <code>Integer</code> if you want to have null values",
+    "score" : 10,
+    "owner" : {
+      "account_id" : 4470050,
+      "reputation" : 69587,
+      "user_id" : 3636601,
+      "user_type" : "registered",
+      "accept_rate" : 75,
+      "profile_image" : "https://www.gravatar.com/avatar/e46b43f329f0228186fb75d496316d33?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Jens",
+      "link" : "https://stackoverflow.com/users/3636601/jens"
+    },
+    "creation_date" : 1757312847,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
   "answer_comments" : {
-    "79753586" : [ {
-      "comment_id" : 140709461,
-      "post_id" : 79753586,
-      "body" : "Oh, sorry, it doesn&#39;t work since <code>doModal()</code> is blocking (just like <code>dialog.setVisible(true)</code>)",
+    "79759186" : [ {
+      "comment_id" : 140723674,
+      "post_id" : 79759186,
+      "body" : "Why does this correct Answer deserve a Down-Vote?",
       "score" : 0,
       "owner" : {
-        "account_id" : 10187542,
-        "reputation" : 2667,
-        "user_id" : 20692967,
+        "account_id" : 322981,
+        "reputation" : 346951,
+        "user_id" : 642706,
         "user_type" : "registered",
-        "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
-        "display_name" : "Sergey Zolotarev",
-        "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+        "accept_rate" : 58,
+        "profile_image" : "https://i.sstatic.net/ZWEI3.jpg?s=256",
+        "display_name" : "Basil Bourque",
+        "link" : "https://stackoverflow.com/users/642706/basil-bourque"
       },
-      "creation_date" : 1756822805,
-      "content_license" : "CC BY-SA 4.0"
-    }, {
-      "comment_id" : 140709450,
-      "post_id" : 79753586,
-      "body" : "Thank you. Is this how it&#39;s <i>supposed</i> to be done (from the standpoint of FEST creators)?",
-      "score" : 0,
-      "owner" : {
-        "account_id" : 10187542,
-        "reputation" : 2667,
-        "user_id" : 20692967,
-        "user_type" : "registered",
-        "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
-        "display_name" : "Sergey Zolotarev",
-        "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
-      },
-      "creation_date" : 1756822541,
+      "creation_date" : 1757402133,
       "content_license" : "CC BY-SA 4.0"
     } ]
   }

@@ -1,28 +1,97 @@
 {
   "question" : {
-    "question_id" : 79755826,
-    "title" : "Spring boot kafka listener observation enrichment",
-    "body" : "<p>I've a kafka based spring boot application (Micrometer + Otel) which consumes a lot of events from a lot of kafka topics and publishes its output on another set of kafka topics.</p>\n<p>I want to enrich the kafka listener observations which are created out of the box by spring boot (my organization has some wrapper libraries over vanilla sb3)</p>\n<p>Requirements :</p>\n<ol>\n<li>Modify Observation name</li>\n<li>Add low and high cardinality values which can be extracted by kafka message itself</li>\n<li>Add some Business logic specific properties which would be available later in application flow</li>\n</ol>\n<p>As of now i've been able to do all of them but am not very proud of the solution :</p>\n<pre><code>@Slf4j\npublic class KafkaConsumerObservationConvention extends KafkaListenerObservation.DefaultKafkaListenerObservationConvention {\n\n@Override\npublic boolean supportsContext(Observation.Context context) {\n    return super.supportsContext(context);\n}\n\n@Override\npublic String getName() {\n    return &quot;consumeKafkaEvent&quot;;\n}\n\n\n@Override\npublic KeyValues getLowCardinalityKeyValues(KafkaRecordReceiverContext context) {\n   ...\n}\n}\n</code></pre>\n<p>The above takes care of Requirements 1 and 2 but not 3 since ObservationConvention is called when the observation is created and i simply don't have those properties as of this instant.</p>\n<p>For Requirements 3 I've had to resort to directly using low level Micrometer APIs which let me play with raw observation objects.</p>\n<pre><code>@Autowired ObservationRegistry observationRegistry;\n\nOptional.ofNullable(observationRegistry.getCurrentObservation())\n                .ifPresent(o-&gt;o.lowCardinalityKeyValue(\n                KeyValue.of(&quot;key&quot;, &quot;value&quot;);\n</code></pre>\n<p>I don't like this approach because</p>\n<p>Problems :</p>\n<ol>\n<li>The logic of observation enrichment is now scattered across the application. Anyone who wants to add some property needs to do this low level thing themselves. Hence the ObservationConvention is not a one-stop solution</li>\n<li>From what i know Observations can also be stacked so if its something like obs1 -&gt; obs2 -&gt; obs3. When i do <code>observationRegistry.getCurrentObservation()</code> it will give me <code>obs3</code> but the original observation created by KafkaListener was obs1. So this poses a risk of data corruption.</li>\n</ol>\n<p>I had thought of another solution to mitigate Problem 1 to some extent :</p>\n<p>Bundle the ObservationRegistry (OR) logic as part of ObservationConvention (OC) itself by providing a separate public method which lets a user update current observation.\nHowever this approach didn't work since my ObservationConvention was not even getting called in this case. One possible reason i could think of for this was that by design an OR is supposed to have references to all OCs and ObservationHandlers and if I make my OC also dependant on the OR it poses a risk of a cyclic dependency and the beans may not be connected properly. Which led me to give up this approach also thinking this might actually be an antipattern.</p>\n<p>Please let me know what is the recommended way of supporting this use case without compromising on code quality</p>\n",
-    "tags" : [ "java", "spring-boot", "spring-micrometer" ],
+    "question_id" : 79761108,
+    "title" : "Primitive types in patterns: why doesn&#39;t Integer dominate byte?",
+    "body" : "<p>JEP 455 introduced Primitive Types in Patterns, instanceof, and switch as a preview feature in JDK 23. It continues as a preview feature in JDK 24 and 25, so the feature is not detailed in the Java Language Specification.</p>\n<p>The JEP describes &quot;safety of conversions&quot;, where certain pairs of types are <em>unconditionally exact</em>, meaning no runtime checks are required.  For other pairs, a runtime test is necessary to determine if a conversion can be made without loss of information.</p>\n<p>For example:</p>\n<pre><code>int x = getValue();  // Which returns 42\n\nswitch (x) {\n  case byte -&gt; System.out.println(&quot;byte&quot;);\n  case int -&gt; System.out.println(&quot;int&quot;);\n}\n</code></pre>\n<p>The runtime check verifies that 42 will fit in a byte and matches, printing 'byte'.</p>\n<p>If we change the order of the cases:</p>\n<pre><code>switch (x) {\n  case int -&gt; System.out.println(&quot;int&quot;);\n  case byte -&gt; System.out.println(&quot;byte&quot;);\n}\n</code></pre>\n<p>This will result in a compiler error because the int case now dominates the byte case.</p>\n<p>Quoting from the Java Language Specification (where pattern dominance is defined),</p>\n<blockquote>\n<p>A switch label in a switch block is said to be dominated if for every value that it\napplies to, it can be determined that one of the preceding switch labels would also\napply.</p>\n</blockquote>\n<p>So far, everything makes sense.</p>\n<p>However, if we change the case for int to use the wrapper class Integer:</p>\n<pre><code>switch (x) {\n  case Integer -&gt; System.out.println(&quot;int&quot;);\n  case byte -&gt; System.out.println(&quot;byte&quot;);\n}\n</code></pre>\n<p>This code will compile without an error, and the result will be 'int'.</p>\n<p>The compiler is clearly autoboxing the int to an Integer and matching the first case.</p>\n<p>What I can't understand is why the compiler allows this, since the Integer case is still dominating the byte case. Any value that will match for a byte will also match for a boxed Integer.</p>\n<p>JEP 507, the latest version states:</p>\n<blockquote>\n<p>Furthermore, boxing conversions and widening reference conversions are unconditionally exact.</p>\n</blockquote>\n<p>However, that still does not explain why the compiler is not rejecting this because of pattern dominance.</p>\n<p>Just to be clear, all the examples use the same line, <code>int x = getValue();</code>, where <code>getValue()</code> returns 42.</p>\n",
+    "tags" : [ "java", "pattern-matching", "primitive-types", "java-23" ],
     "owner" : {
-      "account_id" : 12510863,
-      "reputation" : 165,
-      "user_id" : 9106041,
+      "account_id" : 11106749,
+      "reputation" : 3510,
+      "user_id" : 8153713,
       "user_type" : "registered",
-      "profile_image" : "https://lh6.googleusercontent.com/-cvK-SR9xInk/AAAAAAAAAAI/AAAAAAAACxk/hsD_2BbZJO0/s256-rj/photo.jpg",
-      "display_name" : "Krittam Kothari",
-      "link" : "https://stackoverflow.com/users/9106041/krittam-kothari"
+      "profile_image" : "https://www.gravatar.com/avatar/9e8b92347582eb46c8a3613d6961ea20?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Speakjava",
+      "link" : "https://stackoverflow.com/users/8153713/speakjava"
     },
-    "is_answered" : false,
-    "view_count" : 62,
-    "answer_count" : 0,
-    "score" : 1,
-    "last_activity_date" : 1756994770,
-    "creation_date" : 1756994770,
-    "link" : "https://stackoverflow.com/questions/79755826/spring-boot-kafka-listener-observation-enrichment",
+    "is_answered" : true,
+    "view_count" : 154,
+    "answer_count" : 1,
+    "score" : 9,
+    "last_activity_date" : 1757555819,
+    "creation_date" : 1757523444,
+    "link" : "https://stackoverflow.com/questions/79761108/primitive-types-in-patterns-why-doesnt-integer-dominate-byte",
     "content_license" : "CC BY-SA 4.0"
   },
-  "answers" : [ ],
-  "question_comments" : [ ],
+  "answers" : [ {
+    "answer_id" : 79761420,
+    "question_id" : 79761108,
+    "body" : "<p>Domination is a relationship between the patterns themselves. The selector expression does not matter.</p>\n<p>(Whether or not the type of the selector expression <em>should</em> be considered for determining dominance is another matter, and outside of the scope of this answer.)</p>\n<p>As <a href=\"https://stackoverflow.com/questions/79761108/primitive-types-in-patterns-why-doesnt-integer-dominate-byte#comment140727335_79761108\">Jon Skeet said in the comments</a>,</p>\n<blockquote>\n<p>&quot;Any value that will match for a byte will also match for a boxed Integer.&quot; Is that actually the case? What about a boxed Byte?</p>\n</blockquote>\n<p>From the <a href=\"https://docs.oracle.com/javase/specs/jls/se24/preview/specs/primitive-types-in-patterns-instanceof-switch-jls.html\" rel=\"noreferrer\">preview spec</a>, the <code>Integer</code> pattern does not dominate the <code>byte</code> pattern. The relevant quotes are</p>\n<p>(14.11.1)</p>\n<blockquote>\n<p>A case label with a case pattern q is dominated if there is a preceding unguarded case label in the switch block with a case pattern p, and p dominates q</p>\n</blockquote>\n<p>(14.30.3)</p>\n<blockquote>\n<p>A pattern p dominates a type pattern that declares a pattern variable of type T if p is unconditional for T.</p>\n</blockquote>\n<blockquote>\n<p>A type pattern that declares a pattern variable of a type S is unconditional for a type T if there is a testing conversion that is unconditionally exact (5.7.2) from |T| to |S|.</p>\n</blockquote>\n<p>None of these definitions refer to the selector expression of the switch.</p>\n<p>For this case, we can substitute <code>Integer</code> for &quot;S&quot; and <code>byte</code> for &quot;T&quot; into the last quote, and show that there is no testing conversion that is unconditionally exact from <code>byte</code> to <code>Integer</code>.</p>\n<p>The unconditionally exact testing conversions are (5.7.2):</p>\n<blockquote>\n<ul>\n<li>an identity conversion</li>\n<li>an exact widening primitive conversion</li>\n<li>a widening reference conversion</li>\n<li>a boxing conversion</li>\n<li>a boxing conversion followed by a widening reference conversion</li>\n</ul>\n</blockquote>\n<p>To convert from <code>byte</code> to <code>Integer</code>, we need an (exact) widening primitive conversion <em><strong>followed by a boxing conversion</strong></em>, which is not in the above list.</p>\n",
+    "score" : 8,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 6651855,
+      "reputation" : 292025,
+      "user_id" : 5133585,
+      "user_type" : "registered",
+      "accept_rate" : 96,
+      "profile_image" : "https://i.sstatic.net/dfqcw.png?s=256",
+      "display_name" : "Sweeper",
+      "link" : "https://stackoverflow.com/users/5133585/sweeper"
+    },
+    "creation_date" : 1757555819,
+    "last_activity_date" : 1757555819,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140727551,
+    "post_id" : 79761108,
+    "body" : "Just to be clear, all the examples use the same line, int x = getValue(), where getValue() returns 42.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 11106749,
+      "reputation" : 3510,
+      "user_id" : 8153713,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/9e8b92347582eb46c8a3613d6961ea20?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Speakjava",
+      "link" : "https://stackoverflow.com/users/8153713/speakjava"
+    },
+    "creation_date" : 1757531274,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140727488,
+    "post_id" : 79761108,
+    "body" : "I am a little surprised the compiler even bothers trying to check for dominance in this way.  It&#39;s trying to help, but I wouldn&#39;t expect it to be perfect in the best of circumstances.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 465573,
+      "reputation" : 200423,
+      "user_id" : 869736,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/ae7bb06b9a23a4dd7eea69e853d47d12?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Louis Wasserman",
+      "link" : "https://stackoverflow.com/users/869736/louis-wasserman"
+    },
+    "creation_date" : 1757529236,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140727335,
+    "post_id" : 79761108,
+    "body" : "&quot;Any value that will match for a byte will also match for a boxed Integer.&quot;  Is that actually the case? What about a boxed Byte?",
+    "score" : 5,
+    "owner" : {
+      "account_id" : 11683,
+      "reputation" : 1520862,
+      "user_id" : 22656,
+      "user_type" : "registered",
+      "accept_rate" : 86,
+      "profile_image" : "https://www.gravatar.com/avatar/6d8ebb117e8d83d74ea95fbdd0f87e13?s=256&d=identicon&r=PG",
+      "display_name" : "Jon Skeet",
+      "link" : "https://stackoverflow.com/users/22656/jon-skeet"
+    },
+    "creation_date" : 1757524209,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
   "answer_comments" : { }
 }

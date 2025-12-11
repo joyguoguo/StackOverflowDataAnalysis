@@ -1,48 +1,95 @@
 {
   "question" : {
-    "question_id" : 79778164,
-    "title" : "Process events with throttling and timeout",
-    "body" : "<p>There are different kinds of events in my application. Let's call them for simplicity a-event, b-events, c-events and so on. I need to implement throttling for each kind of events separately:</p>\n<pre class=\"lang-java prettyprint-override\"><code>    @Test\n    void test() throws InterruptedException {\n        var sink = Sinks.many().unicast().&lt;String&gt;onBackpressureBuffer();\n\n        sink.asFlux()\n                .groupBy(e -&gt; e.charAt(0))\n                .flatMap(g -&gt; g\n                        .doOnNext(e -&gt; System.out.println(&quot;got &quot; + e))\n                        .timeout(Duration.ofMillis(150), Mono.defer(() -&gt; {\n                            System.out.println(&quot;timeout&quot;);\n                            return Mono.empty();\n                        }))\n                        .sample(Duration.ofMillis(100))\n                        .doOnNext(e -&gt; System.out.println(&quot;processed &quot; + e)))\n                .subscribe();\n\n        sink.tryEmitNext(&quot;a1&quot;);\n        Thread.sleep(150);\n        sink.tryEmitNext(&quot;a2&quot;);\n\n        try {\n            Thread.sleep(1000);\n        } catch (InterruptedException e) {\n            e.printStackTrace();\n        }\n    }\n</code></pre>\n<p>And also I need to close a queue for each kind of messages after a timeount so it doesn't consume any resources.</p>\n<p>It works in general. If delay between <code>a1</code> and <code>a2</code> is 50 ms, then I get:</p>\n<pre><code>got a1\ngot a2\nprocessed a2\ntimeout\n</code></pre>\n<p><code>a1</code> is not processed because of throttling.</p>\n<p>If delay is 250 ms it works fine as well:</p>\n<pre><code>got a1\nprocessed a1\ntimeout\ngot a2\nprocessed a2\ntimeout\n</code></pre>\n<p>The message queue for a-events is cleared after timeout, created the new one and <code>a2</code> is processed.</p>\n<p>The problem is when delay is 150 ms. Sometimes it receives <code>a2</code> but doesn't process it:</p>\n<pre><code>got a1\nprocessed a1\ngot a2\ntimeout\n</code></pre>\n<p>How to make this schema more stable. So it doesn't loose last event because of timeout?</p>\n",
-    "tags" : [ "java", "project-reactor" ],
+    "question_id" : 79784562,
+    "title" : "JAX-RS REST API returns 200 OK immediately, but JSON body arrives delayed only on my computer",
+    "body" : "<p>I have a JAX-RS REST API that gets live images from a camera.\nThe camera returns a multipart response (XML + JPEG), which I parse in the service and then return as JSON in the response.</p>\n<p>Problem:</p>\n<p>When I send a request from my local computer using Postman, I immediately get 200 OK with minimal content (for example, 1), but after a short delay the full JSON data appears.</p>\n<p>When I send the same request from other computers, the response arrives all at once, without delay.</p>\n<p>The controller looks like this:</p>\n<pre><code>@Path(&quot;/real-time-image&quot;)\n@GET\npublic Response getLiveImage() {\n    return liveImageService.getImage();\n}\n</code></pre>\n<p>Question:</p>\n<p>Why does the JSON appear delayed only on my computer, while I tested 3–4 other computers and it works fine there?</p>\n<p>Could this be related to HTTP buffering or network issues?</p>\n<p>How can I ensure that the response is returned only after the full JSON is ready?</p>\n<p>What I tried:</p>\n<ol>\n<li>I read the camera's multipart HTTP response fully into a byte array before parsing.</li>\n<li>I parsed the XML and JPEG parts, saved the data to the database, and then built the Response object synchronously.</li>\n<li>I tested the API from multiple computers using Postman:\n<ul>\n<li>On my local machine, I immediately got 200 OK with minimal content (like &quot;1&quot;), then after a short delay the full JSON appeared.</li>\n</ul>\n</li>\n</ol>\n",
+    "tags" : [ "java", "rest", "postman", "jax-rs", "multipart" ],
     "owner" : {
-      "account_id" : 316179,
-      "reputation" : 1325,
-      "user_id" : 632199,
+      "account_id" : 40165436,
+      "reputation" : 1,
+      "user_id" : 29643237,
       "user_type" : "registered",
-      "accept_rate" : 98,
-      "profile_image" : "https://www.gravatar.com/avatar/3a157683f0231ec33d7878b687295ba4?s=256&d=identicon&r=PG",
-      "display_name" : "Denis",
-      "link" : "https://stackoverflow.com/users/632199/denis"
+      "profile_image" : "https://www.gravatar.com/avatar/8343165f5be25335e782760746a8bbd2?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Otabek Rajabov",
+      "link" : "https://stackoverflow.com/users/29643237/otabek-rajabov"
     },
     "is_answered" : true,
-    "view_count" : 46,
+    "view_count" : 97,
     "answer_count" : 1,
-    "score" : 1,
-    "last_activity_date" : 1759159734,
-    "creation_date" : 1759152535,
-    "link" : "https://stackoverflow.com/questions/79778164/process-events-with-throttling-and-timeout",
+    "score" : 0,
+    "last_activity_date" : 1759914675,
+    "creation_date" : 1759841741,
+    "link" : "https://stackoverflow.com/questions/79784562/jax-rs-rest-api-returns-200-ok-immediately-but-json-body-arrives-delayed-only-o",
     "content_license" : "CC BY-SA 4.0"
   },
   "answers" : [ {
-    "answer_id" : 79778304,
-    "question_id" : 79778164,
-    "body" : "<p>The solution is to store last event and return it in timeout fallback:</p>\n<pre class=\"lang-java prettyprint-override\"><code>        sink.asFlux()\n                .groupBy(e -&gt; e.charAt(0))\n                .flatMap(g -&gt; {\n                    var last = new AtomicReference&lt;String&gt;();\n                    return g\n                            .doOnNext(e -&gt; {\n                                System.out.println(&quot;got &quot; + e);\n                                last.set(e);\n                            })\n                            .sample(Duration.ofMillis(100))\n                            .timeout(Duration.ofMillis(150), Mono.defer(() -&gt; {\n                                System.out.println(&quot;timeout&quot;);\n                                return Mono.justOrEmpty(last.get());\n                            }))\n                            .doOnNext(e -&gt; {\n                                last.set(null);\n                                System.out.println(&quot;processed &quot; + e);\n                            });\n                })\n                .subscribe();\n</code></pre>\n<p><code>last.set(null);</code> guarantees that the last event will not be processed twice.</p>\n<p>Also <code>timeout</code> should be after <code>sample</code>. Otherwise <code>a2</code> event can be skipped at all.</p>\n<p>The output is as follows, so <code>a2</code> processed even after timeout:</p>\n<pre><code>got a1\nprocessed a1\ngot a2\ntimeout\nprocessed a2\n</code></pre>\n",
+    "answer_id" : 79784686,
+    "question_id" : 79784562,
+    "body" : "<p>Unfortunately you haven't provided the source behind <code>liveImageService.getImage()</code> so it's hard to see what you're doing.</p>\n<p>For large jsons (where strings are repeated) you'll benefit from gzipping/compressing the response. For spring boot this is achieved via the <code>server.compression.*</code> properties (see <a href=\"https://docs.spring.io/spring-boot/docs/2.0.6.RELEASE/reference/html/howto-embedded-web-servers.html#how-to-enable-http-response-compression\" rel=\"nofollow noreferrer\">how-to-enable-http-response-compression</a>)</p>\n<p>How big is this response stream? Perhaps you're loading a massive blob into memory up front when you could be streaming it?</p>\n<p>You might get better results by returning a <code>ResponseEntity</code> pointing to a <code>org.springframework.core.io.Resource</code>. Be sure to set the content type header on the response to the total number of bytes so the client knows the size of the response before it arrives.</p>\n<p>Eg:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class LiveImageService {\n   private static final Resource IMAGE_RESOURCE = new ClassPathResource(&quot;images/my-image.png&quot;);\n\n   public ResponseEntity&lt;Resource&gt; getImage() {\n      HttpHeaders headers = new HttpHeaders();\n      headers.setContentLength(IMAGE_RESOURCE.getFile().length());\n      headers.setContentType(MediaType.IMAGE_PNG);\n      return new ResponseEntity(IMAGE_RESOURCE, httpHeaders, HttpStatus.OK);\n   }\n}\n</code></pre>\n",
     "score" : 1,
-    "is_accepted" : true,
+    "is_accepted" : false,
     "owner" : {
-      "account_id" : 316179,
-      "reputation" : 1325,
-      "user_id" : 632199,
+      "account_id" : 1096470,
+      "reputation" : 29414,
+      "user_id" : 1089967,
       "user_type" : "registered",
-      "accept_rate" : 98,
-      "profile_image" : "https://www.gravatar.com/avatar/3a157683f0231ec33d7878b687295ba4?s=256&d=identicon&r=PG",
-      "display_name" : "Denis",
-      "link" : "https://stackoverflow.com/users/632199/denis"
+      "accept_rate" : 59,
+      "profile_image" : "https://www.gravatar.com/avatar/1f256b904ff621d678598d8fa49f86c5?s=256&d=identicon&r=PG",
+      "display_name" : "lance-java",
+      "link" : "https://stackoverflow.com/users/1089967/lance-java"
     },
-    "creation_date" : 1759159734,
-    "last_activity_date" : 1759159734,
+    "creation_date" : 1759849049,
+    "last_activity_date" : 1759914675,
     "content_license" : "CC BY-SA 4.0"
   } ],
-  "question_comments" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140783466,
+    "post_id" : 79784562,
+    "body" : "Is it not just Postman that needs time to process the JSON? What happens if you use a command-line tool like curl or wget?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1211967,
+      "reputation" : 9964,
+      "user_id" : 1180351,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/pKB8y.png?s=256",
+      "display_name" : "Rob Spoor",
+      "link" : "https://stackoverflow.com/users/1180351/rob-spoor"
+    },
+    "creation_date" : 1759913995,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140782906,
+    "post_id" : 79784562,
+    "body" : "Which server or Jakarta REST implementation are you using?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 51161,
+      "reputation" : 17960,
+      "user_id" : 152794,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/eX5Ms.jpg?s=256",
+      "display_name" : "James R. Perkins",
+      "link" : "https://stackoverflow.com/users/152794/james-r-perkins"
+    },
+    "creation_date" : 1759881902,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140782490,
+    "post_id" : 79784562,
+    "body" : "Which behavour do you observe when running curl -v ? This will show you the full socket interaction in real time it is often usefull to debug \uD83D\uDE09",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 13343141,
+      "reputation" : 525,
+      "user_id" : 9630748,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-rQE-_jClqIU/AAAAAAAAAAI/AAAAAAAAAAA/tkxIr93dTTs/s256-rj/photo.jpg",
+      "display_name" : "Arnault Le Pr&#233;vost-Corvellec",
+      "link" : "https://stackoverflow.com/users/9630748/arnault-le-pr%c3%a9vost-corvellec"
+    },
+    "creation_date" : 1759862288,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
   "answer_comments" : { }
 }

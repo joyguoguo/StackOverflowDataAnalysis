@@ -1,28 +1,267 @@
 {
   "question" : {
-    "question_id" : 79774179,
-    "title" : "How to specify component ancestors in a pom.xml?",
-    "body" : "<p>I forked some java library project (with <code>pom.xml</code>). Now I want to build a <code>SBOM</code> file from this <code>pom.xml</code> file using <a href=\"https://github.com/CycloneDX/cdxgen\" rel=\"nofollow noreferrer\">the cdxgen utility</a>. My fork will have different identifiers than the original (<em>groupId</em>, <em>artifactId</em>, <em>version</em>). I would like the information about the original to remain in the <code>SBOM</code> file - in <a href=\"https://cyclonedx.org/docs/1.6/json/#components_items_pedigree_ancestors\" rel=\"nofollow noreferrer\">the ancestors section</a>.</p>\n<p>What should I specify in the <code>pom.xml</code> file or do something else to ensure that <a href=\"https://cyclonedx.org/docs/1.6/json/#components_items_pedigree_ancestors\" rel=\"nofollow noreferrer\">the ancestors section</a> is filled in the built <code>SBOM</code> file?</p>\n",
-    "tags" : [ "java", "pom.xml", "owasp", "sbom", "cyclonedx" ],
+    "question_id" : 79779759,
+    "title" : "How to terminate partition yet succeed on the job?",
+    "body" : "<p>I have a Jakarta Batch application that runs jobs with partitions. Under some conditions the processor signals there is nothing else to be done by throwing an exception. As this exception shall neither fail the job nor fail the transaction on the current chunk I added this exception to the <a href=\"https://jakarta.ee/specifications/batch/2.0/jakarta-batch-spec-2.0#skipping-exceptions\" rel=\"nofollow noreferrer\">skippable exceptions</a>.</p>\n<p>While this has the effect of allowing the job to continue, there are two effects I do not like:</p>\n<ul>\n<li>all the remaining items are still processed although no more work can be performed. Hence I want the partition to terminate but allow other partitions to still run.</li>\n<li>The job as a whole is marked as FAILED. In this one case preempting the work is ok for the application thus I'd like the job to be marked as SUCCESS. After all preempted partitions do not need to be investigated by an operator.</li>\n<li>The step/job still needs to be able to fail when encountering other problems (=other exceptions)</li>\n</ul>\n<p>How can I implement the desired behaviour?</p>\n<p><strong>Update: I tried different scenarios, none of which really brought me to my intended solution:</strong></p>\n<ul>\n<li><strong>Do nothing (just a normal partitioned step)</strong>\nAll items are processed and written (no early exit)</li>\n<li><strong>Throw Exception</strong>\nThe partition breaks the read/process/write loop,\nthe chunk gets rolled back and the step fails. Unless the exception was thrown on a chunks first item I loose the previous items.</li>\n<li><strong>Throw skippable Exception</strong>\nThe partition continues the read/process/write loop,\nchunk writes all possible data and the step ends with success. But\nthat means all non-processable items are still read and processed.</li>\n<li><strong>Throw skippable Exception and set exit status</strong>\nThe partition continues the read/process/write loop,\nchunk writes all possible data and the step ends with success</li>\n</ul>\n<p>I doubt a PartitionAnalyzer would change the behaviour as it can tweak the step's result having looked at all the partition results. My problem is that only by throwing a non-skippable exception I can exit the partition but it results in a rollback.</p>\n",
+    "tags" : [ "java", "jakarta-ee", "jsr352", "java-batch" ],
     "owner" : {
-      "account_id" : 5395380,
-      "reputation" : 1656,
-      "user_id" : 17547033,
+      "account_id" : 5289146,
+      "reputation" : 9940,
+      "user_id" : 4222206,
       "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/3a3672aa0c64568638e19db88d9f87d7?s=256&d=identicon&r=PG",
-      "display_name" : "nik0x1",
-      "link" : "https://stackoverflow.com/users/17547033/nik0x1"
+      "profile_image" : "https://www.gravatar.com/avatar/416696430ab23f397a5dbeda73e72896?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "queeg",
+      "link" : "https://stackoverflow.com/users/4222206/queeg"
     },
-    "is_answered" : false,
-    "view_count" : 58,
-    "answer_count" : 0,
-    "score" : 0,
-    "last_activity_date" : 1758747358,
-    "creation_date" : 1758747358,
-    "link" : "https://stackoverflow.com/questions/79774179/how-to-specify-component-ancestors-in-a-pom-xml",
+    "is_answered" : true,
+    "view_count" : 124,
+    "answer_count" : 3,
+    "score" : 2,
+    "last_activity_date" : 1759654860,
+    "creation_date" : 1759304658,
+    "link" : "https://stackoverflow.com/questions/79779759/how-to-terminate-partition-yet-succeed-on-the-job",
     "content_license" : "CC BY-SA 4.0"
   },
-  "answers" : [ ],
-  "question_comments" : [ ],
-  "answer_comments" : { }
+  "answers" : [ {
+    "answer_id" : 79780739,
+    "question_id" : 79779759,
+    "body" : "<p>Investigating on this issue first of all I checked how JBeret (my Java Batch Implementation) runs in partitions and saw it makes use of a ChunkRunner. The ChunkRunner implements <a href=\"https://github.com/jberet/jsr352/blob/main/jberet-core/src/main/java/org/jberet/runtime/runner/ChunkRunner.java#L292\" rel=\"nofollow noreferrer\">the loop that reads/processes/writes items</a> until the ItemReader returns null.</p>\n<p>Well, not exactly. The loop is coded like this:</p>\n<pre class=\"lang-java prettyprint-override\"><code>while ((processingInfo.chunkState != ChunkState.JOB_STOPPED) &amp;&amp;\n\n                (processingInfo.chunkState != ChunkState.DEPLETED ||\n                        processingInfo.itemState == ItemState.TO_RETRY_READ ||\n                        processingInfo.itemState == ItemState.TO_RETRY_PROCESS ||\n                        processingInfo.itemState == ItemState.TO_RETRY_WRITE)\n                ) {\n...\n}\n</code></pre>\n<p>So I need to find a way to set the chunkState to DEPLETED - and I would have to do so from within the ItemProcessor or the ItemWriter, as these are the components that could identify the conditions to stop further processing.</p>\n<p>The method that has access to <code>processingInfo</code> and runs the ItemProcessor is <a href=\"https://github.com/jberet/jsr352/blob/main/jberet-core/src/main/java/org/jberet/runtime/runner/ChunkRunner.java#L439\" rel=\"nofollow noreferrer\">processItem(ProcessingInfo)</a>. The ItemProcessor itself does not get hold of <code>processingInfo</code>, and the calling method does not allow setting the chunkState to DEPLETED.</p>\n<p>Ending the partition early is not possible - at least not today.</p>\n<p>As I already commented my test case does not break the step or the job. If other conditions apply it does break, so the other two bulletpoints are already met. But it does not stop the partition either - all the remaining items are read and processed nevertheless.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 5289146,
+      "reputation" : 9940,
+      "user_id" : 4222206,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/416696430ab23f397a5dbeda73e72896?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "queeg",
+      "link" : "https://stackoverflow.com/users/4222206/queeg"
+    },
+    "creation_date" : 1759394352,
+    "last_activity_date" : 1759654860,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79780970,
+    "question_id" : 79779759,
+    "body" : "<h1>Example Technique</h1>\n<p>One technique you could use (rather than skippable exceptions which as you mentioned, don't actually abort the current step), would be:</p>\n<ol>\n<li><p>In your chunk artifact (e.g. Processor) set a particular exit status</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Inject StepContext stepCtx;\n\n//if (... whatever condition ...) {\n  stepCtx.setExitStatus(&quot;CONTINUE&quot;);\n  throw new MyExpectedException();   \n</code></pre>\n<p><em>NOTE:</em> You could also decouple the throwing of the Exception and setting the exit status by doing the latter in a ChunkListener.onError() method.</p>\n</li>\n<li><p>Add JSL transition logic so that we transition to the next step, or end the job successfully, on this particular status</p>\n<pre class=\"lang-xml prettyprint-override\"><code>&lt;step id=&quot;Step1&quot;&gt;\n &lt;next on=&quot;CONTINUE&quot; to=&quot;Step2&quot;/&gt;  &lt;!-- Or end --&gt;\n&lt;/step&gt;         \n</code></pre>\n</li>\n<li><p>In a partitioned step, use the PartitionAnalyzer to convert partition-level to status to step-level status used by job transitioning.</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Override\npublic void analyzeStatus(BatchStatus batchStatus,\n        String partitionExitStatus) throws Exception {\n\n      if (partitionExitStatus.equals(&quot;CONTINUE&quot;)) {\n           // &quot;bubble up&quot; from partition-level to step level         \n           stepCtx.setExitStatus(&quot;CONTINUE&quot;);\n      }\n</code></pre>\n</li>\n</ol>\n<h3>NOTE</h3>\n<p>You could add more fine-grained differentiated behavior at a couple points here.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 1623729,
+      "reputation" : 5370,
+      "user_id" : 1499766,
+      "user_type" : "registered",
+      "accept_rate" : 86,
+      "profile_image" : "https://www.gravatar.com/avatar/930600717d161c99c999d1a703fe8690?s=256&d=identicon&r=PG",
+      "display_name" : "Scott Kurz",
+      "link" : "https://stackoverflow.com/users/1499766/scott-kurz"
+    },
+    "creation_date" : 1759411840,
+    "last_activity_date" : 1759489250,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79782677,
+    "question_id" : 79779759,
+    "body" : "<p>As other solutions did not work, I implemented some custom solution.</p>\n<p>When the processor discovers no more data shall be processed it returns null. To prevent handing the remainder of the partition it also sets a flag in the stepContext's transientUserData. The reader checks transientUserData flag and - if set - returns null. This makes the partition stop on the next iteration.</p>\n<p>As I want to use generic readers I attached an ItemReadListener that performs the check and action in the afterRead() method.</p>\n",
+    "score" : 0,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 5289146,
+      "reputation" : 9940,
+      "user_id" : 4222206,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/416696430ab23f397a5dbeda73e72896?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "queeg",
+      "link" : "https://stackoverflow.com/users/4222206/queeg"
+    },
+    "creation_date" : 1759611383,
+    "last_activity_date" : 1759654474,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140772753,
+    "post_id" : 79779759,
+    "body" : "Ha-hum. Creating a test case I prove that throwing the skippable exception does neither stop the partition nor fail the step or the job. The fact I see breaking jobs must have a different reason. Maybe it is easier to spot once I preempt the partition early - so far I do not see how I can do that with the additional batch artifacts.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 5289146,
+      "reputation" : 9940,
+      "user_id" : 4222206,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/416696430ab23f397a5dbeda73e72896?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "queeg",
+      "link" : "https://stackoverflow.com/users/4222206/queeg"
+    },
+    "creation_date" : 1759393060,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140771264,
+    "post_id" : 79779759,
+    "body" : "Building on my last comment, 1) would be the exact same way you&#39;d handle a similar problem with a non-partitioned step.  It lets you &quot;catch&quot; an exception and not fail a job because of a failing step.    (In general, you&#39;re ideally going to be able to write reader/writer/processor chunk step artifacts in a way that you have some ability to reuse across partitioned vs. non-partitioned scenarios).    If I have time I&#39;ll write a more complete answer but hopefully this keeps you moving.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1623729,
+      "reputation" : 5370,
+      "user_id" : 1499766,
+      "user_type" : "registered",
+      "accept_rate" : 86,
+      "profile_image" : "https://www.gravatar.com/avatar/930600717d161c99c999d1a703fe8690?s=256&d=identicon&r=PG",
+      "display_name" : "Scott Kurz",
+      "link" : "https://stackoverflow.com/users/1499766/scott-kurz"
+    },
+    "creation_date" : 1759327298,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140771255,
+    "post_id" : 79779759,
+    "body" : "I think you could do this basically by:   1) introduce a transition element so that the job doesn&#39;t fail just because a step fails.   You could also potentially introduce logic to set different step exit statuses and differentiate across them in the transition &quot;on&quot; attr values.       2)  If you need logic to bubble up or aggregate partition-level exit statuses to the step level exit status, you&#39;d introduce a PartitionAnalyzer for this.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1623729,
+      "reputation" : 5370,
+      "user_id" : 1499766,
+      "user_type" : "registered",
+      "accept_rate" : 86,
+      "profile_image" : "https://www.gravatar.com/avatar/930600717d161c99c999d1a703fe8690?s=256&d=identicon&r=PG",
+      "display_name" : "Scott Kurz",
+      "link" : "https://stackoverflow.com/users/1499766/scott-kurz"
+    },
+    "creation_date" : 1759327191,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79780970" : [ {
+      "comment_id" : 140780455,
+      "post_id" : 79780970,
+      "body" : "I would have expected something like a <code>stop early</code> functionality to be contained in Jakarta Batch. Maybe for the next version then.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 5289146,
+        "reputation" : 9940,
+        "user_id" : 4222206,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/416696430ab23f397a5dbeda73e72896?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "queeg",
+        "link" : "https://stackoverflow.com/users/4222206/queeg"
+      },
+      "creation_date" : 1759781832,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140779946,
+      "post_id" : 79780970,
+      "body" : "Yes, if you have the ability to change the Reader then that&#39;s the most straightforward way to end the chunk normally.   I assumed you were asking this question because it was hard to change the Reader and so you were wondering what other mechanism could end the step, and how to deal with that.  Maybe I&#39;ll extract this answer and write up a separate question at some point.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 1623729,
+        "reputation" : 5370,
+        "user_id" : 1499766,
+        "user_type" : "registered",
+        "accept_rate" : 86,
+        "profile_image" : "https://www.gravatar.com/avatar/930600717d161c99c999d1a703fe8690?s=256&d=identicon&r=PG",
+        "display_name" : "Scott Kurz",
+        "link" : "https://stackoverflow.com/users/1499766/scott-kurz"
+      },
+      "creation_date" : 1759766321,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140777379,
+      "post_id" : 79780970,
+      "body" : "This example does not meet my idea as the chunk gets rolled back when the exception is thrown.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 5289146,
+        "reputation" : 9940,
+        "user_id" : 4222206,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/416696430ab23f397a5dbeda73e72896?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "queeg",
+        "link" : "https://stackoverflow.com/users/4222206/queeg"
+      },
+      "creation_date" : 1759611149,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140776477,
+      "post_id" : 79780970,
+      "body" : "Note in my example I chose to use &quot;CONTINUE&quot; for each of the partition and step level exit statuses, but that&#39;s not a key part of the sample.  You could use something totally different.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1623729,
+        "reputation" : 5370,
+        "user_id" : 1499766,
+        "user_type" : "registered",
+        "accept_rate" : 86,
+        "profile_image" : "https://www.gravatar.com/avatar/930600717d161c99c999d1a703fe8690?s=256&d=identicon&r=PG",
+        "display_name" : "Scott Kurz",
+        "link" : "https://stackoverflow.com/users/1499766/scott-kurz"
+      },
+      "creation_date" : 1759541830,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140776476,
+      "post_id" : 79780970,
+      "body" : "@queeg In a partitioned chunk step, the chunk-level artifacts (reader/processor/writer/chunklistener) each run on the partition thread. Setting the exit status via the StepContext from one of these sets the partition-level exit status.  The PartitionAnalyzer runs in the top-level thread.  Setting the exit status via the StepContext in the PartitionAnalyzer sets the top-level step&#39;s exit status.  The PartitionAnalyzer.analyzeStatus() gets called for each partition and gets passed the partition-level statuses.  The &quot;next&quot; transition element can continue the job rather than failing for an exit st",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1623729,
+        "reputation" : 5370,
+        "user_id" : 1499766,
+        "user_type" : "registered",
+        "accept_rate" : 86,
+        "profile_image" : "https://www.gravatar.com/avatar/930600717d161c99c999d1a703fe8690?s=256&d=identicon&r=PG",
+        "display_name" : "Scott Kurz",
+        "link" : "https://stackoverflow.com/users/1499766/scott-kurz"
+      },
+      "creation_date" : 1759541737,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140776317,
+      "post_id" : 79780970,
+      "body" : "I experimented with setting an exit status in the stepcontext. The batch continues running. Then I tried throwing an exception. The partition stops but the step - and with that the job fails. Some more magic is required but from the spec I do not understand what the framework will do with the values the batch artifacts return. Or which class would get hold of all the partitions&#39; exit codes and decide what to present to the step.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 5289146,
+        "reputation" : 9940,
+        "user_id" : 4222206,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/416696430ab23f397a5dbeda73e72896?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "queeg",
+        "link" : "https://stackoverflow.com/users/4222206/queeg"
+      },
+      "creation_date" : 1759530135,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140773784,
+      "post_id" : 79780970,
+      "body" : "@queeg So stepping back, this answer explains how to transition past an exception (which actually solves the same problem for a non-partitioned case too) and then shows you the point of control when each individual partition&#39;s batch/exit status is passed to the top-level.    IMO, that seems like a good place to me to stop for this individual question rather than trying to outline all the ways the analyzer might aggregate the status.  So I&#39;d probably break that out into a separate question if you have more thoughts there.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1623729,
+        "reputation" : 5370,
+        "user_id" : 1499766,
+        "user_type" : "registered",
+        "accept_rate" : 86,
+        "profile_image" : "https://www.gravatar.com/avatar/930600717d161c99c999d1a703fe8690?s=256&d=identicon&r=PG",
+        "display_name" : "Scott Kurz",
+        "link" : "https://stackoverflow.com/users/1499766/scott-kurz"
+      },
+      "creation_date" : 1759422648,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140773706,
+      "post_id" : 79780970,
+      "body" : "Thank you for the example. Setting an exit status sounds good. I did not even think of setting the step exit status during a partition - but likely it applies to the partition. But then I still do not understand the PartitionAnalyzer. Let&#39;s say one partition runs to the end, one wants to cut short and one has a serious problem. The PartitionAnalyzer would have to receive all three partitionStatus codes to forward the worst. But it gets only one?",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 5289146,
+        "reputation" : 9940,
+        "user_id" : 4222206,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/416696430ab23f397a5dbeda73e72896?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "queeg",
+        "link" : "https://stackoverflow.com/users/4222206/queeg"
+      },
+      "creation_date" : 1759419428,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
 }

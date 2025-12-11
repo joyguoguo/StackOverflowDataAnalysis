@@ -1,246 +1,45 @@
 {
   "question" : {
-    "question_id" : 79788787,
-    "title" : "Run application in background and restart automatically in case of exception or other failures",
-    "body" : "<p>I need my app to run in the background. The app process worked well for 40 hours while running in the background, then some ANR errors were thrown and my app stopped working when the last ANR error happened, but it was running on a separated thread. This app uses java.io.File. The Android device was not used during the 40 hours, only this app and WhatsApp were running.</p>\n<pre><code>package net.example.android;\n\nimport android.app.ActivityManager;\nimport android.app.Application;\nimport android.content.Intent;\nimport android.os.Bundle;\nimport android.view.WindowManager;\n\nimport androidx.appcompat.app.AppCompatActivity;\nimport androidx.annotation.NonNull;\nimport androidx.core.content.ContextCompat;\n\nimport net.example.webserver.databinding.ActivityMainBinding;\n\npublic class MainActivity extends AppCompatActivity {\n\n    private ActivityMainBinding binding;\n\n    @Override\n    protected void onCreate(Bundle savedInstanceState) {\n        super.onCreate(savedInstanceState);\n\n        Thread.setDefaultUncaughtExceptionHandler(new Thread.UncaughtExceptionHandler(){\n            @Override\n            public void uncaughtException(@NonNull Thread t, @NonNull Throwable e) {\n                if (!ServerFragment.launch_error(e)) {\n                    ActivityManager.RunningAppProcessInfo myProcess = new ActivityManager.RunningAppProcessInfo();\n                    ActivityManager.getMyMemoryState(myProcess);\n                    boolean isInBackground = myProcess.importance != ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND;\n                    if (isInBackground) {\n                        System.out.println(&quot;Uncaught Exception:&quot;);\n                        e.printStackTrace();\n                        ServerFragment.restart_server();\n                    } else {\n                        final Application app = getApplication();\n                        Intent launchIntentForPackage = app.getPackageManager().getLaunchIntentForPackage(app.getPackageName());\n                        if (launchIntentForPackage != null) {\n                            launchIntentForPackage.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_CLEAR_TASK);\n                            ContextCompat.startActivity(app, launchIntentForPackage, null);\n                            System.exit(2);\n                        }\n                    }\n                }\n            }\n        });\n\n        binding = ActivityMainBinding.inflate(getLayoutInflater());\n        setContentView(binding.getRoot()); //ServerFragment\n\n        getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);\n    }\n\n}\n</code></pre>\n<pre><code>public class ServerFragment extends Fragment {\n\n    private static FragmentServerBinding binding;\n    private static FragmentActivity fragmentActivity;\n\n    @Override\n    public View onCreateView(@NonNull LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {\n        fragmentActivity = this.getActivity();\n        binding = FragmentServerBinding.inflate(inflater, container, false);\n        return binding.getRoot();\n    }\n\n    public void onViewCreated(@NonNull View view, Bundle savedInstanceState) {\n        super.onViewCreated(view, savedInstanceState);\n\n        binding.buttonStart.setOnClickListener(new View.OnClickListener(){\n            public void onClick(View view) {\n                run_server();\n            }\n        });\n    }\n\n    private static class ServerApplication implements ForegroundService.ServiceApplication {\n\n        @Override\n        public void start() {\n            ServerThread.instance.start();\n        }\n\n        @Override\n        public void stop() {\n            ServerThread.reset();\n        }\n    }\n\n    private static void foreground_service(String action){\n        Intent serviceIntent = new Intent(fragmentActivity, ForegroundService.class);\n        serviceIntent.setAction(action);\n        if (Build.VERSION.SDK_INT &gt;= Build.VERSION_CODES.O) {\n            fragmentActivity.startForegroundService(serviceIntent);\n        } else {\n            fragmentActivity.startService(serviceIntent);\n        }\n    }\n\n    public static void run_server(){\n        ForegroundService.setServiceApplication(new ServerApplication());\n        foreground_service(ForegroundService.ACTION_START_FOREGROUND_SERVICE);\n    }\n\n    public static void restart_server(){\n        foreground_service(ForegroundService.ACTION_STOP_FOREGROUND_SERVICE);\n        run_server();\n    }\n\n\n</code></pre>\n<pre><code>package net.example.android;\n\nimport android.app.Notification;\nimport android.app.NotificationChannel;\nimport android.app.NotificationManager;\nimport android.app.Service;\nimport android.content.Intent;\nimport android.os.Build;\nimport android.os.IBinder;\n\nimport androidx.core.app.NotificationCompat;\n\npublic class ForegroundService extends Service {\n\n    private static final String CHANNEL_ID = &quot;ForegroundServiceChannel&quot;;\n\n    public static final String ACTION_START_FOREGROUND_SERVICE = &quot;ACTION_START_FOREGROUND_SERVICE&quot;;\n    public static final String ACTION_STOP_FOREGROUND_SERVICE = &quot;ACTION_STOP_FOREGROUND_SERVICE&quot;;\n\n    public interface ServiceApplication {\n        void start();\n        void stop();\n    }\n\n    private static ServiceApplication serviceApplication;\n\n    public static void setServiceApplication(ServiceApplication serviceApplication){\n        ForegroundService.serviceApplication = serviceApplication;\n    }\n\n    @Override\n    public void onCreate() {\n        super.onCreate();\n        createNotificationChannel();\n    }\n\n    @Override\n    public int onStartCommand(Intent intent, int flags, int startId) {\n        Notification notification = new NotificationCompat.Builder(this, CHANNEL_ID)\n                .setContentTitle(&quot;Foreground Service&quot;)\n                .setContentText(&quot;This service is running in the foreground.&quot;)\n                .setSmallIcon(android.R.drawable.ic_dialog_info)\n                .build();\n\n        if(intent == null || intent.getAction() == null || intent.getAction().equalsIgnoreCase(ACTION_START_FOREGROUND_SERVICE)) {\n            startForeground(1, notification);\n            if(serviceApplication != null){\n                serviceApplication.start();\n            }\n        } else if (intent.getAction().equalsIgnoreCase(ACTION_STOP_FOREGROUND_SERVICE)){\n            if(serviceApplication != null){\n                serviceApplication.stop();\n            }\n            stopForeground(true);\n        }\n\n        return START_STICKY;\n    }\n\n    @Override\n    public IBinder onBind(Intent intent) {\n        return null;\n    }\n\n    @Override\n    public void onDestroy() {\n        super.onDestroy();\n    }\n\n    private void createNotificationChannel() {\n        if (Build.VERSION.SDK_INT &gt;= Build.VERSION_CODES.O) {\n            NotificationChannel serviceChannel = new NotificationChannel(\n                    CHANNEL_ID,\n                    &quot;Foreground Service Channel&quot;,\n                    NotificationManager.IMPORTANCE_DEFAULT\n            );\n            NotificationManager manager = getSystemService(NotificationManager.class);\n            if (manager != null) {\n                manager.createNotificationChannel(serviceChannel);\n            }\n        }\n    }\n\n}\n\n</code></pre>\n<pre><code>--------- beginning of system\n2025-10-30 22:07:48.084  4048-24182 ActivityManager         pid-4048                            \n E  ANR in com.osp.app.signin\nPID: 24023\nReason: executing service com.osp.app.signin/com.msc.sa.service.RequestService\nLoad: 0.0 / 0.0 / 0.0\n------ Current CPU Core Info ------\n- offline : \n- online : 0-7\n- AP Temp = 320\n                             0           1           2           3           4           5           6           7\n------------------------------------------------------------------------------------------------------------------\nscaling_cur_freq       1352000     1352000     1352000     1352000     1352000     1352000     1560000     1560000\nscaling_governor   interactive interactive interactive interactive interactive interactive interactive interactive\nscaling_max_freq       1352000     1352000     1352000     1352000     1352000     1352000     1560000     1560000\n------------------------------------------------------------------------------------------------------------------\nCPU usage from 0ms to 5456ms later (2025-10-30 22:07:42.576 to 2025-10-30 22:07:48.032):\n  114% 31243/net.example.webserver: 72% user + 41% kernel / faults: 44869 minor\n  11% 4048/system_server: 6.2% user + 4.7% kernel / faults: 387 minor 18 major\n  5.3% 3625/android.hardware.sensors@1.0-service: 0.9% user + 4.4% kernel\n  5.3% 24023/com.osp.app.signin: 3.8% user + 1.4% kernel / faults: 1895 minor 377 major\n  2% 16288/com.google.android.gms.persistent: 1.1% user + 0.9% kernel / faults: 9 minor\n  1.2% 3002/kworker/u16:6: 0% user + 1.2% kernel\n  1.1% 2692/ueventd: 0.7% user + 0.3% kernel\n                                                                                                     \n30% TOTAL: 11% user + 7.8% kernel + 11% iowait + 0.1% softirq\nCPU usage from 75305233ms to 75305233ms ago (1969-12-31 21:00:00.000 to 1969-12-31 21:00:00.000) with 0% awake:\n0% TOTAL: 0% user + 0% kernel\n2025-10-30 22:14:18.119  4048-25030 ActivityManager         pid-4048                             E  ANR in com.osp.app.signin\nPID: 24191\nReason: executing service com.osp.app.signin/com.msc.sa.service.RequestService\nLoad: 0.0 / 0.0 / 0.0\n------ Current CPU Core Info ------\n- offline : \n- online : 0-7\n- AP Temp = 324\n                 0           1           2           3           4           5           6           7\n------------------------------------------------------------------------------------------------------------------\nscaling_cur_freq       1352000     1352000     1352000     1352000     1352000     1352000     1560000     1560000\nscaling_governor   interactive interactive interactive interactive interactive interactive interactive interactive\nscaling_max_freq       1352000     1352000     1352000     1352000     1352000     1352000     1560000     1560000\n------------------------------------------------------------------------------------------------------------------\nCPU usage from 0ms to 5385ms later (2025-10-30 22:14:12.666 to 2025-10-30 22:14:18.051):\n113% 31243/net.example.webserver: 74% user + 39% kernel / faults: 44190 minor 415 major\n32% 21090/com.whatsapp: 23% user + 9.1% kernel / faults: 6414 minor 1865 major\n21% 4048/system_server: 10% user + 10% kernel / faults: 3447 minor 1118 major\n5.3% 4353/com.android.systemui: 3.3% user + 2% kernel / faults: 1604 minor 1076 major\n5% 1714/mmc-cmdqd/0: 0% user + 5% kernel\n0.2% 24191/com.osp.app.signin: 0.1% user + 0% kernel / faults: 4548 minor 1141 major\n2.9% 16288/com.google.android.gms.persistent: 2% user + 0.9% kernel / faults: 389 minor 32 major\n2.5% 3625/android.hardware.sensors@1.0-service: 0.3% user + 2.2% kernel\n0% 4683/com.google.android.ext.services: 0% user + 0% kernel / faults: 4024 minor 1115 major\n0% 7581/com.microsoft.appmanager:pnsvc: 0% user + 0% kernel / faults: 5420 minor 901 major\n1.4% 5/kworker/0:0H: 0% user + 1.4% kernel\n1.4% 24916/com.google.android.gms: 1.3% user + 0.1% kernel / faults: 257 minor 10 major\n...\n38% TOTAL: 15% user + 10% kernel + 12% iowait + 0.5% softirq\nCPU usage from 75695323ms to 75695323ms ago (1969-12-31 21:00:00.000 to 1969-12-31 21:00:00.000) with 0% awake:\n0% TOTAL: 0% user + 0% kernel\n\n\n2025-10-30 22:16:23.889  4048-25278 ActivityManager         pid-4048                             \nE  ANR in com.samsung.android.forest\nPID: 25250\nReason: executing service com.samsung.android.forest/.focus.FocusModeTile\nLoad: 0.0 / 0.0 / 0.0\n------ Current CPU Core Info ------\n- offline : \n- online : 0-7\n- AP Temp = 328\n                 0           1           2           3           4           5           6           7\n------------------------------------------------------------------------------------------------------------------\nscaling_cur_freq       1352000     1352000     1352000     1352000     1352000     1352000     1560000     1560000\nscaling_governor   interactive interactive interactive interactive interactive interactive interactive interactive\nscaling_max_freq       1352000     1352000     1352000     1352000     1352000     1352000     1560000     1560000\n------------------------------------------------------------------------------------------------------------------\nCPU usage from 0ms to 5292ms later (2025-10-30 22:16:18.544 to 2025-10-30 22:16:23.836):\n114% 31243/net.example.webserver: 74% user + 39% kernel / faults: 43507 minor\n9.1% 4048/system_server: 4.1% user + 4.9% kernel / faults: 385 minor 3 major\n3.9% 25250/com.samsung.android.forest: 3% user + 0.9% kernel / faults: 2059 minor 359 major\n0.9% 6249/com.sec.android.sdhms: 0.5% user + 0.3% kernel / faults: 20 minor 1 major\n0.7% 6098/com.android.providers.media.module: 0.1% user + 0.5% kernel / faults: 31 minor 1 major\n0.3% 7/rcu_preempt: 0% user + 0.3% kernel\n0.3% 833/cfinteractive: 0% user + 0.3% kernel\n0.1% 1714/mmc-cmdqd/0: 0% user + 0.1% kernel\n0.1% 3397/servicemanager: 0% user + 0.1% kernel\n0.1% 3603/statsd: 0.1% user + 0% kernel\n0.1% 3604/netd: 0% user + 0.1% kernel\n0.1% 3765/argosd: 0.1% user + 0% kernel\n0.1% 4353/com.android.systemui: 0.1% user + 0% kernel / faults: 3 minor\n0.1% 4620/com.sec.imsservice: 0% user + 0.1% kernel\n0.1% 21090/com.whatsapp: 0% user + 0.1% kernel\n0% 21510/kworker/u17:0: 0% user + 0% kernel\n0.1% 23868/com.samsung.android.scloud: 0.1% user + 0% kernel / faults: 1 minor\n0.1% 25025/kworker/u16:0: 0% user + 0.1% kernel\n27% TOTAL: 10% user + 6% kernel + 11% iowait\nCPU usage from 75821201ms to 75821201ms ago (1969-12-31 21:00:00.000 to 1969-12-31 21:00:00.000) with 0% awake:\n0% TOTAL: 0% user + 0% kernel\n2025-10-30 22:29:42.443  4048-27853 ActivityManager         pid-4048                             E  ANR in com.sec.android.app.samsungapps\nPID: 27472\nReason: executing service com.sec.android.app.samsungapps/.jobscheduling.PollJobService\nLoad: 0.0 / 0.0 / 0.0\n------ Current CPU Core Info ------\n- offline : \n- online : 0-7\n- AP Temp = 339\n                 0           1           2           3           4           5           6           7\n------------------------------------------------------------------------------------------------------------------\nscaling_cur_freq       1352000     1352000     1352000     1352000     1352000     1352000     1560000     1560000\nscaling_governor   interactive interactive interactive interactive interactive interactive interactive interactive\nscaling_max_freq       1352000     1352000     1352000     1352000     1352000     1352000     1560000     1560000\n------------------------------------------------------------------------------------------------------------------\nCPU usage from 0ms to 5475ms later (2025-10-30 22:29:36.902 to 2025-10-30 22:29:42.376):\n111% 31243/net.example.webserver: 72% user + 38% kernel / faults: 46527 minor\n86% 26887/com.android.vending:background: 65% user + 21% kernel / faults: 13204 minor 382 major\n25% 4048/system_server: 17% user + 8.2% kernel / faults: 4113 minor 338 major\n15% 4353/com.android.systemui: 10% user + 5.3% kernel / faults: 12221 minor 68 major\n15% 25113/com.dti.samsung: 9.3% user + 6.3% kernel / faults: 1199 minor 2 major\n15% 867/kswapd0: 0% user + 15% kernel\n12% 26878/com.android.vending: 8.4% user + 3.6% kernel / faults: 7771 minor 4149 major\n9.3% 1714/mmc-cmdqd/0: 0% user + 9.3% kernel\n8.4% 27810/com.google.android.projection.gearhead:provider: 8.4% user + 0% kernel / faults: 2729 minor 4 major\n4.3% 27472/com.sec.android.app.samsungapps: 2.9% user + 1.4% kernel / faults: 5687 minor 233 major\n2.3% 3525/jbd2/mmcblk0p32: 0% user + 2.3% kernel\n1.8% 5/kworker/0:0H: 0% user + 1.8% kernel\n1.8% 25739/com.google.android.gms.persistent: 1% user + 0.7% kernel / faults: 3411 minor 172 major\n1.8% 26313/com.whatsapp: 0.9% user + 0.9% kernel / faults: 2697 minor 634 major\n...\n\n2025-10-30 22:30:08.582  4048-28073 ActivityManager         pid-4048                             \nE  ANR in com.android.vending:instant_app_installer\nPID: 27695\nReason: executing service com.android.vending/com.google.android.finsky.instantapps.dna.ArchivePrefetchService\nLoad: 0.0 / 0.0 / 0.0\n------ Current CPU Core Info ------\n- offline : \n- online : 0-7\n- AP Temp = 362\n                 0           1           2           3           4           5           6           7\n------------------------------------------------------------------------------------------------------------------\nscaling_cur_freq       1352000     1352000     1352000     1352000     1352000     1352000     1560000     1560000\nscaling_governor   interactive interactive interactive interactive interactive interactive interactive interactive\nscaling_max_freq       1352000     1352000     1352000     1352000     1352000     1352000     1560000     1560000\n------------------------------------------------------------------------------------------------------------------\nCPU usage from 0ms to 5460ms later (2025-10-30 22:30:03.062 to 2025-10-30 22:30:08.522):\n124% 31243/net.example.webserver: 84% user + 40% kernel / faults: 45343 minor\n99% 26096/com.google.android.youtube: 0% user + 99% kernel\n85% 26887/com.android.vending:background: 79% user + 6.2% kernel / faults: 552 minor 2 major\n31% 27917/com.samsung.android.game.gos: 27% user + 4.2% kernel / faults: 6685 minor 81 major\n18% 4048/system_server: 9.3% user + 9.5% kernel / faults: 1394 minor 125 major\n5.1% 27695/com.android.vending:instant_app_installer: 2.7% user + 2.3% kernel / faults: 5069 minor 1910 major\n4.3% 867/kswapd0: 0% user + 4.3% kernel\n2% 1714/mmc-cmdqd/0: 0% user + 2% kernel\n1.6% 3002/kworker/u16:6: 0% user + 1.6% kernel\n0.9% 6249/com.sec.android.sdhms: 0.5% user + 0.3% kernel / faults: 289 minor 10 major\n0.9% 27958/com.samsung.android.sm.devicesecurity: 0.7% user + 0.1% kernel / faults: 1167 minor 2 major\n...\n\n2025-10-30 22:33:14.591  4048-28650 ActivityManager         pid-4048                             \nE  ANR in com.sec.android.app.myfiles\nPID: 28437\nReason: Broadcast of Intent { act=android.intent.action.DEVICE_STORAGE_LOW flg=0x5200010 cmp=com.sec.android.app.myfiles/.external.receiver.StorageMonitorReceiver (has extras) }\nLoad: 0.0 / 0.0 / 0.0\n------ Current CPU Core Info ------\n- offline : \n- online : 0-7\n- AP Temp = 355\n                 0           1           2           3           4           5           6           7\n------------------------------------------------------------------------------------------------------------------\nscaling_cur_freq       1352000     1352000     1352000     1352000     1352000     1352000     1560000     1560000\nscaling_governor   interactive interactive interactive interactive interactive interactive interactive interactive\nscaling_max_freq       1352000     1352000     1352000     1352000     1352000     1352000     1560000     1560000\n------------------------------------------------------------------------------------------------------------------\nCPU usage from 0ms to 5581ms later (2025-10-30 22:33:08.931 to 2025-10-30 22:33:14.512):\n113% 31243/net.example.webserver: 72% user + 40% kernel / faults: 49843 minor 2 major\n38% 867/kswapd0: 0% user + 38% kernel\n30% 28651/com.google.android.apps.photos: 21% user + 9.2% kernel / faults: 24287 minor 1403 major\n26% 4048/system_server: 14% user + 12% kernel / faults: 13806 minor 838 major\n21% 26887/com.android.vending:background: 17% user + 4.1% kernel / faults: 11978 minor 8 major\n21% 28152/com.google.android.gms.unstable: 17% user + 4.5% kernel / faults: 6037 minor 535 major\n13% 1714/mmc-cmdqd/0: 0% user + 13% kernel\n12% 28195/com.google.android.gms: 8.3% user + 4.3% kernel / faults: 18886 minor 166 major\n7.6% 26878/com.android.vending: 7.2% user + 0.3% kernel / faults: 10954 minor 421 major\n4.1% 28437/com.sec.android.app.myfiles: 2.8% user + 1.2% kernel / faults: 6509 minor 217 major\n...\n\n2025-10-30 22:34:36.297  4048-29210 ActivityManager         pid-4048                             \nE  ANR in com.sec.android.app.myfiles\nPID: 28970\nReason: Broadcast of Intent { act=android.intent.action.DEVICE_STORAGE_OK flg=0x5200010 cmp=com.sec.android.app.myfiles/.external.receiver.StorageMonitorReceiver (has extras) }\nLoad: 0.0 / 0.0 / 0.0\n------ Current CPU Core Info ------\n- offline : \n- online : 0-7\n- AP Temp = 356\n                 0           1           2           3           4           5           6           7\n------------------------------------------------------------------------------------------------------------------\nscaling_cur_freq       1352000     1352000     1352000     1352000     1352000     1352000     1560000     1560000\nscaling_governor   interactive interactive interactive interactive interactive interactive interactive interactive\nscaling_max_freq       1352000     1352000     1352000     1352000     1352000     1352000     1560000     1560000\n------------------------------------------------------------------------------------------------------------------\nCPU usage from 0ms to 20384ms later (2025-10-30 22:34:15.822 to 2025-10-30 22:34:36.207) with 99% awake:\n113% 31243/net.example.webserver: 73% user + 40% kernel / faults: 174640 minor 1 major\n39% 4048/system_server: 27% user + 12% kernel / faults: 46635 minor 5848 major\n20% 3751/installd: 2.6% user + 17% kernel / faults: 7255 minor 19 major\n18% 867/kswapd0: 0% user + 18% kernel\n14% 26878/com.android.vending: 11% user + 3.7% kernel / faults: 23413 minor 7039 major\n10% 1714/mmc-cmdqd/0: 0% user + 10% kernel\n3.9% 25113/com.dti.samsung: 1.9% user + 1.9% kernel / faults: 2461 minor 57 major\n7% 4353/com.android.systemui: 4.5% user + 2.5% kernel / faults: 29281 minor 3015 major\n6.5% 25739/com.google.android.gms.persistent: 4% user + 2.5% kernel / faults: 18233 minor 1908 major\n2.9% 3625/android.hardware.sensors@1.0-service: 0.9% user + 1.9% kernel / faults: 154 minor\n1.9% 5/kworker/0:0H: 0% user + 1.9% kernel\n1.7% 26313/com.whatsapp: 0.5% user + 1.1% kernel / faults: 4533 minor 2183 major\n...\n\n2025-10-30 22:35:50.742  4048-30008 ActivityManager         pid-4048                             \nE  ANR in com.sec.android.app.myfiles\nPID: 29849\nReason: Broadcast of Intent { act=android.intent.action.DEVICE_STORAGE_LOW flg=0x5200010 cmp=com.sec.android.app.myfiles/.external.receiver.StorageMonitorReceiver (has extras) }\nLoad: 0.0 / 0.0 / 0.0\n------ Current CPU Core Info ------\n- offline : \n- online : 0-7\n- AP Temp = 352\n                 0           1           2           3           4           5           6           7\n------------------------------------------------------------------------------------------------------------------\nscaling_cur_freq       1352000     1352000     1352000     1352000     1352000     1352000     1560000     1560000\nscaling_governor   interactive interactive interactive interactive interactive interactive interactive interactive\nscaling_max_freq       1352000     1352000     1352000     1352000     1352000     1352000     1560000     1560000\n------------------------------------------------------------------------------------------------------------------\nCPU usage from 0ms to 22117ms later (2025-10-30 22:35:28.553 to 2025-10-30 22:35:50.669):\n116% 31243/net.example.webserver: 73% user + 42% kernel / faults: 185801 minor 31 major\n26% 4048/system_server: 16% user + 9.9% kernel / faults: 29994 minor 2337 major\n20% 867/kswapd0: 0% user + 20% kernel\n2.8% 25113/com.dti.samsung: 1.3% user + 1.4% kernel / faults: 1950 minor 106 major\n9.3% 25739/com.google.android.gms.persistent: 5.6% user + 3.6% kernel / faults: 21614 minor 7801 major\n7.3% 1714/mmc-cmdqd/0: 0% user + 7.3% kernel\n5.6% 4353/com.android.systemui: 3.4% user + 2.2% kernel / faults: 26899 minor 1789 major\n3.3% 3625/android.hardware.sensors@1.0-service: 1.1% user + 2.2% kernel / faults: 176 minor\n1.5% 5/kworker/0:0H: 0% user + 1.5% kernel\n...\n\n2025-10-30 22:36:38.536  4048-30860 ActivityManager         pid-4048                             \nE  ANR in com.google.android.youtube\nPID: 29627\nReason: executing service com.google.android.youtube/androidx.work.impl.background.systemjob.SystemJobService\nLoad: 0.0 / 0.0 / 0.0\n------ Current CPU Core Info ------\n- offline : \n- online : 0-7\n- AP Temp = 341\n                 0           1           2           3           4           5           6           7\n------------------------------------------------------------------------------------------------------------------\nscaling_cur_freq       1352000     1352000     1352000     1352000     1352000     1352000     1560000     1560000\nscaling_governor   interactive interactive interactive interactive interactive interactive interactive interactive\nscaling_max_freq       1352000     1352000     1352000     1352000     1352000     1352000     1560000     1560000\n------------------------------------------------------------------------------------------------------------------\nCPU usage from 0ms to 22100ms later (2025-10-30 22:36:16.373 to 2025-10-30 22:36:38.474) with 99% awake:\n113% 31243/net.example.webserver: 72% user + 40% kernel / faults: 183567 minor 1 major\n13% 4048/system_server: 7.7% user + 5.3% kernel / faults: 6186 minor 83 major\n8.1% 30671/com.facebook.katana: 6.7% user + 1.4% kernel / faults: 4092 minor 198 major\n5.3% 3625/android.hardware.sensors@1.0-service: 1.8% user + 3.5% kernel / faults: 6 minor\n2.8% 4353/com.android.systemui: 2.2% user + 0.6% kernel / faults: 5378 minor 7 major\n2.4% 25113/com.dti.samsung: 1.4% user + 1% kernel / faults: 105 minor 25 major\n2.2% 25739/com.google.android.gms.persistent: 1.4% user + 0.7% kernel / faults: 279 minor\n0.5% 23811/kworker/u16:3: 0% user + 0.5% kernel\n...\n</code></pre>\n",
-    "tags" : [ "java", "android" ],
+    "question_id" : 79793263,
+    "title" : "How to get the type of the generic that it refers to",
+    "body" : "<p>I am using CodeModel to manipulate JAXB auto-generated classes.<br />\nThe getter method of the JAXB classes return something like <code>JAXBElement&lt;OutputRoot&gt;</code>, <code>JAXBElement&lt;String&gt;</code>, etc. I'd want to generate a method in the JAXB classes which returns the <code>OutputRoot</code>, <code>String</code>, etc.</p>\n<p>What I can't figure out how to get the internal type (<code>OutputRoot</code>, etc.) so I can specify it on the new method.</p>\n<p>What I have so far is</p>\n<pre><code>@Override\npublic boolean run(Outline model, Options opt, ErrorHandler errorHandler) {\n    JCodeModel m = new JCodeModel();\n\n    for (ClassOutline o : model.getClasses()) {\n        for (Entry&lt;String, JFieldVar&gt; e : o.implClass.fields().entrySet()) {\n\n            JClass classOptional = model\n                  .getCodeModel()\n                  .ref(Optional.class)\n                  .narrow( e.getValue()\n                  .type().boxify() );\n\n            String methodName = &quot;get&quot; + e.getKey().substring(0, 1).toUpperCase() + e.getKey().substring(1);\n            JMethod method = o.implClass.method(PUBLIC, classOptional, methodName);\n            JBlock body = method.body();\n        }\n    }  \n}           \n</code></pre>\n<p>Any hint please?</p>\n",
+    "tags" : [ "java", "jaxb", "sun-codemodel" ],
     "owner" : {
-      "account_id" : 6539163,
-      "reputation" : 50,
-      "user_id" : 5057436,
+      "account_id" : 1324418,
+      "reputation" : 1519,
+      "user_id" : 1269572,
       "user_type" : "registered",
-      "profile_image" : "https://i.sstatic.net/cWhBv.jpg?s=256",
-      "display_name" : "Lucas",
-      "link" : "https://stackoverflow.com/users/5057436/lucas"
+      "accept_rate" : 76,
+      "profile_image" : "https://www.gravatar.com/avatar/71bbb43fc9269586beb0688707ebae7c?s=256&d=identicon&r=PG",
+      "display_name" : "Viktor",
+      "link" : "https://stackoverflow.com/users/1269572/viktor"
     },
     "is_answered" : false,
-    "view_count" : 119,
-    "answer_count" : 1,
-    "score" : -3,
-    "last_activity_date" : 1762041876,
-    "creation_date" : 1760302720,
-    "link" : "https://stackoverflow.com/questions/79788787/run-application-in-background-and-restart-automatically-in-case-of-exception-or",
+    "view_count" : 56,
+    "answer_count" : 0,
+    "score" : 0,
+    "last_activity_date" : 1760784147,
+    "creation_date" : 1760718536,
+    "link" : "https://stackoverflow.com/questions/79793263/how-to-get-the-type-of-the-generic-that-it-refers-to",
     "content_license" : "CC BY-SA 4.0"
   },
-  "answers" : [ {
-    "answer_id" : 79788925,
-    "question_id" : 79788787,
-    "body" : "<p>Use a different OS.  Seriously, this is exactly the kind of behavior Android is built to prevent.    It's not built to host long running processes, it's explicitly built to kill processes to conserve power, and programs are encouraged to write in ways to prevent needing that functionality.  You're going to spend your time fighting the base design of the system.  And losing, since restarting services is something that cannot be done reliably.</p>\n<p>In particular an HTTP server is the wrong architecture to use on an Android app.  There are better ways to do anything it does.  If you want to have one program providing data to another, use a ContentResolver.  If you don't want that, there's no reason to use a server at all.</p>\n",
-    "score" : -2,
-    "is_accepted" : false,
-    "owner" : {
-      "account_id" : 1790714,
-      "reputation" : 94752,
-      "user_id" : 1631193,
-      "user_type" : "registered",
-      "accept_rate" : 71,
-      "profile_image" : "https://www.gravatar.com/avatar/ac9dfee58394495fa69f12f58a928be3?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "Gabe Sechan",
-      "link" : "https://stackoverflow.com/users/1631193/gabe-sechan"
-    },
-    "creation_date" : 1760330849,
-    "last_activity_date" : 1760331257,
-    "content_license" : "CC BY-SA 4.0"
-  } ],
+  "answers" : [ ],
   "question_comments" : [ {
-    "comment_id" : 140831590,
-    "post_id" : 79788787,
-    "body" : "I completely rewrote the question, please reconsider it",
+    "comment_id" : 140806666,
+    "post_id" : 79793263,
+    "body" : "Take a look at <a href=\"https://javadoc.io/doc/org.glassfish.jaxb/codemodel/4.0.3/com.sun.codemodel/com/sun/codemodel/JClass.html#getTypeParameters()\" rel=\"nofollow noreferrer\">JClass.getTypeParameters()</a>.",
     "score" : 0,
     "owner" : {
-      "account_id" : 6539163,
-      "reputation" : 50,
-      "user_id" : 5057436,
+      "account_id" : 3909931,
+      "reputation" : 561,
+      "user_id" : 3235583,
       "user_type" : "registered",
-      "profile_image" : "https://i.sstatic.net/cWhBv.jpg?s=256",
-      "display_name" : "Lucas",
-      "link" : "https://stackoverflow.com/users/5057436/lucas"
+      "profile_image" : "https://www.gravatar.com/avatar/721504354b2550253c68f256f2028fa0?s=256&d=identicon&r=PG",
+      "display_name" : "Rick O&#39;Sullivan",
+      "link" : "https://stackoverflow.com/users/3235583/rick-osullivan"
     },
-    "creation_date" : 1762042235,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140793595,
-    "post_id" : 79788787,
-    "body" : "&quot;Actually the server is a more complex application than an http file server&quot; -- understood. However, you are having a problem hosting a server. Other developers have implemented servers on Android (even though I agree with Gabe that Android is not an ideal server platform by any means). If you look at existing open source Android server projects, you might learn something that helps you in your project.",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 39846,
-      "reputation" : 1011055,
-      "user_id" : 115145,
-      "user_type" : "registered",
-      "accept_rate" : 84,
-      "profile_image" : "https://i.sstatic.net/wDnd8.png?s=256",
-      "display_name" : "CommonsWare",
-      "link" : "https://stackoverflow.com/users/115145/commonsware"
-    },
-    "creation_date" : 1760383834,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140791916,
-    "post_id" : 79788787,
-    "body" : "Actually the server is a more complex application than an http file server, it is just for a example to ask here for an resilient android app. It is safe because externally they can only send bytes to be read by the server. The programmer will have already defined each byte that has been authenticated as relevant to the purpose of the application. For the file server, it is only for reading files and restricted from a root path.",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 6539163,
-      "reputation" : 50,
-      "user_id" : 5057436,
-      "user_type" : "registered",
-      "profile_image" : "https://i.sstatic.net/cWhBv.jpg?s=256",
-      "display_name" : "Lucas",
-      "link" : "https://stackoverflow.com/users/5057436/lucas"
-    },
-    "creation_date" : 1760311938,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140791785,
-    "post_id" : 79788787,
-    "body" : "&quot;I have tried to execute the main() in a foreground service...&quot; -- move your service to its own Java file. Right now, you have it as an inner class of <code>MainActivity</code>. &quot;This didn&#39;t worked for keep process alive&quot; -- what did you do to test this? &quot;I have an application that hosts a file server&quot; -- have you looked at existing open source projects that host servers? Also, how are you planning on securing this?",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 39846,
-      "reputation" : 1011055,
-      "user_id" : 115145,
-      "user_type" : "registered",
-      "accept_rate" : 84,
-      "profile_image" : "https://i.sstatic.net/wDnd8.png?s=256",
-      "display_name" : "CommonsWare",
-      "link" : "https://stackoverflow.com/users/115145/commonsware"
-    },
-    "creation_date" : 1760303219,
+    "creation_date" : 1760974378,
     "content_license" : "CC BY-SA 4.0"
   } ],
-  "answer_comments" : {
-    "79788925" : [ {
-      "comment_id" : 140864158,
-      "post_id" : 79788925,
-      "body" : "5) If the requirement is resilience, not UI  The long-running work belongs in:  - a ForegroundService  - or WorkManager with constraints, backoff policy, retries    Apps aren’t allowed to self-revive after crashes anymore. The architecture must shift long-running operations into system-managed components instead of Activities.",
-      "score" : 0,
-      "owner" : {
-        "account_id" : 44637181,
-        "reputation" : 9,
-        "user_id" : 31856923,
-        "user_type" : "registered",
-        "profile_image" : "https://www.gravatar.com/avatar/d63993b4aeeccdc2fb437008782cbf8c?s=256&d=identicon&r=PG&f=y&so-version=2",
-        "display_name" : "Kajol Shah",
-        "link" : "https://stackoverflow.com/users/31856923/kajol-shah"
-      },
-      "creation_date" : 1763637567,
-      "content_license" : "CC BY-SA 4.0"
-    }, {
-      "comment_id" : 140864156,
-      "post_id" : 79788925,
-      "body" : "@KajolShah If you need reliability after unexpected termination, the correct pattern is:    1) Move long-running logic to a foreground service  Use startForegroundService() + notification.    2)Handle exceptions inside your service  Wrap logic in a supervisor coroutine/job so the process doesn’t crash.    3) Use WorkManager for scheduled / retryable work  WorkManager can automatically retry if the process dies.    4) Don’t rely on “restart after crash” hacks  Broadcast receivers like BOOT_COMPLETED or using AlarmManager to “restart the app” won’t help during normal runtime crashes.",
-      "score" : 0,
-      "owner" : {
-        "account_id" : 44637181,
-        "reputation" : 9,
-        "user_id" : 31856923,
-        "user_type" : "registered",
-        "profile_image" : "https://www.gravatar.com/avatar/d63993b4aeeccdc2fb437008782cbf8c?s=256&d=identicon&r=PG&f=y&so-version=2",
-        "display_name" : "Kajol Shah",
-        "link" : "https://stackoverflow.com/users/31856923/kajol-shah"
-      },
-      "creation_date" : 1763637525,
-      "content_license" : "CC BY-SA 4.0"
-    }, {
-      "comment_id" : 140864154,
-      "post_id" : 79788925,
-      "body" : "An Android app cannot automatically “restart itself” after an exception the way a backend service does. If your app throws an uncaught exception → the process is killed → the OS may recreate your last Activity, but there’s no guarantee.",
-      "score" : 0,
-      "owner" : {
-        "account_id" : 44637181,
-        "reputation" : 9,
-        "user_id" : 31856923,
-        "user_type" : "registered",
-        "profile_image" : "https://www.gravatar.com/avatar/d63993b4aeeccdc2fb437008782cbf8c?s=256&d=identicon&r=PG&f=y&so-version=2",
-        "display_name" : "Kajol Shah",
-        "link" : "https://stackoverflow.com/users/31856923/kajol-shah"
-      },
-      "creation_date" : 1763637497,
-      "content_license" : "CC BY-SA 4.0"
-    }, {
-      "comment_id" : 140793881,
-      "post_id" : 79788925,
-      "body" : "I don&#39;t understand what you&#39;re asking, but that&#39;s not how Android works.  Nothing in the state of an app is changed by the charging state.  You&#39;re just incorrect in some assumptions there by so much I don&#39;t know how to guide you on what is the problem.",
-      "score" : 0,
-      "owner" : {
-        "account_id" : 1790714,
-        "reputation" : 94752,
-        "user_id" : 1631193,
-        "user_type" : "registered",
-        "accept_rate" : 71,
-        "profile_image" : "https://www.gravatar.com/avatar/ac9dfee58394495fa69f12f58a928be3?s=256&d=identicon&r=PG&f=y&so-version=2",
-        "display_name" : "Gabe Sechan",
-        "link" : "https://stackoverflow.com/users/1631193/gabe-sechan"
-      },
-      "creation_date" : 1760397259,
-      "content_license" : "CC BY-SA 4.0"
-    }, {
-      "comment_id" : 140793612,
-      "post_id" : 79788925,
-      "body" : "It only needs to run Java, but why does it run in the background only when it is connected to the power cable? Is there any way to allow it to work when the battery is not being charged?",
-      "score" : 0,
-      "owner" : {
-        "account_id" : 6539163,
-        "reputation" : 50,
-        "user_id" : 5057436,
-        "user_type" : "registered",
-        "profile_image" : "https://i.sstatic.net/cWhBv.jpg?s=256",
-        "display_name" : "Lucas",
-        "link" : "https://stackoverflow.com/users/5057436/lucas"
-      },
-      "creation_date" : 1760384478,
-      "content_license" : "CC BY-SA 4.0"
-    }, {
-      "comment_id" : 140793184,
-      "post_id" : 79788925,
-      "body" : "@Lucas In general, just because architecture A works on PC doesn&#39;t mean its appropriate for mobile.  Different world, different needs.  You need to rearchitect as appropriate",
-      "score" : 0,
-      "owner" : {
-        "account_id" : 1790714,
-        "reputation" : 94752,
-        "user_id" : 1631193,
-        "user_type" : "registered",
-        "accept_rate" : 71,
-        "profile_image" : "https://www.gravatar.com/avatar/ac9dfee58394495fa69f12f58a928be3?s=256&d=identicon&r=PG&f=y&so-version=2",
-        "display_name" : "Gabe Sechan",
-        "link" : "https://stackoverflow.com/users/1631193/gabe-sechan"
-      },
-      "creation_date" : 1760369514,
-      "content_license" : "CC BY-SA 4.0"
-    }, {
-      "comment_id" : 140793182,
-      "post_id" : 79788925,
-      "body" : "@Lucas It uses push messaging via FCM <a href=\"https://firebase.google.com/docs/cloud-messaging\" rel=\"nofollow noreferrer\">firebase.google.com/docs/cloud-messaging</a>. Basically there&#39;s an OS level process that listens to messages from a server.  Any app that wants to send a push to a device will send a message to that server, which will forward it on to your device.  That OS level process will look for an app that is set ot recieve those messages, which will have a BroadcastReceiver associated with it.  That BroadcastReceiver will be launched and passed the message.  So the app isn&#39;t running, it&#39;s started on need.  There is a single OS level process running for all apps",
-      "score" : 1,
-      "owner" : {
-        "account_id" : 1790714,
-        "reputation" : 94752,
-        "user_id" : 1631193,
-        "user_type" : "registered",
-        "accept_rate" : 71,
-        "profile_image" : "https://www.gravatar.com/avatar/ac9dfee58394495fa69f12f58a928be3?s=256&d=identicon&r=PG&f=y&so-version=2",
-        "display_name" : "Gabe Sechan",
-        "link" : "https://stackoverflow.com/users/1631193/gabe-sechan"
-      },
-      "creation_date" : 1760369423,
-      "content_license" : "CC BY-SA 4.0"
-    }, {
-      "comment_id" : 140793144,
-      "post_id" : 79788925,
-      "body" : "It is already working for Windows and Linux, and it is also working for Android, except when it is in the background. The user will be informed about the energy consumption; it is just a matter of safety to keep the process active while it is in the background, so that the phone is not exposed when hosting a server. Perhaps I should ask, for example, how WhatsApp receives messages from the internet while the app is in the background?",
-      "score" : 0,
-      "owner" : {
-        "account_id" : 6539163,
-        "reputation" : 50,
-        "user_id" : 5057436,
-        "user_type" : "registered",
-        "profile_image" : "https://i.sstatic.net/cWhBv.jpg?s=256",
-        "display_name" : "Lucas",
-        "link" : "https://stackoverflow.com/users/5057436/lucas"
-      },
-      "creation_date" : 1760367643,
-      "content_license" : "CC BY-SA 4.0"
-    } ]
-  }
+  "answer_comments" : { }
 }

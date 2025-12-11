@@ -1,82 +1,46 @@
 {
   "question" : {
-    "question_id" : 79755224,
-    "title" : "How to perform a non-blocking &#39;fire-and-forget&#39; database update alongside a main transaction in Quarkus?",
-    "body" : "<p>I'm working on a Quarkus project using Mutiny and Hibernate Reactive Panache. In one of my API endpoints, I need to perform three concurrent database operations: one query and two updates.</p>\n<p>My requirements are very specific:</p>\n<ol>\n<li><strong>Main Transaction:</strong> A database query (<code>doSelect1</code>) and one of the database updates (<code>doUpdate1</code>) must execute together. Both must succeed for the transaction to be considered successful.</li>\n<li><strong>Immediate Response:</strong> Upon the successful completion of <code>doSelect1</code> and <code>doUpdate1</code>, the API should immediately return the result of the <code>doSelect1</code> query to the client.</li>\n<li><strong>Fire-and-Forget Update:</strong> Concurrently, a second database update (<code>doUpdate2</code>) should be initiated. This operation should be &quot;fire-and-forget.&quot;\n<ul>\n<li>The API response <strong>should not</strong> wait for <code>doUpdate2</code> to complete.</li>\n<li>If <code>doUpdate2</code> fails, it should only log the error and <strong>must not</strong> cause the main transaction (with <code>doSelect1</code> and <code>doUpdate1</code>) to roll back or affect the API response.</li>\n</ul>\n</li>\n</ol>\n<p>Here is my current implementation using <code>Uni.combine()</code>:</p>\n<pre class=\"lang-java prettyprint-override\"><code>import io.smallrye.mutiny.Uni;\nimport io.smallrye.mutiny.tuples.Tuple3;\nimport io.quarkus.hibernate.reactive.panache.common.WithTransaction;\nimport jakarta.transaction.Transactional;\n\n// ...\n\n@WithTransaction\npublic Uni&lt;ResultVO&gt; doLogin() {\n    // I want doSelect1() and doUpdate1() to succeed together,\n    // and for the method to return as soon as they are done.\n    // doUpdate2() should run in the background without blocking the response.\n    return Uni.combine().all().unis(doSelect1(), doUpdate1(), doUpdate2().onFailure().recoverWithNull())\n              .asTuple()\n              .onItem().transform(tuple -&gt; tuple.getItem1()); // Return the result of doSelect1\n}\n\npublic Uni&lt;ResultVO&gt; doSelect1() {\n    // ... database query logic\n}\n\npublic Uni&lt;Void&gt; doUpdate1() {\n    // ... database update logic\n}\n\n\n// This should be a non-blocking, &quot;fire-and-forget&quot; operation\n// in a new transaction.\n@WithTransaction\n@Transactional(Transactional.TxType.REQUIRES_NEW) // Start a new transaction\npublic Uni&lt;Void&gt; doUpdate2() {\n    // ... another database update logic that might fail\n    // and should not affect the main flow.\n}\n</code></pre>\n<p><strong>The Problem:</strong></p>\n<p>My current code almost works. The <code>onFailure().recoverWithNull()</code> on <code>doUpdate2()</code> correctly prevents its failure from causing the entire pipeline to fail. However, the <code>Uni.combine().all()</code> part still waits for all three <code>Uni</code>s to complete before proceeding. This means the API response is blocked until <code>doUpdate2</code> finishes, which violates my &quot;fire-and-forget&quot; requirement.</p>\n<p><strong>My Question:</strong></p>\n<p>How can I properly implement this non-blocking, fire-and-forget behavior for <code>doUpdate2</code> while ensuring <code>doSelect1</code> and <code>doUpdate1</code> complete together in a transaction?</p>\n<p>I have read some documentation and it seems that <strong>SmallRye Reactive Messaging</strong> might be suitable for this kind of asynchronous, background task. Is that the recommended approach here, or is there a simpler way to achieve this using only Mutiny? For example, is there a way to subscribe to <code>doUpdate2</code> without having it be part of the blocking <code>combine</code> operation?</p>\n<p>Any guidance would be greatly appreciated. Thank you!</p>\n",
-    "tags" : [ "java", "quarkus", "reactive", "quarkus-panache" ],
+    "question_id" : 79760890,
+    "title" : "Asserting on JTable cell tooltips",
+    "body" : "<p>I want to make an assertion that my table's cell renderer component has an expected tooltip.</p>\n<p>How do I do it with AssertJ Swing?</p>\n<p>My attempt:</p>\n<pre class=\"lang-java prettyprint-override\"><code>class GuiCheckBoxCellRendererTest extends SwingTest {\n\n    JFrame frame;\n\n    @AfterEach\n    void tearDown() {\n        runAndWait(frame::dispose);\n    }\n\n    @Test\n    void getTableCellRendererComponent_givenValue_returnsExpectedCheckBox() {\n        String tooltip = &quot;Some tooltip&quot;;\n        CheckBoxCellRenderer renderer = callAndWait(() -&gt; CheckBoxCellRenderer.from(tooltip));\n        DefaultTableModel tableModel = callAndWait(() -&gt; new DefaultTableModel(new Object[][]{{1, &quot;Alex&quot;}}, new String[]{&quot;Status&quot;, &quot;Name&quot;}));\n        table = callAndWait(() -&gt; new JTable(tableModel));\n        runAndWait(() -&gt; table.setDefaultRenderer(Object.class, renderer));\n        frame = createFrame(table);\n        robot.showWindow(frame);\n        robot.focusAndWaitForFocusGain(frame);\n        assumeThat(callAndWait(frame::isVisible)).isTrue();\n        assumeThat(callAndWait(frame::isShowing)).isTrue();\n        assumeThat(callAndWait(table::isVisible)).isTrue();\n        assumeThat(callAndWait(table::isShowing)).isTrue();\n        JTableFixture tableFixture = new JTableFixture(robot, table);\n        \n        tableFixture.cell(TableCell.row(0).column(0)).select();\n        robot.waitForIdle();\n        tableFixture.requireToolTip(tooltip); // requires tooltip for the entire table, apparently\n    }\n\n    JFrame createFrame(JComponent component) {\n        return callAndWait(() -&gt; {\n            JFrame frame = new JFrame();\n            JScrollPane scrollPane = new JScrollPane(component);\n            scrollPane.setPreferredSize(new Dimension(200, 150));\n            frame.add(scrollPane);\n            frame.pack();\n            return frame;\n        });\n    }\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>import javax.swing.JCheckBox;\nimport javax.swing.JTable;\nimport javax.swing.table.DefaultTableCellRenderer;\nimport java.awt.Color;\nimport java.awt.Component;\nimport java.util.function.Function;\n\npublic class CheckBoxCellRenderer extends DefaultTableCellRenderer {\n\n    private final JCheckBox checkBox;\n    private final Function&lt;Boolean, String&gt; tooltipFunction;\n\n    private CheckBoxCellRenderer(Function&lt;Boolean, String&gt; tooltipFunction) {\n        this.checkBox = new JCheckBox();\n        this.tooltipFunction = tooltipFunction;\n        this.checkBox.setToolTipText(tooltipFunction.apply(checkBox.isSelected()));\n    }\n\n    public static CheckBoxCellRenderer from(String tooltip) {\n        return from(selected -&gt; tooltip);\n    }\n\n    public static CheckBoxCellRenderer from(Function&lt;Boolean, String&gt; tooltipFunction) {\n        return new CheckBoxCellRenderer(tooltipFunction);\n    }\n\n    @Override\n    public Component getTableCellRendererComponent(JTable table, Object value,\n                                                   boolean isSelected, boolean hasFocus, int row, int column) {\n        checkBox.setSelected(value instanceof Number &amp;&amp; ((Number) value),intValue() == 1);\n        checkBox.setToolTipText(tooltipFunction.apply(checkBox.isSelected()));\n        return checkBox;\n    }\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>import org.assertj.swing.core.Robot;\nimport org.assertj.swing.edt.FailOnThreadViolationRepaintManager;\nimport org.assertj.swing.edt.GuiActionRunner;\nimport org.assertj.swing.edt.GuiQuery;\nimport org.assertj.swing.edt.GuiTask;\nimport org.junit.jupiter.api.AfterAll;\nimport org.junit.jupiter.api.AfterEach;\nimport org.junit.jupiter.api.BeforeAll;\nimport org.junit.jupiter.api.BeforeEach;\n\nimport javax.swing.SwingUtilities;\n\npublic abstract class SwingTest {\n\n    protected Robot robot;\n\n    @BeforeAll\n    static void superSetUpOnce() {\n        FailOnThreadViolationRepaintManager.install();\n    }\n\n    @AfterAll\n    static void superTearDownOnce() {\n        FailOnThreadViolationRepaintManager.uninstall();\n    }\n\n    @BeforeEach\n    void superSetUp() {\n        robot = BasicRobot.robotWithCurrentAwtHierarchy();\n    }\n\n    @AfterEach\n    void superTearDown() {\n        robot.cleanUp();\n    }\n\n    protected static void runLater(Runnable edtRunnable) {\n        SwingUtilities.invokeLater(() -&gt; {\n            try {\n                edtRunnable.run();\n            } catch (Throwable e) {\n                throw new RuntimeException(e);\n            }\n        });\n    }\n\n    protected static void runAndWait(Runnable edtRunnable) {\n        GuiActionRunner.execute(new GuiTask() {\n            @Override\n            protected void executeInEDT() throws Throwable {\n                edtRunnable.run();\n            }\n        });\n    }\n\n    protected static &lt;T&gt; T callAndWait(Callable&lt;T&gt; edtCallable) {\n        return GuiActionRunner.execute(new GuiQuery&lt;T&gt;() {\n            @Override\n            protected T executeInEDT() throws Throwable {\n                return edtCallable.call();\n            }\n        });\n    }\n}\n</code></pre>\n<pre><code>java.lang.AssertionError: [javax.swing.JTable[name=null, rowCount=1, columnCount=1, enabled=true, visible=true, showing=true] - property:'toolTipText'] \nExpecting:\n null\nto match pattern:\n &quot;Some tooltip&quot;\n</code></pre>\n",
+    "tags" : [ "java", "swing", "assertj-swing" ],
     "owner" : {
-      "account_id" : 31520100,
-      "reputation" : 3,
-      "user_id" : 24341334,
+      "account_id" : 10187542,
+      "reputation" : 2683,
+      "user_id" : 20692967,
       "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/98aef94899de3846e062023378d26916?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "tiga",
-      "link" : "https://stackoverflow.com/users/24341334/tiga"
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
     },
     "is_answered" : true,
-    "view_count" : 112,
-    "answer_count" : 2,
+    "view_count" : 90,
+    "answer_count" : 1,
     "score" : 0,
-    "last_activity_date" : 1756975024,
-    "creation_date" : 1756952180,
-    "link" : "https://stackoverflow.com/questions/79755224/how-to-perform-a-non-blocking-fire-and-forget-database-update-alongside-a-main",
+    "last_activity_date" : 1760457992,
+    "creation_date" : 1757509431,
+    "link" : "https://stackoverflow.com/questions/79760890/asserting-on-jtable-cell-tooltips",
     "content_license" : "CC BY-SA 4.0"
   },
   "answers" : [ {
-    "answer_id" : 79755319,
-    "question_id" : 79755224,
-    "body" : "<p>You can move the update logic to a different helper class and  just use @async and make it non blocking.</p>\n<p>I know its simple and straightforward, but please let me know the issue you faced here</p>\n",
+    "answer_id" : 79790381,
+    "question_id" : 79760890,
+    "body" : "<p>Your code seems to assume that <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.desktop/javax/swing/JComponent.html#getToolTipText()\" rel=\"nofollow noreferrer\"><code>getToolTipText()</code></a> will provide the tooltip of the currently selected cell but this is not the case. When Swing is going to display a tooltip, it will invoke the method <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.desktop/javax/swing/JComponent.html#getToolTipText(java.awt.event.MouseEvent)\" rel=\"nofollow noreferrer\"><code>getToolTipText(MouseEvent event)</code></a> which delegates to the <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.desktop/javax/swing/JComponent.html#getToolTipText()\" rel=\"nofollow noreferrer\"><code>getToolTipText()</code></a> method by default and still does in case of a <code>JTable</code> when there’s no location specific tooltip. But to get the cell specific tooltip provided by the cell renderer you have to use the method with a mouse event parameter.</p>\n<p>You don’t need a special framework to test this. The following code will verify that the renderer for the first cell provides the configured tooltip:</p>\n<pre class=\"lang-java prettyprint-override\"><code>String tooltip = &quot;Some tooltip&quot;;\nCheckBoxCellRenderer renderer = CheckBoxCellRenderer.from(tooltip);\n\nDefaultTableModel tableModel = new DefaultTableModel(\n    new Object[][]{{1, &quot;Alex&quot;}}, new String[]{&quot;Status&quot;, &quot;Name&quot;});\nJTable table = new JTable(tableModel);\ntable.setDefaultRenderer(Object.class, renderer);\n\nRectangle cell = table.getCellRect(0, 0, false);\nString actualTooltip = table.getToolTipText(new MouseEvent(table,\n    MouseEvent.MOUSE_MOVED, System.currentTimeMillis(), 0,\n    cell.x, cell.y, 0, false));\n\nassert actualTooltip.equals(tooltip);\n</code></pre>\n<hr />\n<p>As a side note, your <code>CheckBoxCellRenderer</code> does not use any of the functionality inherited from <code>DefaultTableCellRenderer</code> so it should not extend it but rather just implement the <code>TableCellRenderer</code> interface.</p>\n",
     "score" : 1,
     "is_accepted" : false,
     "owner" : {
-      "account_id" : 38077386,
-      "reputation" : 106,
-      "user_id" : 28582581,
+      "account_id" : 3211603,
+      "reputation" : 300981,
+      "user_id" : 2711488,
       "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/1290181c8be3c97ffa01c4ac59488c65?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "Vamsi Krishna",
-      "link" : "https://stackoverflow.com/users/28582581/vamsi-krishna"
+      "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+      "display_name" : "Holger",
+      "link" : "https://stackoverflow.com/users/2711488/holger"
     },
-    "creation_date" : 1756964854,
-    "last_activity_date" : 1756964854,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "answer_id" : 79755453,
-    "question_id" : 79755224,
-    "body" : "<p>I can't really answer your main question, but <a href=\"https://stackoverflow.com/a/76520504/6692043\">https://stackoverflow.com/a/76520504/6692043</a> seems to be what you are after.</p>\n<p>EDIT: Though I'm told <a href=\"https://hibernate.org/reactive/documentation/4.1/reference/html_single/#_sessions_and_vert_x_contexts\" rel=\"nofollow noreferrer\">running parallel operations on the same Hibernate Reactive session is a big no-no</a>, so you might want to use something like <code>doSelect1().then(doUpdate1())</code> (or whatever the correct syntax is in Mutiny) rather than <code>Uni.combine().all(...)</code>.</p>\n<p>That being said, there is more.</p>\n<p><code>@Transactional(Transactional.TxType.REQUIRES_NEW)</code> on reactive methods is incorrect. Right now it most likely is ignored, or just performs some pointless work.\nSee <a href=\"https://quarkus.io/guides/hibernate-reactive-panache#transactions\" rel=\"nofollow noreferrer\">https://quarkus.io/guides/hibernate-reactive-panache#transactions</a></p>\n<p>I think <code>@WithTransaction</code> will by default behave like &quot;REQUIRES_NEW&quot;. But... it reuses the surrounding session, which is really not good in your case: a Hibernate ORM/Reactive session cannot be used after a failure, which you indicate could happen in <code>doUpdate2</code>.</p>\n<p>What you really need is a new transaction <em>and</em> a new session.</p>\n<p>I do not think that's possible with Panache, unfortunately. But... When using &quot;plain&quot; Hibernate Reactive, though you can always start another transaction/session explicitly:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Inject\nMutiny.SessionFactory sessionFactory;\n\n\n// This should be a non-blocking, &quot;fire-and-forget&quot; operation\n// in a new transaction.\npublic Uni&lt;Void&gt; doUpdate2() {\n    return sessionFactory.withTransaction(session -&gt; { // the given session is guaranteed to be a new one\n\n        // ... another database update logic that might fail\n        // and should not affect the main flow.\n    });\n}\n</code></pre>\n<p>Note I am aware the experience is not awesome here, we have plans to improve it: <a href=\"https://github.com/quarkusio/quarkus/issues/47698\" rel=\"nofollow noreferrer\">https://github.com/quarkusio/quarkus/issues/47698</a></p>\n",
-    "score" : 1,
-    "is_accepted" : true,
-    "owner" : {
-      "account_id" : 8974783,
-      "reputation" : 10107,
-      "user_id" : 6692043,
-      "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/3673815784047b7e0673677a0bc7dde0?s=256&d=identicon&r=PG",
-      "display_name" : "yrodiere",
-      "link" : "https://stackoverflow.com/users/6692043/yrodiere"
-    },
-    "creation_date" : 1756974473,
-    "last_activity_date" : 1756975024,
+    "creation_date" : 1760457992,
+    "last_activity_date" : 1760457992,
     "content_license" : "CC BY-SA 4.0"
   } ],
   "question_comments" : [ ],
-  "answer_comments" : {
-    "79755319" : [ {
-      "comment_id" : 140721311,
-      "post_id" : 79755319,
-      "body" : "In my Quarkus version (3.20.2.2), it seems there is no @async annotation. Do I need to add any dependencies?",
-      "score" : 0,
-      "owner" : {
-        "account_id" : 31520100,
-        "reputation" : 3,
-        "user_id" : 24341334,
-        "user_type" : "registered",
-        "profile_image" : "https://www.gravatar.com/avatar/98aef94899de3846e062023378d26916?s=256&d=identicon&r=PG&f=y&so-version=2",
-        "display_name" : "tiga",
-        "link" : "https://stackoverflow.com/users/24341334/tiga"
-      },
-      "creation_date" : 1757318740,
-      "content_license" : "CC BY-SA 4.0"
-    } ]
-  }
+  "answer_comments" : { }
 }

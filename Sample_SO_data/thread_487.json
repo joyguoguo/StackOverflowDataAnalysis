@@ -1,114 +1,135 @@
 {
   "question" : {
-    "question_id" : 79794432,
-    "title" : "dataproc serverless slow consume kafka topic",
-    "body" : "<p>I use dataproc serverless with java API to read kafka topic. The topic has only 2 partitions.\nThe topic receives 200 msg/sec.\nAfter reading messages I repartition to 100, transform the data then write to BQ.\nSince I repartition I see two stages one with 2 tasks to read data and a second one with 10 that transforms and writes the data.\nWhen having\nstreaming.max.offsets.per.trigger=500\nstreaming.min.offsets.per.trigger=100\nThe task of reading is varying a lot in time between 7sec and 1min50.\nWhile the task that transforms an dwrites data takes around 10 sec.\nAny idea about why it's taking too much time to read data and how to optimize the code ?</p>\n<pre><code>Dataset&lt;Row&gt; dfr = spark\n                .readStream()\n                .format(&quot;org.apache.spark.sql.kafka010.KafkaSourceProvider&quot;)\n                .option(&quot;kafka.bootstrap.servers&quot;, kafkaServers)\n                .option(&quot;kafka.sasl.kerberos.service.name&quot;, &quot;kafka&quot;)\n                .option(&quot;kafka.sasl.mechanism&quot;, &quot;GSSAPI&quot;)\n                .option(&quot;kafka.security.protocol&quot;, &quot;SASL_SSL&quot;)\n                .option(&quot;kafka.ssl.truststore.location&quot;, trustStoreName)\n                .option(&quot;kafka.ssl.truststore.password&quot;, truststorePassword)\n                .option(&quot;kafka.ssl.truststore.type&quot;, &quot;JKS&quot;)\n                .option(&quot;startingOffsets&quot;, &quot;latest&quot;)\n                .option(&quot;kafka.max.partition.fetch.bytes&quot;, &quot;209715200&quot;)  // 200MB per partition\n                .option(&quot;kafka.fetch.max.bytes&quot;, &quot;1048576000&quot;)            // 1000MB total\n                .option(&quot;subscribe&quot;, kafkaTopic)\n                .option(&quot;maxOffsetsPerTrigger&quot;, maxOffsets)\n                .option(&quot;minOffsetsPerTrigger&quot;, minOffsets)\n                .option(&quot;failOnDataLoss&quot;, &quot;false&quot;)\n                .option(&quot;kafka.request.timeout.ms&quot;, 300000)\n                .option(&quot;kafka.session.timeout.ms&quot;, 60000)\n                .load();\n\n        Dataset&lt;Row&gt; dfr2 = dfr.selectExpr(\n                &quot;CAST(topic as STRING) as topic&quot;, &quot;CAST(key AS STRING) AS key&quot;,\n                &quot;CAST(value AS STRING) AS xml&quot;,\n                &quot;timestamp&quot;, &quot;partition&quot;, &quot;offset&quot;).repartition(10);\n\n        StructType outSchema = new StructType()\n                .add(&quot;key&quot;, DataTypes.StringType)\n                .add(&quot;topic&quot;, DataTypes.StringType)\n                .add(&quot;partition&quot;, DataTypes.IntegerType)\n                .add(&quot;offset&quot;, DataTypes.LongType)\n                .add(&quot;JSON_COL&quot;, DataTypes.StringType)\n                .add(&quot;DAT_MAJ_DWH&quot;, DataTypes.StringType);\n\n        // Create proper encoder - cast the result to Encoder&lt;Row&gt;\n        Encoder&lt;Row&gt; encoder = Encoders.row(outSchema);\n\n        Dataset&lt;Row&gt; jsonified = dfr2.mapPartitions(\n                (MapPartitionsFunction&lt;Row, Row&gt;) (Iterator&lt;Row&gt; it) -&gt; {\n                    List&lt;Row&gt; out = new ArrayList&lt;&gt;();\n                    DocumentBuilder builder = XML_BUILDER.get();\n                    while (it.hasNext()) {\n                        Row r = it.next();\n                        String topic = r.getString(0);\n                        String key = r.getString(1);\n                        String xml = r.getString(2);\n                        int part = r.getInt(4);\n                        long offset = r.getLong(5);\n                        String json = null;\n                        try {\n                            builder.reset();\n                            // Pass the XML string, not the Document\n                            json = BusMessageXmlJson.toJson(xml);\n                        } catch (Exception ex) {\n                            System.err.println(&quot;XML parse error partition=&quot; + part +\n                                                       &quot; offset=&quot; + offset + &quot; msg=&quot; + ex.getMessage());\n                        }\n                        String ts = r.getTimestamp(3).toInstant().toString();\n                        out.add(RowFactory.create(key, topic, part, offset, json, ts));\n                    }\n                    return out.iterator();\n                },\n                encoder\n        ).withColumn(\n                &quot;DAT_MAJ_DWH&quot;,\n                date_format(to_timestamp(col(&quot;DAT_MAJ_DWH&quot;)), &quot;yyyy-MM-dd'T'HH:mm:ss.SSSSSS&quot;)\n        ).select(&quot;key&quot;,&quot;topic&quot;,&quot;partition&quot;,&quot;offset&quot;,&quot;JSON_COL&quot;,&quot;DAT_MAJ_DWH&quot;);\n\n\n        StreamingQuery query = jsonified\n                .writeStream()\n                .queryName(&quot;spark-sdh-ndc-streaming-query&quot;)\n                .foreachBatch((batchDF, batchId) -&gt; {\n\n                    // Write this batch to BigQuery using batch API\n                    batchDF.select(&quot;JSON_COL&quot;, &quot;DAT_MAJ_DWH&quot;).write()\n                            .format(&quot;bigquery&quot;)\n                            .option(&quot;temporaryGcsBucket&quot;, tempBucket)\n                            .option(&quot;table&quot;, bigQueryTable)\n                            .option(&quot;createDisposition&quot;, &quot;CREATE_IF_NEEDED&quot;)\n                            .option(&quot;intermediateFormat&quot;, &quot;avro&quot;)\n                            .option(&quot;writeMethod&quot;, &quot;indirect&quot;)\n                            .option(&quot;allowFieldAddition&quot;, &quot;true&quot;)\n                            .option(&quot;allowFieldRelaxation&quot;, &quot;true&quot;)\n                            .mode(SaveMode.Append)\n                            .save();\n\n                    // 2. Commit offsets to Kafka AFTER successful write\n                    commitOffsetsToKafka(batchDF, kafkaServers, trustStoreName, truststorePassword, consumerGroup);\n\n                    System.out.println(&quot;Batch &quot; + batchId + &quot; written successfully&quot;);\n                })\n                .option(&quot;checkpointLocation&quot;, checkpointPath)\n                .trigger(Trigger.ProcessingTime(triggerInterval))\n                .start();\n        System.out.println(&quot;Streaming query started successfully!&quot;);\n        System.out.println(&quot;Query ID: &quot; + query.id());\n        System.out.println(&quot;Waiting for termination... (Ctrl+C to stop)&quot;);\n\n        query.awaitTermination();\n</code></pre>\n<p><a href=\"https://i.sstatic.net/eSgG6zvI.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/eSgG6zvI.png\" alt=\"enter image description here\" /></a></p>\n",
-    "tags" : [ "java", "apache-spark", "spark-structured-streaming", "dataproc" ],
+    "question_id" : 79800345,
+    "title" : "Expanding Spring Modulith tracing tags",
+    "body" : "<p>I am using Spring Modulith 2.0.0-M3 with Spring Boot 4.0.0-RC1. I have enabled zipkin tracing export and I can see that Spring Modulith adds a <code>module.key</code> and <code>module.method</code> tags to the trace.</p>\n<p>I would like to expand this with two more high-cardinality tags: bean name and class name of the invoked methods. I can see that Modulith has a package-private implementation: <code>DefaultModulithObservationConvention</code> which seems like something I want to extend to add these 2 new tags.</p>\n<p>I can copy/paste the default implementation and add these 2 tags, but that seems like a bad way to go and I cannot find any documentation for this.</p>\n<p>Is there a better way to add these 2 tags?</p>\n",
+    "tags" : [ "java", "spring-boot", "spring-modulith" ],
     "owner" : {
-      "account_id" : 7999012,
-      "reputation" : 926,
-      "user_id" : 6034446,
+      "account_id" : 6886800,
+      "reputation" : 1129,
+      "user_id" : 5291611,
       "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/eee81eb4f64c8211d5a40f2a8ff968ca?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "firsni",
-      "link" : "https://stackoverflow.com/users/6034446/firsni"
+      "accept_rate" : 96,
+      "profile_image" : "https://www.gravatar.com/avatar/21e356690b1071eb3f81ce47cc14c84b?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "alturkovic",
+      "link" : "https://stackoverflow.com/users/5291611/alturkovic"
     },
-    "is_answered" : false,
-    "view_count" : 83,
-    "answer_count" : 1,
-    "score" : 0,
-    "last_activity_date" : 1762251013,
-    "creation_date" : 1760898609,
-    "link" : "https://stackoverflow.com/questions/79794432/dataproc-serverless-slow-consume-kafka-topic",
+    "is_answered" : true,
+    "view_count" : 204,
+    "answer_count" : 2,
+    "score" : 1,
+    "last_activity_date" : 1762521568,
+    "creation_date" : 1761517883,
+    "link" : "https://stackoverflow.com/questions/79800345/expanding-spring-modulith-tracing-tags",
     "content_license" : "CC BY-SA 4.0"
   },
   "answers" : [ {
-    "answer_id" : 79807550,
-    "question_id" : 79794432,
-    "body" : "<p>I think removing <code>streaming.min.offsets.per.trigger=100</code> or keeping it less than 80 since you have 80msg/sec would ensure tasks do not wait to reach 100msg to read per batch and read right at next batch time. Also, you can try <code>minPartitions</code> (you can play around with the value. Giving around 1.5-2 times the no.of partitions to start with) config  which can help create more parallel tasks to read per partition.</p>\n",
+    "answer_id" : 79812086,
+    "question_id" : 79800345,
+    "body" : "<p>Perhaps you use reflection to avoid copy/pasta?</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Bean\nModulithObservationConvention modulithObservationConvention() throws Exception {\n    Class&lt;?&gt; type = Class.forName(&quot;org.springframework.modulith.observability.support.DefaultModulithObservationConvention&quot;);\n    type.setAccessible(true);\n    Constructor constructor = type.getDeclaredConstructor();\n    constructor.setAccessible(true);\n    ModulithObservationConvention delegate = (ModulithObservationConvention) constructor.newInstance();\n    return new ModulithObservationConvention {\n        @Override\n        public boolean supportsContext(Observation.Context context) {\n            return delegate.supportsContext(context);\n        }\n\n        @Override\n        public String getName() {\n            return delegate.getName();\n        }\n\n        @Override\n        public KeyValues getLowCardinalityKeyValues(ModulithObservationContext context) {\n            return delegate.getLowCardinalityKeyValues(context);\n        }\n\n        @Override\n        public KeyValues getHighCardinalityKeyValues(ModulithObservationContext context) {\n            KeyValues delegateKvs = delegate.getHighCardinalityKeyValues(context);\n            KeyValues customKvs = KeyValues.of(\n                &quot;bean.name&quot;, &quot;sample&quot;,\n                &quot;class.name&quot;, &quot;foo.bar.Sample&quot;\n            );\n            return KeyValues.concat(delegateKvs, customKvs); \n        }\n    };\n}\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 1096470,
+      "reputation" : 29414,
+      "user_id" : 1089967,
+      "user_type" : "registered",
+      "accept_rate" : 59,
+      "profile_image" : "https://www.gravatar.com/avatar/1f256b904ff621d678598d8fa49f86c5?s=256&d=identicon&r=PG",
+      "display_name" : "lance-java",
+      "link" : "https://stackoverflow.com/users/1089967/lance-java"
+    },
+    "creation_date" : 1762504502,
+    "last_activity_date" : 1762521568,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79810171,
+    "question_id" : 79800345,
+    "body" : "<p>You can’t extend <code>DefaultModulithObservationConvention</code>, it’s <strong>package-private</strong> by design.\nThe proper way is to define your own <code>ObservationConvention&lt;ModulithObservationContext&gt;</code> bean.\nSpring Modulith will automatically use it instead of the internal default.</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Bean\nObservationConvention&lt;ModulithObservationContext&gt; modulithObservationConvention() {\n    return new ObservationConvention&lt;&gt;() {\n        @Override\n        public boolean supportsContext(Observation.Context context) {\n            return context instanceof ModulithObservationContext;\n        }\n\n        @Override\n        public String getName() {\n            return &quot;modulith.observation&quot;;\n        }\n\n        @Override\n        public KeyValues getLowCardinalityKeyValues(ModulithObservationContext context) {\n            return KeyValues.of(\n                &quot;module.key&quot;, context.getModule().getName(),\n                &quot;module.method&quot;, context.getMethod().getName()\n            );\n        }\n\n        @Override\n        public KeyValues getHighCardinalityKeyValues(ModulithObservationContext context) {\n            return KeyValues.of(\n                &quot;bean.name&quot;, context.getBean().getClass().getSimpleName(),\n                &quot;class.name&quot;, context.getMethod().getDeclaringClass().getName()\n            );\n        }\n    };\n}\n</code></pre>\n<p>This replaces the built-in convention and lets you add any extra tags (<code>bean.name</code>, <code>class.name</code>, etc.)\nNo internal classes need to be copied or modified.</p>\n<p><strong>In short:</strong> register your own <code>ObservationConvention&lt;ModulithObservationContext&gt;</code> bean : it safely overrides the default and gives you full control over trace tags.</p>\n",
     "score" : 0,
     "is_accepted" : false,
     "owner" : {
-      "account_id" : 1383279,
-      "reputation" : 1511,
-      "user_id" : 1315833,
+      "account_id" : 12972904,
+      "reputation" : 890,
+      "user_id" : 9377995,
       "user_type" : "registered",
-      "accept_rate" : 80,
-      "profile_image" : "https://www.gravatar.com/avatar/00485e9b12c3818ec67071c2bb197a10?s=256&d=identicon&r=PG",
-      "display_name" : "Vindhya G",
-      "link" : "https://stackoverflow.com/users/1315833/vindhya-g"
+      "profile_image" : "https://i.sstatic.net/Hl13jffO.png?s=256",
+      "display_name" : "gdoura mohamed",
+      "link" : "https://stackoverflow.com/users/9377995/gdoura-mohamed"
     },
-    "creation_date" : 1762145926,
-    "last_activity_date" : 1762145926,
+    "creation_date" : 1762351650,
+    "last_activity_date" : 1762351650,
     "content_license" : "CC BY-SA 4.0"
   } ],
   "question_comments" : [ ],
   "answer_comments" : {
-    "79807550" : [ {
-      "comment_id" : 140855214,
-      "post_id" : 79807550,
-      "body" : "okay so the time 7 sec to 1 min 50 sec is without repartition?",
+    "79812086" : [ {
+      "comment_id" : 140841691,
+      "post_id" : 79812086,
+      "body" : "@alturkovic Its&#39; a dirty hack for sure.... I won&#39;t tell if you don&#39;t :)",
       "score" : 0,
       "owner" : {
-        "account_id" : 1383279,
-        "reputation" : 1511,
-        "user_id" : 1315833,
+        "account_id" : 1096470,
+        "reputation" : 29414,
+        "user_id" : 1089967,
         "user_type" : "registered",
-        "accept_rate" : 80,
-        "profile_image" : "https://www.gravatar.com/avatar/00485e9b12c3818ec67071c2bb197a10?s=256&d=identicon&r=PG",
-        "display_name" : "Vindhya G",
-        "link" : "https://stackoverflow.com/users/1315833/vindhya-g"
+        "accept_rate" : 59,
+        "profile_image" : "https://www.gravatar.com/avatar/1f256b904ff621d678598d8fa49f86c5?s=256&d=identicon&r=PG",
+        "display_name" : "lance-java",
+        "link" : "https://stackoverflow.com/users/1089967/lance-java"
       },
-      "creation_date" : 1763179313,
+      "creation_date" : 1762514663,
       "content_license" : "CC BY-SA 4.0"
     }, {
-      "comment_id" : 140850006,
-      "post_id" : 79807550,
-      "body" : "I did the repartition in order to split the stage of reading from transformation so that I figure out which is taking time. But I plan to remove it in prod.",
+      "comment_id" : 140841675,
+      "post_id" : 79812086,
+      "body" : "That would work, but... :D I was hoping for a better support in the framework itself, but thanks for the suggestion, will keep it in mind",
       "score" : 0,
       "owner" : {
-        "account_id" : 7999012,
-        "reputation" : 926,
-        "user_id" : 6034446,
+        "account_id" : 6886800,
+        "reputation" : 1129,
+        "user_id" : 5291611,
         "user_type" : "registered",
-        "profile_image" : "https://www.gravatar.com/avatar/eee81eb4f64c8211d5a40f2a8ff968ca?s=256&d=identicon&r=PG&f=y&so-version=2",
-        "display_name" : "firsni",
-        "link" : "https://stackoverflow.com/users/6034446/firsni"
+        "accept_rate" : 96,
+        "profile_image" : "https://www.gravatar.com/avatar/21e356690b1071eb3f81ce47cc14c84b?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "alturkovic",
+        "link" : "https://stackoverflow.com/users/5291611/alturkovic"
       },
-      "creation_date" : 1762939152,
+      "creation_date" : 1762514082,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79810171" : [ {
+      "comment_id" : 140840727,
+      "post_id" : 79810171,
+      "body" : "This does not match the default implementation at all. There is no support for <code>EventListener</code> or the <code>module.invocation-type</code> tag and the <code>module.method</code> is a high-cardinality tag in that implementation. Of course I could do it like this and that is exactly what I said I DO NOT want to do in my question. I want to add 2 more tags without compromising on the default behavior.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 6886800,
+        "reputation" : 1129,
+        "user_id" : 5291611,
+        "user_type" : "registered",
+        "accept_rate" : 96,
+        "profile_image" : "https://www.gravatar.com/avatar/21e356690b1071eb3f81ce47cc14c84b?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "alturkovic",
+        "link" : "https://stackoverflow.com/users/5291611/alturkovic"
+      },
+      "creation_date" : 1762459656,
       "content_license" : "CC BY-SA 4.0"
     }, {
-      "comment_id" : 140837036,
-      "post_id" : 79807550,
-      "body" : "As far as I have seen bottlenecks are mostly in dataproc than kafka unless kafka is overloaded with less partitions &amp; storage. I see you do repartitions right after reading which are handled by the same tasks that reads from kafka to do shuffle write.  It does some aggregations within the partitions before it ends. So repartition could be the bottleneck. You can try removing it and see if the read becomes faster. Usually Spark handles partitions well on its own. Is there any particular reason you are using repartition? Also Spark UI can help. Timelines of tasks scheduled, streaming metrics etc",
-      "score" : 0,
+      "comment_id" : 140839379,
+      "post_id" : 79810171,
+      "body" : "Did you generate this answer?",
+      "score" : 2,
       "owner" : {
-        "account_id" : 1383279,
-        "reputation" : 1511,
-        "user_id" : 1315833,
+        "account_id" : 17592368,
+        "reputation" : 19777,
+        "user_id" : 12763954,
         "user_type" : "registered",
-        "accept_rate" : 80,
-        "profile_image" : "https://www.gravatar.com/avatar/00485e9b12c3818ec67071c2bb197a10?s=256&d=identicon&r=PG",
-        "display_name" : "Vindhya G",
-        "link" : "https://stackoverflow.com/users/1315833/vindhya-g"
+        "profile_image" : "https://lh6.googleusercontent.com/-uYTsiw1bQ_o/AAAAAAAAAAI/AAAAAAAAAAA/ACHi3rev-nenZRronqGEJxeFQWww3ShBnQ/s256-rj/photo.jpg",
+        "display_name" : "Olivier",
+        "link" : "https://stackoverflow.com/users/12763954/olivier"
       },
-      "creation_date" : 1762313766,
-      "content_license" : "CC BY-SA 4.0"
-    }, {
-      "comment_id" : 140836205,
-      "post_id" : 79807550,
-      "body" : "Thx for your response actually it&#39;s more than 80 msg/sec one topic is 200 msg/sec and second 2000 msg/sec. I tried the minPartitions it made things better but not enough. how do you think I can figure out if the problem is on kafka side or dataproc side ?",
-      "score" : 0,
-      "owner" : {
-        "account_id" : 7999012,
-        "reputation" : 926,
-        "user_id" : 6034446,
-        "user_type" : "registered",
-        "profile_image" : "https://www.gravatar.com/avatar/eee81eb4f64c8211d5a40f2a8ff968ca?s=256&d=identicon&r=PG&f=y&so-version=2",
-        "display_name" : "firsni",
-        "link" : "https://stackoverflow.com/users/6034446/firsni"
-      },
-      "creation_date" : 1762275355,
+      "creation_date" : 1762414892,
       "content_license" : "CC BY-SA 4.0"
     } ]
   }

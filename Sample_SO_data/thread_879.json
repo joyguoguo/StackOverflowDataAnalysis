@@ -1,62 +1,384 @@
 {
   "question" : {
-    "question_id" : 79758144,
-    "title" : "How to override Spring Batch Step ExitStatus when ItemReader.read() throws an exception?",
-    "body" : "<h3>Problem</h3>\n<p>When my <code>ItemReader.read()</code> throws an exception, the step is marked <code>FAILED</code>.\nIn my <code>afterStep</code> listener I try to override it with:</p>\n<pre class=\"lang-java prettyprint-override\"><code>stepExecution.setStatus(BatchStatus.COMPLETED);\nstepExecution.setExitStatus(ExitStatus.COMPLETED);\n</code></pre>\n<p>This makes the step show as <code>COMPLETED</code> in the repository, but in the job flow the <code>JobExecutionDecider</code> still receives the original <code>FAILED</code> <code>ExitStatus</code>.</p>\n<p>How can I make the overridden <code>ExitStatus</code> propagate correctly so that flow transitions (<code>on(&quot;*&quot;)</code>, <code>decider</code>, etc.) see <code>COMPLETED</code> instead of <code>FAILED</code>?</p>\n<p>I’m experimenting with Spring Batch and trying to override the exit status of a step when the <code>ItemReader.read()</code> method fails.</p>\n<p>Here’s the test I have:</p>\n<pre><code>package com.mdp.mayaanonymizationengine;\n\nimport com.mdp.mayaanonymizationengine.core.AbstractDatabaseProperty;\nimport com.mdp.mayaanonymizationengine.core.IntegrationTest;\nimport lombok.extern.slf4j.Slf4j;\nimport org.junit.jupiter.api.Test;\nimport org.springframework.batch.core.*;\nimport org.springframework.batch.core.job.builder.JobBuilder;\nimport org.springframework.batch.core.job.flow.FlowExecutionStatus;\nimport org.springframework.batch.core.job.flow.JobExecutionDecider;\nimport org.springframework.batch.core.launch.JobLauncher;\nimport org.springframework.batch.core.repository.JobRepository;\nimport org.springframework.batch.core.step.builder.StepBuilder;\nimport org.springframework.batch.item.ExecutionContext;\nimport org.springframework.batch.item.ItemReader;\nimport org.springframework.batch.item.ItemStream;\nimport org.springframework.batch.item.ItemStreamException;\nimport org.springframework.beans.factory.annotation.Autowired;\nimport org.springframework.transaction.PlatformTransactionManager;\n\n@Slf4j\n@IntegrationTest\nclass BatchTest extends AbstractDatabaseProperty {\n\n    @Autowired\n    private JobLauncher jobLauncher;\n\n    @Autowired\n    private PlatformTransactionManager transactionManager;\n\n    @Autowired\n    private JobRepository jobRepository;\n\n    @Test\n    void testStepFailureOverriddenToCompleted() throws Exception {\n        jobLauncher.run(\n                testJob(jobRepository, transactionManager),\n                new JobParameters()\n        );\n    }\n\n    public Job testJob(JobRepository jobRepository,\n                       PlatformTransactionManager transactionManager) {\n        return new JobBuilder(&quot;testJob&quot;, jobRepository)\n                .start(failingStep(jobRepository, transactionManager))\n                .on(&quot;*&quot;).to(decider())\n                .end()\n                .build();\n    }\n\n    public Step failingStep(JobRepository jobRepository,\n                            PlatformTransactionManager transactionManager) {\n        return new StepBuilder(&quot;failingStep&quot;, jobRepository)\n                .&lt;String, String&gt;chunk(1, transactionManager)\n                .reader(new TestBatchReader())\n                .writer(items -&gt; {\n                    // no-op\n                })\n                .listener(new StepExecutionListener() {\n                    @Override\n                    public void beforeStep(StepExecution stepExecution) { }\n\n                    @Override\n                    public ExitStatus afterStep(StepExecution stepExecution) {\n                        System.out.println(&quot;afterStep called, overriding status to COMPLETED&quot;);\n\n                        // Force batch + exit status\n                        stepExecution.setStatus(BatchStatus.COMPLETED);\n                        stepExecution.setExitStatus(ExitStatus.COMPLETED);\n\n                        return ExitStatus.COMPLETED;\n                    }\n                })\n                .build();\n    }\n\n    public JobExecutionDecider decider() {\n        return (JobExecution jobExecution, StepExecution stepExecution) -&gt; {\n            System.out.println(&quot;Decider saw exit status: &quot; + stepExecution.getExitStatus());\n            return FlowExecutionStatus.COMPLETED;\n        };\n    }\n\n    static class TestBatchReader implements ItemReader&lt;String&gt;, ItemStream {\n        @Override\n        public void open(ExecutionContext executionContext) throws ItemStreamException {\n            log.info(&quot;Reader open called&quot;);\n        }\n\n        @Override\n        public String read() {\n            throw new RuntimeException(&quot;Simulated reader failure!&quot;);\n        }\n    }\n}\n\n</code></pre>\n<p>What happens</p>\n<ul>\n<li><p>The reader throws a <code>RuntimeException</code>.</p>\n</li>\n<li><p>The step listener’s <code>afterStep</code> callback sets both <code>BatchStatus</code> and <code>ExitStatus</code> to <code>COMPLETED</code>.</p>\n</li>\n<li><p>In the logs, the job finishes with <code>BatchStatus=COMPLETED</code>, as expected.</p>\n</li>\n<li><p>But the <code>JobExecutionDecider</code> still sees <code>ExitStatus=FAILED;exitDescription=...</code> from the exception.</p>\n</li>\n</ul>\n<p>My question</p>\n<ul>\n<li><p>How can I reliably override the <code>ExitStatus</code> of a step when <code>ItemReader.read()</code> (or similar methods like <code>process</code> / <code>write</code>) throws an exception, so that both:</p>\n</li>\n<li><p>The persisted step status is updated, and</p>\n</li>\n<li><p>Flow transitions (<code>JobExecutionDecider, on(&quot;...&quot;)</code> mappings, etc.) also see the overridden exit status?</p>\n</li>\n</ul>\n<p>Is there a way to make the <code>decider</code> see my overridden <code>ExitStatus</code>, or do I need to handle this earlier than <code>afterStep</code>?</p>\n",
-    "tags" : [ "java", "spring", "spring-boot", "spring-batch" ],
+    "question_id" : 79763692,
+    "title" : "Why does the compareTo method throw an exception?",
+    "body" : "<pre class=\"lang-java prettyprint-override\"><code>// File: Employee.java\n\npublic class Employee implements Comparable {\n    public Integer salary;\n    public int compareTo(Object e) {\n        Employee other = (Employee) e;\n        return Integer.compare(salary, other.salary);\n    }\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>// File: Manager.java\npublic class Manager extends Employee {\n    public Integer salary;\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>// File: Main.java, Contains the main method\npublic class Main {\n    public static void main(String[] args) {\n        Manager m = new Manager();\n        Employee e_ = new Employee();\n\n        m.salary = 0;\n        e_.salary = 1;\n\n        System.out.println(e_.compareTo(m));\n        // System.out.println(e.compareTo(m));\n    }\n}\n</code></pre>\n<p>Can anyone explain to me why I am getting this error? I have initialised <code>m.salary = 0</code>  and <code>e_.salary = 1</code> after creating objects of the <code>Manager</code> and <code>Employee</code> classes, which should set the instance fields in each Manager and Employee object to 0 and 1, respectively.</p>\n",
+    "tags" : [ "java", "nullpointerexception" ],
     "owner" : {
-      "account_id" : 43831550,
-      "reputation" : 1,
-      "user_id" : 31438709,
+      "account_id" : 42072374,
+      "reputation" : 71,
+      "user_id" : 30580675,
       "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/648ca4684e9116b68a2e04ba398e100c?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "Nipun Kumar",
-      "link" : "https://stackoverflow.com/users/31438709/nipun-kumar"
+      "profile_image" : "https://www.gravatar.com/avatar/84ff1e961ded0b144ff1e4c90de2c8dd?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "0xChaitanya",
+      "link" : "https://stackoverflow.com/users/30580675/0xchaitanya"
     },
-    "is_answered" : false,
-    "view_count" : 87,
-    "answer_count" : 0,
-    "score" : 0,
-    "last_activity_date" : 1757252115,
-    "creation_date" : 1757252115,
-    "link" : "https://stackoverflow.com/questions/79758144/how-to-override-spring-batch-step-exitstatus-when-itemreader-read-throws-an-ex",
+    "is_answered" : true,
+    "view_count" : 317,
+    "answer_count" : 4,
+    "score" : 2,
+    "last_activity_date" : 1759739590,
+    "creation_date" : 1757763838,
+    "link" : "https://stackoverflow.com/questions/79763692/why-does-the-compareto-method-throw-an-exception",
     "content_license" : "CC BY-SA 4.0"
   },
-  "answers" : [ ],
-  "question_comments" : [ {
-    "comment_id" : 140720299,
-    "post_id" : 79758144,
-    "body" : "Alternatively, define appropriate handling for the resulting failure, instead of <i>post hoc</i> trying to convert it into a completion.",
-    "score" : 1,
+  "answers" : [ {
+    "answer_id" : 79763696,
+    "question_id" : 79763692,
+    "body" : "<p>There is no such thing as &quot;variable overriding&quot; in Java. The <code>Manager</code> class's <code>salary</code> member is <strong>hiding</strong> the member from the <code>Employee</code> class. For the variable <code>m</code>, you initialize the <code>Manager.salary</code> member, but the <code>compareTo</code> method refers to the <code>Employee.salary</code> member, which is <code>null</code>.\nIn short, drop the <code>Manager.salary</code> member, and you should be fine:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class Manager extends Employee {\n}\n</code></pre>\n<p>As a side note, since Java 5, the <a href=\"https://download.java.net/java/early_access/jdk25/docs/api/java.base/java/lang/Comparable.html\" rel=\"noreferrer\"><code>Comparable</code></a> interface has been made generic. You can save some casting boilerplate (and gain some compile-time safety) by defining your <code>Employee</code> as <code>Comparable&lt;Employee&gt;</code>:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class Employee implements Comparable&lt;Employee&gt; {\n    public Integer salary;\n    @Override\n    public int compareTo(Employee e) {\n        return Integer.compare(salary, e.salary);\n    }\n}\n</code></pre>\n",
+    "score" : 13,
+    "is_accepted" : false,
     "owner" : {
-      "account_id" : 2792262,
-      "reputation" : 190712,
-      "user_id" : 2402272,
+      "account_id" : 2818342,
+      "reputation" : 315967,
+      "user_id" : 2422776,
       "user_type" : "registered",
-      "accept_rate" : 85,
-      "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
-      "display_name" : "John Bollinger",
-      "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+      "profile_image" : "https://www.gravatar.com/avatar/2353050223ebecb113741c29458de4b2?s=256&d=identicon&r=PG",
+      "display_name" : "Mureinik",
+      "link" : "https://stackoverflow.com/users/2422776/mureinik"
     },
-    "creation_date" : 1757259240,
+    "creation_date" : 1757764163,
+    "last_activity_date" : 1757796455,
     "content_license" : "CC BY-SA 4.0"
   }, {
-    "comment_id" : 140720194,
-    "post_id" : 79758144,
-    "body" : "This seems like an XY question.  If your <code>ItemReader</code> can internally generate exceptions that should not be fatal to the step then surely the appropriate thing to do is <i>catch</i> them inside that component so that they don&#39;t propagate outward in the first place.  And if an exception is thrown that you did not anticipate and allow (by catching it), then surely failing the step is the right response for the batch processor to exhibit.",
-    "score" : 2,
+    "answer_id" : 79763695,
+    "question_id" : 79763692,
+    "body" : "<p>The problem is that you're declaring two separate fields - one in <code>Employee</code> and one in <code>Manager</code>. They've got the same name, but they're still separate fields. So each instance of <code>Manager</code> has two fields. (I'd personally encourage you not to use public fields at all, but that's a slightly separate matter.)</p>\n<p>Let's make a very slight change to your code, just renaming those two fields so that it's clear what you're referring to in each case:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class Employee implements Comparable{\n    public Integer employeeSalary;\n    public int compareTo(Object e){\n        Employee other = (Employee) e;\n        return Integer.compare(employeeSalary, other.employeeSalary);\n    }\n}\n\npublic class Manager extends Employee{\n    public Integer managerSalary;\n}\n</code></pre>\n<p>Then your <code>Main</code> class is <em>equivalent</em> to:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class Main{\n    public static void main(String[] args){\n        Manager m = new Manager();\n        Employee e_ = new Employee();\n\n        m.managerSalary = 0;\n        e_.employeeSalary = 1;\n\n        System.out.println(e_.compareTo(m));\n        // System.out.println(e.compareTo(m));\n    }\n}\n</code></pre>\n<p>Note how you're specifying <code>m.managerSalary</code> - but <code>m.employeeSalary</code> is still null.</p>\n<p>Now when you call <code>e_.compareTo(m)</code>, it's effectively calling <code>Integer.compare(e_.employeeSalary, m.employeeSalary)</code> - so it's passing <code>null</code> as the second argument. That tries to unbox both <code>Integer</code> values to <code>int</code> (as the signature is <code>Integer.compare(int, int)</code>) which causes the exception.</p>\n<p>Going back to your original code, if you <em>just</em> remove the <code>salary</code> field from <code>Manager</code>, letting it just inherit the existing <code>salary</code> field without creating a second field with the same name, the exception will go away. (Although the use of <code>Integer</code> rather than <code>int</code> suggests that <code>null</code> is a valid value - so you should handle that in <code>compareTo</code> anyway...)</p>\n",
+    "score" : 9,
+    "is_accepted" : false,
     "owner" : {
-      "account_id" : 2792262,
-      "reputation" : 190712,
-      "user_id" : 2402272,
+      "account_id" : 11683,
+      "reputation" : 1520862,
+      "user_id" : 22656,
       "user_type" : "registered",
-      "accept_rate" : 85,
-      "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
-      "display_name" : "John Bollinger",
-      "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+      "accept_rate" : 86,
+      "profile_image" : "https://www.gravatar.com/avatar/6d8ebb117e8d83d74ea95fbdd0f87e13?s=256&d=identicon&r=PG",
+      "display_name" : "Jon Skeet",
+      "link" : "https://stackoverflow.com/users/22656/jon-skeet"
     },
-    "creation_date" : 1757253778,
+    "creation_date" : 1757764142,
+    "last_activity_date" : 1757764142,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79763729,
+    "question_id" : 79763692,
+    "body" : "<p>You define</p>\n<pre><code>public Integer salary;\n</code></pre>\n<p>both for your <code>Employee</code> <code>class</code> which <code>implements IComparable</code> and has a <code>compareTo</code> method as well as the <code>Manager</code> <code>class</code> that <code>extends Employee</code>. Your <code>compareTo</code> method:</p>\n<pre><code>    public int compareTo(Object e){\n        Employee other = (Employee) e;\n        return Integer.compare(salary, other.salary);\n    }\n</code></pre>\n<p>gets an <code>Object e</code>, converts it to <code>Employee</code> and compares <code>salary</code> with <code>other.salary</code>, where <code>other</code> is the converted object. When you do</p>\n<pre><code>        Manager m = new Manager();\n        Employee e_ = new Employee();\n\n        m.salary = 0;\n        e_.salary = 1;\n\n        System.out.println(e_.compareTo(m));\n</code></pre>\n<p>you:</p>\n<ul>\n<li>instantiate <code>m</code> as a <code>new Manager()</code></li>\n<li>instantiate <code>e_</code> as a <code>new Employee()</code></li>\n<li>sets the <code>salary</code> of <code>m</code> to 0 (that is the <code>salary</code> member of the <code>Manager</code>, not of the <code>Employee</code>, so the <code>salary</code> of <code>Employee</code>, the base class will be uninitialized, whereas the <code>salary</code> of <code>Manager</code> which shadows the <code>salary</code> of <code>Employee</code> is the one you initialized)</li>\n<li>sets the <code>salary</code> of <code>e_</code> to 1</li>\n<li>passes <code>m</code> to <code>e_.compareTo</code></li>\n<li>internally, <code>e_compareTo</code>:\n<ul>\n<li>converts the object that you passed to <code>Employee</code></li>\n<li>so its <code>salary</code> is the base class's uninitialized <code>salary</code> instead of the subclass's initialized <code>salary</code></li>\n<li>hence you get the error</li>\n</ul>\n</li>\n</ul>\n<p>The solution is the following:</p>\n<h1>1. Don't shadow members in your subclass</h1>\n<p>Inside</p>\n<pre><code>// File: Manager.java\npublic class Manager extends Employee{\n    public Integer salary;\n}\n</code></pre>\n<p>the <code>salary</code> is completely useless, as you already have a <code>salary</code> in the base class and you can use it perfectly fine. So you will need to remove it:</p>\n<pre><code>// File: Manager.java\npublic class Manager extends Employee{\n}\n</code></pre>\n<h1>2. Avoid scattering value assignments</h1>\n<pre><code>public Integer salary;\n</code></pre>\n<p>is bad design. You allow thusly to change the value of this field outside the boundaries of the class and you lose control and track on what may happen to it. Instead, <a href=\"https://stackoverflow.com/q/215497/642706\">make it <code>protected</code></a> and have a getter and setter:</p>\n<pre><code>protected Integer salary;\n\npublic Integer getSalary() {\n    return salary;\n}\n\npublic void setSalary(Integer salary) {\n    this.salary = salary;\n}\n</code></pre>\n<p>The reason is that getting and setting the value may become less simple in the future and you may have some validations you want to run each time you set the value, log when the value is being reached to, etc. etc., depending on your future needs.</p>\n<h1>3. Refactor the way you set and get your variable</h1>\n<pre><code>// File: Main.java, Contains the main method\npublic class Main{\n    public static void main(String[] args){\n        Manager m = new Manager();\n        Employee e_ = new Employee();\n\n        m.setSalary(0);\n        e_.setSalary(1);\n\n        System.out.println(e_.compareTo(m));\n        // System.out.println(e.compareTo(m));\n    }\n}\n</code></pre>\n<p>and</p>\n<pre><code>// File: Employee.java\n\npublic class Employee implements Comparable{\n    public Integer salary;\n    public int compareTo(Object e){\n        Employee other = (Employee) e;\n        return (\n            (this.getSalary() == null) ||\n            (other == null)\n        ) ?\n        0 : // unknown\n        this.getSalary().compareTo( other.getSalary() );\n    }\n}\n</code></pre>\n",
+    "score" : 2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 194308,
+      "reputation" : 80465,
+      "user_id" : 436560,
+      "user_type" : "registered",
+      "accept_rate" : 87,
+      "profile_image" : "https://i.sstatic.net/2GESV.jpg?s=256",
+      "display_name" : "Lajos Arpad",
+      "link" : "https://stackoverflow.com/users/436560/lajos-arpad"
+    },
+    "creation_date" : 1757768976,
+    "last_activity_date" : 1757791822,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79763948,
+    "question_id" : 79763692,
+    "body" : "<p>First read the very good <a href=\"https://stackoverflow.com/a/79763695/642706\">Answer by Jon Skeet</a>, the <a href=\"https://stackoverflow.com/a/79763696/642706\">Answer by Mureinik</a>, and the <a href=\"https://stackoverflow.com/a/79763729/642706\">Answer by Lajos Arpad</a>. Then we can flesh-out their fixes to make a fully working example.</p>\n<p>As those Answers noted, you repeated your <code>salary</code> field across both superclass and subclass. Doing so is unnecessary and problematic. The subclass inherits from the superclass its <code>public</code>, <code>protected</code>, and possibly no-scope-modifier fields, as discussed <a href=\"https://stackoverflow.com/q/215497/642706\">here</a>. So the subclass should be as follows.</p>\n<p>Also, by default the subclass implicitly calls the superclass's no-argument constructor (<code>super()</code>). So we need a constructor in subclass that calls our superclass’ constructor with arguments.</p>\n<pre class=\"lang-java prettyprint-override\"><code>public final class Manager extends Employee\n{\n    public Manager ( final String theName , final Integer theSalary )\n    {\n        super( theName , theSalary );\n    }\n}\n</code></pre>\n<p>I trust the <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/util/Comparator.html#comparing(java.util.function.Function)\" rel=\"nofollow noreferrer\"><code>Comparator.comparing</code></a> methods more than I trust my own lousy code. So I did not implement the details of <code>Comparable</code> myself. Instead, I defined a static constant to hold a <code>private static final Comparator</code> instance. I define the comparator with a brief <a href=\"https://docs.oracle.com/javase/tutorial/java/javaOO/methodreferences.html\" rel=\"nofollow noreferrer\">method reference</a>, referring to our getter accessor method.</p>\n<pre><code>private static final Comparator &lt; Employee &gt; COMPARATOR = \n    Comparator\n        .comparing( Employee :: salary )\n        .thenComparing( Employee :: name );\n</code></pre>\n<p>You asked to compare salary. We should add a second criterion as well, to further sort when salary values are duplicated. I added a criterion of <code>Employee :: name</code>.</p>\n<p>Modern Java offers <a href=\"https://openjdk.org/jeps/409\" rel=\"nofollow noreferrer\">sealed classes/interfaces</a>. This feature restricts which other classes or interfaces may extend/implement them. So I marked <code>Employee</code> as <code>sealed</code> with <code>permits Manager</code>. And I marked <code>Manager</code> as <code>final</code>.</p>\n<p>By the way, you may or may not want to use the JavaBeans convention of prefixing accessor methods with <code>get…</code>/<code>set…</code>. I prefer not to prefix unless required by some framework.</p>\n<p>Resulting <code>Employee</code> class code:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public sealed class Employee\n        implements Comparable &lt; Employee &gt;\n        permits Manager\n{\n    // Statics\n    private static final Comparator &lt; Employee &gt; COMPARATOR = \n        Comparator\n            .comparing( Employee :: salary )\n            .thenComparing( Employee :: name );\n\n    // Fields.\n    protected String name;\n    protected Integer salary;  // Make `protected` rather than `private` to allow access by subclasses.\n\n    // Constructors.\n    public Employee ( final String theName , final Integer theSalary )\n    {\n        // Validate inputs.\n        Objects.requireNonNull( theName );\n        if ( theName.isBlank() ) throw new IllegalArgumentException( &quot;Invalid name string: &quot; + theName );\n        Objects.requireNonNull( theSalary );\n        if ( theSalary &lt; 0 ) throw new IllegalArgumentException( &quot;Invalid salary: &quot; + theSalary );\n        // Assign fields.\n        this.name = theName;\n        this.salary = theSalary;\n    }\n\n    // Accessors.\n    public String name ( ) { return this.name; }\n    public Integer salary ( ) { return this.salary; }\n\n    // Implement `Comparable`.\n    @Override\n    public int compareTo ( final Employee other ) { return Employee.COMPARATOR.compare( this , other ); }\n\n    // `Object` overrides.\n    @Override\n    public boolean equals ( final Object o )\n    {\n        if ( o == null || getClass() != o.getClass() ) return false;\n        final Employee employee = ( Employee ) o;\n        return  Objects.equals( salary , employee.salary ) &amp;&amp; Objects.equals( name , employee.name ) ;\n    }\n\n    @Override\n    public int hashCode ( ) { return Objects.hash( salary , name ); }\n\n    @Override\n    public String toString ( )\n    {\n        return &quot;Employee{&quot; +\n                &quot;name='&quot; + name + '\\'' +\n                &quot;, salary=&quot; + salary +\n                '}';\n    }\n}\n</code></pre>\n<p>Example usage:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class App\n{\n    static void main ( )\n    {\n        SequencedSet &lt; Employee &gt; workers =\n                new TreeSet &lt;&gt;(\n                        List.of(\n                                new Manager( &quot;Alice&quot; , 20 ) ,\n                                new Employee( &quot;Bob&quot; , 10 ) ,\n                                new Employee( &quot;Carol&quot; , 30 ) ,\n                                new Employee( &quot;Davis&quot; , 10 ) ,\n                                new Employee( &quot;Erin&quot; , 50 )\n                        )\n                );\n        workers.forEach( IO :: println );\n    }\n}\n</code></pre>\n<p>When run:</p>\n<pre class=\"lang-none prettyprint-override\"><code>Employee{name='Bob', salary=10}\nEmployee{name='Davis', salary=10}\nEmployee{name='Alice', salary=20}\nEmployee{name='Carol', salary=30}\nEmployee{name='Erin', salary=50}\n</code></pre>\n<p>For the opposite direction, descending rather than ascending, add a call to <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/util/Comparator.html#reversed()\" rel=\"nofollow noreferrer\"><code>Comparator#reversed</code></a> when initializing the constant <code>Comparator</code>.</p>\n<hr />\n<p>That code above was written for Java 25+. If using earlier Java, you may need to change a few things. This might include: Swap out <code>IO</code> for <code>System.out</code>, and swap out <code>SequencedSet</code> for <code>NavigableSet</code>. And you might need to add <code>public</code> to <code>static void main</code>. And remove <code>sealed</code>/<code>permits</code>.</p>\n<hr />\n<p>In real work I would likely use <a href=\"https://jspecify.dev/\" rel=\"nofollow noreferrer\"><em>JSpecify</em></a> nullability annotations. And I would likely use <a href=\"https://jakarta.ee/specifications/bean-validation/\" rel=\"nofollow noreferrer\"><em>Jakarta Validation</em></a> to validate state.</p>\n",
+    "score" : 2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 322981,
+      "reputation" : 346951,
+      "user_id" : 642706,
+      "user_type" : "registered",
+      "accept_rate" : 58,
+      "profile_image" : "https://i.sstatic.net/ZWEI3.jpg?s=256",
+      "display_name" : "Basil Bourque",
+      "link" : "https://stackoverflow.com/users/642706/basil-bourque"
+    },
+    "creation_date" : 1757794798,
+    "last_activity_date" : 1757830219,
     "content_license" : "CC BY-SA 4.0"
   } ],
-  "answer_comments" : { }
+  "question_comments" : [ {
+    "comment_id" : 140734609,
+    "post_id" : 79763692,
+    "body" : "If an empoyee always has a salary (also when it may be 0), you should definitely prefer a primitive <code>int</code> over an <code>Integer</code>reference. The latter introduces a needless risk of a <code>NullPointerException</code>. As you have seen. Also I recommend constructors with arguments so you are sure that you always set the fields when instantiating objects.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7612423,
+      "reputation" : 87400,
+      "user_id" : 5772882,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Anonymous",
+      "link" : "https://stackoverflow.com/users/5772882/anonymous"
+    },
+    "creation_date" : 1757836589,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140733963,
+    "post_id" : 79763692,
+    "body" : "less memory, (slightly) faster, ... is sure depends on your use case, on data model, but if you don&#39;t need it to be an <code>Object</code>, then better use <code>int</code>, especially if doing calculations with it",
+    "score" : 3,
+    "owner" : {
+      "account_id" : 31180,
+      "reputation" : 29752,
+      "user_id" : 85421,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/kKvXH.gif?s=256",
+      "display_name" : "user85421",
+      "link" : "https://stackoverflow.com/users/85421/user85421"
+    },
+    "creation_date" : 1757787705,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140733959,
+    "post_id" : 79763692,
+    "body" : "@user85421 Sorry, I didn&#39;t know that compare takes primitive int as arguments. But, is there a reason to prefer int over Integer?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 42072374,
+      "reputation" : 71,
+      "user_id" : 30580675,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/84ff1e961ded0b144ff1e4c90de2c8dd?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "0xChaitanya",
+      "link" : "https://stackoverflow.com/users/30580675/0xchaitanya"
+    },
+    "creation_date" : 1757787300,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140733703,
+    "post_id" : 79763692,
+    "body" : "Also note that using raw types is strongly discouraged (like in <code>class Employee implements Comparable{</code>)",
+    "score" : 3,
+    "owner" : {
+      "account_id" : 31180,
+      "reputation" : 29752,
+      "user_id" : 85421,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/kKvXH.gif?s=256",
+      "display_name" : "user85421",
+      "link" : "https://stackoverflow.com/users/85421/user85421"
+    },
+    "creation_date" : 1757775679,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140733700,
+    "post_id" : 79763692,
+    "body" : "why are you using the static <code>Integer.compare(int, int)</code>, that takes two primitive <code>int</code>, to compare <code>Integer</code>; instead of using <code>Integer.compareTo((Integer)</code> which compares the wrapper <code>Integer</code>? Actually, why are you using <code>Integer</code> instead of primitive <code>int</code> at all??",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 31180,
+      "reputation" : 29752,
+      "user_id" : 85421,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/kKvXH.gif?s=256",
+      "display_name" : "user85421",
+      "link" : "https://stackoverflow.com/users/85421/user85421"
+    },
+    "creation_date" : 1757775449,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140733518,
+    "post_id" : 79763692,
+    "body" : "in Manager.java , remove <code>public Integer salary;</code>",
+    "score" : 3,
+    "owner" : {
+      "account_id" : 26698569,
+      "reputation" : 4070,
+      "user_id" : 20306007,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/98bbc403493aee3681b71dae7abef66e?s=256&d=identicon&r=PG",
+      "display_name" : "life888888",
+      "link" : "https://stackoverflow.com/users/20306007/life888888"
+    },
+    "creation_date" : 1757764534,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140733512,
+    "post_id" : 79763692,
+    "body" : "This question is similar to: <a href=\"https://stackoverflow.com/questions/218384/what-is-a-nullpointerexception-and-how-do-i-fix-it\">What is a NullPointerException, and how do I fix it?</a>. If you believe it’s different, please <a href=\"https://stackoverflow.com/posts/79763692/edit\">edit</a> the question, make it clear how it’s different and/or how the answers on that question are not helpful for your problem.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 108033,
+      "reputation" : 20099,
+      "user_id" : 286934,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f16a184d26b72795ff243464d715cffe?s=256&d=identicon&r=PG",
+      "display_name" : "Progman",
+      "link" : "https://stackoverflow.com/users/286934/progman"
+    },
+    "creation_date" : 1757764197,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140733511,
+    "post_id" : 79763692,
+    "body" : "Please <a href=\"https://stackoverflow.com/posts/79763692/edit\">edit</a> your question to include the full complete error message you get, including the stack trace.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 108033,
+      "reputation" : 20099,
+      "user_id" : 286934,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f16a184d26b72795ff243464d715cffe?s=256&d=identicon&r=PG",
+      "display_name" : "Progman",
+      "link" : "https://stackoverflow.com/users/286934/progman"
+    },
+    "creation_date" : 1757764155,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79763729" : [ {
+      "comment_id" : 140733934,
+      "post_id" : 79763729,
+      "body" : "<code>Comparable</code> → <a href=\"https://docs.oracle.com/javase/specs/jls/se24/html/jls-4.html#jls-4.8-400\" rel=\"nofollow noreferrer\">JLS 4.8 Raw Types</a>: &quot;<i>The use of raw types is allowed only as a concession to compatibility of legacy code. The use of raw types in code written after the introduction of generics into the Java programming language is strongly discouraged.</i>&quot; (even back in Java 6)",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 31180,
+        "reputation" : 29752,
+        "user_id" : 85421,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/kKvXH.gif?s=256",
+        "display_name" : "user85421",
+        "link" : "https://stackoverflow.com/users/85421/user85421"
+      },
+      "creation_date" : 1757785903,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140733858,
+      "post_id" : 79763729,
+      "body" : "@BasilBourque Indeed, both of you are right, thank you for the observation.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 194308,
+        "reputation" : 80465,
+        "user_id" : 436560,
+        "user_type" : "registered",
+        "accept_rate" : 87,
+        "profile_image" : "https://i.sstatic.net/2GESV.jpg?s=256",
+        "display_name" : "Lajos Arpad",
+        "link" : "https://stackoverflow.com/users/436560/lajos-arpad"
+      },
+      "creation_date" : 1757782243,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140733855,
+      "post_id" : 79763729,
+      "body" : "@user85421 Thanks for this comment. Indeed you are right, I have not worked with Java for quite a while and took that line from the question at face value. Thanks again for your observation.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 194308,
+        "reputation" : 80465,
+        "user_id" : 436560,
+        "user_type" : "registered",
+        "accept_rate" : 87,
+        "profile_image" : "https://i.sstatic.net/2GESV.jpg?s=256",
+        "display_name" : "Lajos Arpad",
+        "link" : "https://stackoverflow.com/users/436560/lajos-arpad"
+      },
+      "creation_date" : 1757782225,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140733826,
+      "post_id" : 79763729,
+      "body" : "I think your <code>implements Comparable</code> should be a parameterized type <code>implements Comparable &lt; Employee &gt;</code> but I’m not certain. And btw, very helpful Answer you posted, well-done.",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 322981,
+        "reputation" : 346951,
+        "user_id" : 642706,
+        "user_type" : "registered",
+        "accept_rate" : 58,
+        "profile_image" : "https://i.sstatic.net/ZWEI3.jpg?s=256",
+        "display_name" : "Basil Bourque",
+        "link" : "https://stackoverflow.com/users/642706/basil-bourque"
+      },
+      "creation_date" : 1757780948,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140733707,
+      "post_id" : 79763729,
+      "body" : "static <code>Integer.compare</code> is used to compare primitive <code>int</code>, not recommended for wrapper <code>Integer</code> - actually not clear why use <code>Integer</code> at all",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 31180,
+        "reputation" : 29752,
+        "user_id" : 85421,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/kKvXH.gif?s=256",
+        "display_name" : "user85421",
+        "link" : "https://stackoverflow.com/users/85421/user85421"
+      },
+      "creation_date" : 1757776013,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79763696" : [ {
+      "comment_id" : 140734582,
+      "post_id" : 79763696,
+      "body" : "@user85421 The <code>Integer.compareTo(Integer)</code> method may be <i>marginally</i> better ... or no measurable difference.  It will depend on how the JIT compiler&#39;s optimizer deals with it. The difference between the methods is where the unboxing will occur.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 47283,
+        "reputation" : 723428,
+        "user_id" : 139985,
+        "user_type" : "registered",
+        "accept_rate" : 69,
+        "profile_image" : "https://www.gravatar.com/avatar/147c5a9cc1feec049c50da791ac7d144?s=256&d=identicon&r=PG",
+        "display_name" : "Stephen C",
+        "link" : "https://stackoverflow.com/users/139985/stephen-c"
+      },
+      "creation_date" : 1757834914,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140733715,
+      "post_id" : 79763696,
+      "body" : "actually using the static <code>Integer.compare(int, int)</code> to compare <code>Integer</code> is probably not the <i>best</i>",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 31180,
+        "reputation" : 29752,
+        "user_id" : 85421,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/kKvXH.gif?s=256",
+        "display_name" : "user85421",
+        "link" : "https://stackoverflow.com/users/85421/user85421"
+      },
+      "creation_date" : 1757776114,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140733540,
+      "post_id" : 79763696,
+      "body" : "Using <code>Integer</code> rather than <code>int</code> here could cause a null pointer exception in the <code>Integer.compare</code> unboxing if a value is null. Tricky for a beginner to understand what is happening.",
+      "score" : 3,
+      "owner" : {
+        "account_id" : 3159259,
+        "reputation" : 111552,
+        "user_id" : 2670892,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/4iPV5.png?s=256",
+        "display_name" : "greg-449",
+        "link" : "https://stackoverflow.com/users/2670892/greg-449"
+      },
+      "creation_date" : 1757765367,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79763948" : [ {
+      "comment_id" : 140734280,
+      "post_id" : 79763948,
+      "body" : "A well-written good answer. Nicely done.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 194308,
+        "reputation" : 80465,
+        "user_id" : 436560,
+        "user_type" : "registered",
+        "accept_rate" : 87,
+        "profile_image" : "https://i.sstatic.net/2GESV.jpg?s=256",
+        "display_name" : "Lajos Arpad",
+        "link" : "https://stackoverflow.com/users/436560/lajos-arpad"
+      },
+      "creation_date" : 1757804522,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
 }

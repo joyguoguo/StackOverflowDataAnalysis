@@ -1,156 +1,47 @@
 {
   "question" : {
-    "question_id" : 79833859,
-    "title" : "Mapping an entity with an embedded key",
-    "body" : "<p>There is a class with an <code>EmbeddedId</code>.</p>\n<pre><code>@Entity\n@Getter\n@Setter\n@Table(name = &quot;indicator_values&quot;)\npublic class IndicatorValue {\n\n    @EmbeddedId\n    public IndicatorValueId id;\n\n    @Column(name = &quot;value&quot;)\n    public BigDecimal value;\n\n    public IndicatorValue() {}\n\n    public IndicatorValue(\n        IndicatorValueId id,\n        BigDecimal value\n    ) {\n        this.id = id;\n        this.value = value;\n    }\n\n    // Constructor used for experimentation (invoked in the repository)\n    public IndicatorValue(\n        String categoryCode,\n        String indicatorCode,\n        BigDecimal value,\n        LocalDate effectiveDate\n    ) {\n        this.value = value;\n        this.id = new IndicatorValueId(categoryCode, indicatorCode, effectiveDate);\n    }\n\n}\n</code></pre>\n<p>Alongside it, there is an <code>@Embeddable</code> class that defines this ID.</p>\n<pre><code>@Embeddable\n@AllArgsConstructor\n@NoArgsConstructor\n@EqualsAndHashCode\n@Getter\n@Setter\npublic class IndicatorValueId implements Serializable {\n    @Column(name = &quot;category_code&quot;)\n    private String categoryCode;\n    @Column(name = &quot;indicator_code&quot;)\n    private String indicatorCode;\n    @Column(name = &quot;effective_date&quot;)\n    private LocalDate effectiveDate;\n}\n</code></pre>\n<p>And there is a repository (I’ve tried different methods to verify the result—this is not the complete list).</p>\n<pre><code>public interface IndicatorValueRepository extends JpaRepository&lt;IndicatorValue, IndicatorValueId&gt; {\n\n    @Query(&quot;&quot;&quot;\n    SELECT iv\n    FROM IndicatorValue iv\n    WHERE iv.id.indicatorCode = :indicatorCode\n      AND iv.id.effectiveDate &lt; :effectiveDate\n    ORDER BY iv.id.effectiveDate DESC\n    &quot;&quot;&quot;)\n    List&lt;IndicatorValue&gt; findByIndicatorCodeBeforeDate(\n            @Param(&quot;indicatorCode&quot;) String indicatorCode,\n            @Param(&quot;effectiveDate&quot;) LocalDate effectiveDate\n    );\n\n    @Query(&quot;&quot;&quot;\n    SELECT NEW by.vezhlivec.normsservice.entity.IndicatorValue(\n      iv.id.categoryCode,\n      iv.id.indicatorCode,\n      iv.value,\n      iv.id.effectiveDate\n      )\n    FROM IndicatorValue iv\n    WHERE iv.id.indicatorCode = :indicatorCode\n      AND iv.id.categoryCode IS NULL\n      AND iv.id.effectiveDate &lt; :effectiveDate\n    ORDER BY iv.id.effectiveDate DESC\n    &quot;&quot;&quot;)\n    List&lt;IndicatorValue&gt; findByIndicatorCodeBeforeDate1(\n            @Param(&quot;indicatorCode&quot;) String indicatorCode,\n            @Param(&quot;effectiveDate&quot;) LocalDate effectiveDate\n    );\n\n    List&lt;IndicatorValue&gt; findByIdIndicatorCode(String indicatorCode);\n\n    List&lt;IndicatorValue&gt; findByValue(BigDecimal value);\n}\n</code></pre>\n<p>The core issue is that data is retrieved correctly <strong>only</strong> when I select a specific field, use a native query, or perform mapping via a constructor (as in <code>findByIndicatorCodeBeforeDate1</code>).</p>\n<p>In all other cases—when attempting to fetch the entity or a list of entities—I either get <code>null</code> or a <code>List</code> with the correct number of elements, but every element is <code>null</code>.</p>\n<p>Even the standard <code>findById()</code> returns <code>null</code>, despite the record definitely existing in the database.</p>\n<p>Here is a test snippet from the service</p>\n<pre><code>        List&lt;IndicatorValue&gt; iv = indicatorValueRepository.findByIdIndicatorCode(&quot;worker_4th_grade_hour_rate_construction&quot;);\n        System.out.println(iv);\n        List&lt;IndicatorValue&gt; v = indicatorValueRepository.findByValue(new BigDecimal(&quot;13.02&quot;));\n        System.out.println(v);\n\n        List&lt;IndicatorValue&gt; iv1 = indicatorValueRepository\n                .findByIndicatorCodeBeforeDate(&quot;worker_4th_grade_hour_rate_construction&quot;, period.atDay(1));\n        System.out.println(iv1);\n\n        List&lt;IndicatorValue&gt; iv2 = indicatorValueRepository\n                .findByIndicatorCodeBeforeDate1(&quot;worker_4th_grade_hour_rate_construction&quot;, period.atDay(1));\n        for (IndicatorValue iv3 : iv2) {\n            log.debug(&quot;Код категории: {}, код индикатора: {}, значение: {}, дата: {}&quot;,\n                    iv3.getId().getCategoryCode(),\n                    iv3.getId().getIndicatorCode(),\n                    iv3.getValue(),\n                    iv3.getId().getEffectiveDate());\n        }\n\n        Optional&lt;IndicatorValue&gt; iv4 = indicatorValueRepository\n                .findById(new IndicatorValueId(\n                        null,\n                        &quot;worker_4th_grade_hour_rate_construction&quot;,\n                        LocalDate.of(2025, 9, 1)\n                        )\n                );\n        System.out.println(iv4.orElse(null));\n</code></pre>\n<p>and the corresponding log output.</p>\n<pre><code>2025-11-28T22:28:44.318+03:00 DEBUG 414781 --- [nio-8080-exec-2] org.hibernate.SQL                        : \n    select\n        iv1_0.category_code,\n        iv1_0.effective_date,\n        iv1_0.indicator_code,\n        iv1_0.value \n    from\n        indicator_values iv1_0 \n    where\n        iv1_0.indicator_code=?\n2025-11-28T22:28:44.323+03:00 TRACE 414781 --- [nio-8080-exec-2] org.hibernate.orm.jdbc.extract           : extracted value (1:VARCHAR) -&gt; [null]\n2025-11-28T22:28:44.324+03:00 TRACE 414781 --- [nio-8080-exec-2] org.hibernate.orm.jdbc.extract           : extracted value (1:VARCHAR) -&gt; [null]\n2025-11-28T22:28:44.324+03:00 TRACE 414781 --- [nio-8080-exec-2] org.hibernate.orm.jdbc.extract           : extracted value (1:VARCHAR) -&gt; [null]\n[null, null, null]\n2025-11-28T22:28:44.326+03:00 DEBUG 414781 --- [nio-8080-exec-2] org.hibernate.SQL                        : \n    select\n        iv1_0.category_code,\n        iv1_0.effective_date,\n        iv1_0.indicator_code,\n        iv1_0.value \n    from\n        indicator_values iv1_0 \n    where\n        iv1_0.value=?\n2025-11-28T22:28:44.327+03:00 TRACE 414781 --- [nio-8080-exec-2] org.hibernate.orm.jdbc.extract           : extracted value (1:VARCHAR) -&gt; [null]\n2025-11-28T22:28:44.327+03:00 TRACE 414781 --- [nio-8080-exec-2] org.hibernate.orm.jdbc.extract           : extracted value (1:VARCHAR) -&gt; [null]\n2025-11-28T22:28:44.327+03:00 TRACE 414781 --- [nio-8080-exec-2] org.hibernate.orm.jdbc.extract           : extracted value (1:VARCHAR) -&gt; [null]\n2025-11-28T22:28:44.327+03:00 TRACE 414781 --- [nio-8080-exec-2] org.hibernate.orm.jdbc.extract           : extracted value (1:VARCHAR) -&gt; [null]\n2025-11-28T22:28:44.327+03:00 TRACE 414781 --- [nio-8080-exec-2] org.hibernate.orm.jdbc.extract           : extracted value (1:VARCHAR) -&gt; [null]\n[null, null, null, null, null]\n2025-11-28T22:28:44.330+03:00 DEBUG 414781 --- [nio-8080-exec-2] org.hibernate.SQL                        : \n    select\n        iv1_0.category_code,\n        iv1_0.effective_date,\n        iv1_0.indicator_code,\n        iv1_0.value \n    from\n        indicator_values iv1_0 \n    where\n        iv1_0.indicator_code=? \n        and iv1_0.effective_date&lt;? \n    order by\n        iv1_0.effective_date desc\n2025-11-28T22:28:44.331+03:00 TRACE 414781 --- [nio-8080-exec-2] org.hibernate.orm.jdbc.extract           : extracted value (1:VARCHAR) -&gt; [null]\n[null]\n2025-11-28T22:28:44.333+03:00 DEBUG 414781 --- [nio-8080-exec-2] org.hibernate.SQL                        : \n    select\n        iv1_0.category_code,\n        iv1_0.indicator_code,\n        iv1_0.value,\n        iv1_0.effective_date \n    from\n        indicator_values iv1_0 \n    where\n        iv1_0.indicator_code=? \n        and iv1_0.category_code is null \n        and iv1_0.effective_date&lt;? \n    order by\n        iv1_0.effective_date desc\n2025-11-28T22:28:44.334+03:00 TRACE 414781 --- [nio-8080-exec-2] org.hibernate.orm.jdbc.extract           : extracted value (1:VARCHAR) -&gt; [null]\n2025-11-28T22:28:44.334+03:00 TRACE 414781 --- [nio-8080-exec-2] org.hibernate.orm.jdbc.extract           : extracted value (2:VARCHAR) -&gt; [worker_4th_grade_hour_rate_construction]\n2025-11-28T22:28:44.334+03:00 TRACE 414781 --- [nio-8080-exec-2] org.hibernate.orm.jdbc.extract           : extracted value (3:NUMERIC) -&gt; [13.02]\n2025-11-28T22:28:44.334+03:00 TRACE 414781 --- [nio-8080-exec-2] org.hibernate.orm.jdbc.extract           : extracted value (4:DATE) -&gt; [2024-09-01]\n2025-11-28T22:28:44.335+03:00 DEBUG 414781 --- [nio-8080-exec-2] b.v.n.s.i.u.IndicatorsUpdateService      : Код категории: null, код индикатора: worker_4th_grade_hour_rate_construction, значение: 13.02, дата: 2024-09-01\n2025-11-28T22:28:44.350+03:00 DEBUG 414781 --- [nio-8080-exec-2] org.hibernate.SQL                        : \n    select\n        iv1_0.category_code,\n        iv1_0.effective_date,\n        iv1_0.indicator_code,\n        iv1_0.value \n    from\n        indicator_values iv1_0 \n    where\n        (\n            iv1_0.category_code, iv1_0.effective_date, iv1_0.indicator_code\n        ) in ((?, ?, ?))\nnull\n</code></pre>\n",
-    "tags" : [ "java", "hibernate", "jpa", "mapping" ],
+    "question_id" : 79840739,
+    "title" : "Google Pay Decryption Failure with Tink",
+    "body" : "<p>I'm trying to integrate Google Pay in Direct Integration mode. I'm having trouble decrypting the payment data once received.</p>\n<pre><code>public static String decryptGooglePayTokenWithTink(\n            String encryptedMessage,\n            String privateKeyBase64,\n            String merchantId,\n            boolean isTestEnvironment\n    ) throws Exception {\n        // Per Google documentation:\n        // - For TEST: Use &quot;merchant:[MERCHANT ID]&quot; format\n        // - For PRODUCTION: Use &quot;merchant:[MERCHANT ID]&quot; format\n        // If merchant ID is not configured, use empty string\n        String recipientId = (merchantId != null &amp;&amp; !merchantId.trim().isEmpty()) \n                ? &quot;merchant:&quot; + merchantId \n                : &quot;&quot;;\n        \n        try {\n            // Build recipient using Tink library exactly as per Google documentation\n            PaymentMethodTokenRecipient.Builder builder = new PaymentMethodTokenRecipient.Builder();\n            \n            // Use appropriate Google signing keys manager based on environment\n            // Keys are prefetched at startup for performance\n            if (isTestEnvironment) {\n                builder.fetchSenderVerifyingKeysWith(GooglePaymentsPublicKeysManager.INSTANCE_TEST);\n            } else {\n                builder.fetchSenderVerifyingKeysWith(GooglePaymentsPublicKeysManager.INSTANCE_PRODUCTION);\n            }\n            \n            // Set recipient ID per Google documentation: &quot;merchant:[MERCHANT ID]&quot;\n            builder.recipientId(recipientId);\n            \n            // Set protocol version (ECv2 only)\n            builder.protocolVersion(&quot;ECv2&quot;);\n            \n            // Add private key as Base64-encoded PKCS8 string\n            // Can add multiple keys for graceful key rotation\n            builder.addRecipientPrivateKey(privateKeyBase64);\n            \n            // Build and unseal (decrypt and verify signatures)\n            PaymentMethodTokenRecipient recipient = builder.build();\n            return recipient.unseal(encryptedMessage);\n        } catch (Exception e) {\n            throw new IllegalArgumentException(e.getMessage(), e);\n        }\n    }\n</code></pre>\n<p>This fails. I have added my Public Key on <a href=\"https://pay.google.com/\" rel=\"nofollow noreferrer\">https://pay.google.com/</a> under the Direct Integration. And I'm trying on TEST mode. The <code>unseal</code> method throws an error.</p>\n<p>Error Log:</p>\n<blockquote>\n<p>Caused by: javax.crypto.AEADBadTagException: Tag mismatch!    at\njava.base/com.sun.crypto.provider.GaloisCounterMode$GCMDecrypt.doFinal(GaloisCounterMode.java:1395)\nat\njava.base/com.sun.crypto.provider.GaloisCounterMode.engineDoFinal(GaloisCounterMode.java:406)\nat java.base/javax.crypto.Cipher.doFinal(Cipher.java:2205)  at\nio.apptizer.payments.util.GooglePayECv2Util.decryptGooglePayPayload(GooglePayECv2Util.java:231)\n... 73 common frames omitted</p>\n</blockquote>\n<p>What could be causing the issue?</p>\n<p>Edit:\nOn the Google Pay Console, my added Public Key is on &quot;Inactive&quot; status. I don't see any option to bring it to Active status.</p>\n",
+    "tags" : [ "java", "google-play" ],
     "owner" : {
-      "account_id" : 35681406,
-      "reputation" : 1,
-      "user_id" : 31969879,
+      "account_id" : 2510127,
+      "reputation" : 5232,
+      "user_id" : 2182809,
       "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/6955aa5fb9ec877d76cf319c8243ffe6?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "Сергей Потапчук",
-      "link" : "https://stackoverflow.com/users/31969879/%d0%a1%d0%b5%d1%80%d0%b3%d0%b5%d0%b9-%d0%9f%d0%be%d1%82%d0%b0%d0%bf%d1%87%d1%83%d0%ba"
+      "accept_rate" : 65,
+      "profile_image" : "https://i.sstatic.net/g613H.jpg?s=256",
+      "display_name" : "Nimila Hiranya",
+      "link" : "https://stackoverflow.com/users/2182809/nimila-hiranya"
     },
     "is_answered" : false,
-    "view_count" : 70,
-    "answer_count" : 0,
+    "view_count" : 38,
+    "answer_count" : 1,
     "score" : 0,
-    "last_activity_date" : 1764523732,
-    "creation_date" : 1764503471,
-    "link" : "https://stackoverflow.com/questions/79833859/mapping-an-entity-with-an-embedded-key",
+    "last_activity_date" : 1765266647,
+    "creation_date" : 1765182621,
+    "link" : "https://stackoverflow.com/questions/79840739/google-pay-decryption-failure-with-tink",
     "content_license" : "CC BY-SA 4.0"
   },
-  "answers" : [ ],
-  "question_comments" : [ {
-    "comment_id" : 140880420,
-    "post_id" : 79833859,
-    "body" : "My English isn&#39;t very strong. I didn’t mean that I’d found a solution—I only updated the class in the post. The database (<code>PostgreSQL</code>) uses a column of type <code>date</code>.",
+  "answers" : [ {
+    "answer_id" : 79841644,
+    "question_id" : 79840739,
+    "body" : "<p>eah, that “Tag mismatch!” error usually means your private key doesn’t match the public key you uploaded—or it’s in the wrong format.</p>\n<p>Quick checklist:</p>\n<p>Public key stuck as “Inactive”? That’s normal in test mode until Google sees a real test payment using that key. Just make sure you’re using the test card (4111 1111 1111 1111) and test environment flags in your frontend.</p>\n<p>Private key must be PKCS#8 DER in Base64—not PEM, not PKCS#1. Convert it if needed:</p>\n<p>bash</p>\n<p>openssl pkcs8 -topk8 -nocrypt -in key.pem -outform der | base64</p>\n<p>If you didn’t set a Merchant ID in the Google Pay console, use an empty string for recipientId, not &quot;merchant:&quot;.</p>\n<p>Fix those and it’ll likely start working.</p>\n",
     "score" : 0,
+    "is_accepted" : false,
     "owner" : {
-      "account_id" : 35681406,
+      "account_id" : 44955021,
       "reputation" : 1,
-      "user_id" : 31969879,
+      "user_id" : 32022835,
       "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/6955aa5fb9ec877d76cf319c8243ffe6?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "Сергей Потапчук",
-      "link" : "https://stackoverflow.com/users/31969879/%d0%a1%d0%b5%d1%80%d0%b3%d0%b5%d0%b9-%d0%9f%d0%be%d1%82%d0%b0%d0%bf%d1%87%d1%83%d0%ba"
+      "profile_image" : "https://www.gravatar.com/avatar/835849134d6e852c313ff63c66088507?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Gerdona Mendez",
+      "link" : "https://stackoverflow.com/users/32022835/gerdona-mendez"
     },
-    "creation_date" : 1764528746,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140880347,
-    "post_id" : 79833859,
-    "body" : "What is the date type in the DB? I noticed that findByIndicatorCodeBeforeDate1 and others use &lt; for the date value, not an == check, so I would guess it has to do with precision in your DB value vs what is passed in on the check.",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 231721,
-      "reputation" : 21335,
-      "user_id" : 496099,
-      "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/efa7510cf47d7bd79e80486246e7e39e?s=256&d=identicon&r=PG",
-      "display_name" : "Chris",
-      "link" : "https://stackoverflow.com/users/496099/chris"
-    },
-    "creation_date" : 1764524209,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140880336,
-    "post_id" : 79833859,
-    "body" : "Alright, I&#39;ve fixed it. Thank you.",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 35681406,
-      "reputation" : 1,
-      "user_id" : 31969879,
-      "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/6955aa5fb9ec877d76cf319c8243ffe6?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "Сергей Потапчук",
-      "link" : "https://stackoverflow.com/users/31969879/%d0%a1%d0%b5%d1%80%d0%b3%d0%b5%d0%b9-%d0%9f%d0%be%d1%82%d0%b0%d0%bf%d1%87%d1%83%d0%ba"
-    },
-    "creation_date" : 1764523818,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140880307,
-    "post_id" : 79833859,
-    "body" : "Oh ok, I see. In that case, update your post to reflect your actual code. This will help us to provide better answers or comments. Btw yes, the Jakarta Persistence specs doesn&#39;t say anything about a compulsory all-arg constructor, but since you were trying to build an <code>IndicatorValue</code> with <code>IndicatorValueId</code>&#39;s fields rather than an actual instance, I thought that could be the cause :/ I&#39;ll keep scratching my head though. Maybe somebody else might be able to help you with the updated version of your code.",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 5569841,
-      "reputation" : 8654,
-      "user_id" : 4415625,
-      "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/0ea1713807527aa1cf52e40579e35ec4?s=256&d=identicon&r=PG",
-      "display_name" : "dani-vta",
-      "link" : "https://stackoverflow.com/users/4415625/dani-vta"
-    },
-    "creation_date" : 1764522478,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140880290,
-    "post_id" : 79833859,
-    "body" : "Yes, sorry—I was experimenting, and the class actually has multiple constructors. Initially, I used the annotations: <code>@AllArgsConstructor</code> and <code>@NoArgsConstructor</code>. Later, I replaced them with explicitly written constructors. When drafting the post, I simply omitted listing all of them (including <code>@AllArgsConstructor</code>) because, as far as I understand, <code>@AllArgsConstructor</code> isn’t strictly required in this context.  But please believe me—it is present. I’ve even tried making the fields <code>public</code> to rule out visibility issues, and that didn’t help either.",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 35681406,
-      "reputation" : 1,
-      "user_id" : 31969879,
-      "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/6955aa5fb9ec877d76cf319c8243ffe6?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "Сергей Потапчук",
-      "link" : "https://stackoverflow.com/users/31969879/%d0%a1%d0%b5%d1%80%d0%b3%d0%b5%d0%b9-%d0%9f%d0%be%d1%82%d0%b0%d0%bf%d1%87%d1%83%d0%ba"
-    },
-    "creation_date" : 1764521884,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140880236,
-    "post_id" : 79833859,
-    "body" : "From what I see in your question, you have an <code>@AllArgsConstructor</code> only in <code>IndicatorValueId</code> not in <code>IndicatorValue</code>.",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 5569841,
-      "reputation" : 8654,
-      "user_id" : 4415625,
-      "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/0ea1713807527aa1cf52e40579e35ec4?s=256&d=identicon&r=PG",
-      "display_name" : "dani-vta",
-      "link" : "https://stackoverflow.com/users/4415625/dani-vta"
-    },
-    "creation_date" : 1764519193,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140880141,
-    "post_id" : 79833859,
-    "body" : "I added such a constructor (and it’s still present), but it doesn’t change the result at all.",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 35681406,
-      "reputation" : 1,
-      "user_id" : 31969879,
-      "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/6955aa5fb9ec877d76cf319c8243ffe6?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "Сергей Потапчук",
-      "link" : "https://stackoverflow.com/users/31969879/%d0%a1%d0%b5%d1%80%d0%b3%d0%b5%d0%b9-%d0%9f%d0%be%d1%82%d0%b0%d0%bf%d1%87%d1%83%d0%ba"
-    },
-    "creation_date" : 1764514062,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140880129,
-    "post_id" : 79833859,
-    "body" : "<i>data is retrieved correctly only when I select a specific field, use a native query, or perform mapping via a constructor</i> That&#39;s because you&#39;re telling the framework how to construct your data when using finer fields. The class <code>IndicatorValue</code> should also exhibit a constructor that accepts an instance of <code>IndicatorValueId</code>. So, <code>public IndicatorValue(IndicatorValueId id, BigDecimal value)</code>.",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 5569841,
-      "reputation" : 8654,
-      "user_id" : 4415625,
-      "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/0ea1713807527aa1cf52e40579e35ec4?s=256&d=identicon&r=PG",
-      "display_name" : "dani-vta",
-      "link" : "https://stackoverflow.com/users/4415625/dani-vta"
-    },
-    "creation_date" : 1764513183,
+    "creation_date" : 1765266647,
+    "last_activity_date" : 1765266647,
     "content_license" : "CC BY-SA 4.0"
   } ],
+  "question_comments" : [ ],
   "answer_comments" : { }
 }

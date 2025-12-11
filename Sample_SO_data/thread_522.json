@@ -1,46 +1,82 @@
 {
   "question" : {
-    "question_id" : 79791487,
-    "title" : "Expose custom health group components into Prometheus metrics in Spring Boot",
-    "body" : "<p>We have two custom health groups named <code>extended</code> and <code>readiness</code>:</p>\n<ul>\n<li><code>extended</code>: custom dependency-heavy <code>HealthIndicator</code>s provided explicitly via application property</li>\n<li><code>readiness</code>: everything except those defined in the <code>extended</code> group</li>\n</ul>\n<p>Currently calling the <code>/actuator/health/readiness</code> endpoint, the response looks like this (simplified for readability):</p>\n<pre><code>db\n ├ storeDataSource\n └ pizzaDataSource\ndiskSpace\ngracefulShutdownHealthCheck\nhazelcast\njms\n ├ internalActiveMQConnectionFactory\n ├ notifConnectionFactory\n └ platformJmsConnectionFactory\nping\nrefreshScope\n</code></pre>\n<p>We want to expose all the components from the <code>readiness</code> group as a <code>Prometheus</code> metric one by one. But since these components aren't defined explicitly, and the number of them can be increased/decreased by adding/removing <code>Maven</code> dependencies (for example <code>jms</code> or <code>hazelcast</code>), we don't know the exact list of the component's name in compile time.</p>\n<p>Therefore we do the following:</p>\n<pre><code>@Configuration\n@AllArgsConstructor\npublic class HealthGroupMetricsConfig {\n\n    private final MeterRegistry meterRegistry;\n    private final HealthEndpoint healthEndpoint;\n\n    @PostConstruct\n    public void bindReadinessHealth() {\n        HealthComponent component = healthEndpoint.healthForPath(&quot;readiness&quot;);\n        CompositeHealth health = (CompositeHealth) component;\n        \n        health.getComponents().forEach( (key, value) -&gt; {\n            if (value instanceof Health h) {\n                Gauge.builder(&quot;app_health_readiness_component&quot;, h, he -&gt; &quot;UP&quot;.equalsIgnoreCase(h.getStatus().getCode()) ? 1 : 0)\n                        .tag(&quot;component&quot;, key)\n                        .register(meterRegistry);\n            } else if (value instanceof CompositeHealth ch) {\n                Gauge.builder(&quot;app_health_readiness_component&quot;, ch, he -&gt; &quot;UP&quot;.equalsIgnoreCase(ch.getStatus().getCode()) ? 1 : 0)\n                        .tag(&quot;component&quot;, key)\n                        .register(meterRegistry);\n            }\n        });\n    }\n\n}\n</code></pre>\n<p>But in this way the <code>healthForPath</code> method will be called once during <code>@PostConstruct</code>, and all the components will be registered as a <code>Prometheus</code> metric <strong>statically</strong>, which means every time the <code>/actuator/prometheus</code> endpoint is called, the same health statuses (which were evaluated for the first time) will be responded, which is not the desired behaviour, since we want fresh data every time.</p>\n<p>If we just put <code>healthForPath</code> inside <code>Gauge.builder</code> to have a fresh call to <code>/actuator/health/readiness</code>, then it will be called multiple times (as many components we have) unnecessarily.</p>\n<p>Our second approach was to call <code>healthForPath</code> once at the beginning just to collect the names of the health components, and after that injecting them as a bean from the <code>ApplicationContext</code>:</p>\n<pre><code>@Configuration\n@AllArgsConstructor\npublic class HealthGroupMetricsConfig {\n\n    private final MeterRegistry meterRegistry;\n    private final HealthEndpoint healthEndpoint;\n    private final ApplicationContext applicationContext;\n\n    @PostConstruct\n    public void bindReadinessHealth() {\n        HealthComponent component = healthEndpoint.healthForPath(&quot;readiness&quot;);\n        CompositeHealth health = (CompositeHealth) component;\n\n        health.getComponents().keySet().forEach(name -&gt; Gauge.builder(&quot;app_health_readiness_component&quot;, () -&gt; {\n            HealthIndicator hi = applicationContext.getBean(name, HealthIndicator.class);\n            return hi.health().getStatus().equals(UP) ? 1 : 0;\n        })\n                .tag(&quot;component&quot;, name)\n                .register(meterRegistry));\n    }\n\n}\n</code></pre>\n<p>But it turned out not all the components are <code>HealthIndicator</code>s, and the indicator's name doesn't always equal to the health component's name either. Listing all the <code>HealthIndicator</code>s we get the following:</p>\n<pre><code>gracefulShutdownHealthCheck\nhazelcastHealthContributor\ndiskSpaceHealthIndicator\npingHealthContributor\nrefreshScopeHealthIndicator\n</code></pre>\n<p>As you can see the <code>CompositeHealth</code>s (i.e. <code>db</code> and <code>jms</code>) are missing, because for example <code>notifConnectionFactory</code> is not a <code>HealthIndicator</code>, but an <code>oracle.jms.AQjmsConnectionFactory</code>.</p>\n<p>Our final thought was to make an <code>HTTP</code> call in case of every components, since the individual statuses can be evaluated by calling <code>/actuator/health/readiness/&lt;components-name&gt;</code>. In this way we can achieve the desired goal, but we are afraid of some performance issue because of the multiple <code>HTTP</code> calls (if any).</p>\n<p>Any suggestion how to do this?</p>\n<p>We are using Spring Boot version <code>2.7.18</code>.</p>\n",
-    "tags" : [ "java", "spring-boot", "prometheus", "metrics", "health-check" ],
+    "question_id" : 79796432,
+    "title" : "Mapping multiple subclasses to same Parent ID in JPA Joined Inheritance",
+    "body" : "<p>I created the tables Person, PersonExtra, PersonBasic, etc. in my database with the superclass Person and subclasses PersonExtra and PersonBasic.</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Entity\n@Table(name = &quot;person&quot;)\n@Inheritance(strategy = InheritanceType.JOINED)\npublic class Person {\n    @Id\n    @Column(name = &quot;id&quot;, nullable = false, unique = true, length = 20)\n    private String id;\n    private String name;\n    private String lastname;\n    // ...\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>@Entity\n@PrimaryKeyJoinColumn(name = &quot;extra_id&quot;)\npublic class PersonExtra extends Person {\n    private String code;\n    private String subject;\n    // ...\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>@Entity\n@PrimaryKeyJoinColumn(name = &quot;basic_id&quot;)\npublic class PersonBasic extends Person {\n    private String range;\n}\n</code></pre>\n<p>If I create a Person first and then try to create a PersonExtra with an existing Person's ID, I get a duplicate ID error because it tries to persist both Person and PersonExtra. It seems like a person can only have one unique type and can only be created through the subclass.</p>\n<ul>\n<li>I would like a person to be able to be both a PersonExtra and a PersonBasic at the same time.</li>\n</ul>\n<p>When I was modeling the database, it seemed better. I had the idea of using something like inheritance in the database, which could be easier to map.</p>\n<p>How can I structure my JPA entities so different subclasses (PersonExtra and PersonBasic) can be created with the same id as the superclass (Person)?</p>\n<ul>\n<li><p>I was thinking that maybe creating One to One relations like Person with PersonExtra and Person with PersonBasic could work.<br />\nI liked the idea of having inheritance here but, seems is it not possible in this situation?</p>\n</li>\n<li><p>I was considering using the MappedSuperclass annotation, but isn't that just for an abstract class when the entity isn't created in the database?</p>\n</li>\n<li><p>Or maybe should I modify the database and create a one-to-many relationship with roles? Part of me thinks that some of the database semantics could be lost, and implementing the logic later could be complicated.</p>\n</li>\n</ul>\n<p>I'm new to this and could be wrong about all of this.</p>\n",
+    "tags" : [ "java", "spring", "hibernate", "jpa", "spring-data-jpa" ],
     "owner" : {
-      "account_id" : 18890249,
-      "reputation" : 214,
-      "user_id" : 13780725,
+      "account_id" : 38432673,
+      "reputation" : 22,
+      "user_id" : 28772060,
       "user_type" : "registered",
-      "profile_image" : "https://i.sstatic.net/Gh1tC.jpg?s=256",
-      "display_name" : "tibotka",
-      "link" : "https://stackoverflow.com/users/13780725/tibotka"
+      "profile_image" : "https://www.gravatar.com/avatar/8a2bff1bacb0cd5fb7f8a04f2f6534d8?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "gustavo",
+      "link" : "https://stackoverflow.com/users/28772060/gustavo"
     },
     "is_answered" : true,
-    "view_count" : 74,
-    "answer_count" : 1,
-    "score" : 1,
-    "last_activity_date" : 1763120342,
-    "creation_date" : 1760551613,
-    "link" : "https://stackoverflow.com/questions/79791487/expose-custom-health-group-components-into-prometheus-metrics-in-spring-boot",
+    "view_count" : 116,
+    "answer_count" : 2,
+    "score" : 2,
+    "last_activity_date" : 1761163881,
+    "creation_date" : 1761113817,
+    "link" : "https://stackoverflow.com/questions/79796432/mapping-multiple-subclasses-to-same-parent-id-in-jpa-joined-inheritance",
     "content_license" : "CC BY-SA 4.0"
   },
   "answers" : [ {
-    "answer_id" : 79819984,
-    "question_id" : 79791487,
-    "body" : "<p>The solution was the following:</p>\n<pre><code>@Configuration\n@AllArgsConstructor\npublic class HealthGroupMetricsConfiguration {\n\n    private final MeterRegistry meterRegistry;\n    private final HealthEndpoint healthEndpoint;\n\n    @PostConstruct\n    public void registerHealthContributors() {\n        collectHealthContributors((CompositeHealth) healthEndpoint.healthForPath(&quot;readiness&quot;), &quot;readiness&quot;)\n            .forEach(contributor -&gt;\n                Gauge.builder(&quot;app_health_readiness&quot;, contributor, new HealthStatusGaugeMapper(healthEndpoint, contributor))\n                    .strongReference(true)\n                    .description(&quot;Readiness health group contributor's status: UP=1, DOWN=0, OUT_OF_SERVICE=-1, UNKNOWN=-2&quot;)\n                    .tag(&quot;component&quot;, contributor.replace(&quot;readiness.&quot;, &quot;&quot;))\n                    .register(meterRegistry));\n    }\n\n    private List&lt;String&gt; collectHealthContributors(CompositeHealth health, String prefix) {\n        List&lt;String&gt; contributors = new ArrayList&lt;&gt;();\n\n        health.getComponents().forEach((name, component) -&gt; {\n            String fullName = prefix + &quot;.&quot; + name;\n\n            if (component instanceof CompositeHealth ch) {\n                contributors.addAll(collectHealthContributors(ch, fullName));\n            } else {\n                contributors.add(fullName);\n            }\n        });\n\n        return contributors;\n    }\n\n}\n</code></pre>\n<p>and the correspondent <code>HealthStatusGaugeMapper</code> class:</p>\n<pre><code>public class HealthStatusGaugeMapper implements ToDoubleFunction&lt;String&gt; {\n\n    private final HealthEndpoint healthEndpoint;\n    private final String[] paths;\n\n    public HealthStatusGaugeMapper(HealthEndpoint healthEndpoint, String contributor) {\n        this.healthEndpoint = healthEndpoint;\n        this.paths = contributor.split(&quot;\\\\.&quot;);\n    }\n\n    @Override\n    public double applyAsDouble(String binder) {\n        Health hc = (Health) healthEndpoint.healthForPath(paths);\n        Status status = hc.getStatus();\n\n        if (Status.UP.equals(status)) {\n            return 1;\n        } else if (Status.DOWN.equals(status)) {\n            return 0;\n        } else if (Status.OUT_OF_SERVICE.equals(status)) {\n            return -1;\n        } else if (Status.UNKNOWN.equals(status)) {\n            return -2;\n        } else {\n            throw new ExtendedRuntimeException(ErrorType.APP, getClass(),\n                    &quot;Unhandled health status code: &quot; + status.getCode());\n        }\n    }\n\n}\n</code></pre>\n",
-    "score" : 1,
+    "answer_id" : 79797164,
+    "question_id" : 79796432,
+    "body" : "<blockquote>\n<p>If I create a Person first and then try to create a PersonExtra with an existing Person's ID, I get a duplicate ID error because it tries to persist both Person and PersonExtra.</p>\n</blockquote>\n<p>Of course it does.  If you instantiate an object whose class is <code>Person</code>, then it's class <em>is not</em> <code>PersonExtra</code> or <code>PersonBasic</code>.  If you instantiate an object whose class is <code>PersonExtra</code> then its class <em>is not</em> <code>Person</code> or <code>PersonBasic</code>, notwithstanding that you can assign a reference to it to a variable of <em>type</em> <code>Person</code>. Therefore, your <code>Person</code> object and your <code>PersonExtra</code> object cannot be either the same or equivalent.  It follows that if they are persisted then they must have distinct persistent identities.</p>\n<blockquote>\n<p>It seems like a person can only have one unique type</p>\n</blockquote>\n<p>An <em>object</em> can have only one <em>class</em>, established when the object is created and remaining the same throughout its lifetime. This is a fundamental characteristic of Java's OO model.  References to an object can be consistent with more than one <em>type</em> through polymorphism, this is a separate characteristic of Java's OO model.  JPA works with and within Java's OO model.</p>\n<blockquote>\n<p>and can only be created through the subclass.</p>\n</blockquote>\n<p>Sort of.  If you want an object whose class is <code>PersonExtra</code> then you need to create it <em>as</em> a <code>PersonExtra</code>.  It then will not be a <code>PersonBasic</code> in any sense.  It will function as <code>Person</code> in a polymorphic sense, and have all the properties of any <code>Person</code>, but its object identity is inextricably tied to having class <code>PersonExtra</code>.</p>\n<p>If you persist such an object then the fact that its class is <code>PersonExtra</code> (and not any other) is among the details to be persisted, subject to later retrieval.</p>\n<blockquote>\n<p>I would like a person to be able to be both a PersonExtra and a PersonBasic at the same time.</p>\n</blockquote>\n<p>That is impossible -- inconsistent with Java's OO model -- as long as <code>PersonExtra</code> and <code>PersonBasic</code> are class types, with neither being a subtype of the other.  This is not even a matter of JPA.</p>\n<p>If <em>every</em> <code>PersonExtra</code> should also be a <code>PersonBasic</code> then <code>PersonExtra</code> should extend <code>PersonBasic</code> instead of extending <code>Person</code> directly. And if you don't need to support entities that are <code>Person</code>s but not <code>PersonBasic</code>s, then you should probably combine those two into a single class.</p>\n<p>You could also consider whether you may be looking for composition instead of inheritance.  That is, maybe you want <code>Person</code>s to <em>have</em> <code>PersonExtraDetails</code> instead of <em>being</em> <code>PersonExtra</code>s.  That would be modeled via (mapped) relationships, not inheritance.  For example:</p>\n<pre><code>@Entity\npublic class Person {\n    @Id\n    private String id;\n    private String name;\n    private String lastname;\n\n    @OneToOne(mappedBy=&quot;person&quot;, optional=true)\n    private PersonBasicDetails basicDetails;\n\n    @OneToOne(mappedBy=&quot;person&quot;, optional=true)\n    private PersonExtraDetails extraDetails;\n\n    // ...\n}\n</code></pre>\n<pre><code>@Entity\npublic class PersonExtraDetails {\n    @Id\n    private Integer id;\n    private String code;\n    private String subject;\n\n    @OneToOne\n    private Person person;\n}\n</code></pre>\n<pre><code>@Entity\npublic class PersonBasicDetails {\n    @Id\n    Integer id;\n    private String range;\n\n    @OneToOne\n    private Person person;\n}\n</code></pre>\n<blockquote>\n<p>How can I structure my JPA entities so different subclasses (PersonExtra and PersonBasic) can be created with the same id as the superclass (Person)?</p>\n</blockquote>\n<p>You can't.  I'm uncertain where your mental model of this is failing you, but I suspect that you may be looking at this the wrong way around, maybe as classes being Java-side proxies for database tables.  It's harder to come at this from the database side than it is to come from the Java side, and if you're starting with a database schema then you almost never are looking for polymorphic entities on the Java side.</p>\n<blockquote>\n<ul>\n<li>I was thinking that maybe creating One to One relations like Person with PersonExtra and Person with PersonBasic could work.</li>\n</ul>\n</blockquote>\n<p>Indeed it could, as described above.  Note well that this dispenses with the polymorphism.</p>\n<blockquote>\n<ul>\n<li>I liked the idea of having inheritance here but, seems is it not possible in this situation?</li>\n</ul>\n</blockquote>\n<p>It's unclear what you liked about polymorphism for this problem, and it's unclear whether that could be made to work for you (many of the primary considerations are discussed above).  I would advise you, however, that entity polymorphism is messy, and even pure-Java polymorphism tends to be overused.</p>\n<blockquote>\n<ul>\n<li>I was considering using the MappedSuperclass annotation, but isn't that just for an abstract class when the entity isn't created in the database?</li>\n</ul>\n</blockquote>\n<p>A mapped superclass does not need to be abstract, but if <code>Person</code> were a mapped superclass instead of an entity class then objects whose class was exactly <code>Person</code> would not be entities. They could not be persisted in the database.</p>\n<blockquote>\n<ul>\n<li>Or maybe should I modify the database and create a one-to-many relationship with roles? Part of me thinks that some of the database semantics could be lost, and implementing the logic later could be complicated.</li>\n</ul>\n</blockquote>\n<p>It's unclear to me how what you've presented would map to roles, or how a model of it would differ from the one-to-one relationships you're contemplating, but possibly that would make sense. I'm uncertain what &quot;database semantics&quot; you fear losing, but I think that's an issue of how you implement the details.</p>\n<blockquote>\n<p>I'm new to this and could be wrong about all of this.</p>\n</blockquote>\n<p>How best to model your data is a non-trivial problem, both in Java and in the database.  There are often multiple viable options with different tradeoffs.  When I have the freedom to design the database <em>de novo</em>, I tend to prefer starting on the Java side, focusing on how the entities will be used there, what their significance is, and how they are related to each other.  A clean, well-factored design on that side tends to admit clean, well-normalized database designs.  Which you may even be able to generate automagically from the annotated entity classes.</p>\n",
+    "score" : 2,
     "is_accepted" : true,
     "owner" : {
-      "account_id" : 18890249,
-      "reputation" : 214,
-      "user_id" : 13780725,
+      "account_id" : 2792262,
+      "reputation" : 190832,
+      "user_id" : 2402272,
       "user_type" : "registered",
-      "profile_image" : "https://i.sstatic.net/Gh1tC.jpg?s=256",
-      "display_name" : "tibotka",
-      "link" : "https://stackoverflow.com/users/13780725/tibotka"
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+      "display_name" : "John Bollinger",
+      "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
     },
-    "creation_date" : 1763120342,
-    "last_activity_date" : 1763120342,
+    "creation_date" : 1761160411,
+    "last_activity_date" : 1761163881,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79797001,
+    "question_id" : 79796432,
+    "body" : "<p>Take a look at <a href=\"https://github.com/Blazebit/blaze-persistence\" rel=\"nofollow noreferrer\">Blaze Persistence entity view</a></p>\n<p>But as for me that approach will lead to some complexity and cause errors</p>\n",
+    "score" : -2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 7426697,
+      "reputation" : 3061,
+      "user_id" : 5648942,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/3230f26677f40f48e3ecb294382b0728?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Javasick",
+      "link" : "https://stackoverflow.com/users/5648942/javasick"
+    },
+    "creation_date" : 1761148711,
+    "last_activity_date" : 1761148711,
     "content_license" : "CC BY-SA 4.0"
   } ],
-  "question_comments" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140811486,
+    "post_id" : 79796432,
+    "body" : "Java inheritance question for you - how can a Person be both a PersonExtra AND a PersonBasic at the same time. If you can&#39;t do it with java inheritance, JPA inheritance can&#39;t either.  You want roles, where a Person can have the &#39;basic&#39; and &#39;extra&#39; role or data added in at the same time, not inheritance",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 231721,
+      "reputation" : 21335,
+      "user_id" : 496099,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/efa7510cf47d7bd79e80486246e7e39e?s=256&d=identicon&r=PG",
+      "display_name" : "Chris",
+      "link" : "https://stackoverflow.com/users/496099/chris"
+    },
+    "creation_date" : 1761157888,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
   "answer_comments" : { }
 }

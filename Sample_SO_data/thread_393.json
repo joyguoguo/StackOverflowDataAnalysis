@@ -1,28 +1,94 @@
 {
   "question" : {
-    "question_id" : 79804241,
-    "title" : "Netty writeAndFlush fails: io.netty.util.IllegalReferenceCountException: refCnt: 0",
-    "body" : "<p>I am having a problem with netty writeAndFlush failing.  Specifically, <code>io.netty.util.IllegalReferenceCountException: refCnt: 0</code> is thrown.  Here is the stack trace:</p>\n<pre><code>12:49:04.062 [Timer-0] ERROR com.ltsllc.miranda.netty.OutboundHeartBeatHandler - heartbeat start failed\nio.netty.util.IllegalReferenceCountException: refCnt: 0\n    at io.netty.buffer.AbstractByteBuf.ensureAccessible(AbstractByteBuf.java:1480)\n    at io.netty.buffer.UnpooledHeapByteBuf.array(UnpooledHeapByteBuf.java:147)\n    at com.ltsllc.miranda.netty.ChannelOutboundMonitor.write(ChannelOutboundMonitor.java:44)\n    at io.netty.channel.AbstractChannelHandlerContext.write(AbstractChannelHandlerContext.java:827)\n    at io.netty.channel.AbstractChannelHandlerContext.write(AbstractChannelHandlerContext.java:752)\n    at com.ltsllc.miranda.netty.NullTerminatedOutboundFrame.write(NullTerminatedOutboundFrame.java:31)\n    at io.netty.channel.AbstractChannelHandlerContext.write(AbstractChannelHandlerContext.java:827)\n    at io.netty.channel.AbstractChannelHandlerContext$WriteTask.run(AbstractChannelHandlerContext.java:1136)\n</code></pre>\n<p>Here is the method:</p>\n<pre><code>    public synchronized void sendHeartBeat() {\n        iterations++;\n\n        if (iterations % 100 == 0) {\n            System.gc();\n        }\n\n        if (channel == null || !channel.isOpen()) {\n            logger.error(&quot;null or closed channel&quot;);\n            return;\n        }\n\n        AlarmClock.getInstance().scheduleOnce(this, Alarms.HEART_BEAT,\n                Miranda.getProperties().getLongProperty(Miranda.PROPERTY_HEART_BEAT_INTERVAL));\n        if (Miranda.getProperties().getBooleanProperty(Miranda.PROPERTY_USE_HEARTBEATS)) {\n            if (System.currentTimeMillis() &gt;\n                    timeOfLastActivity + Miranda.getProperties().getLongProperty(Miranda.PROPERTY_HEART_BEAT_INTERVAL)) {\n                String message = Node.HEART_BEAT_START;\n                ByteBuf byteBuf = Unpooled.copiedBuffer(message.getBytes());\n\n                ChannelFuture future = channel.writeAndFlush(byteBuf);\n                long delay = Miranda.getProperties().getLongProperty(Miranda.PROPERTY_HEART_BEAT_TIMEOUT);\n                AlarmClock.getInstance().scheduleOnce(this, Alarms.HEART_BEAT_TIMEOUT, delay);\n                metTimeout = false;\n                try {\n                    future.await();\n                    if (!future.isSuccess()) {\n                        logger.error(&quot;heartbeat start failed&quot;);\n                        future.cause().printStackTrace();\n                    }\n                } catch (InterruptedException e) {\n                    throw new RuntimeException(e);\n                }\n\n            }\n        }\n</code></pre>\n<p>I am using netty 4.2.7.Final.</p>\n<p>I have used maven dependency tree to ensure that I am pulling in netty 4.2.7.Final</p>\n<p>There are no network issues because this is to the same machine: it doesn't go out on the wire.</p>\n<p>This isn't an encoding/decoding error - the message is well formed.</p>\n<p>This isn't a problem with excessive writes because I'm not making lots of writes.</p>\n<p>This isn't a problem with the channel being closed or inactive because I've checked those.</p>\n<p>I don't know if this is due to the EventLoop being terminated, how do you check?</p>\n<p>What can I try?</p>\n",
-    "tags" : [ "java", "netty" ],
+    "question_id" : 79810098,
+    "title" : "Lucene Boolean Operator Problems",
+    "body" : "<p>Using Lucene, certain queries parse and execute in a completely unexpected way.</p>\n<p>Here's the code for testing it (written in Scala, but can be easily translated to Java too):</p>\n<pre class=\"lang-scala prettyprint-override\"><code>import org.apache.lucene.analysis.standard.StandardAnalyzer\nimport org.apache.lucene.document._\nimport org.apache.lucene.index._\nimport org.apache.lucene.queryparser.classic.QueryParser\nimport org.apache.lucene.search.{IndexSearcher, Query}\nimport org.apache.lucene.store._\nimport scala.jdk.CollectionConverters._\n\nobject LuceneTestUtils{\n\n  def testDocuments(\n    docs: Seq[Map[String, String]],\n    query: String,\n    expected: Seq[Map[String, String]]\n  ): Unit = {\n    withIndex(docs) { searcher =&gt;\n      val analyzer = new StandardAnalyzer()\n      val parser = new QueryParser(&quot;defaultField&quot;, analyzer)\n      val q: Query = parser.parse(query)\n      println(q)\n      val hits = searcher.search(q, 1000).scoreDocs\n      val results = hits.map { hit =&gt;\n        val doc = searcher.doc(hit.doc)\n        doc.getFields.asScala.map(f =&gt; f.name() -&gt; doc.get(f.name())).toMap\n      }\n      .toList\n\n      val notExpected = results.diff(expected)\n      assert(notExpected.isEmpty, s&quot;Got unexpected documents:\\n${notExpected.mkString(&quot;\\n&quot;)}\\nReceived documents:\\n${results.mkString(&quot;\\n&quot;)}&quot;)\n\n      val missing = expected.diff(results)\n      assert(missing.isEmpty, s&quot;Missing expected documents: \\n${missing.mkString(&quot;\\n&quot;)}\\nReceived documents:\\n${results.mkString(&quot;\\n&quot;)}&quot;)\n    }\n  }\n\n  def withIndex(\n      docs: Seq[Map[String, String]]\n  )(test: IndexSearcher =&gt; Unit): Unit = {\n    val analyzer = new StandardAnalyzer()\n    val index: Directory =\n      new org.apache.lucene.store.ByteBuffersDirectory(NoLockFactory.INSTANCE)\n    val config = new IndexWriterConfig(analyzer)\n    val writer = new IndexWriter(index, config)\n\n    docs.foreach { fields =&gt;\n      val doc = new Document()\n      fields.foreach { case (k, v) =&gt;\n        doc.add(new StringField(k, v, Field.Store.YES))\n      }\n      writer.addDocument(doc)\n    }\n    writer.close()\n\n    val reader = DirectoryReader.open(index)\n    val searcher = new IndexSearcher(reader)\n    try {\n      test(searcher)\n    } finally {\n      reader.close()\n      index.close()\n    }\n  }\n}\n</code></pre>\n<p>Dependencies used:</p>\n<pre><code>  &quot;org.apache.lucene&quot; % &quot;lucene-core&quot; % &quot;9.9.2&quot;,\n  &quot;org.apache.lucene&quot; % &quot;lucene-queryparser&quot; % &quot;9.9.2&quot;,\n</code></pre>\n<p>I generate some test data:</p>\n<pre class=\"lang-scala prettyprint-override\"><code>  private val testData =  for {\n      key1Value &lt;- Seq(Some(&quot;value1&quot;), Some(&quot;value2&quot;), None)\n      key2Value &lt;- Seq(Some(&quot;value1&quot;), Some(&quot;value2&quot;), None)\n      key3Value &lt;- Seq(Some(&quot;value1&quot;), Some(&quot;value2&quot;), None)\n      key4Value &lt;- Seq(Some(&quot;value1&quot;), Some(&quot;value2&quot;), None)\n    } yield Seq(\n      key1Value.map(&quot;key1&quot; -&gt; _),\n      key2Value.map(&quot;key2&quot; -&gt; _),\n      key3Value.map(&quot;key3&quot; -&gt; _),\n      key4Value.map(&quot;key4&quot; -&gt; _)\n    ).flatten.toMap\n</code></pre>\n<p>Most queries work exactly as expected, e.g.:</p>\n<p>1.</p>\n<pre class=\"lang-scala prettyprint-override\"><code>    val expectedDocs = testData\n      .filter(doc =&gt;\n        (doc.get(&quot;key1&quot;).contains(&quot;value2&quot;) || doc.get(&quot;key2&quot;).contains(&quot;value2&quot;)) &amp;&amp;\n        (doc.get(&quot;key3&quot;).contains(&quot;value2&quot;) || doc.get(&quot;key4&quot;).contains(&quot;value2&quot;))\n      )\n\n    LuceneTestUtils.testDocuments(testData, &quot;(key1:value2 OR key2:value2) AND (key3:value2 OR key4:value2)&quot;, expectedDocs)\n</code></pre>\n<p>The following test cases show very unexpected behaviour:</p>\n<p>2.</p>\n<pre class=\"lang-scala prettyprint-override\"><code>   val expectedDocs = testData\n      .filter(doc =&gt; \n        doc.get(&quot;key1&quot;).contains(&quot;value1&quot;) &amp;&amp;\n        // This feels very wrong, it should be ||\n        doc.get(&quot;key2&quot;).contains(&quot;value1&quot;) &amp;&amp;\n        doc.get(&quot;key3&quot;).contains(&quot;value1&quot;) &amp;&amp;\n        doc.get(&quot;key4&quot;).contains(&quot;value1&quot;)\n      )\n\n    LuceneTestUtils.testDocuments(testData, &quot;key1:value1 AND key2:value1 OR key3:value1 AND key4:value1&quot;, expectedDocs)\n</code></pre>\n<ol start=\"3\">\n<li></li>\n</ol>\n<pre class=\"lang-scala prettyprint-override\"><code>    val expectedDocs = testData\n      .filter(doc =&gt;\n        // ???\n        // doc.get(&quot;key1&quot;).contains(&quot;value2&quot;) || (\n        doc.get(&quot;key2&quot;).contains(&quot;value2&quot;) &amp;&amp;\n          doc.get(&quot;key3&quot;).contains(&quot;value2&quot;)\n        // ) || doc.get(&quot;key4&quot;).contains(&quot;value2&quot;)\n      )\n\n    LuceneTestUtils.testDocuments(testData, &quot;key1:value2 OR key2:value2 AND key3:value2 OR key4:value2&quot;, expectedDocs)\n</code></pre>\n<p>No operator precedence could explain this.</p>\n<ul>\n<li>AND before OR</li>\n<li>AND equal to OR\n<ul>\n<li>with either left-to-right or right-to-left associativity</li>\n</ul>\n</li>\n<li>AND after OR</li>\n</ul>\n<p>A hint at the problem is the output of that <code>println(q)</code>:</p>\n<p>1.</p>\n<pre class=\"lang-none prettyprint-override\"><code>+(key1:value2 key2:value2) +(key3:value2 key4:value2)\n</code></pre>\n<ol start=\"2\">\n<li></li>\n</ol>\n<pre class=\"lang-none prettyprint-override\"><code>+key1:value1 +key2:value1 +key3:value1 +key4:value1\n</code></pre>\n<ol start=\"3\">\n<li></li>\n</ol>\n<pre class=\"lang-none prettyprint-override\"><code>key1:value2 +key2:value2 +key3:value2 key4:value2\n</code></pre>\n<p>These match the observed behaviour, but don't make sense. Why does Lucene work in that way?</p>\n",
+    "tags" : [ "java", "scala", "lucene" ],
     "owner" : {
-      "account_id" : 11187949,
-      "reputation" : 191,
-      "user_id" : 8209535,
+      "account_id" : 9181967,
+      "reputation" : 3268,
+      "user_id" : 7037695,
       "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/eb05194fa08382285f2ae57db5aa28b4?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "Clark Hobbie",
-      "link" : "https://stackoverflow.com/users/8209535/clark-hobbie"
+      "accept_rate" : 89,
+      "profile_image" : "https://lh3.googleusercontent.com/-VBSyZ-n09Do/AAAAAAAAAAI/AAAAAAAAADI/zZd-wwa0QWc/s256-rj/photo.jpg",
+      "display_name" : "Markus Appel",
+      "link" : "https://stackoverflow.com/users/7037695/markus-appel"
     },
     "is_answered" : false,
-    "view_count" : 69,
+    "view_count" : 92,
     "answer_count" : 0,
-    "score" : 0,
-    "last_activity_date" : 1761794149,
-    "creation_date" : 1761773755,
-    "link" : "https://stackoverflow.com/questions/79804241/netty-writeandflush-fails-io-netty-util-illegalreferencecountexception-refcnt",
+    "score" : 1,
+    "last_activity_date" : 1762367912,
+    "creation_date" : 1762348660,
+    "link" : "https://stackoverflow.com/questions/79810098/lucene-boolean-operator-problems",
     "content_license" : "CC BY-SA 4.0"
   },
   "answers" : [ ],
-  "question_comments" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140839100,
+    "post_id" : 79810098,
+    "body" : "This question is similar to: <a href=\"https://stackoverflow.com/questions/74818122/lucene-operator-precedence-for-boolean-operators\">Lucene operator precedence for boolean operators</a>. If you believe it’s different, please <a href=\"https://stackoverflow.com/posts/79810098/edit\">edit</a> the question, make it clear how it’s different and/or how the answers on that question are not helpful for your problem.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 4688171,
+      "reputation" : 11611,
+      "user_id" : 3795036,
+      "user_type" : "registered",
+      "accept_rate" : 88,
+      "profile_image" : "https://i.sstatic.net/eM2E2.png?s=256",
+      "display_name" : "K.Nicholas",
+      "link" : "https://stackoverflow.com/users/3795036/k-nicholas"
+    },
+    "creation_date" : 1762395723,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140838825,
+    "post_id" : 79810098,
+    "body" : "Bottom line: these &quot;boolean&quot; operators <code>AND</code> and <code>OR</code> were added to Lucene as a way to try to be more inuitive than <code>+</code> (meaning &quot;must exist&quot;) along with &quot;may exist&quot; and &quot;must not exist&quot;. <i>These</i> are the fundamental Lucene operators here. We have to remember that Lucene&#39;s overall objective is not a pure boolean &quot;hit&quot; or &quot;miss&quot; process - but rather a <i>scoring</i> process (more relevant vs. less relevant matches, ranked in order).",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 12743722,
+      "reputation" : 22621,
+      "user_id" : 12567365,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/zNR3x.png?s=256",
+      "display_name" : "andrewJames",
+      "link" : "https://stackoverflow.com/users/12567365/andrewjames"
+    },
+    "creation_date" : 1762377776,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140838824,
+    "post_id" : 79810098,
+    "body" : "Related: <a href=\"https://stackoverflow.com/q/74818122\">Lucene operator precedence for boolean operators</a>. There is also a great thread (old but still highly relevant) from the Lucene mailing list: <a href=\"https://www.mail-archive.com/java-user@lucene.apache.org/msg11815.html\" rel=\"nofollow noreferrer\">Getting a Better Understanding of Lucene&#39;s Search Operators</a>.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 12743722,
+      "reputation" : 22621,
+      "user_id" : 12567365,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/zNR3x.png?s=256",
+      "display_name" : "andrewJames",
+      "link" : "https://stackoverflow.com/users/12567365/andrewjames"
+    },
+    "creation_date" : 1762377772,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140838534,
+    "post_id" : 79810098,
+    "body" : "I don&#39;t have a precise answer but the Classic QueryParser you&#39;re using is documented to be used by end users simple queries (<a href=\"https://lucene.apache.org/core/9_5_0/queryparser/org/apache/lucene/queryparser/classic/package-summary.html#package.description\" rel=\"nofollow noreferrer\">link</a>). Did you try another parser out of curiosity?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7034556,
+      "reputation" : 15907,
+      "user_id" : 5389127,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/391c01e15f62cee096b758c4c2815c2c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Ga&#235;l J",
+      "link" : "https://stackoverflow.com/users/5389127/ga%c3%abl-j"
+    },
+    "creation_date" : 1762367898,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
   "answer_comments" : { }
 }

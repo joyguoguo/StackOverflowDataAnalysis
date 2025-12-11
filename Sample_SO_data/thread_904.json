@@ -1,46 +1,28 @@
 {
   "question" : {
-    "question_id" : 79755956,
-    "title" : "Spring Batch Cannot change transaction isolation level in the middle of a transaction",
-    "body" : "<p>After updating to Spring Boot 3.4.3 and consequently to Spring Batch 3.5.5, I started getting an error when starting the Job. Previously, I used Spring Batch 2.6.4 and there were no errors.</p>\n<p>Job config:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Configuration\n@RequiredArgsConstructor\n@EnableBatchProcessing\npublic class DeleteJobConfig {\n\n    private final JobRepository jobRepository;\n    private final Repository Repository;\n    private final PlatformTransactionManager platformTransactionManager;\n    private final ApplicationProperties applicationProperties;\n\n    @Bean\n    public Job deleteJob() {\n        return new JobBuilder(&quot;deleteJob&quot;, jobRepository)\n                .incrementer(new RunIdIncrementer())\n                .preventRestart()\n                .start(deleteStep())\n                .build();\n    }\n\n    @Bean\n    public Step deleteStep() {\n        return new StepBuilder(&quot;deleteStep&quot;, jobRepository)\n                .&lt;Entity, Entity&gt;chunk(applicationProperties.getBatch().getDeleteJob().getChunkSize(), platformTransactionManager)\n                .reader(deleteReader())\n                .writer(deleteWriter())\n                .build();\n    }\n\n    @Bean\n    @StepScope\n    public ItemReader&lt;&gt; deleteReader() {\n        ...\n    }\n\n    @Bean\n    public ItemWriter&lt;&gt; deleteWriter() {\n        ...\n    }\n}\n</code></pre>\n<p>Launch service:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Service\n@Slf4j\n@RequiredArgsConstructor\npublic class ArchiverService {\n\n    private final JobLauncher jobLauncher;\n    private final Job deleteJob;\n\n    @Override\n    @Scheduled(\n            cron = &quot;${app.scheduler.cron.deleting-time}&quot;,\n            zone = &quot;${app.scheduler.zone-moscow}&quot;\n    )\n    @SneakyThrows\n    public void deleteExpiredNotNews() {\n        log.info(&quot;Starting deleteExpiredNotNews&quot;);\n\n        JobParameters params = new JobParametersBuilder()\n                .addString(&quot;runId&quot;, UUID.randomUUID().toString())\n                .toJobParameters();\n\n        jobLauncher.run(deleteJob, params);\n\n        log.info(&quot;Finished deleteExpiredNotNews&quot;);\n    }\n}\n</code></pre>\n<p>stacktrace:</p>\n<pre><code>org.springframework.transaction.CannotCreateTransactionException: Could not open JPA EntityManager for transaction\n    at org.springframework.orm.jpa.JpaTransactionManager.doBegin(JpaTransactionManager.java:466) ~[spring-orm-6.2.3.jar:6.2.3]\n    at org.springframework.transaction.support.AbstractPlatformTransactionManager.startTransaction(AbstractPlatformTransactionManager.java:532) ~[spring-tx-6.2.3.jar:6.2.3]\n    at org.springframework.transaction.support.AbstractPlatformTransactionManager.getTransaction(AbstractPlatformTransactionManager.java:405) ~[spring-tx-6.2.3.jar:6.2.3]\n    at org.springframework.transaction.interceptor.TransactionAspectSupport.createTransactionIfNecessary(TransactionAspectSupport.java:639) ~[spring-tx-6.2.3.jar:6.2.3]\n    at org.springframework.transaction.interceptor.TransactionAspectSupport.invokeWithinTransaction(TransactionAspectSupport.java:374) ~[spring-tx-6.2.3.jar:6.2.3]\n    at org.springframework.transaction.interceptor.TransactionInterceptor.invoke(TransactionInterceptor.java:119) ~[spring-tx-6.2.3.jar:6.2.3]\n    at org.springframework.aop.framework.ReflectiveMethodInvocation.proceed(ReflectiveMethodInvocation.java:184) ~[spring-aop-6.2.3.jar:6.2.3]\n    at org.springframework.aop.framework.JdkDynamicAopProxy.invoke(JdkDynamicAopProxy.java:223) ~[spring-aop-6.2.3.jar:6.2.3]\n    at jdk.proxy2/jdk.proxy2.$Proxy283.getLastJobExecution(Unknown Source) ~[?:?]\n    at org.springframework.batch.core.launch.support.TaskExecutorJobLauncher.run(TaskExecutorJobLauncher.java:109) ~[spring-batch-core-5.2.1.jar:5.2.1]\n    at com.my.sales.plan.scheduler.impl.ArchiverService.deleteExpiredNotNews(ArchiverService.java:56) ~[classes/:?]\n    at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method) ~[?:?]\n    at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:77) ~[?:?]\n    at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43) ~[?:?]\n    at java.base/java.lang.reflect.Method.invoke(Method.java:568) ~[?:?]\n    at org.springframework.scheduling.support.ScheduledMethodRunnable.runInternal(ScheduledMethodRunnable.java:130) ~[spring-context-6.2.3.jar:6.2.3]\n    at org.springframework.scheduling.support.ScheduledMethodRunnable.lambda$run$2(ScheduledMethodRunnable.java:124) ~[spring-context-6.2.3.jar:6.2.3]\n    at io.micrometer.observation.Observation.observe(Observation.java:498) ~[micrometer-observation-1.14.4.jar:1.14.4]\n    at org.springframework.scheduling.support.ScheduledMethodRunnable.run(ScheduledMethodRunnable.java:124) ~[spring-context-6.2.3.jar:6.2.3]\n    at org.springframework.scheduling.config.Task$OutcomeTrackingRunnable.run(Task.java:85) ~[spring-context-6.2.3.jar:6.2.3]\n    at org.springframework.scheduling.support.DelegatingErrorHandlingRunnable.run(DelegatingErrorHandlingRunnable.java:54) [spring-context-6.2.3.jar:6.2.3]\n    at org.springframework.scheduling.concurrent.ReschedulingRunnable.run(ReschedulingRunnable.java:96) [spring-context-6.2.3.jar:6.2.3]\n    at java.base/java.util.concurrent.Executors$RunnableAdapter.call(Executors.java:539) [?:?]\n    at java.base/java.util.concurrent.FutureTask.run(FutureTask.java:264) [?:?]\n    at java.base/java.util.concurrent.ScheduledThreadPoolExecutor$ScheduledFutureTask.run(ScheduledThreadPoolExecutor.java:304) [?:?]\n    at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1136) [?:?]\n    at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:635) [?:?]\n    at java.base/java.lang.Thread.run(Thread.java:833) [?:?]\nCaused by: org.postgresql.util.PSQLException: Cannot change transaction isolation level in the middle of a transaction.\n    at org.postgresql.jdbc.PgConnection.setTransactionIsolation(PgConnection.java:1075) ~[postgresql-42.7.5.jar:42.7.5]\n    at com.zaxxer.hikari.pool.ProxyConnection.setTransactionIsolation(ProxyConnection.java:421) ~[HikariCP-5.1.0.jar:?]\n    at com.zaxxer.hikari.pool.HikariProxyConnection.setTransactionIsolation(HikariProxyConnection.java) ~[HikariCP-5.1.0.jar:?]\n    at org.springframework.jdbc.datasource.DataSourceUtils.prepareConnectionForTransaction(DataSourceUtils.java:216) ~[spring-jdbc-6.2.3.jar:6.2.3]\n    at org.springframework.orm.jpa.vendor.HibernateJpaDialect.beginTransaction(HibernateJpaDialect.java:165) ~[spring-orm-6.2.3.jar:6.2.3]\n    at org.springframework.orm.jpa.JpaTransactionManager.doBegin(JpaTransactionManager.java:420) ~[spring-orm-6.2.3.jar:6.2.3]\n    ... 27 more\n</code></pre>\n<p>I also tried removing the scheduled execution and running it through a regular REST controller, but the error persists.</p>\n",
-    "tags" : [ "java", "spring", "spring-boot", "jpa", "spring-batch" ],
+    "question_id" : 79761373,
+    "title" : "Hibernate Toools 6.5 Reverse Engineering Does Not Generate JPA Annotations",
+    "body" : "<p>Eclipse 2025-06, OpenJDK 25, Hibernate Tools 6.5, PostgreSQL Database v17, postgresql-42.7.2.jar driver</p>\n<p>I set up Hibernate Configuration and checked Console Configuration Type to JPA (jdk 1.5+).  In Hibernate Code Generation Configuration and Exporters tab, I checked both 'Use Java 5 syntax' and 'Generate EJB3 annotations' and then checked 'Domain Code (.java).  It generates Java domain classes but no JPA annotations which I want.  I would appreciate help in setting it up correctly so that generated Java classes also have JPA annotations.  Thanks.</p>\n",
+    "tags" : [ "java", "eclipse", "hibernate", "jpa" ],
     "owner" : {
-      "account_id" : 10692733,
-      "reputation" : 133,
-      "user_id" : 9945151,
+      "account_id" : 3913512,
+      "reputation" : 35,
+      "user_id" : 3238083,
       "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/73680993e9f400048124213e6cd07875?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "R1zen",
-      "link" : "https://stackoverflow.com/users/9945151/r1zen"
+      "profile_image" : "https://www.gravatar.com/avatar/11befb90d247c050c91910e475a3a688?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Asif",
+      "link" : "https://stackoverflow.com/users/3238083/asif"
     },
-    "is_answered" : true,
-    "view_count" : 132,
-    "answer_count" : 1,
-    "score" : 0,
-    "last_activity_date" : 1757005795,
-    "creation_date" : 1757002014,
-    "link" : "https://stackoverflow.com/questions/79755956/spring-batch-cannot-change-transaction-isolation-level-in-the-middle-of-a-transa",
+    "is_answered" : false,
+    "view_count" : 87,
+    "answer_count" : 0,
+    "score" : 2,
+    "last_activity_date" : 1757547882,
+    "creation_date" : 1757547666,
+    "link" : "https://stackoverflow.com/questions/79761373/hibernate-toools-6-5-reverse-engineering-does-not-generate-jpa-annotations",
     "content_license" : "CC BY-SA 4.0"
   },
-  "answers" : [ {
-    "answer_id" : 79756017,
-    "question_id" : 79755956,
-    "body" : "<ol>\n<li>Try to configure Hikari with explicit default isolation</li>\n</ol>\n<pre><code> spring:\n  datasource:\n    hikari:\n      transaction-isolation: TRANSACTION_READ_COMMITTED\n</code></pre>\n<ol start=\"2\">\n<li>Pay attention to the compatibility:</li>\n</ol>\n<p>Spring Boot 3.x → Spring Framework 6.x → Spring Batch 5.x only.\nOld Batch 3.x or 4.x will not work due to the migration from javax.* → jakarta.*.\nSpring Boot 2.x (2.2–2.6) → Spring Batch 3.4–3.5 works fine.</p>\n<ol start=\"3\">\n<li>Upgrading Spring Boot and Spring Batch carries a high risk.</li>\n</ol>\n",
-    "score" : 1,
-    "is_accepted" : false,
-    "owner" : {
-      "account_id" : 2621865,
-      "reputation" : 41,
-      "user_id" : 2269722,
-      "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/72b25a5c6761da9602e1904dafccfce0?s=256&d=identicon&r=PG",
-      "display_name" : "peter8015",
-      "link" : "https://stackoverflow.com/users/2269722/peter8015"
-    },
-    "creation_date" : 1757005795,
-    "last_activity_date" : 1757005795,
-    "content_license" : "CC BY-SA 4.0"
-  } ],
+  "answers" : [ ],
   "question_comments" : [ ],
   "answer_comments" : { }
 }

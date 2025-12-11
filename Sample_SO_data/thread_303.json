@@ -1,144 +1,78 @@
 {
   "question" : {
-    "question_id" : 79812066,
-    "title" : "Optional bean from creation to usage",
-    "body" : "<p>In the <code>application.yml</code>, some properties can be given or not (according to the environment, the treatment at the end can be done or not). If not given, then the bean initialized with these properties in a configuration must not be initialized. I saw that it is not recommended to return null.</p>\n<p>In the code, for the service, I want to initalize it only if the bean has been created in the configuration.</p>\n<p>In the code, in a service where the previous service is used, I saw that I can use <code>Optional&lt;MyService&gt;</code> in the constructor or <code>@Autowired(required = false)</code> on the attribute and then I will do <code>if(myService != null)</code> to not do the code if service does not exist.</p>\n<p>An exemple of the code in the configuration with a comment where I do not know what to do:</p>\n<pre><code>@Configuration\npublic class MyConfiguration {\n    // Empty value by default if not given\n    @Value(&quot;${property.value:}&quot;)\n    private String myProperty;\n    \n    @Bean(&quot;myBean&quot;)\n    public MyBeanObject myBeanObject() {\n        if (StringUtils.isNotEmpty(this.myProperty)) {\n            return new MyBeanObject;\n        } else {\n            // How to do?\n        }\n    }\n}\n</code></pre>\n<p>An exemple of the first service with a comment where I do not know how to do:</p>\n<pre><code>// How to make this service optional and not created if bean does not exist?\n@Service(&quot;myFirstService&quot;)\npublic class MyFirstServiceImpl extends AbstractMyService {\n    @Autowired\n    public MyFirstServiceImpl(@Qualifier(&quot;myBean&quot;) MyBeanObject myBeanObject) {\n        super(myBeanObject);\n    }\n}\n</code></pre>\n<p>An exemple of the second service where I do the treatment only if the service exists (I do not know if it is correct):</p>\n<pre><code>@Service\npublic class MySecondServiceImpl {\n    private AbstractMyService myService;\n    \n    @Autowired\n    public MySecondServiceImpl(@Qualifier(&quot;myFirstService&quot;) Optional&lt;AbstractMyService&gt; myServiceOpt) {\n        if(myServiceOpt.isPresent()) {\n            this.myService = myServiceOpt.get();\n        }\n    }\n    \n    public void method() {\n        if(this.myService != null) {\n            // treatment\n        }\n   }\n}\n</code></pre>\n",
-    "tags" : [ "java", "spring" ],
+    "question_id" : 79819222,
+    "title" : "Mockito MockStatic behavior leaking to other junit tests",
+    "body" : "<p>I am using Mockito 5.20.0 to mock a static method, but the mock is not correctly closing / the mocked behavior is leaking outside of the tests it is intended to apply to. This is only a problem if <code>MyMockedTest</code> runs before <code>MyUnmockedTest</code>. If <code>MyUnmockedTest</code> runs first, there is no problem and both test classes pass. From what I can tell, the try-with-resources should be closing and un-mocking <code>MyUtil</code> when <code>MyMockedTest::testStuff</code> is complete, and the mocked behavior should not carry over to another class.</p>\n<p>I have run the tests both in IntelliJ and with <code>./gradlew clean build test</code>. The tests do not run in parallel.</p>\n<p>Illustrative example code with details redacted, hopefully it communicates the gist of what's going on:</p>\n<pre><code>public class MyUtil {\n    public static DBConnection getMyDbConnection() {\n        // ....\n        // The other code here makes a network call\n        return new DBConnection();\n    }\n}\n\n\nimport org.mockito.MockedStatic;\n\nimport static org.mockito.Mockito.*;\n\npublic class MyMockedTest {\n    @ParameterizedTest\n    @EnumSource(value = Source.class, names = {&quot;SOURCE_ONE&quot;, &quot;SOURCE_TWO&quot;})\n    public void testStuff() {\n        // MyUtil has several methods called, and I only want to change the behavior of \n        // getMyDbConnection.\n        try (MockedStatic&lt;MyUtil&gt; myUtilMockedStatic = mockStatic(MyUtil.class, CALLS_REAL_METHODS)) {\n            DBConnection dbConnection = mock(DBConnection.class);\n            when(dbConnection.getConnectionName()).thenReturn(&quot;myConnection&quot;);\n            myUtilMockedStatic.when(MyUtil::getMyDbConnection).thenReturn(redshiftConnection);\n            // MyUtil.getMyDbConnection() is called downstream in code under test\n            MyFirstClass myFirstClass = new MyFirstClass();\n            DBConnection results = myFirstClass.getDbConnection()\n            // Assertion passes \n            assertEquals(results.getDbConnection().getConnectionName(), &quot;myConnection&quot;);\n        }\n    }\n}\n\npublic class MyUnmockedTest {\n    @ParameterizedTest\n    @EnumSource(value = Source.class, names = {&quot;SOURCE_ONE&quot;, &quot;SOURCE_TWO&quot;})\n    public void testStuffWithoutMockedUtils() {\n        MyOtherClass myOtherClass = new MyOtherClass();\n        // MyUtil.getMyDbConnection() is called downstream in code under test\n        DBConnection results = myOtherClass.getDbConnection();\n        // Assertion fails, because the downstream MyUtil.getMyDbConnection() is still returning the mocked DBConnection.\n        assertNotEquals(results.getDbConnection().getConnectionName(), &quot;myConnection&quot;);\n    }\n}\n</code></pre>\n<p>Relevant <code>build.gradle</code> Test configuration:</p>\n<pre><code>test {\n    useJUnitPlatform {\n        includeEngines &quot;jqwik&quot;, &quot;junit-jupiter&quot;\n    }\n\n    include &quot;**/*Test.class&quot;\n}\n\n\nconfigurations {\n    mockitoAgent\n}\n\ndependencies {\n    // ...\n    testImplementation &quot;org.junit.jupiter:junit-jupiter-api:6.0.1&quot;\n    testImplementation &quot;org.junit.jupiter:junit-jupiter-params:6.0.1&quot;\n    testRuntimeOnly &quot;org.junit.jupiter:junit-jupiter-engine:6.0.1&quot;\n    testRuntimeOnly &quot;org.junit.platform:junit-platform-launcher:1.13.4&quot;\n    testImplementation &quot;net.jqwik:jqwik:1.9.3&quot;\n    testImplementation &quot;org.wiremock:wiremock:3.13.1&quot;\n    testImplementation &quot;org.mockito:mockito-core:5.20.0&quot;\n    testImplementation &quot;org.mockito:mockito-junit-jupiter:5.20.0&quot;\n    mockitoAgent(&quot;org.mockito:mockito-core:5.20.0&quot;) {\n        transitive = false\n    }\n    // ...\n}\n\ntasks {\n    test {\n        jvmArgs += &quot;-javaagent:${configurations.mockitoAgent.asPath}&quot;\n    }\n}\n\ntest {\n    environment &quot;ENVIRONMENT&quot;, &quot;test&quot;\n\n    testLogging {\n        exceptionFormat = 'full'\n        showStandardStreams = true\n        events &quot;passed&quot;, &quot;skipped&quot;, &quot;failed&quot;\n    }\n}\n</code></pre>\n",
+    "tags" : [ "java", "testing", "junit", "mockito", "junit5" ],
     "owner" : {
-      "account_id" : 18936970,
-      "reputation" : 341,
-      "user_id" : 13817825,
+      "account_id" : 2864110,
+      "reputation" : 596,
+      "user_id" : 2458755,
       "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/cbced2a5eafd2c2cec5f5dd41b288905?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "phildeg31",
-      "link" : "https://stackoverflow.com/users/13817825/phildeg31"
+      "accept_rate" : 84,
+      "profile_image" : "https://www.gravatar.com/avatar/83ab5b95215907c328e37b2f996fc293?s=256&d=identicon&r=PG",
+      "display_name" : "PunDefeated",
+      "link" : "https://stackoverflow.com/users/2458755/pundefeated"
     },
     "is_answered" : false,
-    "view_count" : 91,
-    "answer_count" : 1,
-    "score" : 4,
-    "last_activity_date" : 1762512568,
-    "creation_date" : 1762503186,
-    "link" : "https://stackoverflow.com/questions/79812066/optional-bean-from-creation-to-usage",
+    "view_count" : 55,
+    "answer_count" : 0,
+    "score" : 0,
+    "last_activity_date" : 1763062789,
+    "creation_date" : 1763054404,
+    "link" : "https://stackoverflow.com/questions/79819222/mockito-mockstatic-behavior-leaking-to-other-junit-tests",
     "content_license" : "CC BY-SA 4.0"
   },
-  "answers" : [ {
-    "answer_id" : 79812243,
-    "question_id" : 79812066,
-    "body" : "<p>Thanks to M. Deinum, this is the solution I did:</p>\n<ul>\n<li><p>I created an interface based on Conditional for an annotation permitting to check that multiple String properties are not empty (based on an excemple found in this site, I just adapted it to my case):</p>\n<pre><code>@Target({ ElementType.TYPE, ElementType.METHOD })\n@Retention(RetentionPolicy.RUNTIME)\n@Conditional(ConditionalOnPropertyNotEmpty.OnPropertyNotEmptyCondition.class)\npublic @interface ConditionalOnPropertyNotEmpty {\n    String[] value() default {};\n\n    class OnPropertyNotEmptyCondition implements Condition {\n\n        @Override\n        public boolean matches(ConditionContext context, AnnotatedTypeMetadata metadata) {\n            Map&lt;String, Object&gt; attrs = metadata.getAnnotationAttributes(ConditionalOnPropertyNotEmpty.class.getName());\n            if (attrs == null) {\n                return false;\n            }\n            String[] properties = (String[]) attrs.get(&quot;value&quot;);\n            List&lt;String&gt; propertyNames = Arrays.asList(properties);\n            for (String propertyName : propertyNames) {\n                String val = context.getEnvironment().getProperty(propertyName);\n                if (StringUtils.isEmpty(val)) {\n                    return false;\n                }\n            }\n            return true;\n        }\n    }\n}\n</code></pre>\n</li>\n<li><p>I use it to create my beans (or not) in the configuration:</p>\n<pre><code>@Configuration\npublic class MyConfiguration {\n    // Empty value by default if not given\n    @Value(&quot;${property1.value:}&quot;)\n    private String myFirstProperty;\n    @Value(&quot;${property2.value:}&quot;)\n    private String mySecondProperty;\n\n    @Bean(&quot;myBean&quot;)\n    @ConditionalOnPropertyNotEmpty({ &quot;property1.value&quot;, &quot;property2.value&quot; })\n    public MyBeanObject myBeanObject() {\n        return new MyBeanObject(this.myFirstProperty, this.mySecondProperty);\n    }\n\n    @Bean(&quot;myFirstService&quot;)\n    @ConditionalOnPropertyNotEmpty({ &quot;property1.value&quot;, &quot;property2.value&quot; })\n    public AbstractMyService myFirstServiceBean() {\n        return new MyFirstServiceImpl(@Qualifier(&quot;myBean&quot;) MyBeanObject myBeanObject);\n    }\n}\n</code></pre>\n</li>\n<li><p>In the second service, I do the treatment only if the bean of the first service exist</p>\n</li>\n</ul>\n",
-    "score" : 0,
-    "is_accepted" : false,
-    "owner" : {
-      "account_id" : 18936970,
-      "reputation" : 341,
-      "user_id" : 13817825,
-      "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/cbced2a5eafd2c2cec5f5dd41b288905?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "phildeg31",
-      "link" : "https://stackoverflow.com/users/13817825/phildeg31"
-    },
-    "creation_date" : 1762512568,
-    "last_activity_date" : 1762512568,
-    "content_license" : "CC BY-SA 4.0"
-  } ],
+  "answers" : [ ],
   "question_comments" : [ {
-    "comment_id" : 140843124,
-    "post_id" : 79812066,
-    "body" : "Yes I agree but I cannot set it as the best answer because it is only a comment. This is why I explained what I did thanks to his answer.",
+    "comment_id" : 140853093,
+    "post_id" : 79819222,
+    "body" : "@Mureinik I&#39;m currently having trouble paring it down to a minimal reproducible example given the size of the project. I&#39;ll update the question if I can figure it out.",
     "score" : 0,
     "owner" : {
-      "account_id" : 18936970,
-      "reputation" : 341,
-      "user_id" : 13817825,
+      "account_id" : 2864110,
+      "reputation" : 596,
+      "user_id" : 2458755,
       "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/cbced2a5eafd2c2cec5f5dd41b288905?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "phildeg31",
-      "link" : "https://stackoverflow.com/users/13817825/phildeg31"
+      "accept_rate" : 84,
+      "profile_image" : "https://www.gravatar.com/avatar/83ab5b95215907c328e37b2f996fc293?s=256&d=identicon&r=PG",
+      "display_name" : "PunDefeated",
+      "link" : "https://stackoverflow.com/users/2458755/pundefeated"
     },
-    "creation_date" : 1762592922,
+    "creation_date" : 1763063550,
     "content_license" : "CC BY-SA 4.0"
   }, {
-    "comment_id" : 140841595,
-    "post_id" : 79812066,
-    "body" : "@M.Deinum Your first comment should be an answer IMO. Covers the available options pretty nice (my suggestions would have been the same).",
+    "comment_id" : 140853076,
+    "post_id" : 79819222,
+    "body" : "Can you share a <a href=\"https://stackoverflow.com/help/minimal-reproducible-example\">minimal reproducible example</a>?",
     "score" : 0,
     "owner" : {
-      "account_id" : 23783500,
-      "reputation" : 7109,
-      "user_id" : 17795888,
+      "account_id" : 2818342,
+      "reputation" : 315967,
+      "user_id" : 2422776,
       "user_type" : "registered",
-      "profile_image" : "https://i.sstatic.net/Xay1V.jpg?s=256",
-      "display_name" : "Chaosfire",
-      "link" : "https://stackoverflow.com/users/17795888/chaosfire"
+      "profile_image" : "https://www.gravatar.com/avatar/2353050223ebecb113741c29458de4b2?s=256&d=identicon&r=PG",
+      "display_name" : "Mureinik",
+      "link" : "https://stackoverflow.com/users/2422776/mureinik"
     },
-    "creation_date" : 1762511372,
+    "creation_date" : 1763062498,
     "content_license" : "CC BY-SA 4.0"
   }, {
-    "comment_id" : 140841436,
-    "post_id" : 79812066,
-    "body" : "Well you would probably better of ditching the <code>@Service</code> on your first service make that an <code>@Bean</code> as well and make your configuration conditional on the property. Or as mentioned return a no-op implementatin of the <code>MyBeanObject</code>.",
-    "score" : 1,
-    "owner" : {
-      "account_id" : 3192259,
-      "reputation" : 126777,
-      "user_id" : 2696260,
-      "user_type" : "registered",
-      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
-      "display_name" : "M. Deinum",
-      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
-    },
-    "creation_date" : 1762506173,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140841431,
-    "post_id" : 79812066,
-    "body" : "Ok so for myBeanObject you mean?",
+    "comment_id" : 140853002,
+    "post_id" : 79819222,
+    "body" : "Do your unit tests run in parallel in any way, even for a small overlap? Also <a href=\"https://stackoverflow.com/posts/79819222/edit\">edit</a> your question to include a detailed description how exactly you run your unit tests and how you execution of the unit tests is configured.",
     "score" : 0,
     "owner" : {
-      "account_id" : 18936970,
-      "reputation" : 341,
-      "user_id" : 13817825,
+      "account_id" : 108033,
+      "reputation" : 20099,
+      "user_id" : 286934,
       "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/cbced2a5eafd2c2cec5f5dd41b288905?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "phildeg31",
-      "link" : "https://stackoverflow.com/users/13817825/phildeg31"
+      "profile_image" : "https://www.gravatar.com/avatar/f16a184d26b72795ff243464d715cffe?s=256&d=identicon&r=PG",
+      "display_name" : "Progman",
+      "link" : "https://stackoverflow.com/users/286934/progman"
     },
-    "creation_date" : 1762506054,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140841424,
-    "post_id" : 79812066,
-    "body" : "If you are using an <code>application.yml</code> I&#39;m under the assumption you are using Spring Boot. If so don&#39;t do an if but make the bean conditional on a property <code>@ConditionalOnProperty</code>. Also when doing optional please use as intended and don&#39;t use it as a glorified <code>if</code>. Don&#39;t use <code>isPresent</code> with <code>get</code> just assign it to a field, and use somethingl ike <code>optional.ifPresent( svc -&gt; svc.doSomething())</code>. If you don&#39;t want to use a conditional or refrain from optional and if, is to to return an no-op implementation of the service.",
-    "score" : 4,
-    "owner" : {
-      "account_id" : 3192259,
-      "reputation" : 126777,
-      "user_id" : 2696260,
-      "user_type" : "registered",
-      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
-      "display_name" : "M. Deinum",
-      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
-    },
-    "creation_date" : 1762505962,
+    "creation_date" : 1763058845,
     "content_license" : "CC BY-SA 4.0"
   } ],
-  "answer_comments" : {
-    "79812243" : [ {
-      "comment_id" : 140845988,
-      "post_id" : 79812243,
-      "body" : "use @EnableConfigurationProperties. it can controller bean created.  less than code.",
-      "score" : 0,
-      "owner" : {
-        "account_id" : 31928324,
-        "reputation" : 1,
-        "user_id" : 24738709,
-        "user_type" : "registered",
-        "profile_image" : "https://i.sstatic.net/51ahZIBH.jpg?s=256",
-        "display_name" : "Williams",
-        "link" : "https://stackoverflow.com/users/24738709/williams"
-      },
-      "creation_date" : 1762740329,
-      "content_license" : "CC BY-SA 4.0"
-    } ]
-  }
+  "answer_comments" : { }
 }

@@ -1,44 +1,150 @@
 {
   "question" : {
-    "question_id" : 79750163,
-    "title" : "Apache HttpClient 5 cache not removing expired resources from disk",
-    "body" : "<p>My application needs to fetch resources (images, CSS, fonts, etc.) from given URLs and cache them locally based on the <code>Cache-Control</code>/<code>ETag</code> headers returned with the resource.</p>\n<p>I’m using Apache HttpClient 5 with the cache module:</p>\n<pre><code>&lt;dependency&gt;\n  &lt;groupId&gt;org.apache.httpcomponents.client5&lt;/groupId&gt;\n  &lt;artifactId&gt;httpclient5&lt;/artifactId&gt;\n  &lt;version&gt;5.3.1&lt;/version&gt;\n&lt;/dependency&gt;\n&lt;dependency&gt;\n  &lt;groupId&gt;org.apache.httpcomponents.client5&lt;/groupId&gt;\n  &lt;artifactId&gt;httpclient5-cache&lt;/artifactId&gt;\n  &lt;version&gt;5.3.1&lt;/version&gt;\n&lt;/dependency&gt;\n</code></pre>\n<p>Apache HttpClient successfully caches resources locally and fetches a new version once the old one has expired.\nHowever, <strong>old versions of the resources are not removed automatically</strong> from the local cache.</p>\n<p>Here’s my test implementation:</p>\n<pre><code>@Component\npublic class ResourceCache {\n\n  private final CloseableHttpClient client;\n\n  public ResourceCache() {\n        CacheConfig cacheConfig = CacheConfig.custom()\n        .setMaxCacheEntries(2)\n        .setMaxObjectSize(10 * 1024 * 1024)\n        .setSharedCache(false)\n        .setHeuristicCachingEnabled(true)\n        .setHeuristicDefaultLifetime(TimeValue.ofMinutes(2))\n        .build();\n    ManagedHttpCacheStorage storage = new ManagedHttpCacheStorage(cacheConfig);\n\n    client = CachingHttpClients.custom()\n        .setCacheDir(new File(&quot;/my_cache&quot;))\n        .setCacheConfig(cacheConfig)\n        .setHttpCacheStorage(storage)\n        .build();\n\n    ScheduledExecutorService ses = Executors.newSingleThreadScheduledExecutor();\n    ses.scheduleAtFixedRate(storage::cleanResources, 30, 30, TimeUnit.SECONDS);\n  }\n\n  public void fetchAndCache() {\n      List&lt;String&gt; resources = List.of(\n          &quot;https://img.shields.io/npm/v/react.svg&quot;,   // cache-control: max-age=300, s-maxage=300; no ETag\n          &quot;https://jpeg.org/images/jpeg-home.jpg&quot;,   // ETag only\n          &quot;http://httpbin.org/image/png&quot;             // no cache-control, no ETag\n      );\n\n    for (String resource : resources) {\n        HttpGet request = new HttpGet(resource);\n        HttpClientResponseHandler&lt;byte[]&gt; handler = response -&gt; {\n          if (response.getEntity() != null) {\n            return response.getEntity().getContent().readAllBytes();\n          }\n          return new byte[0];\n        };\n\n        try {\n          byte[] data = client.execute(request, handler);\n        } catch (IOException e) {\n          e.printStackTrace();\n        }\n    }\n  }\n}\n</code></pre>\n<p>Observed behavior:</p>\n<ul>\n<li><code>https://img.shields.io/npm/v/react.svg</code> → Has <code>Cache-Control: max-age=300</code>. After it expires, a new version is fetched, but the <strong>old one still exists</strong>. (Also, for some reason, this specific resource seems to be fetched twice each time.)</li>\n<li><code>https://jpeg.org/images/jpeg-home.jpg</code> → Has an <code>ETag</code>. A new version is not fetched (since the ETag hasn’t changed). Expected.</li>\n<li><code>http://httpbin.org/image/png</code> → No cache-control/ETag. Apache client applies heuristic caching. After expiration, a new version is fetched, but again, the <strong>old version remains</strong> in the cache.</li>\n</ul>\n<p>I’m creating my own <code>ManagedHttpCacheStorage</code> so I can call <code>cleanResources()</code> on it periodically from a scheduled job.However, <code>cleanResources()</code> does not remove files from the cache folder.</p>\n<p>The <a href=\"https://hc.apache.org/httpcomponents-client-5.5.x/current/httpclient5-cache/apidocs/org/apache/hc/client5/http/impl/cache/ManagedHttpCacheStorage.html\" rel=\"nofollow noreferrer\">Documentation</a> says that this type of storage can deallocate resources.\nDoes this mean it only removes references from memory but leaves the files on disk?</p>\n<p>Is there a way to automatically clean expired resources from disk with Apache HttpClient 5?\nOr do I need to implement my own cleanup logic?</p>\n<p>Additionally, I noticed that if I manually delete the cache folder while the application is still running, resources are no longer cached and are fetched from the web each time.</p>\n<p><a href=\"https://i.sstatic.net/wc61wCY8.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/wc61wCY8.png\" alt=\"Cache folder content\" /></a></p>\n",
-    "tags" : [ "java", "caching", "apache-httpcomponents", "apache-httpclient-5.x" ],
+    "question_id" : 79756132,
+    "title" : "Performance of frequently reordering a short list",
+    "body" : "<p>I have an application where I have a <code>Rule</code> object that has a list of <code>Filter</code> predicates. I will be comparing many <code>Events</code> to the predicates, and want to know if they <em>all</em> match. Most Events will not match against the Rule, so I want to fail as fast as possible.</p>\n<p>I figure, if I reorder the list so that the most-recently failing Filter is first, the Filters that are low-value will naturally sink down to the bottom of the list. Each Filter will hold a task roughly equivalent to a case-insensitive string comparison, so I <em>think</em> reordering the list will be more performant than doing an unnecessary test.</p>\n<p>I know from studying Big-O complexity that a Linked List is the correct solution here for <em>algorithmic complexity.</em> However, given the fact that I expect this list to be somewhere in the range of 5-50 elements long, I have a suspicion that storing the Filters in an ArrayList will <em>actually</em> be the most performant, as that forces the list to be stored in one  block of physical memory, instead of spread across the heap.</p>\n<p>Is there some other data structure that would be even more performant for this task?</p>\n<pre><code>public class Rule {\n  private List&lt;Predicate&lt;Event&gt;&gt; filters;\n\n  public boolean doesEventMatch(final Event event) {\n    for (int i = 0; i &lt; filters.size(); i++) {\n      if (!filter.test(event)) {\n        // remove the active filter and insert it at the front of the list\n        if (i != 0) {\n          final Predicate&lt;Event&gt; activeFilter = filters.remove(i);\n          filters.add(0, activeFilter);\n        }\n\n        return false;\n      }\n    }\n    return true;\n  }\n}\n</code></pre>\n",
+    "tags" : [ "java", "algorithm" ],
     "owner" : {
-      "account_id" : 11778017,
-      "reputation" : 232,
-      "user_id" : 8618703,
+      "account_id" : 187570,
+      "reputation" : 5316,
+      "user_id" : 425722,
       "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/304cc3f273baeeea8d40e0d9ac9f4d48?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "Teodor Mysko",
-      "link" : "https://stackoverflow.com/users/8618703/teodor-mysko"
+      "accept_rate" : 83,
+      "profile_image" : "https://i.sstatic.net/346yd.jpg?s=256",
+      "display_name" : "Andrew Rueckert",
+      "link" : "https://stackoverflow.com/users/425722/andrew-rueckert"
     },
-    "is_answered" : false,
-    "view_count" : 69,
-    "answer_count" : 0,
-    "score" : 1,
-    "last_activity_date" : 1756468131,
-    "creation_date" : 1756464226,
-    "link" : "https://stackoverflow.com/questions/79750163/apache-httpclient-5-cache-not-removing-expired-resources-from-disk",
-    "content_license" : "CC BY-SA 4.0"
+    "is_answered" : true,
+    "view_count" : 150,
+    "closed_date" : 1757212755,
+    "answer_count" : 2,
+    "score" : -2,
+    "last_activity_date" : 1757187872,
+    "creation_date" : 1757012818,
+    "link" : "https://stackoverflow.com/questions/79756132/performance-of-frequently-reordering-a-short-list",
+    "closed_reason" : "Opinion-based"
   },
-  "answers" : [ ],
-  "question_comments" : [ {
-    "comment_id" : 140702251,
-    "post_id" : 79750163,
-    "body" : "Upgrade to HttpClient 5.5 and re-test. If the problem persists report the issue to the project <a href=\"https://issues.apache.org/jira/browse/HTTPCLIENT\" rel=\"nofollow noreferrer\">issues.apache.org/jira/browse/HTTPCLIENT</a>",
-    "score" : 0,
+  "answers" : [ {
+    "answer_id" : 79756148,
+    "question_id" : 79756132,
+    "body" : "<p>Imagine your list has 20 filters in it, and you repeatedly reorder filter at index 0 and filter at index 1. This sounds quite plausible.</p>\n<p>Your operation will end up performing 18 'move steps' (to <code>remove(1)</code>, ArrayList's impl moves elements 2-19 down by 1), and then 19 'move steps' (to <code>add(0, ..)</code>, the impl moves 0-18 up by 1).</p>\n<p>Whereas flipping element 0 and element 1 around, which is all that you really want, would be faster.</p>\n<p>Your instincts are <em>highly likely</em> correct. LinkedList is essentially always wrong. There's always some data type (usually, but not always, <code>ArrayList</code>) that will do better. Regardless of the algorithmic complexity: Computers aren't von neumann machines; they operate almost nothing like it. Hence, the algorithmic complexity stuff only works on a large enough scale (in fairness to the 'point' of algorithmic complexity, that's what it is about: It just means <em>eventually, <strong>with enough input data</strong>, the performance characteristic will coalesce into this formula</em>. With the 'eventually' doing <em>a lot</em> of work.</p>\n<p>But, we're getting ahead of ourselves.</p>\n<h2>The golden rule</h2>\n<p>Because computers aren't von neumann machines and java VMs also aren't, it is <em>completely ridiculous to imagine you can guess what the performance is going to be</em>. It's just stupid at this point. Don't, ever, do it.</p>\n<p>If you want to know if something is more or less performant than an alterative, <strong>measure it</strong>. You use <a href=\"https://www.baeldung.com/java-microbenchmark-harness\" rel=\"noreferrer\">JMH</a> to set up a test (Don't time it yourself, you'll do it wrong, use JMH, it knows the ways to manipulate a VM to give you reliable timing info), and compare both implementations. If you don't do that, <em>you are just fumbling about in the dark and have no idea what you are doing</em>. It's reminiscent of the 4 humours kind of 'science'. Just pontificating without an iota of reality.</p>\n<h2>... ah, but what do I compare?</h2>\n<p>I'd go with 3 options which sound like plausible strategies:</p>\n<ol>\n<li>What you have now.</li>\n<li>Don't reorder.</li>\n</ol>\n<p>And stop there, run with JMH. Because it's somewhat likely you end up with 'no significant difference' and thus there's no further need to write more code.</p>\n<p>Your JMH code will need to emulate a realistic load, which means you have to answer a bunch of questions. What <em>is</em> a realistic load. Do you have real data? How often does the 'low value filter' thing actually come up?</p>\n<p>But, if the difference is significant enough, or you feel like you really wanna try and make things go faster:</p>\n<ol start=\"3\">\n<li>Write a custom method that implements 'move to front'.</li>\n</ol>\n<p>Unfortunately, to efficiently do the move to front thing, you need access to the backing array of arraylist which you do not have. Hence, you'd have to copy/paste ArrayList. Which you can; it's not magic, and the source is available.</p>\n<p>Then, it would look like this:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public void moveToFront(int idx) {\n  if (idx == 0) return;\n  Object front = array[idx];\n  System.arraycopy(array, 0, idx - 1, array, 1, idx - 1);\n  array[0] = front;\n}\n</code></pre>\n",
+    "score" : 5,
+    "is_accepted" : true,
     "owner" : {
-      "account_id" : 133909,
-      "reputation" : 27881,
-      "user_id" : 335638,
+      "account_id" : 401843,
+      "reputation" : 107186,
+      "user_id" : 768644,
       "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/a0176e178f8f08da2ac4524454b4184e?s=256&d=identicon&r=PG",
-      "display_name" : "ok2c",
-      "link" : "https://stackoverflow.com/users/335638/ok2c"
+      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+      "display_name" : "rzwitserloot",
+      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
     },
-    "creation_date" : 1756487678,
+    "creation_date" : 1757013898,
+    "last_activity_date" : 1757013898,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79756163,
+    "question_id" : 79756132,
+    "body" : "<p>Items in a sorted list can be retrieved by performing a binary search on the list, which typically takes O(log(N)) time.  A binary search tree performs the task of retrieving, removing, and inserting an object in the same amount of time.  With a few modifications, a binary search tree can become an AVL, which self-balances to prevent the underlying data structure from degrading into a linked list.</p>\n<p>More information on AVL trees can be found at <a href=\"https://en.wikipedia.org/wiki/AVL_tree\" rel=\"nofollow noreferrer\">https://en.wikipedia.org/wiki/AVL_tree</a>.</p>\n<p>Note:  A hash table can perform retrieving, removing, and insertion operations in O(1) time.  This might not be appropriate for your specific problem, because it looks like you need to find out whether an event matches one of the filters in your list.  In that situation, the retrieval operation might degrade into a linear search, which takes O(N) time.</p>\n",
+    "score" : -4,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 7506919,
+      "reputation" : 30,
+      "user_id" : 5703157,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/66b5dc237b1dc66312ef1635e8cb6db0?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "TTCUSM",
+      "link" : "https://stackoverflow.com/users/5703157/ttcusm"
+    },
+    "creation_date" : 1757014935,
+    "last_activity_date" : 1757187872,
     "content_license" : "CC BY-SA 4.0"
   } ],
-  "answer_comments" : { }
+  "question_comments" : [ {
+    "comment_id" : 140716359,
+    "post_id" : 79756132,
+    "body" : "Predicates with state generally not good idea. Rather than churn memory you might consider counters <code>fails[i]++</code> and reorder filters periodically by the fails values. Needs good benchmarks.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 5998820,
+      "reputation" : 16283,
+      "user_id" : 4712734,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f6e922a2cb7e2da59286f27b162aaca5?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "DuncG",
+      "link" : "https://stackoverflow.com/users/4712734/duncg"
+    },
+    "creation_date" : 1757053447,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79756163" : [ {
+      "comment_id" : 140720175,
+      "post_id" : 79756163,
+      "body" : "Actually I meant consider editing the wording before that line, not that sentence itself. No matter.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 5998820,
+        "reputation" : 16283,
+        "user_id" : 4712734,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/f6e922a2cb7e2da59286f27b162aaca5?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "DuncG",
+        "link" : "https://stackoverflow.com/users/4712734/duncg"
+      },
+      "creation_date" : 1757253199,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140719369,
+      "post_id" : 79756163,
+      "body" : "@DuncG I edited my comment.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 7506919,
+        "reputation" : 30,
+        "user_id" : 5703157,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/66b5dc237b1dc66312ef1635e8cb6db0?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "TTCUSM",
+        "link" : "https://stackoverflow.com/users/5703157/ttcusm"
+      },
+      "creation_date" : 1757187909,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140719364,
+      "post_id" : 79756163,
+      "body" : "You end with &quot;Your code, however...&quot; which suggests everything written beforehand is unrelated to the question being asked. Worth editing to clarify.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 5998820,
+        "reputation" : 16283,
+        "user_id" : 4712734,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/f6e922a2cb7e2da59286f27b162aaca5?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "DuncG",
+        "link" : "https://stackoverflow.com/users/4712734/duncg"
+      },
+      "creation_date" : 1757187638,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79756148" : [ {
+      "comment_id" : 140715711,
+      "post_id" : 79756148,
+      "body" : "&quot;, it is completely ridiculous to imagine you can guess what the performance is going to be. It&#39;s just stupid at this point. Don&#39;t, ever, do it.    If you want to know if something is more or less performant than an alterative, measure it. &quot;  Totally agree with this.  I wish we could automatically add this comment to every question that even mentions &quot;big O&quot;.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 9061,
+        "reputation" : 21190,
+        "user_id" : 16582,
+        "user_type" : "registered",
+        "accept_rate" : 67,
+        "profile_image" : "https://www.gravatar.com/avatar/febff21383acf755f8b375c322e36f2b?s=256&d=identicon&r=PG",
+        "display_name" : "ravenspoint",
+        "link" : "https://stackoverflow.com/users/16582/ravenspoint"
+      },
+      "creation_date" : 1757019668,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
 }

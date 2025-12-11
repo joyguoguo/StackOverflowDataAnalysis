@@ -75,16 +75,78 @@ This page includes:
 
 ---
 
-## 🧩 Next Steps for Your Final Project
+## 🚀 当前功能
 
-This demo provides a solid foundation. To complete your project, you should:
+- 读取 `Sample_SO_data/` 下的离线 Stack Overflow Java 线程样本并映射为本地内存数据集。
+- 提供 REST API：
+  - `GET /api/topic-trends`
+  - `GET /api/cooccurrence`
+  - `GET /api/multithreading/pitfalls`
+  - `GET /api/solvability/contrast`
+  - `GET /api/metadata/status`
+- 前端仪表盘展示：
+  - Topic Trends 折线图（可切换指标）
+  - 标签共现 Top N 柱状图
+  - 多线程常见问题条形图
+  - 易解/难解问题雷达图
+  - 数据概览卡片
 
-1. Implement **real data collection** from Stack Overflow (at least 1000 threads).
-2. Store the data in a **database** (e.g., PostgreSQL or MySQL).
-3. Build **four core analyses** (Topic Trends, Co-occurrence, Multithreading Pitfalls, Solvable vs. Hard-to-Solve Questions).
-4. Connect your frontend charts to **dynamic backend APIs**.
-5. Ensure all analysis is **real-time** and **not precomputed**.
+## 📥 数据采集
 
+本项目已实现完整的数据采集功能，可以从 Stack Overflow API 采集 Java 相关的问答数据。
+
+### 快速开始
+
+1. **使用独立采集工具（推荐）**
+
+   ```bash
+   # 编译项目
+   mvn clean package
+   
+   # 采集 1000 个线程（使用环境变量）
+   export COLLECT_COUNT=1000
+   export COLLECT_OUTPUT=Sample_SO_data
+   java -cp target/FinalProject_demo-0.0.1-SNAPSHOT.jar \
+       cs209a.finalproject_demo.collector.SimpleDataCollector \
+       1000 Sample_SO_data
+   
+   # 或使用访问令牌（可选，提升配额）
+   export SO_ACCESS_TOKEN=your_access_token
+   java -cp target/FinalProject_demo-0.0.1-SNAPSHOT.jar \
+       cs209a.finalproject_demo.collector.SimpleDataCollector \
+       1000 Sample_SO_data your_access_token
+   ```
+
+2. **在 Spring Boot 应用中集成**
+
+   数据采集服务已集成到 Spring Boot 应用中，可以通过配置调用：
+
+   ```java
+   @Autowired
+   private DataCollectorService collectorService;
+   
+   // 采集 1000 个线程
+   CollectionResult result = collectorService.collectThreads(
+       1000, "Sample_SO_data", null, null);
+   ```
+
+### 详细文档
+
+更多使用说明、配置选项和故障排查，请参考 [数据采集指南](docs/DataCollection.md)。
+
+**注意**：
+- 需要能够访问 Stack Exchange API
+- 建议创建 Stack Overflow 账户并使用访问令牌以提升配额
+- API 有速率限制，采集大量数据需要时间
+
+---
+
+## 📈 下一步建议
+
+1. ✅ **数据采集已完成**：可以从 Stack Overflow API 采集数据
+2. 将当前内存分析逻辑迁移至数据库层（JPA/SQL），支持更大规模数据
+3. 引入更多可配置筛选项与 Drill-down 交互
+4. 为关键分析编写单元/集成测试，并优化性能与缓存策略
 
 ---
 

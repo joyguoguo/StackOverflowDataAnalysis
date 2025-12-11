@@ -1,82 +1,64 @@
 {
   "question" : {
-    "question_id" : 79796845,
-    "title" : "Spring MCP Client do not access to HTTP Headers from McpTransportContext in stream mode",
-    "body" : "<p>I'm trying to implement a <strong>Spring MCP Client</strong> based on the <code>spring-ai</code> <strong>1.1.0-SNAPSHOT</strong> library.</p>\n<p>The <strong>minimal project source code</strong> is available in this public GitHub repository: <a href=\"https://github.com/robynico/spring-mcp-client-stream\" rel=\"nofollow noreferrer\">https://github.com/robynico/spring-mcp-client-stream</a>.</p>\n<p>The Spring controller exposes 2 endpoints:</p>\n<ul>\n<li><code>/chat</code> → Non-streaming</li>\n<li><code>/stream-chat</code> → Streaming</li>\n</ul>\n<p>When calling <code>/stream-chat</code>, the <code>ServletContext</code> is <strong>not available</strong> from <code>McpTransportContext</code> despite implementing <code>AuthenticationMcpTransportContextProvider</code> as recommended in: <a href=\"https://github.com/spring-ai-community/mcp-security\" rel=\"nofollow noreferrer\">https://github.com/spring-ai-community/mcp-security</a></p>\n<p><strong>Question:</strong><br />\nHow to propagate HTTP headers in a <strong>thread-safe way</strong> to the MCP tool execution context when using streaming with reactor ?</p>\n<hr />\n<h2>Controller</h2>\n<p><code>ChatController.java</code></p>\n<pre class=\"lang-java prettyprint-override\"><code>@RestController\n@Validated\npublic class ChatController {\n\n    public static final String HTTP_HEADER_TENANT = &quot;Tenant&quot;;\n\n    private static final Logger logger = LoggerFactory.getLogger(ChatController.class);\n\n    private final AgentService agentService;\n\n    public ChatController(AgentService agentService) {\n        this.agentService = agentService;\n    }\n\n    @PostMapping(value = &quot;/chat&quot;)\n    public String chat(@RequestBody @Valid ChatRequest request) {\n        return agentService.chat(request.getPrompt());\n    }\n\n    @PostMapping(value = &quot;/stream-chat&quot;)\n    public Flux&lt;String&gt; streamChat(@RequestBody @Valid ChatRequest request, @Headers HttpHeaders headers) {\n        var requestAttributes = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();\n        logger.info(&quot;Tenant {}&quot;, requestAttributes.getRequest().getHeader(HTTP_HEADER_TENANT));\n        return agentService.streamChat(request.getPrompt());\n    }\n\n}\n</code></pre>\n<h3>ContextProvider &amp; RequestCustomizer</h3>\n<p><code>McpConfiguration.java</code></p>\n<pre class=\"lang-java prettyprint-override\"><code>@Configuration\npublic class McpConfiguration implements WebMvcConfigurer {\n\n    @Bean\n    McpSyncClientCustomizer syncClientCustomizer() {\n        return (name, syncSpec) -&gt; syncSpec.transportContextProvider(new AuthenticationMcpTransportContextProvider());\n    }\n\n    @Bean\n    McpSyncHttpClientRequestCustomizer requestCustomizer() {\n        return new CustomMcpSyncRequestCustomizer();\n    }\n\n}\n</code></pre>\n<p><code>AuthenticationMcpTransportContextProvider.java</code></p>\n<pre class=\"lang-java prettyprint-override\"><code>public class AuthenticationMcpTransportContextProvider implements Supplier&lt;McpTransportContext&gt; {\n\n    private static final Logger logger = LoggerFactory.getLogger(AuthenticationMcpTransportContextProvider.class);\n\n    public static final String HTTP_HEADERS_KEY = &quot;httpHeaders&quot;;\n\n    @Override\n    public McpTransportContext get() {\n        var data = new HashMap&lt;String, Object&gt;();\n        RequestAttributes previousAttributes = RequestContextHolder.getRequestAttributes();\n        if (previousAttributes instanceof ServletRequestAttributes) {\n            HttpServletRequest request = ((ServletRequestAttributes) previousAttributes).getRequest();\n            Map&lt;String, String&gt; headers = new HashMap&lt;&gt;();\n            List.of(HttpHeaders.AUTHORIZATION, HTTP_HEADER_TENANT).forEach(headerName -&gt; {\n                String value = request.getHeader(headerName);\n                if (value != null) {\n                    headers.put(headerName, value);\n                }\n            });\n            data.put(HTTP_HEADERS_KEY, headers);\n        }\n        logger.info(&quot;Headers found in RequestContextHolder: {}&quot;, data);\n        return McpTransportContext.create(data);\n    }\n\n}\n</code></pre>\n<p><code>CustomMcpSyncRequestCustomizer.java</code></p>\n<pre class=\"lang-java prettyprint-override\"><code>class CustomMcpSyncRequestCustomizer implements McpSyncHttpClientRequestCustomizer {\n\n    private static final Logger logger = LoggerFactory.getLogger(CustomMcpSyncRequestCustomizer.class);\n\n    @Override\n    public void customize(HttpRequest.Builder builder, String method, URI endpoint, String body,\n            McpTransportContext context) {\n        var headers = context.get(AuthenticationMcpTransportContextProvider.HTTP_HEADERS_KEY);\n        logger.info(&quot;Headers found in McpTransportContext: {}&quot;, headers);\n\n        if (headers instanceof Map&lt;?, ?&gt; headerMap) {\n            List.of(HttpHeaders.AUTHORIZATION, HTTP_HEADER_TENANT).forEach(headerName -&gt; {\n                var value = headerMap.get(headerName);\n                if (value instanceof String stringValue) {\n                    builder.header(headerName, stringValue);\n                }\n            });\n        }\n    }\n\n}\n</code></pre>\n<h3>ChatClient</h3>\n<p><code>AgentService.java</code></p>\n<pre class=\"lang-java prettyprint-override\"><code>@Component\npublic class AgentService {\n\n    private final ChatClient chatClient;\n\n    public AgentService(ChatClient.Builder chatClientBuilder, ToolCallbackProvider mcpToolProvider) {\n        var options = BedrockChatOptions.builder()\n            .model(&quot;anthropic.claude-3-5-sonnet-20240620-v1:0&quot;)\n            .temperature(0.6)\n            .maxTokens(3000)\n            .build();\n        chatClient = chatClientBuilder.defaultOptions(options).defaultToolCallbacks(mcpToolProvider).build();\n    }\n\n    public Flux&lt;String&gt; streamChat(String prompt) {\n        return chatClient.prompt().user(userMessage -&gt; userMessage.text(prompt)).stream().content();\n    }\n\n    public String chat(String prompt) {\n        return chatClient.prompt().user(userMessage -&gt; userMessage.text(prompt)).call().content();\n    }\n\n}\n</code></pre>\n<hr />\n<h2>Test</h2>\n<p>Curl:</p>\n<pre class=\"lang-bash prettyprint-override\"><code>curl -X POST http://localhost:8080/stream-chat \\\n-H &quot;Content-Type: application/json&quot; \\\n-H &quot;Tenant: A &quot; \\\n-d '{&quot;prompt&quot;: &quot;do an echo toto&quot;}'\n</code></pre>\n<p>Observed Logs:</p>\n<pre><code>[nio-8080-exec-3] c.c.a.m.c.controller.ChatController      : Tenant A\n[yEventLoop-1-14] o.s.a.b.converse.BedrockProxyChatModel   : Completed streaming response.\n[oundedElastic-2] uthenticationMcpTransportContextProvider : Headers found in RequestContextHolder: {}\n[oundedElastic-2] c.a.m.c.c.CustomMcpSyncRequestCustomizer : Headers found in McpTransportContext: null\n[yEventLoop-1-14] o.s.a.b.converse.BedrockProxyChatModel   : Completed streaming response.\n</code></pre>\n",
-    "tags" : [ "java", "spring", "project-reactor", "model-context-protocol", "spring-ai" ],
+    "question_id" : 79804122,
+    "title" : "Configure Spring Context Using Arguments",
+    "body" : "<p>What's the idiomatic way of deriving spring context beans from command line arguments ?</p>\n<p>I understand you can always parse the argument and call somewhat low lever APIs to create Beans before the context launch, but I am asking if there is a better way to handle this when building a Spring Boot Application + PicoCli</p>\n<p>something that looks like</p>\n<pre><code>import org.springframework.context.annotation.Bean;\nimport org.springframework.context.annotation.Configuration;\n\n@Configuration\npublic class ConfigClass {\n\n    @Bean\n    //made up annotation for example purpose\n    @ConditionalOnArg(option = &quot;-p&quot;, value = &quot;p_value_1&quot;)\n    MyPArgService buildP() {\n\n        return new MyPArgService(&quot;p_value_1&quot;);\n\n    }\n}\n\n</code></pre>\n<p>The alternatives we have is either do your own proper parsing and context building programatically before the context launch or rely on <code>ApplicationArguments</code> from Spring to do this parsing, but in both cases it seems to be duplicate work and not fully taking advantage of the PicoCli integration</p>\n<p>Thanks in advance!\nAll ideas are welcome!</p>\n",
+    "tags" : [ "java", "spring", "spring-boot", "picocli" ],
     "owner" : {
-      "account_id" : 4723263,
-      "reputation" : 247,
-      "user_id" : 3820633,
+      "account_id" : 7407857,
+      "reputation" : 102,
+      "user_id" : 5636231,
       "user_type" : "registered",
-      "accept_rate" : 17,
-      "profile_image" : "https://www.gravatar.com/avatar/102db1d429d12dc6e3fdf1f3d3ffbf5a?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "robynico",
-      "link" : "https://stackoverflow.com/users/3820633/robynico"
+      "profile_image" : "https://i.sstatic.net/yuHZM.jpg?s=256",
+      "display_name" : "Iqbal",
+      "link" : "https://stackoverflow.com/users/5636231/iqbal"
     },
     "is_answered" : true,
-    "view_count" : 180,
-    "answer_count" : 1,
+    "view_count" : 103,
+    "answer_count" : 2,
     "score" : 1,
-    "last_activity_date" : 1763056804,
-    "creation_date" : 1761140826,
-    "link" : "https://stackoverflow.com/questions/79796845/spring-mcp-client-do-not-access-to-http-headers-from-mcptransportcontext-in-stre",
+    "last_activity_date" : 1762017312,
+    "creation_date" : 1761763041,
+    "link" : "https://stackoverflow.com/questions/79804122/configure-spring-context-using-arguments",
     "content_license" : "CC BY-SA 4.0"
   },
   "answers" : [ {
-    "answer_id" : 79812408,
-    "question_id" : 79796845,
-    "body" : "<p><strong>Edit 2025-11-13</strong></p>\n<p>This is now supported in MCP-security version <code>0.0.4</code></p>\n<p>You now need to add this to your streaming calls:</p>\n<pre class=\"lang-java prettyprint-override\"><code>  chatClient\n    .prompt(&quot;&lt;your prompt&gt;&quot;)\n    .stream()\n    .content()\n    // ... any streaming operation ...\n    .contextWrite(\n      AuthenticationMcpTransportContextProvider.writeToReactorContext()\n    );\n</code></pre>\n<p>See <a href=\"https://github.com/spring-ai-community/mcp-security?tab=readme-ov-file#use-with-streaming-chat-client\" rel=\"nofollow noreferrer\">the documentation</a> for further instructions to configure your project.</p>\n<hr />\n<p>The problem is losing thread-locals when switching to a Reactor context. Whenever you call <code>.stream()</code>, this will be executed by Reactor. Reactor has its own way of propagating information, the Context API.</p>\n<p>But the Spring AI Tool API is blocking, and therefore does not have access to the Context API. So you need to jump through a few hoops to get this to work.</p>\n<p>Assumptions on the project</p>\n<ol>\n<li>Using Spring MVC, with <code>org.springframework.boot:spring-boot-starter-web</code></li>\n<li>Using MCP sync clients <code>spring.ai.mcp.client.type=SYNC</code></li>\n<li>Using HttpClient-based MCP clients, with <code>org.springframework.ai:spring-ai-starter-mcp-client</code>\na. The examples below should also work with <code>WebClient</code></li>\n<li>And, as mentioned earlier, using <code>ChatClient#stream()</code></li>\n</ol>\n<p>To get information into the context of the SyncMcpToolCallback, you first have to add it to the Reactive context of the streaming call:</p>\n<pre class=\"lang-java prettyprint-override\"><code>var response = chatClient.prompt(&quot;What's the weather in Paris?&quot;)\n        .toolCallbacks(this.mcpToolCallbacks)\n        .stream()\n        .content()\n        .contextWrite(ctx -&gt; ctx.put(&quot;attributes&quot;, RequestContextHolder.getRequestAttributes())\n                .put(&quot;authentication&quot;, SecurityContextHolder.getContext().getAuthentication())\n                .put(&quot;custom-header&quot;, &quot;custom-header-value))\n       // ...\n</code></pre>\n<p>In here, I'm only putting request attributes and authentication, but you could add anything value you want. This will be stored in a thread local in <code>ToolCallReactiveContextHolder</code> and will be accessible in the client's <code>transportContextProvider</code>.</p>\n<p>So update your client to fetch those values, and put them in an <code>McpTransportContext</code>, like so:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Bean\nMcpSyncClientCustomizer syncClientCustomizer() {\n    return (name, syncSpec) -&gt; syncSpec.transportContextProvider(() -&gt; {\n        var ctx = ToolCallReactiveContextHolder.getContext();\n        var data = new HashMap&lt;String, Object&gt;();\n        // used by OAuth2AuthorizationCodeSyncHttpRequestCustomizer\n        // you may not need it\n        if (ctx.hasKey(&quot;authentication&quot;)) {\n            var authentication = ctx.get(&quot;authentication&quot;);\n            data.put(AuthenticationMcpTransportContextProvider.AUTHENTICATION_KEY, authentication);\n        }\n        // used by OAuth2AuthorizationCodeSyncHttpRequestCustomizer\n        // you may not need it\n        if (ctx.hasKey(&quot;attributes&quot;)) {\n            var requestAttributes = ctx.get(&quot;attributes&quot;);\n            data.put(AuthenticationMcpTransportContextProvider.REQUEST_ATTRIBUTES_KEY, requestAttributes);\n        }\n        if (ctx.hasKey(&quot;custom-header&quot;)) {\n            var headerValue = ctx.get(&quot;custom-header&quot;);\n            data.put(&quot;custom-header&quot;, headerValue);\n        }\n\n        return McpTransportContext.create(data);\n    });\n}\n</code></pre>\n<p>And with this, you can write a custom <code>McpSyncHttpRequestCustomizer</code> to extract that data and put it on the request:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Bean\nMcpSyncHttpClientRequestCustomizer requestCustomizer() {\n    return (builder, method, endpoint, body, context) -&gt; {\n        // Note: we are not using the request attributes or authentication here\n        // But it's 100% possible\n        String headerValue = context.get(&quot;custom-header&quot;).toString();\n        builder.header(&quot;x-custom-header&quot;, headerValue);\n    };\n}\n</code></pre>\n<p><strong>A note on ASYNC clients:</strong></p>\n<p>If you're using <em>only</em> the streaming API, you may want to consider using the ASYNC mode for your MCP client.\nIn that case, all the information will pass through the Reactor context. Like the example above, you add the context to your request:</p>\n<pre class=\"lang-java prettyprint-override\"><code>var response = chatClient.prompt(&quot;What's the weather in Paris?&quot;)\n        .toolCallbacks(this.mcpToolCallbacks)\n        .stream()\n        .content()\n        .contextWrite(ctx -&gt; ctx.put(&quot;my-header&quot;, &quot;some value&quot;))\n       // ...\n</code></pre>\n<p>Then, provide an <code>McpAsyncHttpClientRequestCustomizer</code>:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Bean\nMcpAsyncHttpClientRequestCustomizer asyncRequestCustomizer() {\n    return (builder, method, endpoint, body, context) -&gt; Mono.deferContextual(ctx -&gt; {\n        String headerValue = ctx.get(&quot;my-header&quot;);\n        return Mono.just(builder.header(&quot;x-custom-header&quot;, headerValue));\n    });\n}\n</code></pre>\n<p>Since it has access to the Reactor context, no need for a TransportContextProvider.</p>\n",
+    "answer_id" : 79804654,
+    "question_id" : 79804122,
+    "body" : "<p>What does the command line argument look like? If you do something like <code>-p=foo</code> you can just add an <code>@Value(&quot;p&quot;)</code> to your <code>buildP</code> method as a method argument and you will get the value injected.</p>\n",
     "score" : 2,
-    "is_accepted" : true,
+    "is_accepted" : false,
     "owner" : {
-      "account_id" : 17319363,
-      "reputation" : 148,
-      "user_id" : 12545156,
+      "account_id" : 3192259,
+      "reputation" : 126800,
+      "user_id" : 2696260,
       "user_type" : "registered",
-      "profile_image" : "https://i.sstatic.net/XFDI2.jpg?s=256",
-      "display_name" : "Kehrlann",
-      "link" : "https://stackoverflow.com/users/12545156/kehrlann"
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
     },
-    "creation_date" : 1762523111,
-    "last_activity_date" : 1763056804,
+    "creation_date" : 1761820467,
+    "last_activity_date" : 1761820467,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79804752,
+    "question_id" : 79804122,
+    "body" : "<p>Thanks, that's what I was missing, I thought @Value was exclusive to env vars and props, apparently Spring does inject command line args</p>\n<p>except, it looks like it works in this format</p>\n<p><code>-Dspring-boot.run.arguments=&quot;--p=foo&quot;</code></p>\n<p>with</p>\n<pre><code>@Value(&quot;${p}&quot;)\nString p;\n</code></pre>\n<p>Thanks again!</p>\n<p>This is much more straightforward</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 7407857,
+      "reputation" : 102,
+      "user_id" : 5636231,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/yuHZM.jpg?s=256",
+      "display_name" : "Iqbal",
+      "link" : "https://stackoverflow.com/users/5636231/iqbal"
+    },
+    "creation_date" : 1761826933,
+    "last_activity_date" : 1762017312,
     "content_license" : "CC BY-SA 4.0"
   } ],
-  "question_comments" : [ {
-    "comment_id" : 140813076,
-    "post_id" : 79796845,
-    "body" : "Please remove salutations (&quot;Hello Team&quot;) from your question as per the guidelines: <a href=\"https://stackoverflow.com/help/behavior\">stackoverflow.com/help/behavior</a>.",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 372682,
-      "reputation" : 26502,
-      "user_id" : 721855,
-      "user_type" : "registered",
-      "profile_image" : "https://i.sstatic.net/vZiox.png?s=256",
-      "display_name" : "aled",
-      "link" : "https://stackoverflow.com/users/721855/aled"
-    },
-    "creation_date" : 1761226733,
-    "content_license" : "CC BY-SA 4.0"
-  } ],
-  "answer_comments" : {
-    "79812408" : [ {
-      "comment_id" : 140858238,
-      "post_id" : 79812408,
-      "body" : "ToolCallReactiveContextHolder.getContext() does the work! thx",
-      "score" : 0,
-      "owner" : {
-        "account_id" : 4723263,
-        "reputation" : 247,
-        "user_id" : 3820633,
-        "user_type" : "registered",
-        "accept_rate" : 17,
-        "profile_image" : "https://www.gravatar.com/avatar/102db1d429d12dc6e3fdf1f3d3ffbf5a?s=256&d=identicon&r=PG&f=y&so-version=2",
-        "display_name" : "robynico",
-        "link" : "https://stackoverflow.com/users/3820633/robynico"
-      },
-      "creation_date" : 1763385580,
-      "content_license" : "CC BY-SA 4.0"
-    } ]
-  }
+  "question_comments" : [ ],
+  "answer_comments" : { }
 }

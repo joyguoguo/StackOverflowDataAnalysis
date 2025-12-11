@@ -1,63 +1,94 @@
 {
   "question" : {
-    "question_id" : 79790891,
-    "title" : "Why the method allOf() in CompletableFuture.java is implemented by using something like balanced tree?",
-    "body" : "<p>I find that the method allOf() in CompletableFuture.java is implemented by using something like balanced tree.\nI'm curious why it's implemented like that?\nCan it be implemented by using something else, such as ConcurrentHashMap and AutomicInteger?</p>\n<p>I checked the source code of that class.</p>\n<pre><code>/** Recursively constructs a tree of completions. */\nstatic CompletableFuture&lt;Void&gt; andTree(CompletableFuture&lt;?&gt;[] cfs, int lo, int hi) {\n    CompletableFuture&lt;Void&gt; d = new CompletableFuture&lt;Void&gt;();\n\n    if (lo &gt; hi) // empty\n        d.result = NIL;\n    else {\n        CompletableFuture&lt;?&gt; a, b;\n        int mid = (lo + hi) &gt;&gt;&gt; 1;\n\n        if ((a = (lo == mid ? cfs[lo] :\n                  andTree(cfs, lo, mid))) == null ||\n            (b = (lo == hi ? a : (hi == mid+1) ? cfs[hi] :\n                  andTree(cfs, mid+1, hi)))  == null)\n            throw new NullPointerException();\n\n        if (!d.biRelay(a, b)) {\n            BiRelay&lt;?,?&gt; c = new BiRelay&lt;&gt;(d, a, b);\n            a.bipush(b, c);\n            c.tryFire(SYNC);\n        }\n    }\n    return d;\n}\n</code></pre>\n",
-    "tags" : [ "java", "completable-future" ],
+    "question_id" : 79795620,
+    "title" : "Records don&#39;t deserialize cycles",
+    "body" : "<p>I stumbled upon something that got me curious. Apparently, serializing a record with a cyclic reference does not retain the cycle when deserializing it again, it becomes <code>null</code>. When doing the same exercise with a regular class, the cycle is still there.</p>\n<p>Why is that the case?</p>\n<p>Any pointers or also relevant snippets from the JLS would be appreciated.</p>\n<h4>Disclaimer</h4>\n<p>I am aware that Javas built-in serialization is <em>bad</em> and should not be used, same goes for cyclic references that are not marked <code>transient</code>. The setup is contrived and not something I am going to use anywhere. A student ran into it and I am curious as to why Java behaves the way it does.</p>\n<h3>Minimal Example</h3>\n<p>I have nailed it down to a cycle setup like:</p>\n<pre class=\"lang-java prettyprint-override\"><code>normal.ref.o -&gt; normal\nrecord.ref().o -&gt; record\n</code></pre>\n<p>The full code is:</p>\n<pre class=\"lang-java prettyprint-override\"><code>import java.io.*;\nimport java.util.Objects;\n\npublic class Test {\n    static class Ref implements Serializable {\n        Object o;\n\n        @Override\n        public String toString() {\n            return &quot;Ref[o=%s]&quot;.formatted(Objects.hashCode(o));\n        }\n    }\n\n    static class Normal implements Serializable {\n        int x;\n        Ref ref;\n\n        @Override\n        public String toString() {\n            return &quot;Normal[x=%d, ref=%s]&quot;.formatted(x, ref);\n        }\n    }\n\n    record Record(int x, Ref ref) implements Serializable {}\n\n    public static void main(String[] args) throws Exception {\n        // Setup\n        Normal normalBefore = new Normal();\n        normalBefore.x = 5;\n        normalBefore.ref = new Ref();\n        normalBefore.ref.o = normalBefore; // cycle\n        // normalBefore.ref.o == normalBefore\n\n        Record recordBefore = new Record(5, new Ref());\n        recordBefore.ref().o = recordBefore; // cycle\n        // recordBefore.ref().o == recordBefore\n\n        // Test\n        Normal normalAfter = serializeAndDeserialize(normalBefore);\n        Record recordAfter = serializeAndDeserialize(recordBefore);\n\n        System.out.println(&quot;Normal before:\\t&quot; + normalBefore);\n        System.out.println(&quot;Normal after:\\t&quot; + normalAfter);\n        System.out.println(&quot;Record before:\\t&quot; + recordBefore);\n        System.out.println(&quot;Record after:\\t&quot; + recordAfter);\n        System.out.println(&quot;recordAfter.ref().o:\\t&quot; + recordAfter.ref().o);\n    }\n\n    static &lt;T&gt; T serializeAndDeserialize(T obj) throws Exception {\n        ByteArrayOutputStream baos = new ByteArrayOutputStream();\n        ObjectOutputStream oos = new ObjectOutputStream(baos);\n        oos.writeObject(obj);\n        oos.close();\n\n        ByteArrayInputStream bais = new ByteArrayInputStream(baos.toByteArray());\n        ObjectInputStream ois = new ObjectInputStream(bais);\n        T result = (T) ois.readObject();\n        ois.close();\n\n        return result;\n    }\n}\n</code></pre>\n<p>It prints:</p>\n<pre class=\"lang-java prettyprint-override\"><code>Normal before:  Normal[x=5, ref=Ref[o=1732398722]]\nNormal after:   Normal[x=5, ref=Ref[o=1579572132]]\n\nRecord before:  Record[x=5, ref=Ref[o=1323468385]]\nRecord after:   Record[x=5, ref=Ref[o=0]]\n\nrecordAfter.ref().o:    null\n</code></pre>\n<p>As we can see, <code>Normal</code> serializes and deserializes fully (a full <code>toString()</code> print would yield to a StackOverflow because of the cycle).</p>\n<p>However, the <code>Record</code> drops the cyclic back-reference to itself inside the <code>Ref</code> wrapper object, it becomes <code>null</code>.</p>\n<h4>Code Guidance</h4>\n<p>To give some assistance reading the code, it consists of a wrapper for the cycle, <code>Ref</code>:</p>\n<pre class=\"lang-java prettyprint-override\"><code>static class Ref implements Serializable {\n    Object o;\n\n    @Override\n    public String toString() {\n        return &quot;Ref[o=%s]&quot;.formatted(Objects.hashCode(o));\n    }\n}\n</code></pre>\n<p>This is needed because otherwise we could not create a cycle for <code>record</code>, as its fields are unmodifiable (<code>final</code>).</p>\n<p>Then the actual data carrier classes:</p>\n<pre class=\"lang-java prettyprint-override\"><code>static class Normal implements Serializable {\n    int x;\n    Ref ref;\n\n    @Override\n    public String toString() {\n        return &quot;Normal[x=%d, ref=%s]&quot;.formatted(x, ref);\n    }\n}\n\nrecord Record(int x, Ref ref) implements Serializable {}\n</code></pre>\n<p>The <code>int x</code> is technically obsolete, but I added it to show that non-cycles are fully deserialized still.</p>\n<p>Then we have a method that simply <code>serializeAndDeserialize</code> any given Object and the cycle setup in <code>main</code>, as well as the final test.</p>\n",
+    "tags" : [ "java", "serialization", "deserialization", "record" ],
     "owner" : {
-      "account_id" : 44318710,
-      "reputation" : 41,
-      "user_id" : 31691468,
+      "account_id" : 2803497,
+      "reputation" : 26330,
+      "user_id" : 2411243,
       "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/430ba9a3db506e5470966ffb64d14219?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "Chris Hou",
-      "link" : "https://stackoverflow.com/users/31691468/chris-hou"
+      "profile_image" : "https://i.sstatic.net/W96lW.png?s=256",
+      "display_name" : "Zabuzard",
+      "link" : "https://stackoverflow.com/users/2411243/zabuzard"
     },
     "is_answered" : true,
-    "view_count" : 112,
-    "closed_date" : 1760740265,
+    "view_count" : 149,
     "answer_count" : 1,
-    "score" : 2,
-    "last_activity_date" : 1760519883,
-    "creation_date" : 1760513274,
-    "link" : "https://stackoverflow.com/questions/79790891/why-the-method-allof-in-completablefuture-java-is-implemented-by-using-somethi",
-    "closed_reason" : "Needs more focus"
+    "score" : 7,
+    "last_activity_date" : 1762340092,
+    "creation_date" : 1761036374,
+    "link" : "https://stackoverflow.com/questions/79795620/records-dont-deserialize-cycles",
+    "content_license" : "CC BY-SA 4.0"
   },
   "answers" : [ {
-    "answer_id" : 79790985,
-    "question_id" : 79790891,
-    "body" : "<p>Of course, there are plenty of alternative implementations possible (I once implemented a similar functionality with a <code>Phaser</code>). But they all involve new data structures while this balanced tree settles on the same data structure used to implement all other <code>then…</code> operations.</p>\n<p>So it’s</p>\n<ol>\n<li>very simple to implement and test (most of it already covered by existing test cases)</li>\n<li>very efficient for the expected majority of cases of having a rather small number of incoming futures while still providing good performance for larger numbers as well</li>\n</ol>\n",
-    "score" : 5,
+    "answer_id" : 79795655,
+    "question_id" : 79795620,
+    "body" : "<p>As Holger points out in the comments, <code>record</code> deserialization goes through the canonical constructor instead of using <em>extralinguistic magic</em>. Constructors cannot support cycles as the object does not exist at that point yet.</p>\n<p>The language designers decided against supporting cycles, which would otherwise violate that properties in <code>record</code>s are <strong>unmodifiable</strong>. An exact <em>reason</em> can only be given by the authors but it seems to be a <em>reasonable design choice</em>.</p>\n<p>The behavior is actually well documented and described in the Oracle Docs: <a href=\"https://docs.oracle.com/en/java/javase/25/docs/specs/serialization/serial-arch.html#circular-references\" rel=\"noreferrer\">https://docs.oracle.com/en/java/javase/25/docs/specs/serialization/serial-arch.html#circular-references</a></p>\n<p>To quote some relevant sections (emphasis added by me):</p>\n<blockquote>\n<p>Now consider if <code>Carrier</code> were a record class, as follows: [...]</p>\n<p>When deserialized, the object, <code>c2</code>, will have its <code>d</code> field refer to an instance of <code>Data</code>, that will in turn have its <code>obj</code> field refer to <code>null</code> (rather than referring to <code>c2</code>). The circular reference, through <code>d.obj</code>, in the original object graph, is <strong>not preserved during deserialization</strong>.</p>\n<p>The allocation of the record object <code>c2</code>, and the assignment of its handle, happen <em>after</em> the reconstruction of its field values [...]. While a handle for the record object is added to the set of known objects before the record component values are reconstructed, it has an initial value of <code>null</code>. The handle is assigned to the record object only after the record object has been constructed (through an <strong>invocation of its canonical constructor</strong>). Consequently, during deserialization of the record component values, references in the stream to the handle for the record object, will see the initial <code>null</code> value. As such, <strong>cycles targeting the record object</strong> from its components (or their fields transitively) <strong>are not preserved</strong> during deserialization.</p>\n</blockquote>\n<p>As to why they defensively picked a silent <code>null</code> instead of for example throwing an exception in a fail-fast style, you would have to ask the authors.</p>\n",
+    "score" : 12,
     "is_accepted" : true,
     "owner" : {
+      "account_id" : 2803497,
+      "reputation" : 26330,
+      "user_id" : 2411243,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/W96lW.png?s=256",
+      "display_name" : "Zabuzard",
+      "link" : "https://stackoverflow.com/users/2411243/zabuzard"
+    },
+    "creation_date" : 1761038961,
+    "last_activity_date" : 1761044293,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140836781,
+    "post_id" : 79795620,
+    "body" : "There is nothing wrong with cyclic references, <code>transient</code> or otherwise.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 71739,
+      "reputation" : 311869,
+      "user_id" : 207421,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/5cfe5f7d64f44be04f147295f5c7b88e?s=256&d=identicon&r=PG",
+      "display_name" : "user207421",
+      "link" : "https://stackoverflow.com/users/207421/user207421"
+    },
+    "creation_date" : 1762296239,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140812350,
+    "post_id" : 79795620,
+    "body" : "To be fair, storing a mutable object in a record really defeats the whole purpose of having a record in the first place. In my opinion there is no reasonable design choice that would justify violating language level immutability (or whatever you want to call this thing that Java attempts to provide).",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 1041463,
+      "reputation" : 3917,
+      "user_id" : 1047418,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/3deab5aa1be96fe145d3103251263523?s=256&d=identicon&r=PG",
+      "display_name" : "Torben",
+      "link" : "https://stackoverflow.com/users/1047418/torben"
+    },
+    "creation_date" : 1761205999,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140808133,
+    "post_id" : 79795620,
+    "body" : "Serialization for <code>record</code> does not the usual extralinguistic magic, but invokes the constructor like standard Java software. This does not support cycles. In my opinion they should have added a mechanism to flag the cycles with an exception; references silently becoming <code>null</code> is definitely a bad choice.",
+    "score" : 8,
+    "owner" : {
       "account_id" : 3211603,
-      "reputation" : 300941,
+      "reputation" : 300981,
       "user_id" : 2711488,
       "user_type" : "registered",
       "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
       "display_name" : "Holger",
       "link" : "https://stackoverflow.com/users/2711488/holger"
     },
-    "creation_date" : 1760519839,
-    "last_activity_date" : 1760519839,
-    "content_license" : "CC BY-SA 4.0"
-  } ],
-  "question_comments" : [ {
-    "comment_id" : 140798554,
-    "post_id" : 79790891,
-    "body" : "What would the advantage of another implementation be?",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 465573,
-      "reputation" : 200423,
-      "user_id" : 869736,
-      "user_type" : "registered",
-      "accept_rate" : 82,
-      "profile_image" : "https://www.gravatar.com/avatar/ae7bb06b9a23a4dd7eea69e853d47d12?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "Louis Wasserman",
-      "link" : "https://stackoverflow.com/users/869736/louis-wasserman"
-    },
-    "creation_date" : 1760587370,
+    "creation_date" : 1761037140,
     "content_license" : "CC BY-SA 4.0"
   } ],
   "answer_comments" : { }

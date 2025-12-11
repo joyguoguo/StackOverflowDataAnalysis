@@ -1,81 +1,82 @@
 {
   "question" : {
-    "question_id" : 79749306,
-    "title" : "takeWhile equivalent for Kotlin maps",
-    "body" : "<p>My Kotlin project needs to parse files and keep track of the outcome:</p>\n<pre><code>fun parseFiles(dp:MyDataProvider, files:List&lt;String&gt;)\n{\n    //store the status of each processed file\n    val statusMap = mutableMapOf&lt;String, MutableMap&lt;String, List&lt;ProcessingStatus&gt;&gt;&gt;()\n    files.takeWhile{ currentFileNameToProcess -&gt;\n        val statuses = processFile(currentFileNameToProcess)\n\n        //each group of files has a corresponding 'service' document\n        //serviceName() generates that group name based on the file name\n        statusMap.getOrPut(currentFileNameToProcess.serviceName(), ::mutableMapOf).putAll(mapOf( currentFileNameToProcess to statuses))\n\n        //This function will be part of an AWS lambda.\n        //To make sure we aren't running out of time,\n        //check the run time of the function against a threshold\n        !dp.thresholdExceeded.value()\n    }\n}\n</code></pre>\n<p>I want to make this code conform to functional coding. I also want the map initialized with all the file names even if the loop ends early. I can do both by using <code>groupBy()</code> to transform my list of file names into a map before iterating:</p>\n<pre><code>files.groupBy{ it.serviceName() }\n</code></pre>\n<p>Kotlin Map&lt;K,V&gt; doesn't have a <code>takeWhile()</code> function. Since this function is run by AWS Lambda I use <code>takeWhile()</code> to exit the loop when a time threshold is reached to avoid timeout errors. Is there some other Kotlin function for iterating a map until a condition is detected?</p>\n<p>Code without <code>takeWhile()</code>:</p>\n<pre><code>internal enum class ProcessingStatus {\n    AlreadyProcessed, Sent, Pending, Error, Ignored\n}\n\n@Test\nfun `test file mapping status`()\n{\n    val fileNames = listOf(&quot;idoc_images_2050_131031_001_2324.zip&quot;,&quot;idoc_images_2050_131031_002_2324.zip&quot;, &quot;idoc_images_2050_222031_001_2324.zip&quot;)\n\n    fun String.parseCbSeqNumber(): String {\n        return this.substring(24, 27)\n    }\n\n    fun String.serviceName():String\n    {\n        //we need to transform the name of the image file into a matching filename of the service file\n        //replace the 'images' substring with 'service' and strip out the three digit batch code\n        return this.replace(&quot;images&quot;, &quot;service&quot;).replace(Regex(&quot;(.*)(_\\\\d{3}_)(.*.zip)$&quot;), &quot;$1_$3&quot;)\n    }\n\n    val serviceMap = fileNames.groupBy { it.serviceName() }.mapValues {\n        it.value.associateWith { listOf&lt;ProcessingStatus&gt;() }\n    }.mapValues { serviceEntry-&gt;\n        serviceEntry.value.mapValues {\n            fileEntry-&gt;\n\n            if(fileEntry.key.parseCbSeqNumber() == &quot;001&quot;)\n            {\n                listOf(ProcessingStatus.Pending, ProcessingStatus.AlreadyProcessed)\n            }\n            else if(fileEntry.key.parseCbSeqNumber() == &quot;002&quot;)\n            {\n                listOf(ProcessingStatus.Sent, ProcessingStatus.Ignored)\n            }\n            else{\n                listOf(ProcessingStatus.Error)\n            }\n        }\n\n    }\n\n    println(serviceMap)\n    assertThat(serviceMap.keys.size).isEqualTo(2)\n}\n</code></pre>\n",
-    "tags" : [ "java", "kotlin", "aws-lambda", "iteration" ],
+    "question_id" : 79755224,
+    "title" : "How to perform a non-blocking &#39;fire-and-forget&#39; database update alongside a main transaction in Quarkus?",
+    "body" : "<p>I'm working on a Quarkus project using Mutiny and Hibernate Reactive Panache. In one of my API endpoints, I need to perform three concurrent database operations: one query and two updates.</p>\n<p>My requirements are very specific:</p>\n<ol>\n<li><strong>Main Transaction:</strong> A database query (<code>doSelect1</code>) and one of the database updates (<code>doUpdate1</code>) must execute together. Both must succeed for the transaction to be considered successful.</li>\n<li><strong>Immediate Response:</strong> Upon the successful completion of <code>doSelect1</code> and <code>doUpdate1</code>, the API should immediately return the result of the <code>doSelect1</code> query to the client.</li>\n<li><strong>Fire-and-Forget Update:</strong> Concurrently, a second database update (<code>doUpdate2</code>) should be initiated. This operation should be &quot;fire-and-forget.&quot;\n<ul>\n<li>The API response <strong>should not</strong> wait for <code>doUpdate2</code> to complete.</li>\n<li>If <code>doUpdate2</code> fails, it should only log the error and <strong>must not</strong> cause the main transaction (with <code>doSelect1</code> and <code>doUpdate1</code>) to roll back or affect the API response.</li>\n</ul>\n</li>\n</ol>\n<p>Here is my current implementation using <code>Uni.combine()</code>:</p>\n<pre class=\"lang-java prettyprint-override\"><code>import io.smallrye.mutiny.Uni;\nimport io.smallrye.mutiny.tuples.Tuple3;\nimport io.quarkus.hibernate.reactive.panache.common.WithTransaction;\nimport jakarta.transaction.Transactional;\n\n// ...\n\n@WithTransaction\npublic Uni&lt;ResultVO&gt; doLogin() {\n    // I want doSelect1() and doUpdate1() to succeed together,\n    // and for the method to return as soon as they are done.\n    // doUpdate2() should run in the background without blocking the response.\n    return Uni.combine().all().unis(doSelect1(), doUpdate1(), doUpdate2().onFailure().recoverWithNull())\n              .asTuple()\n              .onItem().transform(tuple -&gt; tuple.getItem1()); // Return the result of doSelect1\n}\n\npublic Uni&lt;ResultVO&gt; doSelect1() {\n    // ... database query logic\n}\n\npublic Uni&lt;Void&gt; doUpdate1() {\n    // ... database update logic\n}\n\n\n// This should be a non-blocking, &quot;fire-and-forget&quot; operation\n// in a new transaction.\n@WithTransaction\n@Transactional(Transactional.TxType.REQUIRES_NEW) // Start a new transaction\npublic Uni&lt;Void&gt; doUpdate2() {\n    // ... another database update logic that might fail\n    // and should not affect the main flow.\n}\n</code></pre>\n<p><strong>The Problem:</strong></p>\n<p>My current code almost works. The <code>onFailure().recoverWithNull()</code> on <code>doUpdate2()</code> correctly prevents its failure from causing the entire pipeline to fail. However, the <code>Uni.combine().all()</code> part still waits for all three <code>Uni</code>s to complete before proceeding. This means the API response is blocked until <code>doUpdate2</code> finishes, which violates my &quot;fire-and-forget&quot; requirement.</p>\n<p><strong>My Question:</strong></p>\n<p>How can I properly implement this non-blocking, fire-and-forget behavior for <code>doUpdate2</code> while ensuring <code>doSelect1</code> and <code>doUpdate1</code> complete together in a transaction?</p>\n<p>I have read some documentation and it seems that <strong>SmallRye Reactive Messaging</strong> might be suitable for this kind of asynchronous, background task. Is that the recommended approach here, or is there a simpler way to achieve this using only Mutiny? For example, is there a way to subscribe to <code>doUpdate2</code> without having it be part of the blocking <code>combine</code> operation?</p>\n<p>Any guidance would be greatly appreciated. Thank you!</p>\n",
+    "tags" : [ "java", "quarkus", "reactive", "quarkus-panache" ],
     "owner" : {
-      "account_id" : 2090213,
-      "reputation" : 1839,
-      "user_id" : 1860222,
+      "account_id" : 31520100,
+      "reputation" : 3,
+      "user_id" : 24341334,
       "user_type" : "registered",
-      "accept_rate" : 52,
-      "profile_image" : "https://www.gravatar.com/avatar/dcd9cf0881ee1e7a5f28175308628e25?s=256&d=identicon&r=PG",
-      "display_name" : "pbuchheit",
-      "link" : "https://stackoverflow.com/users/1860222/pbuchheit"
+      "profile_image" : "https://www.gravatar.com/avatar/98aef94899de3846e062023378d26916?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "tiga",
+      "link" : "https://stackoverflow.com/users/24341334/tiga"
     },
     "is_answered" : true,
-    "view_count" : 116,
-    "answer_count" : 1,
-    "score" : 1,
-    "last_activity_date" : 1756412601,
-    "creation_date" : 1756394787,
-    "link" : "https://stackoverflow.com/questions/79749306/takewhile-equivalent-for-kotlin-maps",
+    "view_count" : 122,
+    "answer_count" : 2,
+    "score" : 0,
+    "last_activity_date" : 1756975024,
+    "creation_date" : 1756952180,
+    "link" : "https://stackoverflow.com/questions/79755224/how-to-perform-a-non-blocking-fire-and-forget-database-update-alongside-a-main",
     "content_license" : "CC BY-SA 4.0"
   },
   "answers" : [ {
-    "answer_id" : 79749417,
-    "question_id" : 79749306,
-    "body" : "<p>The iteration order of maps is ill-defined, and makes <code>takeWhile</code> make little sense.  In addition, even if you wrote one, it would not work well for your use case, which is not applying <code>takeWhile</code> to any particular property of the keys and values but to a specific passage of time.</p>\n<p>Frankly, explicit mutation is probably the right thing to do here for code clarity.  If you must do something like this, consider doing it in lists and flattened collections first, using <code>takeWhile</code> appropriately, and then grouping into a map as part of the second phase after that.</p>\n",
-    "score" : 5,
+    "answer_id" : 79755319,
+    "question_id" : 79755224,
+    "body" : "<p>You can move the update logic to a different helper class and  just use @async and make it non blocking.</p>\n<p>I know its simple and straightforward, but please let me know the issue you faced here</p>\n",
+    "score" : 1,
     "is_accepted" : false,
     "owner" : {
-      "account_id" : 465573,
-      "reputation" : 200423,
-      "user_id" : 869736,
+      "account_id" : 38077386,
+      "reputation" : 106,
+      "user_id" : 28582581,
       "user_type" : "registered",
-      "accept_rate" : 82,
-      "profile_image" : "https://www.gravatar.com/avatar/ae7bb06b9a23a4dd7eea69e853d47d12?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "Louis Wasserman",
-      "link" : "https://stackoverflow.com/users/869736/louis-wasserman"
+      "profile_image" : "https://www.gravatar.com/avatar/1290181c8be3c97ffa01c4ac59488c65?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Vamsi Krishna",
+      "link" : "https://stackoverflow.com/users/28582581/vamsi-krishna"
     },
-    "creation_date" : 1756401364,
-    "last_activity_date" : 1756401364,
-    "content_license" : "CC BY-SA 4.0"
-  } ],
-  "question_comments" : [ {
-    "comment_id" : 140699207,
-    "post_id" : 79749306,
-    "body" : "maps do not guarantee any order, so I&#39;m not sure how much sense takeWhile will have here. If you want to, you can access the entries of the map, and takeWhile will be available there, so basically <code>myMap.entries.takeWhile { it.key == &quot;fizz&quot; || it.value == &quot;buzz&quot;)</code>. Obviously use whatever predicate makes sense.",
-    "score" : 2,
-    "owner" : {
-      "account_id" : 13774089,
-      "reputation" : 2991,
-      "user_id" : 9940820,
-      "user_type" : "registered",
-      "profile_image" : "https://i.sstatic.net/AOJ27.jpg?s=256",
-      "display_name" : "AlexT",
-      "link" : "https://stackoverflow.com/users/9940820/alext"
-    },
-    "creation_date" : 1756397283,
+    "creation_date" : 1756964854,
+    "last_activity_date" : 1756964854,
     "content_license" : "CC BY-SA 4.0"
   }, {
-    "comment_id" : 140699201,
-    "post_id" : 79749306,
-    "body" : "Implement it yourself mutably.  What is the signature?  It&#39;s not actually clear how you expect the semantics to behave.",
-    "score" : 0,
+    "answer_id" : 79755453,
+    "question_id" : 79755224,
+    "body" : "<p>I can't really answer your main question, but <a href=\"https://stackoverflow.com/a/76520504/6692043\">https://stackoverflow.com/a/76520504/6692043</a> seems to be what you are after.</p>\n<p>EDIT: Though I'm told <a href=\"https://hibernate.org/reactive/documentation/4.1/reference/html_single/#_sessions_and_vert_x_contexts\" rel=\"nofollow noreferrer\">running parallel operations on the same Hibernate Reactive session is a big no-no</a>, so you might want to use something like <code>doSelect1().then(doUpdate1())</code> (or whatever the correct syntax is in Mutiny) rather than <code>Uni.combine().all(...)</code>.</p>\n<p>That being said, there is more.</p>\n<p><code>@Transactional(Transactional.TxType.REQUIRES_NEW)</code> on reactive methods is incorrect. Right now it most likely is ignored, or just performs some pointless work.\nSee <a href=\"https://quarkus.io/guides/hibernate-reactive-panache#transactions\" rel=\"nofollow noreferrer\">https://quarkus.io/guides/hibernate-reactive-panache#transactions</a></p>\n<p>I think <code>@WithTransaction</code> will by default behave like &quot;REQUIRES_NEW&quot;. But... it reuses the surrounding session, which is really not good in your case: a Hibernate ORM/Reactive session cannot be used after a failure, which you indicate could happen in <code>doUpdate2</code>.</p>\n<p>What you really need is a new transaction <em>and</em> a new session.</p>\n<p>I do not think that's possible with Panache, unfortunately. But... When using &quot;plain&quot; Hibernate Reactive, though you can always start another transaction/session explicitly:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Inject\nMutiny.SessionFactory sessionFactory;\n\n\n// This should be a non-blocking, &quot;fire-and-forget&quot; operation\n// in a new transaction.\npublic Uni&lt;Void&gt; doUpdate2() {\n    return sessionFactory.withTransaction(session -&gt; { // the given session is guaranteed to be a new one\n\n        // ... another database update logic that might fail\n        // and should not affect the main flow.\n    });\n}\n</code></pre>\n<p>Note I am aware the experience is not awesome here, we have plans to improve it: <a href=\"https://github.com/quarkusio/quarkus/issues/47698\" rel=\"nofollow noreferrer\">https://github.com/quarkusio/quarkus/issues/47698</a></p>\n",
+    "score" : 1,
+    "is_accepted" : true,
     "owner" : {
-      "account_id" : 465573,
-      "reputation" : 200423,
-      "user_id" : 869736,
+      "account_id" : 8974783,
+      "reputation" : 10107,
+      "user_id" : 6692043,
       "user_type" : "registered",
-      "accept_rate" : 82,
-      "profile_image" : "https://www.gravatar.com/avatar/ae7bb06b9a23a4dd7eea69e853d47d12?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "Louis Wasserman",
-      "link" : "https://stackoverflow.com/users/869736/louis-wasserman"
+      "profile_image" : "https://www.gravatar.com/avatar/3673815784047b7e0673677a0bc7dde0?s=256&d=identicon&r=PG",
+      "display_name" : "yrodiere",
+      "link" : "https://stackoverflow.com/users/6692043/yrodiere"
     },
-    "creation_date" : 1756397209,
+    "creation_date" : 1756974473,
+    "last_activity_date" : 1756975024,
     "content_license" : "CC BY-SA 4.0"
   } ],
-  "answer_comments" : { }
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79755319" : [ {
+      "comment_id" : 140721311,
+      "post_id" : 79755319,
+      "body" : "In my Quarkus version (3.20.2.2), it seems there is no @async annotation. Do I need to add any dependencies?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 31520100,
+        "reputation" : 3,
+        "user_id" : 24341334,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/98aef94899de3846e062023378d26916?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "tiga",
+        "link" : "https://stackoverflow.com/users/24341334/tiga"
+      },
+      "creation_date" : 1757318740,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
 }

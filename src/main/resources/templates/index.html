@@ -5,113 +5,454 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Stack Overflow Java Analysis</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/venn.js@0.2.20/build/venn.min.js"></script>
     <style>
+        :root {
+            color-scheme: light;
+        }
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             margin: 0;
             padding: 20px;
-            background-color: #f9f9f9;
-            color: #333;
+            background-color: #f4f6f8;
+            color: #1c1c1c;
         }
         .container {
-            max-width: 900px;
+            max-width: 1100px;
             margin: 0 auto;
+        }
+        header {
+            text-align: center;
+            margin-bottom: 24px;
+        }
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-bottom: 32px;
+        }
+        .stat-card {
             background: white;
-            padding: 30px;
             border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 16px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
         }
-        h1 {
-            text-align: center;
-            color: #2c3e50;
+        .stat-card .label {
+            display: block;
+            font-size: 0.9rem;
+            color: #6b7280;
         }
-        .search-section {
-            margin: 25px 0;
-            text-align: center;
+        .stat-card .value {
+            font-size: 1.8rem;
+            font-weight: bold;
+            color: #111827;
         }
-        .search-section input[type="text"] {
-            width: 70%;
-            padding: 10px;
-            font-size: 16px;
-            border: 1px solid #ccc;
-            border-radius: 4px;
+        .panel {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 24px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
         }
-        .search-section button {
-            padding: 10px 20px;
-            font-size: 16px;
-            margin-left: 10px;
-            background-color: #3498db;
-            color: white;
+        .panel-header {
+            display: flex;
+            justify-content: space-between;
+            gap: 16px;
+            flex-wrap: wrap;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+        .panel-header h2 {
+            margin: 0;
+        }
+        select, input[type="number"], input[type="date"], button {
+            padding: 6px 10px;
+            border-radius: 6px;
+            border: 1px solid #d1d5db;
+            font-size: 0.95rem;
+        }
+        button {
+            background: #2563eb;
             border: none;
-            border-radius: 4px;
+            color: white;
             cursor: pointer;
         }
-        .search-section button:hover {
-            background-color: #2980b9;
-        }
-        .chart-container {
-            margin-top: 30px;
-            text-align: center;
-        }
-        .chart-container canvas {
-            max-width: 100%;
-            height: 400px !important;
+        button:hover {
+            background: #1d4ed8;
         }
     </style>
 </head>
 <body>
 <div class="container">
-    <h1>Stack Overflow Java Thread Analysis</h1>
+    <header>
+        <h1>Stack Overflow Java Q&amp;A 分析面板</h1>
+        <p>基于本地离线数据集的趋势、共现、多线程痛点与可解性洞察</p>
+    </header>
 
-    <div class="search-section">
-        <input type="text" id="keyword" placeholder="Search by keyword (e.g., 'multithreading', 'lambda')..." />
-        <button onclick="alert('Search functionality is not implemented in this demo.')">Search</button>
-    </div>
+    <section class="stats" id="metaSection">
+        <div class="stat-card">
+            <span class="label">线程数</span>
+            <span class="value" id="threadCount">-</span>
+        </div>
+        <div class="stat-card">
+            <span class="label">回答数</span>
+            <span class="value" id="answerCount">-</span>
+        </div>
+        <div class="stat-card">
+            <span class="label">评论数</span>
+            <span class="value" id="commentCount">-</span>
+        </div>
+        <div class="stat-card">
+            <span class="label">数据区间</span>
+            <span class="value" id="dataRange">-</span>
+        </div>
+    </section>
 
-    <div class="chart-container">
-        <h2>Thread Distribution by Type</h2>
-        <canvas id="typePieChart"></canvas>
+    <section class="panel">
+        <div class="panel-header">
+            <div>
+                <h2>Topic Trends</h2>
+                <p>显示帖子数量前 N 的标签在等时长时间窗口内的趋势</p>
+            </div>
+            <div>
+                <label for="trendTopN">Top N 标签：</label>
+                <input id="trendTopN" type="number" min="3" max="20" value="8" style="width: 60px;">
+                <label for="metricSelect" style="margin-left: 15px;">指标：</label>
+                <select id="metricSelect">
+                    <option value="QUESTIONS">发帖量</option>
+                    <option value="ANSWERS">回答数</option>
+                    <option value="SCORE">得分</option>
+                    <option value="ENGAGEMENT">浏览量</option>
+                </select>
+                <button id="refreshTrends" style="margin-left: 10px;">刷新</button>
+            </div>
+        </div>
+        <canvas id="topicTrendChart"></canvas>
+    </section>
+
+    <section class="panel">
+        <div class="panel-header">
+            <div>
+                <h2>话题共现</h2>
+                <p>韦恩图展示前 3 个最强共现对的重叠关系，柱状图展示 Top N 共现对</p>
+            </div>
+            <div>
+                <label for="cooccurrenceSelect">Top N:</label>
+                <input id="cooccurrenceSelect" type="number" min="3" max="20" value="10">
+                <button id="refreshPairs">刷新</button>
+            </div>
+        </div>
+        <div id="vennContainer" style="margin-bottom: 20px; min-height: 300px;"></div>
+        <canvas id="cooccurrenceChart"></canvas>
+    </section>
+
+    <section class="panel">
+        <div class="panel-header">
+            <div>
+                <h2>多线程常见问题</h2>
+                <p>基于标签、标题、正文和代码片段识别多线程相关问题并分类</p>
+            </div>
+            <div>
+                <label for="pitfallSelect">Top N:</label>
+                <input id="pitfallSelect" type="number" min="3" max="10" value="5">
+                <button id="refreshPitfalls">刷新</button>
+            </div>
     </div>
+        <canvas id="pitfallChart"></canvas>
+    </section>
+
+    <section class="panel">
+        <div class="panel-header">
+            <div>
+                <h2>可解性特征对比</h2>
+                <p>比较容易解决 vs 难以解决问题在多个特征上的差异</p>
+            </div>
+            <div class="date-range">
+                <label for="fromDate">From</label>
+                <input type="date" id="fromDate">
+                <label for="toDate">To</label>
+                <input type="date" id="toDate">
+                <button id="refreshSolvability">应用</button>
+    </div>
+    </div>
+        <canvas id="solvabilityChart"></canvas>
+    </section>
 </div>
 
 <script>
-    document.addEventListener('DOMContentLoaded', function () {
-        const ctx = document.getElementById('typePieChart').getContext('2d');
-        const data = {
-            labels: ['Type 1', 'Type 2', 'Type 3'],
-            datasets: [{
-                data: [45, 30, 25],
-                backgroundColor: [
-                    '#FF6384',
-                    '#36A2EB',
-                    '#FFCE56'
-                ],
-                borderWidth: 1
-            }]
-        };
+    const charts = {};
 
-        const config = {
-            type: 'pie',
-            data: data,
+    document.addEventListener('DOMContentLoaded', () => {
+        loadMetadata();
+        initTopicTrendChart();
+        initCooccurrenceChart();
+        initPitfallChart();
+        initSolvabilityChart();
+    });
+
+    async function fetchJson(url) {
+        const response = await fetch(url);
+        if (!response.ok) {
+            throw new Error(`请求失败：${response.status}`);
+        }
+        return response.json();
+    }
+
+    async function loadMetadata() {
+        const payload = await fetchJson('/api/metadata/status');
+        const meta = payload.data;
+        document.getElementById('threadCount').innerText = meta.threadCount;
+        document.getElementById('answerCount').innerText = meta.answerCount;
+        document.getElementById('commentCount').innerText = meta.commentCount;
+        document.getElementById('dataRange').innerText = `${meta.earliestQuestion ?? '-'} ~ ${meta.latestQuestion ?? '-'}`;
+    }
+
+    function initTopicTrendChart() {
+        const ctx = document.getElementById('topicTrendChart').getContext('2d');
+        charts.topicTrends = new Chart(ctx, {
+            type: 'line',
+            data: { labels: [], datasets: [] },
             options: {
                 responsive: true,
-                plugins: {
-                    legend: {
-                        position: 'top',
-                    },
-                    tooltip: {
-                        callbacks: {
-                            label: function(context) {
-                                return `${context.label}: ${context.raw}%`;
-                            }
-                        }
-                    }
-                }
+                interaction: { mode: 'index', intersect: false },
+                plugins: { legend: { position: 'bottom' } }
             }
-        };
+        });
+        document.getElementById('metricSelect').addEventListener('change', loadTopicTrends);
+        document.getElementById('refreshTrends').addEventListener('click', loadTopicTrends);
+        loadTopicTrends();
+    }
 
-        new Chart(ctx, config);
-    });
+    async function loadTopicTrends() {
+        const metric = document.getElementById('metricSelect').value;
+        const topN = document.getElementById('trendTopN').value;
+        const payload = await fetchJson(`/api/topic-trends?metric=${metric}&topN=${topN}`);
+        const data = payload.data;
+        const labels = [...new Set(data.series.flatMap(series => series.points.map(p => p.bucket)))].sort();
+        const colorPalette = ['#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#7E57C2', '#26A69A'];
+        const datasets = data.series.map((series, index) => ({
+            label: series.topic,
+            data: labels.map(label => {
+                const point = series.points.find(p => p.bucket === label);
+                return point ? point.value : 0;
+            }),
+            borderColor: colorPalette[index % colorPalette.length],
+            tension: 0.3,
+            fill: false
+        }));
+        charts.topicTrends.data.labels = labels;
+        charts.topicTrends.data.datasets = datasets;
+        charts.topicTrends.update();
+    }
+
+    function initCooccurrenceChart() {
+        const ctx = document.getElementById('cooccurrenceChart').getContext('2d');
+        charts.cooccurrence = new Chart(ctx, {
+            type: 'bar',
+            data: { labels: [], datasets: [{ label: '共现次数', data: [], backgroundColor: '#36A2EB' }] },
+            options: { responsive: true, plugins: { legend: { display: false } } }
+        });
+        document.getElementById('refreshPairs').addEventListener('click', loadCooccurrence);
+        loadCooccurrence();
+    }
+
+    async function loadCooccurrence() {
+        const topN = document.getElementById('cooccurrenceSelect').value;
+        const payload = await fetchJson(`/api/cooccurrence?topN=${topN}`);
+        
+        // 更新柱状图
+        const labels = payload.data.pairs.map(pair => pair.topics.join(' & '));
+        const data = payload.data.pairs.map(pair => pair.count);
+        charts.cooccurrence.data.labels = labels;
+        charts.cooccurrence.data.datasets[0].data = data;
+        charts.cooccurrence.update();
+        
+        // 更新韦恩图（如果数据存在）
+        if (payload.data.vennDiagram) {
+            renderVennDiagram(payload.data.vennDiagram);
+        }
+    }
+
+    function renderVennDiagram(vennData) {
+        const container = document.getElementById('vennContainer');
+        container.innerHTML = '<h3 style="text-align: center; margin-bottom: 15px;">韦恩图：前 3 个最强共现对</h3>';
+        
+        const sets = vennData.sets;
+        const intersections = vennData.intersections;
+        
+        // 如果只有文本数据，显示文本列表
+        if (sets.length === 0 && intersections.length === 0) {
+            container.innerHTML += '<p style="text-align: center; color: #6b7280;">暂无数据</p>';
+            return;
+        }
+        
+        // 准备 venn.js 数据格式
+        // venn.js 需要的数据格式：每个集合和交集都需要单独定义
+        const vennCircles = [];
+        
+        // 收集所有在共现对中出现的标签
+        const tagsInPairs = new Set();
+        intersections.forEach(intersection => {
+            intersection.sets.forEach(tag => tagsInPairs.add(tag));
+        });
+        
+        // 为每个在共现对中出现的标签创建集合数据（单个标签的出现次数）
+        // 从 sets 中找到对应的标签及其出现次数
+        const tagSizeMap = new Map();
+        sets.forEach(set => {
+            tagSizeMap.set(set.name, set.size);
+        });
+        
+        tagsInPairs.forEach(tag => {
+            const size = tagSizeMap.get(tag) || 0;
+            if (size > 0) {
+                vennCircles.push({
+                    sets: [tag],
+                    size: size
+                });
+            }
+        });
+        
+        // 添加交集（共现对）
+        intersections.forEach(intersection => {
+            if (intersection.sets.length === 2) {
+                vennCircles.push({
+                    sets: intersection.sets,
+                    size: intersection.size
+                });
+            }
+        });
+        
+        // 如果数据不足，显示文本信息
+        if (vennCircles.length < 2) {
+            container.innerHTML += '<p style="text-align: center; color: #6b7280;">数据不足，无法绘制韦恩图（至少需要2个集合）</p>';
+            // 显示文本列表作为备选
+            let html = '<div style="display: flex; justify-content: space-around; flex-wrap: wrap; gap: 20px; margin-top: 20px;">';
+            html += '<div style="flex: 1; min-width: 200px;"><h4>标签集合（面积代表出现次数）</h4><ul>';
+            sets.forEach(set => {
+                html += `<li><strong>${set.name}</strong>: ${set.size} 次</li>`;
+            });
+            html += '</ul></div>';
+            html += '<div style="flex: 1; min-width: 200px;"><h4>共现对（交集大小）</h4><ul>';
+            intersections.forEach(intersection => {
+                html += `<li><strong>${intersection.sets.join(' & ')}</strong>: ${intersection.size} 次</li>`;
+            });
+            html += '</ul></div>';
+            html += '</div>';
+            container.innerHTML += html;
+            return;
+        }
+        
+        // 创建 SVG 容器用于绘制韦恩图
+        const svgContainer = document.createElement('div');
+        svgContainer.id = 'vennSvgContainer';
+        svgContainer.style.cssText = 'width: 100%; height: 400px; margin: 20px 0; display: flex; justify-content: center; align-items: center;';
+        container.appendChild(svgContainer);
+        
+        // 创建 SVG
+        const width = 600;
+        const height = 400;
+        const svg = d3.select(svgContainer)
+            .append('svg')
+            .attr('width', width)
+            .attr('height', height);
+        
+        // 使用 venn.js 绘制韦恩图
+        const vennDiagram = venn.VennDiagram()
+            .width(width)
+            .height(height);
+        
+        // 绘制图表
+        svg.datum(vennCircles).call(vennDiagram);
+        
+        // 添加样式
+        svg.selectAll('.venn-circle path')
+            .style('fill-opacity', 0.3)
+            .style('stroke-width', 2)
+            .style('stroke', '#2563eb')
+            .style('fill', '#36A2EB');
+        
+        // 设置文本样式
+        svg.selectAll('text')
+            .style('font-size', '14px')
+            .style('font-weight', 'bold')
+            .style('fill', '#1c1c1c');
+        
+        // 在下方显示文本信息
+        let html = '<div style="display: flex; justify-content: space-around; flex-wrap: wrap; gap: 20px; margin-top: 20px;">';
+        html += '<div style="flex: 1; min-width: 200px;"><h4>标签集合（面积代表出现次数）</h4><ul>';
+        sets.forEach(set => {
+            html += `<li><strong>${set.name}</strong>: ${set.size} 次</li>`;
+        });
+        html += '</ul></div>';
+        html += '<div style="flex: 1; min-width: 200px;"><h4>韦恩图:前3个最强共现对</h4><h4>共现对（交集大小）</h4><ul>';
+        intersections.forEach(intersection => {
+            html += `<li><strong>${intersection.sets.join(' & ')}</strong>: ${intersection.size} 次</li>`;
+        });
+        html += '</ul></div>';
+        html += '</div>';
+        container.innerHTML += html;
+    }
+
+    function initPitfallChart() {
+        const ctx = document.getElementById('pitfallChart').getContext('2d');
+        charts.pitfall = new Chart(ctx, {
+            type: 'bar',
+            data: { labels: [], datasets: [{ label: '出现次数', data: [], backgroundColor: '#FF9F40' }] },
+            options: {
+                indexAxis: 'y',
+                responsive: true,
+                plugins: { legend: { display: false } }
+            }
+        });
+        document.getElementById('refreshPitfalls').addEventListener('click', loadPitfalls);
+        loadPitfalls();
+    }
+
+    async function loadPitfalls() {
+        const topN = document.getElementById('pitfallSelect').value;
+        const payload = await fetchJson(`/api/multithreading/pitfalls?topN=${topN}`);
+        const labels = payload.data.pitfalls.map(item => item.label);
+        const data = payload.data.pitfalls.map(item => item.count);
+        charts.pitfall.data.labels = labels;
+        charts.pitfall.data.datasets[0].data = data;
+        charts.pitfall.update();
+    }
+
+    function initSolvabilityChart() {
+        const ctx = document.getElementById('solvabilityChart').getContext('2d');
+        charts.solvability = new Chart(ctx, {
+            type: 'radar',
+            data: {
+                labels: [],
+                datasets: [
+                    { label: '易解决', data: [], borderColor: '#4BC0C0', backgroundColor: 'rgba(75,192,192,0.2)' },
+                    { label: '难解决', data: [], borderColor: '#E91E63', backgroundColor: 'rgba(233,30,99,0.2)' }
+                ]
+            },
+            options: { responsive: true }
+        });
+        document.getElementById('refreshSolvability').addEventListener('click', loadSolvability);
+        loadSolvability();
+    }
+
+    async function loadSolvability() {
+        const from = document.getElementById('fromDate').value;
+        const to = document.getElementById('toDate').value;
+        const params = new URLSearchParams();
+        if (from) params.append('from', from);
+        if (to) params.append('to', to);
+        const query = params.toString();
+        const payload = await fetchJson(query ? `/api/solvability/contrast?${query}` : '/api/solvability/contrast');
+        const labels = payload.data.features.map(feature => feature.name);
+        const solvable = payload.data.features.map(feature => feature.solvable.average);
+        const hard = payload.data.features.map(feature => feature.hard.average);
+        charts.solvability.data.labels = labels;
+        charts.solvability.data.datasets[0].data = solvable;
+        charts.solvability.data.datasets[1].data = hard;
+        charts.solvability.update();
+    }
 </script>
 </body>
 </html>

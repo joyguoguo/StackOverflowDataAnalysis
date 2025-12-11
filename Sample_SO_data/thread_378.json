@@ -1,93 +1,64 @@
 {
   "question" : {
-    "question_id" : 79805315,
-    "title" : "Micrometer trace for async method and scheduled method",
-    "body" : "<p>I have a Spring Boot application with scheduled jobs that call async methods. The scheduled method gets a trace ID automatically, but it's not propagating to the async methods unless i manually create spans in the async methods. I need each scheduled execution to have one trace ID shared across all operations, with different span IDs for each async operation.</p>\n<p>Current Setup:</p>\n<p>Spring Boot 3.5.4 Micrometer 1.15.2 with Brave bridge for tracing Log4j2 with MDC for structured logging ThreadPoolTaskExecutor for async processing</p>\n<p>Is there a way to make my current approach cleaner, does it look robust?\nHere is the code</p>\n<p>This is what I am doing right now, it seems to work, does it look correct? Do you see any issues? Is there a cleaner solution possible?</p>\n<p>AsyncConfig.java</p>\n<pre><code>import io.micrometer.context.ContextSnapshot;\nimport org.springframework.beans.factory.annotation.Value;\nimport org.springframework.context.annotation.Bean;\nimport org.springframework.context.annotation.Configuration;\nimport org.springframework.scheduling.annotation.EnableAsync;\nimport org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;\n\n@Configuration\n@EnableAsync\npublic class AsyncConfig {\n    \n    public static final String THREAD_POOL_NAME = &quot;threadPoolTaskExecutor&quot;;\n    \n    @Value(&quot;${thread-pools.data-poller.max-size:10}&quot;)\n    private int threadPoolMaxSize;\n    \n    @Value(&quot;${thread-pools.data-poller.core-size:5}&quot;)\n    private int threadPoolCoreSize;\n    \n    @Value(&quot;${thread-pools.data-poller.queue-capacity:100}&quot;)\n    private int threadPoolQueueSize;\n    \n    @Bean(name = THREAD_POOL_NAME)\n    public ThreadPoolTaskExecutor getThreadPoolTaskExecutor() {\n        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();\n        executor.setMaxPoolSize(threadPoolMaxSize);\n        executor.setCorePoolSize(threadPoolCoreSize);\n        executor.setQueueCapacity(threadPoolQueueSize);\n        // Add context propagation\n        executor.setTaskDecorator(runnable -&gt; \n            ContextSnapshot.captureAll().wrap(runnable)\n        );\n        return executor;\n    }\n}\n</code></pre>\n<p>DataProcessor.java</p>\n<pre><code>import io.micrometer.tracing.Span;\nimport io.micrometer.tracing.Tracer;\nimport lombok.NonNull;\nimport lombok.RequiredArgsConstructor;\nimport lombok.extern.slf4j.Slf4j;\nimport org.springframework.scheduling.annotation.Async;\nimport org.springframework.stereotype.Service;\n\n@Slf4j\n@Service\n@RequiredArgsConstructor\npublic class DataProcessor {\n    \n    @NonNull\n    private final Tracer tracer;\n    \n    public static final String THREAD_POOL_NAME = &quot;threadPoolTaskExecutor&quot;;\n    \n    @Async(THREAD_POOL_NAME)\n    public void processPendingData() {\n        Span span = tracer.nextSpan().name(&quot;process-pending-data&quot;).start();\n        try (Tracer.SpanInScope ws = tracer.withSpan(span)) {\n            log.info(&quot;Processing pending items&quot;);\n            // Now shows correct traceId and unique spanId!\n            // Business logic here\n        } finally {\n            span.end();\n        }\n    }\n    \n    @Async(THREAD_POOL_NAME)\n    public void processRetryData() {\n        Span span = tracer.nextSpan().name(&quot;process-retry-data&quot;).start();\n        try (Tracer.SpanInScope ws = tracer.withSpan(span)) {\n            log.info(&quot;Processing retry items&quot;);\n            // Now shows correct traceId and unique spanId!\n            // Retry logic here\n        } finally {\n            span.end();\n        }\n    }\n}\n</code></pre>\n<p>PollingService.java</p>\n<pre><code>import lombok.NonNull;\nimport lombok.RequiredArgsConstructor;\nimport lombok.extern.slf4j.Slf4j;\nimport org.springframework.scheduling.annotation.EnableScheduling;\nimport org.springframework.scheduling.annotation.Scheduled;\nimport org.springframework.stereotype.Service;\n\n@Slf4j\n@Service\n@EnabledScheduling\n@RequiredArgsConstructor\npublic class PollingService {\n    \n    @NonNull\n    private final DataProcessor dataProcessor;\n    \n    // the trace id automatically spawns for this\n    @Scheduled(fixedDelay = 5000)\n    public void pollData() {\n        log.info(&quot;Starting data polling&quot;); \n        // Shows traceId and spanId correctly in logs\n        \n        // These async calls lose trace context\n        dataProcessor.processPendingData();\n        dataProcessor.processRetryData();\n    }\n}\n</code></pre>\n",
-    "tags" : [ "java", "spring", "spring-boot", "spring-micrometer", "micrometer-tracing" ],
+    "question_id" : 79811010,
+    "title" : "How did you implement Attribute-based Access Control (ABAC) in Spring Boot?",
+    "body" : "<p>I’ve been working on an issue in our Spring Boot application for some time now: <strong>authorization</strong>. Because we have a more complex permission model — permissions depend not only on roles, but also on user-specific attributes (e.g., department) — we require <strong>Attribute-based Access Control (ABAC)</strong> instead of the typical <strong>Role-based Access Control (RBAC)</strong> used in Spring Security (see <a href=\"https://docs.spring.io/spring-security/reference/servlet/authorization/method-security.html\" rel=\"nofollow noreferrer\">Spring Docs - Method-based Security</a>).</p>\n<p>At the moment, we have a custom implementation that roughly follows the ABAC reference model (PEP, PDP, ...). However, it is neither particularly efficient nor easily scalable or maintainable. Therefore, I’d like to hear what solutions you have used and what has worked well in your projects.</p>\n<p>Below are some approaches I have explored or tested, but none of them seem to be a perfect fit so far:</p>\n<ol>\n<li><p><strong><a href=\"https://docs.spring.io/spring-security/reference/servlet/authorization/method-security.html#authorization-expressions\" rel=\"nofollow noreferrer\">SpEL</a></strong> <strong>(Method-based Security: @PreAuthorize / @PostAuthorize)</strong><br />\nSpring allows you to define authorization logic directly in annotations using SpEL. However, this is recommended only for simple logic (see <a href=\"https://docs.spring.io/spring-security/reference/servlet/authorization/method-security.html#favor-granting-authorities\" rel=\"nofollow noreferrer\">Spring Docs - Favor Granting Authorities</a>). Since our use case is more complex, this approach does not seem suitable.</p>\n</li>\n<li><p><strong><a href=\"https://docs.spring.io/spring-security/reference/servlet/authorization/method-security.html#use-programmatic-authorization\" rel=\"nofollow noreferrer\">SpEL - Programmatic Authorization</a></strong><br />\nInstead of writing logic directly in SpEL, one can reference a separate service from SpEL, which then performs the authorization checks. This seems more promising, but it raises questions like:<br />\n<em>Does it scale well?</em><br />\nAnd does it lead to a large number of AuthorizationService classes — potentially one for every business service — increasing code complexity?</p>\n</li>\n<li><p>External Policy Decision Point (e.g., <a href=\"https://www.cerbos.dev/ecosystem/spring-boot\" rel=\"nofollow noreferrer\">Cerbos</a> , OPA)<br />\nUsing an external PDP allows you to separate authorization logic from the application. I tested Cerbos in particular, since its SDK aligns better with our needs (as far as I know, OPA SDK does not easily support passing additional resource attributes specifiy for a method).<br />\nThis approach works in principle, but it introduces operational overhead: Cerbos would need to be deployed as a sidecar, which would complicate deployment, testing, and the general workflow. It is technically possible, but currently difficult to implement in our environment. So ideally, we would prefer a <strong>native Spring/Java solution.</strong></p>\n</li>\n</ol>\n<p><strong>How have you implemented ABAC efficiently and in a scalable way in your Spring Boot/Java applications?</strong><br />\nI would really appreciate your insights or examples of architectures that worked well for you.</p>\n<p>Thanks in advance! \uD83D\uDE0A</p>\n",
+    "tags" : [ "java", "spring", "spring-security", "authorization", "abac" ],
     "owner" : {
-      "account_id" : 44481772,
-      "reputation" : 17,
-      "user_id" : 31775267,
+      "account_id" : 27554485,
+      "reputation" : 25,
+      "user_id" : 21028962,
       "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/55950ef27af2995823de90ca9794a36b?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "Bluev Blue",
-      "link" : "https://stackoverflow.com/users/31775267/bluev-blue"
+      "profile_image" : "https://www.gravatar.com/avatar/b0baf0a40e835452b13581ff247ef4a6?s=256&d=identicon&r=PG",
+      "display_name" : "0xRelu",
+      "link" : "https://stackoverflow.com/users/21028962/0xrelu"
     },
     "is_answered" : false,
-    "view_count" : 148,
-    "answer_count" : 0,
-    "score" : 0,
-    "last_activity_date" : 1761904649,
-    "creation_date" : 1761868280,
-    "link" : "https://stackoverflow.com/questions/79805315/micrometer-trace-for-async-method-and-scheduled-method",
+    "view_count" : 139,
+    "answer_count" : 2,
+    "score" : 4,
+    "last_activity_date" : 1763564981,
+    "creation_date" : 1762418392,
+    "link" : "https://stackoverflow.com/questions/79811010/how-did-you-implement-attribute-based-access-control-abac-in-spring-boot",
     "content_license" : "CC BY-SA 4.0"
   },
-  "answers" : [ ],
-  "question_comments" : [ {
-    "comment_id" : 140831407,
-    "post_id" : 79805315,
-    "body" : "Also you can start a new span inside the wrapper of the runnable in order to avoid doing it inside each <code>@Async</code>. Maybe options from here would help <a href=\"https://stackoverflow.com/a/79804705/7613649\">stackoverflow.com/a/79804705/7613649</a>",
+  "answers" : [ {
+    "answer_id" : 79815335,
+    "question_id" : 79811010,
+    "body" : "<p>We’ve implemented ABAC in a few Spring Boot projects, and after trying different patterns, here’s what has worked best for us.</p>\n<p><strong>Keep the PDP logic inside Spring (don’t overcomplicate it at first)</strong></p>\n<p>Instead of introducing an external policy engine like OPA or Cerbos right away, we built a lightweight <strong>Policy Decision Point</strong> (PDP) inside the app. It uses a central AuthorizationService that evaluates user and resource attributes against a set of rules defined in code or configuration.\nEach rule is just a small, composable predicate — for example:</p>\n<pre><code>public interface PolicyRule {\n    boolean evaluate(UserPrincipal user, Object resource);\n}\n\n</code></pre>\n<p>Then our AuthorizationService just loops through applicable rules for that resource type.\nThis approach kept the logic easy to test and avoided spinning up external services.</p>\n<p><strong>Use custom annotations for Policy Enforcement (PEP)</strong></p>\n<p>We built annotations like <code>@CheckPolicy(&quot;DOCUMENT_VIEW&quot;)</code> and an AOP aspect that intercepts calls and delegates to the PDP.\nThat way, the policy logic stays separate from business code, and we can still leverage Spring’s AOP and security context.</p>\n<pre><code>@CheckPolicy(&quot;DOCUMENT_EDIT&quot;)\npublic void updateDocument(Document doc) { ... }\n\n</code></pre>\n<p>The aspect looks up user and resource attributes and passes them to the PDP for evaluation.</p>\n<p><strong>Use SpEL only for simple dynamic checks</strong></p>\n<p>We do use <code>@PreAuthorize</code> for quick conditions (like comparing IDs or departments), but for anything complex, we delegate to the PDP.\nEmbedding too much logic in SpEL quickly becomes unreadable and untestable.</p>\n<p>A key best practice for ABAC is having a single, consistent way to resolve user and resource attributes.\nWe defined a <code>ContextProvider</code> interface that can pull attributes (department, ownership, sensitivity level, etc.) from various sources — DB, JWT claims, or microservice calls.\nThis avoids duplicating that logic across services.</p>\n<p><strong>Keep the policy definitions externalizable (optional)</strong></p>\n<p>Once the internal PDP grew too complex, we moved the rules to YAML files that are parsed at startup.\nThat gave us flexibility similar to Cerbos, but without the operational overhead.</p>\n<p>Example snippet:</p>\n<pre><code>policies:\n  - action: DOCUMENT_VIEW\n    conditions:\n      - user.department == resource.department\n      - resource.visibility == 'PUBLIC'\n</code></pre>\n<p>If you’re already running Kubernetes and have solid CI/CD automation, offloading ABAC to an external PDP can be great for large, multi-service environments.</p>\n",
     "score" : 0,
+    "is_accepted" : false,
     "owner" : {
-      "account_id" : 10320634,
-      "reputation" : 3398,
-      "user_id" : 7613649,
+      "account_id" : 30070712,
+      "reputation" : 11,
+      "user_id" : 23044730,
       "user_type" : "registered",
-      "accept_rate" : 25,
-      "profile_image" : "https://www.gravatar.com/avatar/c95137fce225c304ac42743da3816d6c?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "Geba",
-      "link" : "https://stackoverflow.com/users/7613649/geba"
+      "profile_image" : "https://lh3.googleusercontent.com/a/ACg8ocIDd55mW7aHmIx0kCFgt15eV92S-pMRqxRp5ciigS4cEQ=k-s256",
+      "display_name" : "Mohammad Askari",
+      "link" : "https://stackoverflow.com/users/23044730/mohammad-askari"
     },
-    "creation_date" : 1762028366,
+    "creation_date" : 1762762830,
+    "last_activity_date" : 1762762830,
     "content_license" : "CC BY-SA 4.0"
   }, {
-    "comment_id" : 140829832,
-    "post_id" : 79805315,
-    "body" : "No it isn&#39;t. It doesn&#39;t break anything. ]",
+    "answer_id" : 79824619,
+    "question_id" : 79811010,
+    "body" : "<p>Pretty interesting approach. I also tried something similar; however, I split <code>CheckPolicy</code> into two separate annotations — <code>PreAuthorize</code> and <code>PostAuthorize</code> (similar to the Spring Security annotations) — to differentiate when the policy logic is executed.</p>\n<p>That said, I’m not a fan of using Spring Security’s <code>PreAuthorize</code> and <code>PostAuthorize</code> for smaller policies, as it ends up scattering policy definitions across different places (mixing SpEL and Java-based policies if you also use the custom annotations).</p>\n<p>For externalized policy definitions, how would you parse YAML-based policies in Java to use them in a PDP?</p>\n",
     "score" : 0,
+    "is_accepted" : false,
     "owner" : {
-      "account_id" : 3192259,
-      "reputation" : 126777,
-      "user_id" : 2696260,
+      "account_id" : 27554485,
+      "reputation" : 25,
+      "user_id" : 21028962,
       "user_type" : "registered",
-      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
-      "display_name" : "M. Deinum",
-      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+      "profile_image" : "https://www.gravatar.com/avatar/b0baf0a40e835452b13581ff247ef4a6?s=256&d=identicon&r=PG",
+      "display_name" : "0xRelu",
+      "link" : "https://stackoverflow.com/users/21028962/0xrelu"
     },
-    "creation_date" : 1761933606,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140829276,
-    "post_id" : 79805315,
-    "body" : "I heard using NewSpan ContinueSpan breaks async nature of the methods. Is this true?",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 44481772,
-      "reputation" : 17,
-      "user_id" : 31775267,
-      "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/55950ef27af2995823de90ca9794a36b?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "Bluev Blue",
-      "link" : "https://stackoverflow.com/users/31775267/bluev-blue"
-    },
-    "creation_date" : 1761915816,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140828888,
-    "post_id" : 79805315,
-    "body" : "You can use the <code>@NewSpan</code>, <code>@ContinueSpan</code> atc. annotation from micrometer instead of doing it manually.",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 3192259,
-      "reputation" : 126777,
-      "user_id" : 2696260,
-      "user_type" : "registered",
-      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
-      "display_name" : "M. Deinum",
-      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
-    },
-    "creation_date" : 1761904781,
+    "creation_date" : 1763564981,
+    "last_activity_date" : 1763564981,
     "content_license" : "CC BY-SA 4.0"
   } ],
+  "question_comments" : [ ],
   "answer_comments" : { }
 }

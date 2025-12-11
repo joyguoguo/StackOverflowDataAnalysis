@@ -1,161 +1,180 @@
 {
   "question" : {
-    "question_id" : 79792966,
-    "title" : "RestEasy mapping Client vs. Server Exceptions",
-    "body" : "<p>We're using, for historic reasons, RestEasy 5.0.10 here in some services and I problem sometimes:</p>\n<p>When the user send bad input, be it wrongly formatted json, wrong types for <code>@FormParam</code>s or whatever, typically we want to return 400 with the underlying message. Not a huge problem with <code>ExceptionMapper</code>s, can be done.</p>\n<p>In case of <code>@FormParam</code> problems, for example, RestEasy already throws nice <code>BadRequestExceptions</code> when this happens, so an <code>ExceptionMapper</code> can simply return the response of them.</p>\n<p>But we also use RestEasy for further api calls, so, for example...</p>\n<ul>\n<li>User A calls (our) service X</li>\n<li>Service X calls service Y (may or may not be ours)</li>\n</ul>\n<p>Now, when a <code>BadRequestException</code> occurs, one of two possibilities can be true (ignoring catching exception in between):</p>\n<ul>\n<li>The the request from User A was somehow &quot;wrong&quot;</li>\n<li>The the request service X sent to service Y was somehow &quot;wrong&quot;</li>\n</ul>\n<p>Both cases would result in a <code>BadRequestException</code>.</p>\n<p>So the question is, can I somehow differentiate between the first and the second case, since in the second case, I would prefer a 500 error instead of a 400 seen by the user? What I can, of course, do is parse the stacktrace and see if it happened in a client or core library, but honestly, that seems... unwise.</p>\n<p>So does RestEasy have a good way of knowing which exceptions happened before they reach our code (when processing the request on a purely technical level) and which exceptions happen afterward, in the &quot;business&quot; code, so to speak?</p>\n<hr />\n<p>Example... Let's assume we provide an arbitrary api endpoint, defined by...</p>\n<pre><code>@POST\n@Path(&quot;someEndpoint&quot;)\n@Consumes(MediaType.APPLICATION_FORM_URLENCODED)\nString someMethod(@FormParam(&quot;id&quot;) long id, @FormParam(&quot;status&quot;) String status);\n</code></pre>\n<p>Sending, for example &quot;abc&quot; as <code>id</code> would result in a BadRequestException (wrapping the Long.parse Exception) the services that goes into my ExceptionMapper and can, of course, be directly given to the client as the included 400 Response. No real problem here... Imagine now this being implemented in my code...</p>\n<pre><code>public String someMethod(long id, String status) {\n    // do some random stuff\n\n    // now let's build a (RestEasy) client via clientBuilder...\n    var client = clientBuilder.build().target(thirdPartyBaseUrl).proxy(clientClass);\n   \n    var existingObjects = client.get(new ArbitraryFilterDto(status));\n\n    // etc.\n}\n</code></pre>\n<p>Now assume that there is a bug in my <code>ArbitraryFilterDto</code> mapping and the call to the client under <code>thirdPartyBaseUrl</code> leads to a 400 response. This ALSO gets translated into a <code>BadRequestException</code>. But THIS one I of course do not want to send to MY client, since it's not really their problem and nothing they can fix.</p>\n<p>What I can do here is add code to my ExceptionMapper and do something like...</p>\n<pre><code>boolean isClientException = Arrays.stream(webApplicationException.getStackTrace())\n.anyMatch(s -&gt; s.getClassName().startsWith(&quot;org.jboss.resteasy.client&quot;));\n</code></pre>\n<p>...by relying on the fact that the client stack will be org.jboss.resteasy.client.*, but honestly, that sounds... awful.</p>\n",
-    "tags" : [ "java", "resteasy" ],
+    "question_id" : 79798851,
+    "title" : "Java Thread interrupt non deterministic behaviour",
+    "body" : "<p>I have this piece of code in Java and I tried it out on Java 21 (Eclipse Temurin and GraalVM)</p>\n<pre><code>public static void main(String[] args) {\n        Thread.currentThread().interrupt();\n\n        long start = System.currentTimeMillis();\n        System.out.println(&quot;started measuring ...&quot;);\n\n        int i = 0;\n\n        try (ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {\n            List&lt;Future&lt;?&gt;&gt; futures = new ArrayList&lt;&gt;();\n            futures.add(executor.submit(() -&gt; &quot;api1&quot;));\n            futures.add(executor.submit(() -&gt; &quot;api2&quot;));\n            futures.add(executor.submit(() -&gt; &quot;api3&quot;));\n            for (; i &lt; futures.size(); i++) {\n                System.out.println((i + 1) + &quot; &quot; + futures.get(i).get());\n            }\n        } catch (ExecutionException e) {\n            System.out.println(&quot;error: &quot; + e.getCause());\n            throw new RuntimeException(e);\n        } catch (InterruptedException e) {\n            System.out.println(&quot;interrupted after &quot; + (System.currentTimeMillis() - start) + &quot; at &quot; + (i + 1));\n            throw new RuntimeException(e);\n        }\n    }\n</code></pre>\n<p>Sometimes the main thread does not get interrupted, sometimes it does. So the output is either:</p>\n<pre><code>started measuring ...\ninterrupted after 0 at 1\nException in thread &quot;main&quot; java.lang.RuntimeException: java.lang.InterruptedException\n        at rs.sf.App.main(App.java:70)\nCaused by: java.lang.InterruptedException\n        at java.base/java.util.concurrent.FutureTask.awaitDone(FutureTask.java:471)\n        at java.base/java.util.concurrent.FutureTask.get(FutureTask.java:190)\n        at rs.sf.App.main(App.java:63)\n</code></pre>\n<p>Or:</p>\n<pre><code>started measuring ...\n1 api1\n2 api2\n3 api3\n</code></pre>\n<p>I couldn't find what's the reason for this non-deterministic behavior. I thought that the first statement (the main thread setting the interrupt flag on itself) is executed before any other subsequent line of code and should therefore the execution should always result in <code>InterruptedException</code></p>\n<p>EDIT:</p>\n<p>If I write futures with a <code>Thread.sleep</code>, the behavior becomes deterministic and the <code>InterruptedException</code> is always thrown, i.e. like this:</p>\n<pre><code>futures.add(executor.submit(() -&gt; {\n        try {\n            Thread.sleep(500);\n        } catch (InterruptedException e) {\n            throw new RuntimeException(e);\n        }\n        return &quot;api1&quot;;\n    }));\n</code></pre>\n",
+    "tags" : [ "java", "multithreading", "concurrency" ],
     "owner" : {
-      "account_id" : 5955901,
-      "reputation" : 10682,
-      "user_id" : 4682610,
+      "account_id" : 14819096,
+      "reputation" : 69,
+      "user_id" : 10702042,
       "user_type" : "registered",
-      "accept_rate" : 29,
-      "profile_image" : "https://i.sstatic.net/sMhnZ.jpg?s=256",
-      "display_name" : "Florian Schaetz",
-      "link" : "https://stackoverflow.com/users/4682610/florian-schaetz"
+      "profile_image" : "https://www.gravatar.com/avatar/eb4e5cefedb48d6fa66438dea139eb78?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Sciotherium",
+      "link" : "https://stackoverflow.com/users/10702042/sciotherium"
     },
-    "is_answered" : false,
-    "view_count" : 41,
-    "answer_count" : 0,
-    "score" : 0,
-    "last_activity_date" : 1760859373,
-    "creation_date" : 1760695214,
-    "link" : "https://stackoverflow.com/questions/79792966/resteasy-mapping-client-vs-server-exceptions",
+    "is_answered" : true,
+    "view_count" : 174,
+    "answer_count" : 2,
+    "score" : 2,
+    "last_activity_date" : 1761492446,
+    "creation_date" : 1761315668,
+    "link" : "https://stackoverflow.com/questions/79798851/java-thread-interrupt-non-deterministic-behaviour",
     "content_license" : "CC BY-SA 4.0"
   },
-  "answers" : [ ],
-  "question_comments" : [ {
-    "comment_id" : 140814340,
-    "post_id" : 79792966,
-    "body" : "That is exactly the question here. Personally, I now find it bad design to have server and client code throw the same exception for basically two different things.",
-    "score" : 0,
+  "answers" : [ {
+    "answer_id" : 79798888,
+    "question_id" : 79798851,
+    "body" : "<p>In your code, the main thread is always interrupted before calling <code>get()</code> on any of the futures. The non-deterministic output you're seeing is due to other factors.</p>\n<p>From the documentation of <a href=\"https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/util/concurrent/Future.html#get()\" rel=\"nofollow noreferrer\"><code>Future::get()</code></a>:</p>\n<blockquote>\n<p>Waits <strong>if necessary</strong> <em>[emphasis added]</em> for the computation to complete, and then retrieves its result.</p>\n<h5>Returns:</h5>\n<p>the computed result</p>\n<h5>Throws:</h5>\n<p><code>CancellationException</code> - if the computation was cancelled</p>\n<p><code>ExecutionException</code> - if the computation threw an exception</p>\n<p><code>InterruptedException</code> - if the current thread was interrupted <strong>while waiting</strong> <em>[emphasis added]</em></p>\n</blockquote>\n<p>That means it's legal for <code>get()</code> to ignore the interrupt status of the calling thread if the <code>Future</code> is already done. Therefore the output of your code depends on how the threads are scheduled, which is non-deterministic. In other words, you have a race condition.</p>\n<p>Your tasks are very short. Thus, it's plausible for all of them to finish by the time the main thread calls <code>get()</code> on any of the futures. In that case you may not see an <code>InterruptedException</code>. But sometimes at least one task will <em>not</em> finish before the main thread calls <code>get()</code> on its future. And that's when you <em>will</em> see an <code>InterruptedException</code>.</p>\n<p>The fact adding a call to <code>sleep</code> in the tasks seemingly guarantees an <code>InterruptedException</code> supports this. It gives time for the main thread to call <code>get()</code> on one of the futures before they all finish. But it's still not deterministic; see <a href=\"https://stackoverflow.com/a/79798925/6395627\">John Bollinger's answer</a>.</p>\n<hr />\n<p>The <code>ExecutorService</code> returned by <code>newVirtualThreadPerTaskExecutor()</code> makes use of <a href=\"https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/util/concurrent/FutureTask.html\" rel=\"nofollow noreferrer\"><code>FutureTask</code></a>. You can see <a href=\"https://github.com/openjdk/jdk/blob/cc9483b4da1a0f65f8773d0c7f35f2e6a7e1bd4f/src/java.base/share/classes/java/util/concurrent/FutureTask.java#L189\" rel=\"nofollow noreferrer\">its implementation</a> (at least in contemporary versions) doesn't check the interrupt status of the calling thread if the future is already done.</p>\n",
+    "score" : 6,
+    "is_accepted" : true,
     "owner" : {
-      "account_id" : 5955901,
-      "reputation" : 10682,
-      "user_id" : 4682610,
+      "account_id" : 8532578,
+      "reputation" : 49884,
+      "user_id" : 6395627,
       "user_type" : "registered",
-      "accept_rate" : 29,
-      "profile_image" : "https://i.sstatic.net/sMhnZ.jpg?s=256",
-      "display_name" : "Florian Schaetz",
-      "link" : "https://stackoverflow.com/users/4682610/florian-schaetz"
+      "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Slaw",
+      "link" : "https://stackoverflow.com/users/6395627/slaw"
     },
-    "creation_date" : 1761287145,
+    "creation_date" : 1761317294,
+    "last_activity_date" : 1761320590,
     "content_license" : "CC BY-SA 4.0"
   }, {
-    "comment_id" : 140807107,
-    "post_id" : 79792966,
-    "body" : "As it is a legitimate case that your business code throws a <code>BadRequestException</code> if it detects wrong input (not just by the validation, could also be a wrong state of an object e.g.), how would your exception handler differentiate between exceptions from your business code and from outside calls?",
-    "score" : 0,
+    "answer_id" : 79798925,
+    "question_id" : 79798851,
+    "body" : "<blockquote>\n<p>I couldn't find what's the reason for this non-deterministic behavior.</p>\n</blockquote>\n<p>Simple: you have a race between your tasks completing and your main thread requesting their results.</p>\n<p>If a <code>Future</code>'s value is already available when the main thread requests it then it is successfully retrieved.  If not then, given that the main thread's interrupt status is set, attempting to retrieve the Future's value causes an <code>InterruptedException</code> to be thrown.</p>\n<blockquote>\n<p>I thought that the first statement (the main thread setting the interrupt flag on itself) is executed before any other subsequent line of code</p>\n</blockquote>\n<p>Yes, in that thread.</p>\n<blockquote>\n<p>and should therefore the execution should always result in InterruptedException</p>\n</blockquote>\n<p>No, <code>Future.get()</code> does not guarantee that.  <a href=\"https://stackoverflow.com/a/79798888/2402272\">Slaw's answer</a> explains this in more detail.</p>\n<blockquote>\n<p>EDIT:</p>\n<p>If I write futures with a Thread.sleep, the behavior becomes deterministic</p>\n</blockquote>\n<p><strong>No, it does not.</strong></p>\n<p>You still have exactly the same race as before, but in this case you have put your thumb on the scale to make it exceedingly unlikely (but not impossible) that the main thread loses to any of the executor threads.  That made your observations of the behavior <em>consistent</em>, but that's not the same as <em>deterministic</em>.</p>\n<p>I raise this in part because it is unfortunately common for inexperienced programmers to mistake methods for producing timing effects, such as <code>Thread.sleep()</code>, to be safe and effective for addressing synchronization problems.  They are not.</p>\n",
+    "score" : 5,
+    "is_accepted" : false,
     "owner" : {
-      "account_id" : 3391382,
-      "reputation" : 5361,
-      "user_id" : 2846138,
+      "account_id" : 2792262,
+      "reputation" : 190832,
+      "user_id" : 2402272,
       "user_type" : "registered",
-      "profile_image" : "https://i.sstatic.net/2sp68.png?s=256",
-      "display_name" : "cyberbrain",
-      "link" : "https://stackoverflow.com/users/2846138/cyberbrain"
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+      "display_name" : "John Bollinger",
+      "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
     },
-    "creation_date" : 1760987882,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140806311,
-    "post_id" : 79792966,
-    "body" : "@cyberbrain If I did this, I could basically ignore the ExceptionHandler. What do I have an ExceptionHandler for that can transform everything nicely if I have to wrap try-catch around any critical method anyway? Sure I can wrap everything, no doubt, but it somewhat defeats the purpose of having an ExceptionHandler that could also take care of something like that. I would prefer only using try-catch when I can actually DO something about it, not to handle a problematic exception class tree.",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 5955901,
-      "reputation" : 10682,
-      "user_id" : 4682610,
-      "user_type" : "registered",
-      "accept_rate" : 29,
-      "profile_image" : "https://i.sstatic.net/sMhnZ.jpg?s=256",
-      "display_name" : "Florian Schaetz",
-      "link" : "https://stackoverflow.com/users/4682610/florian-schaetz"
-    },
-    "creation_date" : 1760963234,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140805722,
-    "post_id" : 79792966,
-    "body" : "So you want to have a generic exception handling inside your <code>someMethod</code> for the <code>client.get(...)</code> call. Is this really RestEasy specific? What if you had used any other REST client framework? I would just wrap the <code>client.get</code> call in a try-catch and have either a specific exception handling or a translation of the caught exception.",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 3391382,
-      "reputation" : 5361,
-      "user_id" : 2846138,
-      "user_type" : "registered",
-      "profile_image" : "https://i.sstatic.net/2sp68.png?s=256",
-      "display_name" : "cyberbrain",
-      "link" : "https://stackoverflow.com/users/2846138/cyberbrain"
-    },
-    "creation_date" : 1760942161,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140804591,
-    "post_id" : 79792966,
-    "body" : "@cyberbrain Added an example, not quite complete, but I hope it makes the case clear.",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 5955901,
-      "reputation" : 10682,
-      "user_id" : 4682610,
-      "user_type" : "registered",
-      "accept_rate" : 29,
-      "profile_image" : "https://i.sstatic.net/sMhnZ.jpg?s=256",
-      "display_name" : "Florian Schaetz",
-      "link" : "https://stackoverflow.com/users/4682610/florian-schaetz"
-    },
-    "creation_date" : 1760859467,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140804589,
-    "post_id" : 79792966,
-    "body" : "@JamesR.Perkins 5.0.10 currently, upgrade planned (and any solution requiring an update is totally fine, not a critical issue).",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 5955901,
-      "reputation" : 10682,
-      "user_id" : 4682610,
-      "user_type" : "registered",
-      "accept_rate" : 29,
-      "profile_image" : "https://i.sstatic.net/sMhnZ.jpg?s=256",
-      "display_name" : "Florian Schaetz",
-      "link" : "https://stackoverflow.com/users/4682610/florian-schaetz"
-    },
-    "creation_date" : 1760859436,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140802882,
-    "post_id" : 79792966,
-    "body" : "Not a good answer, but I don&#39;t think there is anything specific in RESTEasy. However, which version are you using? I can definitely have a look.",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 51161,
-      "reputation" : 17925,
-      "user_id" : 152794,
-      "user_type" : "registered",
-      "profile_image" : "https://i.sstatic.net/eX5Ms.jpg?s=256",
-      "display_name" : "James R. Perkins",
-      "link" : "https://stackoverflow.com/users/152794/james-r-perkins"
-    },
-    "creation_date" : 1760739529,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140801698,
-    "post_id" : 79792966,
-    "body" : "can you provide some <a href=\"https://stackoverflow.com/help/minimal-reproducible-example\">minimal reproducible example</a> for the case &quot;Service X calls service Y&quot;?",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 3391382,
-      "reputation" : 5361,
-      "user_id" : 2846138,
-      "user_type" : "registered",
-      "profile_image" : "https://i.sstatic.net/2sp68.png?s=256",
-      "display_name" : "cyberbrain",
-      "link" : "https://stackoverflow.com/users/2846138/cyberbrain"
-    },
-    "creation_date" : 1760699899,
+    "creation_date" : 1761319813,
+    "last_activity_date" : 1761319813,
     "content_license" : "CC BY-SA 4.0"
   } ],
-  "answer_comments" : { }
+  "question_comments" : [ {
+    "comment_id" : 140815352,
+    "post_id" : 79798851,
+    "body" : "Hello Stefan, &quot;I thought that the first statement (the main thread setting the interrupt flag on itself) is executed before any other subsequent line of code&quot;, It seems not. Try adding after <b>Thread.currentThread().interrupt();</b> the line <b>Thread.sleep( 100 );</b>.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10843443,
+      "reputation" : 916,
+      "user_id" : 20882864,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+      "display_name" : "Marce Puente",
+      "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+    },
+    "creation_date" : 1761316397,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140815340,
+    "post_id" : 79798851,
+    "body" : "<a href=\"https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/util/concurrent/Future.html#get()\" rel=\"nofollow noreferrer\"><code>Future::get()</code></a> says it throws an <code>InterruptedException</code> &quot;<i>if the current thread was interrupted <b>while waiting</i></b>&quot;. If all the futures are complete by the time you call <code>get</code> on any of them, then it&#39;s legal for them to return the result instead of throwing an interrupted exception.",
+    "score" : 4,
+    "owner" : {
+      "account_id" : 8532578,
+      "reputation" : 49884,
+      "user_id" : 6395627,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Slaw",
+      "link" : "https://stackoverflow.com/users/6395627/slaw"
+    },
+    "creation_date" : 1761316264,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140815333,
+    "post_id" : 79798851,
+    "body" : "Random guess: <code>FutureTask.get(...)</code> does not check the interrupt flag if there already is a result available (the fact of wether a result is available depends on how the JVM and OS schedules the main thread and the carrier threads, and is not guranteed to follow any rules whatsoever)",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 30223964,
+      "reputation" : 252,
+      "user_id" : 23162960,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2451acfac254a6fc75757ecf89d75f9a?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Jannik S.",
+      "link" : "https://stackoverflow.com/users/23162960/jannik-s"
+    },
+    "creation_date" : 1761316148,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79798925" : [ {
+      "comment_id" : 140820493,
+      "post_id" : 79798925,
+      "body" : "“there is no such thing as ‘non-deterministic’ behavior” is not entirely correct. <i>John</i> is right in that in some areas, a certain language can have non-deterministic behaviors (usually associated with misuse). My statement should have been limited to this particular case, in which the first line of the method calls ** Thread.currentThread().interrupt(); ** is called, so one interprets that nothing after that call can be executed. If it does, the only possibility I see is that the “startup” of <b>interrupt()</b> comes after the calls to the other threads, and yes, I totally agree.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10843443,
+        "reputation" : 916,
+        "user_id" : 20882864,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+        "display_name" : "Marce Puente",
+        "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+      },
+      "creation_date" : 1761571255,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140820163,
+      "post_id" : 79798925,
+      "body" : "@MarcePuente Since the outcome depends on the thread scheduling, we’d have to enumerate all possible influences on all relevant hardware configs and operating systems. This includes events like user input which may cause interrupts plus other processes/threads being rescheduled to handle the input and subtle timing issues which in turn even includes the room temperature as an influence, as most CPU can change their clock speed when they get too hot (or change it in smaller steps even before it gets too hot). Given those possible influences, I consider the term “non-deterministic“ justified.",
+      "score" : 4,
+      "owner" : {
+        "account_id" : 3211603,
+        "reputation" : 300981,
+        "user_id" : 2711488,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+        "display_name" : "Holger",
+        "link" : "https://stackoverflow.com/users/2711488/holger"
+      },
+      "creation_date" : 1761561121,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140815828,
+      "post_id" : 79798925,
+      "body" : "@MarcePuente The OP expresses confusion about the program is inconsistent with respect to whether an <code>InterruptedException</code> is thrown in the main thread.  Whether that&#39;s what they wanted or expected of the program is unspecified.  They attribute the inconsistency to indeterminism, which is a perfectly fine thing to do at the level of the Java language.  It cannot be determined from the Java language spec and the specifications of the various classes involved whether such an exception should be thrown.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2792262,
+        "reputation" : 190832,
+        "user_id" : 2402272,
+        "user_type" : "registered",
+        "accept_rate" : 85,
+        "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+        "display_name" : "John Bollinger",
+        "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+      },
+      "creation_date" : 1761332765,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140815756,
+      "post_id" : 79798925,
+      "body" : "Hello Teacher, It is very likely that I have misinterpreted the question, but what I understood was that the <i>OP</i> wants an exception to be thrown (hence the call to <b>Thread.currentThread().interrupt();</b> in the first line), but since it&#39;s not immediate, sometimes the threads get executed, which is what he calls “non-deterministic behavior.” However, as we know, there&#39;s no such thing as “non-deterministic” behavior in machine hardware (except for hardware failures); every logical ‘1’ and “0” has a reason for being there.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10843443,
+        "reputation" : 916,
+        "user_id" : 20882864,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+        "display_name" : "Marce Puente",
+        "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+      },
+      "creation_date" : 1761330214,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
 }

@@ -1,171 +1,350 @@
 {
   "question" : {
-    "question_id" : 79778308,
-    "title" : "Hibernate specification with parentheses",
-    "body" : "<p>I am trying to create a Hibernate specification with parentheses but was not able to do it.</p>\n<p>I have many specifications. My problem is with the following specification:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public static Specification&lt;ListingEntity&gt; locations(List&lt;String&gt; locations) {\n    if (locations == null || locations.isEmpty()) {\n        return null;\n    } else {\n        return (root, query, builder) -&gt; {\n            Join&lt;ListingEntity, GeoLevelTwoEntity&gt; joinGeoLevelTwo = root.join(&quot;geoLevelTwoEntity&quot;);\n            Join&lt;GeoLevelTwoEntity, GeoLevelOneEntity&gt; joinGeoLevelOne = joinGeoLevelTwo.join(&quot;geoLevelOneEntity&quot;);\n\n            Predicate predicate = builder.conjunction();\n            for (String location : locations) {\n\n                if (location.contains(&quot;_&quot;)) {\n                    String[] locationParts = location.split(&quot;_&quot;);\n                    Predicate predicateLevelOne = builder.equal(joinGeoLevelOne.get(&quot;geographyLevelOne&quot;), locationParts[1]);\n\n                    Predicate predicateLevelTwo = joinGeoLevelTwo.get(&quot;geographyLevelTwo&quot;).in(locationParts[0]);\n                    Predicate locationPredicate = builder.and(predicateLevelOne, predicateLevelTwo);\n\n                    predicate = builder.or(predicate, locationPredicate);\n                }\n\n            }\n            return predicate;\n\n        };\n    }\n}\n</code></pre>\n<p>It creates the following SQL script:</p>\n<pre class=\"lang-sql prettyprint-override\"><code>from \n  listings le1_0 \n  join geo_level_two glte1_0 on glte1_0.id = le1_0.geography_level_two_id \n  join geo_level_one gloe1_0 on gloe1_0.id = glte1_0.geography_level_one_id \nwhere \n  1 = 1 \n  or gloe1_0.geography_level_one = ? \n  and glte1_0.geography_level_two in (?) \n  or gloe1_0.geography_level_one = ? \n  and glte1_0.geography_level_two in (?) \norder by \n  (\n    select \n      0\n  ) offset ? rows fetch first ? rows only\n</code></pre>\n<p>I want it to create the following way:</p>\n<pre class=\"lang-sql prettyprint-override\"><code>where \n  1 = 1 \n  and ( gloe1_0.geography_level_one = ? \n  and glte1_0.geography_level_two in (?) \n  or gloe1_0.geography_level_one = ? \n  and glte1_0.geography_level_two in (?) )\norder by \n</code></pre>\n<p>I have other specifications that create <code>and</code> conditions like <code>and floor = 2</code> etc. Thus I cannot think it without using parentheses. I think it needs to look like the following:</p>\n<pre class=\"lang-sql prettyprint-override\"><code>(geographyL1 = 'New York' and geographyL2 = 'USA' or geographyL1 = 'London' and geographyL2 = 'UK') and floor = 2 and price &gt; 100000\n</code></pre>\n<p>I have no issue with other specifications that generate the following SQL. Each condition has its own separate specification:</p>\n<pre class=\"lang-sql prettyprint-override\"><code>floor = 2 and price &gt; 100000 and numberOfRooms = 2\n</code></pre>\n<p>What should I do so that my specification for location lies inside parentheses?</p>\n",
-    "tags" : [ "java", "sql", "spring-boot", "hibernate", "predicate" ],
+    "question_id" : 79784977,
+    "title" : "HikariCP connections leak with MySQL long-running INSERT queries",
+    "body" : "<p>I’m facing an issue where INSERT queries on a MySQL table get stuck in “waiting for lock”, and even after innodb_lock_wait_timeout (50s), the connections are not released back to HikariCP, eventually exhausting the pool.</p>\n<p><strong>Scenario</strong>:</p>\n<p>Executed multiple duplicate inserts on the same table (file_record_v2, unique file_id), with a buffer of 2-3 mins between each query.</p>\n<pre><code>INSERT INTO file_record_v2\n            (iso_country_code,\n             created_at,\n             modified_at,\n             bucket,\n             file_id,\n             file_key,\n             file_name,\n             path,\n             status,\n             upload_date,\n             uploaded_by)\nVALUES      ('IN',\n             '2025-10-01 17:22:39.867',\n             '2025-10-01 17:22:39.867',\n             'Fo/89NveRaWnfjgvfsmrIE5ca7kQ2LkqvV9AKTmn0Qw=',\n             '777a7379-6c96-35d1-b47e-17b1708258f5',\n             'abcdef',\n             '1759316708189.csv',\n             NULL,\n             'success',\n             '2025-10-01',\n             'admin@gmail.com');\n</code></pre>\n<p><strong>What happens:</strong></p>\n<p>The first insert succeded.\n2nd query query throws exception instantly - java.sql.SQLIntegrityConstraintViolationException: Duplicate entry....\nAfter that all the subsequent inserts went into a waiting state for the entire 50 seconds (<code>innodb_lock_wait_timeout</code>).</p>\n<p><strong>MySQL slow logs:</strong></p>\n<pre><code>&gt; User@Host: admin[admin] @ [xx.xxx.xx.216] thread_id: 3225252 server_id: 2921685337 \n&gt; Query_time: 50.939886 Lock_time: 50.939609 Rows_sent: 0 Rows_examined: 0 use \n&gt; shard0; SET timestamp=1759319339; insert into file_record_v2\n&gt; (iso_country_code, created_at, modified_at, bucket, file_id, file_key,\n&gt; file_name, path, status, upload_date, uploaded_by) values ('IN',\n&gt; '2025-10-01 17:18:59.548', '2025-10-01 17:18:59.548',\n&gt; 'Fo/89NveRaWnfjgvfsmrIE5ca7kQ2LkqvV9AKTmn0Qw=',\n&gt; '777a7379-6c96-35d1-b47e-17b1708258f5', 'abcdef', '1759316708189.csv',\n&gt; null, 'success', '2025-10-01', 'admin@gmail.com');\n</code></pre>\n<p>Timeline of all queries :\n<a href=\"https://i.sstatic.net/rUQpp6qk.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/rUQpp6qk.png\" alt=\"enter image description here\" /></a></p>\n<p>After 50 seconds, MySQL times out the waiting queries, but Hikari does not return these connections to the pool.\nEventually, all 5 connections in the pool get exhausted and app started throwing:</p>\n<p><strong>Error:</strong><br />\njava.sql.SQLTransientConnectionException: HikariPool-1 - Connection is not available...</p>\n<p><a href=\"https://i.sstatic.net/kEqN5jjb.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/kEqN5jjb.png\" alt=\"Hikari pool metrics\" /></a></p>\n<p><strong>Code Snippet</strong></p>\n<pre><code>@Override\npublic FileUploadResponse storeFileMetadata(String bucketName, String fileKey, String fileName, String user, String countryCode) throws Exception {\n    String fileId = // create file id;\n    LocalDateTime localDateTime = getLocalDateTime();\n\n    try {\n        // Build entity\n        FileRecordEntity entity = FileRecordEntity.builder()\n                .fileId(fileId)\n                .fileName(fileName)\n                .uploadDate(getDate())\n                .bucket(bucketName)\n                .fileKey(fileKey)\n                .userId(user)\n                .status(FileStatus.SUCCESS.getValue())\n                .countryCode(countryCode)\n                .createdAt(localDateTime)\n                .modifiedAt(localDateTime)\n                .build();\n\n        fileRecordRepository.save(entity); // Only DB query which got latent\n\n        return new FileUploadResponse(fileId, null);\n        \n    } catch (ConstraintViolationException | DataIntegrityViolationException e) {\n        log.error(e.getMessage(), e);\n        if (StringUtils.containsIgnoreCase(e.getCause().getCause().getMessage(), &quot;Duplicate entry&quot;))\n            throw new FileValidationException(String.format(&quot;Duplicate file: %s&quot;, fileName));\n        throw e;\n    }\n}\n</code></pre>\n<p><strong>Recovery</strong> :\nWe recovered after restarting the application to free up the exhausted pool.</p>\n<p><strong>Version</strong> :</p>\n<pre><code>Spring Boot: 2.7.10\nSpring Data JPA: 2.7.10\nHikariCP: 4.0.3 \nHibernate: 5.6.15.Final\nDriver : com.mysql.cj.jdbc.Driver\n</code></pre>\n<p>**HikariCP settings : **</p>\n<pre><code>  driverClassName: com.mysql.cj.jdbc.Driver\n  idleTimeout: '600000'\n  initializationFailTimeout: '1'\n  maxLifetime: '3600000'\n  maximumPoolSize: '5'\n  minIdle: '1'\n  validationQuery: SELECT 1\n</code></pre>\n<p>Rest all all defaults.</p>\n<p>Q. Connection Leak: Why doesn’t HikariCP release connections after MySQL times out the query (as seen in slow logs just after 50s), and how can I force close such connections automatically ?</p>\n<p><strong>DB schema :</strong></p>\n<p>There's one issue we had observed in below legacy table is that column named <code>file_id</code> has 2 unique and 1 non-unique index which could be the reason for slow duplicate inserts such as taking locks on multiple indexes ~ 50s (but still seems too high to update a row with 4 indexes), it seems that somewhere <strong>deadlock</strong> happening here (Reason is all queries started but no query got lock and all got terminated after inno_db lock timeout) here causing wait for 50 seconds to acquire a lock, but that still does not explain part why connection on app side didn't get freed up after 50s and either stuck waiting infinitely or connection got leak somewhere.</p>\n<p><a href=\"https://i.sstatic.net/OPmjYo18.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/OPmjYo18.png\" alt=\"enter image description here\" /></a></p>\n",
+    "tags" : [ "java", "spring-boot", "jpa", "mysql-connector", "hikaricp" ],
     "owner" : {
-      "account_id" : 83131,
-      "reputation" : 9085,
-      "user_id" : 233286,
+      "account_id" : 12875245,
+      "reputation" : 657,
+      "user_id" : 9312181,
       "user_type" : "registered",
-      "accept_rate" : 73,
-      "profile_image" : "https://i.sstatic.net/0ivuN.jpg?s=256",
-      "display_name" : "ilhan",
-      "link" : "https://stackoverflow.com/users/233286/ilhan"
+      "profile_image" : "https://www.gravatar.com/avatar/2b471777c25fc5860d7c904c11f5e26f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "tusharRawat",
+      "link" : "https://stackoverflow.com/users/9312181/tusharrawat"
     },
-    "is_answered" : true,
-    "view_count" : 102,
-    "answer_count" : 2,
+    "is_answered" : false,
+    "view_count" : 149,
+    "answer_count" : 0,
     "score" : 0,
-    "last_activity_date" : 1759245914,
-    "creation_date" : 1759159948,
-    "link" : "https://stackoverflow.com/questions/79778308/hibernate-specification-with-parentheses",
+    "last_activity_date" : 1759949617,
+    "creation_date" : 1759877798,
+    "link" : "https://stackoverflow.com/questions/79784977/hikaricp-connections-leak-with-mysql-long-running-insert-queries",
     "content_license" : "CC BY-SA 4.0"
   },
-  "answers" : [ {
-    "answer_id" : 79778429,
-    "question_id" : 79778308,
-    "body" : "<blockquote>\n<p>It creates the following SQL script:</p>\n<p>[...]</p>\n<pre><code>where \n  1 = 1 \n  or gloe1_0.geography_level_one = ? \n  and glte1_0.geography_level_two in (?)\n</code></pre>\n<p>[...]</p>\n</blockquote>\n<p>Well yes, it does.  For the predicate, you start with <code>builder.conjunction()</code>, which corresponds to the <code>1 = 1</code>, and then you add zero or more additional pieces via <code>builder.or()</code>.  <em>Of course</em> the top-level operators are all <code>OR</code>.</p>\n<p><code>builder.conjunction()</code> is intended to provide a starting point for an arbitrary sequence of predicates joined with <code>AND</code>, whereas for a similar sequence joined with <code>OR</code>, you should start with <code>builder.disjunction()</code> instead.  Do bear in mind, however, that these two have opposite logical sense when there are zero (other) predicates in the sequence.</p>\n<h3>If you want to reject everything when there are no locations on which to filter</h3>\n<p>... or if you're willing to assume that that that situation will never arise, then you could just switch from <code>builder.conjunction()</code> to <code>builder.disjunction()</code>.</p>\n<pre><code>            Predicate predicate = builder.disunction();\n            for (String location : locations) {\n                // ...\n            }\n            return predicate;\n</code></pre>\n<p>I would expect the generated criteria to be something like</p>\n<pre><code>where \n  1 &lt;&gt; 1 \n  or gloe1_0.geography_level_one = ? \n  and glte1_0.geography_level_two in (?) \n  or gloe1_0.geography_level_one = ? \n  and glte1_0.geography_level_two in (?) \n</code></pre>\n<p>, which, you should satisfy yourself, is logically equivalent to what you say you are looking for. At least when there are any locations to filter on.</p>\n<h3>Otherwise</h3>\n<p>... you need a special case when there are no locations.  One way to do that would be to proceed as above, but at the end,</p>\n<pre><code>            return predicate.getExpressions().isEmpty()\n                    ? builder.conjunction()\n                    : predicate;\n</code></pre>\n<p>(Or possibly you need <code>predicate.getExpressions().size() &lt; 2</code> instead of <code>.isEmpty()</code>.  Or you can use any other mechanism you choose to determine whether any locations have been added to the predicate.)</p>\n",
-    "score" : 1,
-    "is_accepted" : false,
-    "owner" : {
-      "account_id" : 2792262,
-      "reputation" : 190712,
-      "user_id" : 2402272,
-      "user_type" : "registered",
-      "accept_rate" : 85,
-      "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
-      "display_name" : "John Bollinger",
-      "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
-    },
-    "creation_date" : 1759169333,
-    "last_activity_date" : 1759175776,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "answer_id" : 79779275,
-    "question_id" : 79778308,
-    "body" : "<pre class=\"lang-java prettyprint-override\"><code>return (root, query, builder) -&gt; {\n    Join&lt;ListingEntity, GeoLevelTwoEntity&gt; joinGeoLevelTwo = root.join(&quot;geoLevelTwoEntity&quot;);\n    Join&lt;GeoLevelTwoEntity, GeoLevelOneEntity&gt; joinGeoLevelOne = joinGeoLevelTwo.join(&quot;geoLevelOneEntity&quot;);\n\n    HashMap&lt;String, Byte&gt; specialCities = new HashMap&lt;&gt;();\n    specialCities.put(&quot;Define special ones here&quot;, (byte) 8);\n    specialCities.put(&quot;and here etc&quot;, (byte) 9);\n\n    List&lt;Predicate&gt; groupPredicates = new ArrayList&lt;&gt;();\n    for (String location : locations) {\n\n        if (location.contains(&quot;_&quot;)) {\n            String[] locationParts = location.split(&quot;_&quot;);\n            String country = locationParts[0];\n            String bigCity = locationParts[1];\n\n            Predicate levelOnePredicate = builder.equal(joinGeoLevelOne.get(&quot;geographyLevelOne&quot;), bigCity);\n            Predicate levelTwoPredicate = builder.equal(joinGeoLevelTwo.get(&quot;geographyLevelTwo&quot;), country);\n\n            List&lt;Predicate&gt; innerPredicates = new ArrayList&lt;&gt;();\n            innerPredicates.add(levelOnePredicate);\n            innerPredicates.add(levelTwoPredicate);\n\n            Predicate groupPredicate = builder.and(innerPredicates.toArray(innerPredicates.toArray(new Predicate[0])));\n            groupPredicates.add(groupPredicate);\n        } else if (specialCities.containsKey(location)) {\n            Predicate levelOnePredicate = builder.equal(joinGeoLevelOne.get(&quot;geographyLevelOne&quot;), location);\n            groupPredicates.add(levelOnePredicate);\n        } else {\n            Predicate smallerCityPredicate = builder.equal(joinGeoLevelTwo.get(&quot;geographyLevelTwo&quot;), location);\n            groupPredicates.add(smallerCityPredicate);\n        }\n\n    }\n    return builder.or(groupPredicates.toArray(new Predicate[0]));\n\n};\n</code></pre>\n",
-    "score" : 0,
-    "is_accepted" : false,
-    "owner" : {
-      "account_id" : 83131,
-      "reputation" : 9085,
-      "user_id" : 233286,
-      "user_type" : "registered",
-      "accept_rate" : 73,
-      "profile_image" : "https://i.sstatic.net/0ivuN.jpg?s=256",
-      "display_name" : "ilhan",
-      "link" : "https://stackoverflow.com/users/233286/ilhan"
-    },
-    "creation_date" : 1759245914,
-    "last_activity_date" : 1759245914,
-    "content_license" : "CC BY-SA 4.0"
-  } ],
+  "answers" : [ ],
   "question_comments" : [ {
-    "comment_id" : 140767330,
-    "post_id" : 79778308,
-    "body" : "If there is no filter is entered everything should be listed/returned.",
+    "comment_id" : 140785558,
+    "post_id" : 79784977,
+    "body" : "Yes we&#39;ll clean extra indexes. Is there a way we can check what locks were acquired during this time and in what order ?",
     "score" : 0,
     "owner" : {
-      "account_id" : 83131,
-      "reputation" : 9085,
-      "user_id" : 233286,
+      "account_id" : 12875245,
+      "reputation" : 657,
+      "user_id" : 9312181,
       "user_type" : "registered",
-      "accept_rate" : 73,
-      "profile_image" : "https://i.sstatic.net/0ivuN.jpg?s=256",
-      "display_name" : "ilhan",
-      "link" : "https://stackoverflow.com/users/233286/ilhan"
+      "profile_image" : "https://www.gravatar.com/avatar/2b471777c25fc5860d7c904c11f5e26f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "tusharRawat",
+      "link" : "https://stackoverflow.com/users/9312181/tusharrawat"
     },
-    "creation_date" : 1759173578,
+    "creation_date" : 1759991498,
     "content_license" : "CC BY-SA 4.0"
   }, {
-    "comment_id" : 140767191,
-    "post_id" : 79778308,
-    "body" : "What should be the effect when there are no locations upon which to filter?  Is everything accepted, or is nothing accepted?",
+    "comment_id" : 140785070,
+    "post_id" : 79784977,
+    "body" : "If you want to reduce the possibilities you should fix that index mess... it will definitely not  hurt your application.",
     "score" : 0,
     "owner" : {
-      "account_id" : 2792262,
-      "reputation" : 190712,
-      "user_id" : 2402272,
+      "account_id" : 209503,
+      "reputation" : 23867,
+      "user_id" : 460557,
       "user_type" : "registered",
-      "accept_rate" : 85,
-      "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
-      "display_name" : "John Bollinger",
-      "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/b4565f97815833390c9c880e9e8522e4?s=256&d=identicon&r=PG",
+      "display_name" : "Jorge Campos",
+      "link" : "https://stackoverflow.com/users/460557/jorge-campos"
     },
-    "creation_date" : 1759168824,
+    "creation_date" : 1759960356,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140784768,
+    "post_id" : 79784977,
+    "body" : "@JorgeCampos It might be the cause, but as I mentioned, we haven’t had any luck reproducing it again.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 12875245,
+      "reputation" : 657,
+      "user_id" : 9312181,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2b471777c25fc5860d7c904c11f5e26f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "tusharRawat",
+      "link" : "https://stackoverflow.com/users/9312181/tusharrawat"
+    },
+    "creation_date" : 1759949517,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140784439,
+    "post_id" : 79784977,
+    "body" : "separate note, no need for extra keys on the <code>file_id</code> you have a <code>UK_....</code> this is assuming a unique key, <code>idx_file_id</code> index (the UK is already an index) and <code>unique_file_id</code> yet another unique key on it. This is waste of resources and can potentially cause performance issues and CAN slow down inserts/updates/deletes. Heck this might not even be a side note but the source of your problem :D",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 209503,
+      "reputation" : 23867,
+      "user_id" : 460557,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/b4565f97815833390c9c880e9e8522e4?s=256&d=identicon&r=PG",
+      "display_name" : "Jorge Campos",
+      "link" : "https://stackoverflow.com/users/460557/jorge-campos"
+    },
+    "creation_date" : 1759938924,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140784402,
+    "post_id" : 79784977,
+    "body" : "Added schema and few other things, On staging we tried to reproduce it with same schema (same keys/indexes) definition and same size of table, but no luck. It gives instantly starting from 2nd query that it&#39;s a duplicate insertion and fail and releases the lock as well.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 12875245,
+      "reputation" : 657,
+      "user_id" : 9312181,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2b471777c25fc5860d7c904c11f5e26f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "tusharRawat",
+      "link" : "https://stackoverflow.com/users/9312181/tusharrawat"
+    },
+    "creation_date" : 1759938188,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140784294,
+    "post_id" : 79784977,
+    "body" : "For the sake of sanity and just ruling out possibilities, please try with the latest version of Spring boot 2.7 which is 2.7.18. It&#39;d be pretty sad if all this was caused by running into a bug that has long ago been already fixed.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 187094,
+      "reputation" : 5301,
+      "user_id" : 424903,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/8oHZF.png?s=256",
+      "display_name" : "Gimby",
+      "link" : "https://stackoverflow.com/users/424903/gimby"
+    },
+    "creation_date" : 1759936221,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140784236,
+    "post_id" : 79784977,
+    "body" : "Yes that&#39;s spring @Service",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 12875245,
+      "reputation" : 657,
+      "user_id" : 9312181,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2b471777c25fc5860d7c904c11f5e26f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "tusharRawat",
+      "link" : "https://stackoverflow.com/users/9312181/tusharrawat"
+    },
+    "creation_date" : 1759935013,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140784154,
+    "post_id" : 79784977,
+    "body" : "What kind of class is this storeFileMetadata method in? Is it a Spring @Service or something?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 187094,
+      "reputation" : 5301,
+      "user_id" : 424903,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/8oHZF.png?s=256",
+      "display_name" : "Gimby",
+      "link" : "https://stackoverflow.com/users/424903/gimby"
+    },
+    "creation_date" : 1759932742,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140784116,
+    "post_id" : 79784977,
+    "body" : "Implementation of save method in SimpleJpaRepository has @Transactional in it.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 12875245,
+      "reputation" : 657,
+      "user_id" : 9312181,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2b471777c25fc5860d7c904c11f5e26f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "tusharRawat",
+      "link" : "https://stackoverflow.com/users/9312181/tusharrawat"
+    },
+    "creation_date" : 1759932045,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140784068,
+    "post_id" : 79784977,
+    "body" : "<code>FileValidationException</code> is an Exception and not RuntimeException, however the error statement inside try/catch never get&#39;s logged on application logs for the queries which went latent upto 50s due to MySQL. It seems flow never reached there, all queries were just handling until we restarted the machine.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 12875245,
+      "reputation" : 657,
+      "user_id" : 9312181,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2b471777c25fc5860d7c904c11f5e26f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "tusharRawat",
+      "link" : "https://stackoverflow.com/users/9312181/tusharrawat"
+    },
+    "creation_date" : 1759931130,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140783777,
+    "post_id" : 79784977,
+    "body" : "There is no such thing as an implicit txn, next to that I suspect  your error handling is the actual culprit here. Assuming that there is something transac tional in your stack it doesn&#39;t see an exception it knows how to rollback (assuming your <code>FileValidationException</code> is an <code>Exception</code> and not a <code>RuntimeException</code>). Which can lead to inconsistencies.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126800,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1759923217,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140783729,
+    "post_id" : 79784977,
+    "body" : "@M.Deinum, Do we really need Transactional on save query ? wouldn&#39;t this be an implicit txn by spring-boot.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 12875245,
+      "reputation" : 657,
+      "user_id" : 9312181,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2b471777c25fc5860d7c904c11f5e26f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "tusharRawat",
+      "link" : "https://stackoverflow.com/users/9312181/tusharrawat"
+    },
+    "creation_date" : 1759921802,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140783702,
+    "post_id" : 79784977,
+    "body" : "@M.Deinum, 5 max connection is set based on RPS/machines count, in usually request are served within mills and max active reaches is 12 (sum of all machines) in last 45 days, and per machine reaches around 2 active only. Hence set it as 5. We can set keepAliveTime as well.  We have enabled leakDetectionThreshold for now to see the logs.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 12875245,
+      "reputation" : 657,
+      "user_id" : 9312181,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2b471777c25fc5860d7c904c11f5e26f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "tusharRawat",
+      "link" : "https://stackoverflow.com/users/9312181/tusharrawat"
+    },
+    "creation_date" : 1759921366,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140783537,
+    "post_id" : 79784977,
+    "body" : "<i>&quot;but Hikari does not return these connections to the pool&quot;</i> - well technically the more correct thing to say would be that Spring Boot Data is not returning them to the pool, as it happens on connection close which is a responsibility you are offloading to Spring.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 187094,
+      "reputation" : 5301,
+      "user_id" : 424903,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/8oHZF.png?s=256",
+      "display_name" : "Gimby",
+      "link" : "https://stackoverflow.com/users/424903/gimby"
+    },
+    "creation_date" : 1759916312,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140783511,
+    "post_id" : 79784977,
+    "body" : "For proper tx management it needs to be transactional. Ditch the <code>validationQuery</code> you are using JDBC4 no need to write a custom query. Your <code>idleTimeout</code> is a bit high imho. I would also suggest to set the <code>keepaliveTime</code> and the <code>leakDetectionThreshold</code> (set it to the max of your slow query timeout) the latter will log a warning if  connection is checked out for too long. Something else might introduce a connection leak as well. Also isn&#39;t 5 a bit low for the max poolsize?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126800,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1759915563,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140783470,
+    "post_id" : 79784977,
+    "body" : "No storeFileMetadata is not @transactional, didn&#39;t think it needs to be as there&#39;s only single row save query. Added hikari settings above.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 12875245,
+      "reputation" : 657,
+      "user_id" : 9312181,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2b471777c25fc5860d7c904c11f5e26f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "tusharRawat",
+      "link" : "https://stackoverflow.com/users/9312181/tusharrawat"
+    },
+    "creation_date" : 1759914062,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140783464,
+    "post_id" : 79784977,
+    "body" : "Is your <code>storeFileMetadata</code> transactional? What are your Hikari settings?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126800,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1759913952,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140782951,
+    "post_id" : 79784977,
+    "body" : "Don&#39;t use quote format for your question. It is for quoting other text.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 372682,
+      "reputation" : 26512,
+      "user_id" : 721855,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/vZiox.png?s=256",
+      "display_name" : "aled",
+      "link" : "https://stackoverflow.com/users/721855/aled"
+    },
+    "creation_date" : 1759884929,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140782877,
+    "post_id" : 79784977,
+    "body" : "@Shadow updated to focus one one part.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 12875245,
+      "reputation" : 657,
+      "user_id" : 9312181,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2b471777c25fc5860d7c904c11f5e26f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "tusharRawat",
+      "link" : "https://stackoverflow.com/users/9312181/tusharrawat"
+    },
+    "creation_date" : 1759879433,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140782870,
+    "post_id" : 79784977,
+    "body" : "These are two very differwnt questions. Can you pls just focus on one of them at a time?",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 7035840,
+      "reputation" : 34520,
+      "user_id" : 5389997,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/50ce1e08eea42756ffa9415a9e8df140?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Shadow",
+      "link" : "https://stackoverflow.com/users/5389997/shadow"
+    },
+    "creation_date" : 1759878980,
     "content_license" : "CC BY-SA 4.0"
   } ],
-  "answer_comments" : {
-    "79778429" : [ {
-      "comment_id" : 140767365,
-      "post_id" : 79778429,
-      "body" : "@ilhan This answer already presents the only changes required to your original code to produce a predicate with the required meaning.  Again, if you have issues around combining that predicate with others then that&#39;s a separate question.  <code>CriteriaBuilder</code> does not have or need provision for explicit parentheses.",
-      "score" : 0,
-      "owner" : {
-        "account_id" : 2792262,
-        "reputation" : 190712,
-        "user_id" : 2402272,
-        "user_type" : "registered",
-        "accept_rate" : 85,
-        "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
-        "display_name" : "John Bollinger",
-        "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
-      },
-      "creation_date" : 1759174980,
-      "content_license" : "CC BY-SA 4.0"
-    }, {
-      "comment_id" : 140767357,
-      "post_id" : 79778429,
-      "body" : "I was unable to write the correct <code>CriteriaBuilder</code> or <code>predicate</code>.",
-      "score" : 0,
-      "owner" : {
-        "account_id" : 83131,
-        "reputation" : 9085,
-        "user_id" : 233286,
-        "user_type" : "registered",
-        "accept_rate" : 73,
-        "profile_image" : "https://i.sstatic.net/0ivuN.jpg?s=256",
-        "display_name" : "ilhan",
-        "link" : "https://stackoverflow.com/users/233286/ilhan"
-      },
-      "creation_date" : 1759174732,
-      "content_license" : "CC BY-SA 4.0"
-    }, {
-      "comment_id" : 140767352,
-      "post_id" : 79778429,
-      "body" : "@ilhan If you&#39;re writing SQL code directly then you worry about parentheses.  If you&#39;re using a <code>CriteriaBuilder</code> then you perform operations at that level of abstraction, and let the system figure out the parentheses.  In particular, if you end up with the kind of issue you now describe then it arises from using an inappropriate mechanism to combine the predicate produced by this method with your <code>floor</code> predicate.  That mechanism not having been presented in the question, and such a problem not even having been mentioned, these are out of scope.",
-      "score" : 0,
-      "owner" : {
-        "account_id" : 2792262,
-        "reputation" : 190712,
-        "user_id" : 2402272,
-        "user_type" : "registered",
-        "accept_rate" : 85,
-        "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
-        "display_name" : "John Bollinger",
-        "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
-      },
-      "creation_date" : 1759174502,
-      "content_license" : "CC BY-SA 4.0"
-    }, {
-      "comment_id" : 140767338,
-      "post_id" : 79778429,
-      "body" : "But in this case <code>location New York and USA or London and UK and floor = 2</code> will return unexpected results. That is why I was asking for parentheses.  <code>(location New York and location USA or location London and location UK) and floor = 2</code>",
-      "score" : 0,
-      "owner" : {
-        "account_id" : 83131,
-        "reputation" : 9085,
-        "user_id" : 233286,
-        "user_type" : "registered",
-        "accept_rate" : 73,
-        "profile_image" : "https://i.sstatic.net/0ivuN.jpg?s=256",
-        "display_name" : "ilhan",
-        "link" : "https://stackoverflow.com/users/233286/ilhan"
-      },
-      "creation_date" : 1759173903,
-      "content_license" : "CC BY-SA 4.0"
-    } ]
-  }
+  "answer_comments" : { }
 }

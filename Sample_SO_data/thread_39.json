@@ -1,144 +1,44 @@
 {
   "question" : {
-    "question_id" : 79833584,
-    "title" : "ForkJoinPool and RecursiveTask lead to deadlock when join is called in a different thread than fork",
-    "body" : "<p>The program below never ends:</p>\n<pre><code>void main() {\n    try (Fibonacci fibonacci = new Fibonacci()) {\n        IO.println(fibonacci.calculate(9));\n    }\n}\n\npublic static class Fibonacci implements AutoCloseable {\n\n    private final ConcurrentHashMap&lt;Integer, FibonacciTask&gt; cache;\n    private final ForkJoinPool pool;\n\n    public Fibonacci() {\n        cache = new ConcurrentHashMap&lt;&gt;();\n        pool = new ForkJoinPool(2);\n    }\n\n    public long calculate(int n) {\n        return pool.invoke(new FibonacciTask(n));\n    }\n\n    private class FibonacciTask extends RecursiveTask&lt;Long&gt; {\n\n        private final int n;\n\n        private FibonacciTask(int n) {\n            this.n = n;\n        }\n\n        @Override\n        protected Long compute() {\n            IO.println(&quot;[%d] Start&quot;.formatted(n));\n            if (n &lt; 3) {\n                IO.println(&quot;[%d] End&quot;.formatted(n));\n                return 1L;\n            }\n\n            FibonacciTask previousValue = cache.putIfAbsent(n, this);\n            if (previousValue != null) {\n                IO.println(&quot;[%d] Wait&quot;.formatted(n));\n                long cachedValue = previousValue.join(); // &lt;-- PROBLEMATIC LINE\n                IO.println(&quot;[%d] Got value&quot;.formatted(n));\n\n                return cachedValue;\n            }\n\n            FibonacciTask a = new FibonacciTask(n - 2);\n            FibonacciTask b = new FibonacciTask(n - 1);\n            a.fork();\n            b.fork();\n\n            long value = a.join() + b.join();\n\n            IO.println(&quot;[%d] End&quot;.formatted(n));\n\n            return value;\n        }\n    }\n\n    @Override\n    public void close() {\n        if (pool != null) {\n            pool.close();\n        }\n    }\n}\n</code></pre>\n<p>Here is example log:</p>\n<pre><code>[9] Start\n[7] Start\n[8] Start\n[5] Start\n[6] Start\n[3] Start\n[4] Start\n[2] Start\n[1] Start\n[2] End\n[1] End\n[3] Start\n[2] Start\n[3] Wait\n[2] End\n[3] End\n[4] Start\n[3] Got value\n[4] Wait\n[4] End\n[7] Start\n[5] Start\n[7] Wait\n[5] Wait\n[6] Start\n[6] Wait\n</code></pre>\n<p>The problematic line is here:</p>\n<pre><code>long cachedValue = previousValue.join(); // &lt;-- PROBLEMATIC LINE\n</code></pre>\n<p>In my logs you can see:</p>\n<pre><code>...\n[4] Start\n...\n[4] Wait\n[4] End\n...\n</code></pre>\n<p>but there is no <code>[4] Got value</code>. It means that <code>FibonacciTask(4)</code> was calculated but this line:</p>\n<pre><code>long cachedValue = previousValue.join(); // &lt;-- PROBLEMATIC LINE\n</code></pre>\n<p>is still waiting.</p>\n<p>If I change line:</p>\n<pre><code>pool = new ForkJoinPool(2);\n</code></pre>\n<p>to:</p>\n<pre><code>pool = new ForkJoinPool(1);\n</code></pre>\n<p>the deadlock disappears.</p>\n<p>My only clue is that I shouldn't call <code>join</code> in different thread than <code>fork</code>, but I didn't see in the documentation that this is forbidden.</p>\n",
-    "tags" : [ "java", "concurrency", "deadlock", "forkjoinpool", "recursivetask" ],
+    "question_id" : 79840541,
+    "title" : "Under high load, streams obtained via LaunchedClassLoader are unexpectedly closed, causing file read failures",
+    "body" : "<h2>Issue</h2>\n<p>We are developing a component in a Spring Boot application that loads YAML configuration files from the classpath using ClassLoader#getResourceAsStream. After upgrading from Spring Boot v2.5.12 (OpenJDK v11) to Spring Boot v3.3.3 (OpenJDK v17), under high load (large numbers of concurrent requests), the stream in this component is unexpectedly closed, resulting in failed file reads. Please advise on possible countermeasures.</p>\n<p>Note: The issue does not occur under low load; processing completes successfully.</p>\n<h2>Version information</h2>\n<ul>\n<li>Spring Boot: v2.5.12 -&gt; v3.3.3</li>\n<li>Red Hat OpenJDK: v11.0.17 -&gt; v17.0.9</li>\n<li>Maven: v3.5.3 -&gt; v3.9.6</li>\n<li>SnakeYAML: v1.28 -&gt; v2.2</li>\n</ul>\n<p>Note: The issue occurs after the upgrade.</p>\n<h2>Runtime environment</h2>\n<ul>\n<li>Packaging: Executable JAR (fat jar)</li>\n<li>Deployment: OpenShift container environment (OpenJDK 17)</li>\n</ul>\n<h2>Error log (excerpt)</h2>\n<pre><code>Caused by: org.yaml.snakeyaml.error.YAMLException: java.io.IOException: Stream closed\n\nCaused by: java.io.IOException: Stream closed\n</code></pre>\n<h2>Relevant source code (excerpt)</h2>\n<pre><code>protected InputStream getInputStream(String fileName) throws FileNotFoundException {  \nInputStream is;\n...\nis = getClass().getClassLoader().getResourceAsStream(fileName);  \nreturn is;\n</code></pre>\n<p>Notes:</p>\n<ul>\n<li>A new stream is used per request; streams are not shared across requests.</li>\n<li>The stream is closed properly by the caller using try-with-resources.</li>\n</ul>\n<h2>Known facts</h2>\n<ul>\n<li>Heap dump analysis confirms the class loader in use is LaunchedClassLoader.</li>\n<li>Applying the setting to use the legacy class loader described under “Nested Jar Support” in the Spring Boot 3.2 release notes prevents the issue from occurring.</li>\n</ul>\n<p>Reference: <a href=\"https://github.com/spring-projects/spring-boot/wiki/Spring-Boot-3.2-Release-Notes#nested-jar-support\" rel=\"nofollow noreferrer\">https://github.com/spring-projects/spring-boot/wiki/Spring-Boot-3.2-Release-Notes#nested-jar-support</a></p>\n<h2>Reproduction conditions</h2>\n<ul>\n<li>The issue occurs when generating high load (large numbers of concurrent requests) using tools such as JMeter.</li>\n<li>The issue occurs whether the YAML configuration file is packaged within the Spring Boot application or inside a dependency JAR (library).</li>\n<li>It has been reproduced only in the test environment; it has not been reproduced locally.</li>\n</ul>\n",
+    "tags" : [ "java", "spring-boot", "maven" ],
     "owner" : {
-      "account_id" : 11193622,
-      "reputation" : 65,
-      "user_id" : 8213093,
+      "account_id" : 44940702,
+      "reputation" : 25,
+      "user_id" : 32015291,
       "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/e638e2a85ee54fa0ad149e284186eba0?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "Piotr Walkusz",
-      "link" : "https://stackoverflow.com/users/8213093/piotr-walkusz"
+      "profile_image" : "https://www.gravatar.com/avatar/d710dfa297a50b8ba090e52d3da9a152?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "user32015291",
+      "link" : "https://stackoverflow.com/users/32015291/user32015291"
     },
-    "is_answered" : true,
-    "view_count" : 73,
-    "answer_count" : 1,
-    "score" : 3,
-    "last_activity_date" : 1764513504,
-    "creation_date" : 1764456544,
-    "link" : "https://stackoverflow.com/questions/79833584/forkjoinpool-and-recursivetask-lead-to-deadlock-when-join-is-called-in-a-differe",
+    "is_answered" : false,
+    "view_count" : 72,
+    "answer_count" : 0,
+    "score" : 0,
+    "last_activity_date" : 1765153171,
+    "creation_date" : 1765153171,
+    "link" : "https://stackoverflow.com/questions/79840541/under-high-load-streams-obtained-via-launchedclassloader-are-unexpectedly-close",
     "content_license" : "CC BY-SA 4.0"
   },
-  "answers" : [ {
-    "answer_id" : 79833969,
-    "question_id" : 79833584,
-    "body" : "<h3>Cause of the deadlock</h3>\n<p>The problem was caused because I didn't understand how <code>RecursiveTask.join</code> works.</p>\n<p>Here is simpler example:</p>\n<ol>\n<li>There is <code>Thread 1</code> in <code>ForkJoinPool</code> thread pool</li>\n<li><code>Thread 1</code> executes <code>Task 1</code></li>\n<li><code>Task 1</code> calls <code>join</code> on <code>Task 2</code></li>\n<li><code>Task 1</code> is blocked now, so <code>Thread 1</code> must find another task</li>\n<li><code>Thread 1</code> executes <code>Task 3</code> (unrelated task)</li>\n<li><code>Task 3</code> calls <code>join</code> on <code>Task 4</code></li>\n<li><code>Task 3</code> is blocked now, so <code>Thread 1</code> must fund another task</li>\n<li><code>Task 2</code> was completed in another thread, so <code>Task 1</code> is unblocked now</li>\n</ol>\n<p>Now in theory <code>Thread 1</code> can proceed with <code>Task 1</code>, but it's not true! When <code>RecursiveTask.join</code> is called, the new available task is called in the same thread without clearing stacktrace (in Debugger you can see that that stacktrace is growing).</p>\n<p>Stacktrace of <code>Thread 1</code> is looking like that (from top to bottom):</p>\n<pre><code>task1.compute()\ntask2.join()\ntask3.compute()\ntask4.join()\n</code></pre>\n<p><code>Thread 1</code> cannot go back to <code>Task 1</code>. <code>Thread 1</code> must wait until <code>task4.join()</code> is completed, and then wait until <code>task3.compute()</code> is completed. After that stacktrace looks like that:</p>\n<pre><code>task1.compute()\ntask2.join()\n</code></pre>\n<p><code>task2.join()</code> is completed and <code>task1.compute()</code> can be proceeded.</p>\n<h3>Deadlock in my code</h3>\n<p>Here is the overview of stacktraces (from top to bottom) on both threads from my example program:</p>\n<p><a href=\"https://i.sstatic.net/8kSiFkTK.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/8kSiFkTK.png\" alt=\"The overview of stacktraces on both threads from my example program\" /></a></p>\n<p>Even if value <code>FibonacciTask(4)</code> was already calculated on <code>Thread 36</code>, <code>Thread 35</code> cannot proceed with calculation, because <code>Thread 35</code> still needs to complete methods lower in the stacktrace. But <code>Thread 35</code> cannot complete methods from the bottom of stacktrace, because <code>Thread 35</code> is still waiting on <code>Thread 36</code>. And <code>Thread 36</code> cannot complete its work, because it's waiting until method from middle of <code>Thread 35</code> stacktrace is completed. Deadlock!</p>\n<h3>Solution using Virtual threads</h3>\n<p>This problem can be solved using virtual threads. Virtual threads (unlike <code>ForkJoinPool</code>) clear the stacktrace and load a new stacktrace during task switching (virtual threads are using <code>ContinuationScope</code> under the hood).</p>\n<p>Here is my program rewritten using virtual threads:</p>\n<pre><code>void main() throws ExecutionException, InterruptedException {\n    try (Fibonacci fibonacci = new Fibonacci()) {\n        IO.println(fibonacci.calculate(9));\n    }\n}\n\npublic static class Fibonacci implements AutoCloseable {\n\n    private final ConcurrentHashMap&lt;Integer, FibonacciTask&gt; cache;\n    private final ExecutorService pool;\n\n    public Fibonacci() {\n        cache = new ConcurrentHashMap&lt;&gt;();\n        pool = Executors.newVirtualThreadPerTaskExecutor();\n    }\n\n    public long calculate(int n) throws ExecutionException, InterruptedException {\n        return pool.submit(() -&gt; new FibonacciTask(n).compute()).get();\n    }\n\n    private class FibonacciTask {\n\n        private final int n;\n        private volatile Future&lt;Long&gt; future;\n\n        private FibonacciTask(int n) {\n            this.n = n;\n        }\n\n        protected Long compute() throws ExecutionException, InterruptedException {\n            IO.println(&quot;[%d] Start&quot;.formatted(n));\n            if (n &lt; 3) {\n                IO.println(&quot;[%d] End&quot;.formatted(n));\n                return 1L;\n            }\n\n            FibonacciTask previousValue = cache.putIfAbsent(n, this);\n            if (previousValue != null) {\n                IO.println(&quot;[%d] Wait&quot;.formatted(n));\n                while (previousValue.future == null) {\n                    Thread.onSpinWait();\n                }\n                long cachedValue = previousValue.future.get();\n                IO.println(&quot;[%d] Got value&quot;.formatted(n));\n\n                return cachedValue;\n            }\n\n            future = pool.submit(() -&gt; {\n                FibonacciTask a = new FibonacciTask(n - 2);\n                FibonacciTask b = new FibonacciTask(n - 1);\n\n                return a.compute() + b.compute();\n            });\n\n            IO.println(&quot;[%d] End&quot;.formatted(n));\n\n            return future.get();\n        }\n    }\n\n    @Override\n    public void close() {\n        if (pool != null) {\n            pool.close();\n        }\n    }\n}\n</code></pre>\n",
-    "score" : 2,
-    "is_accepted" : false,
-    "owner" : {
-      "account_id" : 11193622,
-      "reputation" : 65,
-      "user_id" : 8213093,
-      "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/e638e2a85ee54fa0ad149e284186eba0?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "Piotr Walkusz",
-      "link" : "https://stackoverflow.com/users/8213093/piotr-walkusz"
-    },
-    "creation_date" : 1764513504,
-    "last_activity_date" : 1764513504,
-    "content_license" : "CC BY-SA 4.0"
-  } ],
+  "answers" : [ ],
   "question_comments" : [ {
-    "comment_id" : 140879981,
-    "post_id" : 79833584,
-    "body" : "I may be mistaken, but by joining on a cached task you are going &quot;back up&quot; the graph, making it cyclic. At least when the cached task is incomplete. And your case seems non-deterministic. If I remove the <code>println</code> statements then I can&#39;t reproduce the deadlock even with parallelism &gt;= 2. That indicates some kind of race condition in my experience. So, it may be that 1 thread can&#39;t cause the problem due to the order it executes the tasks, but that doesn&#39;t necessarily mean there isn&#39;t a cycle problem.",
-    "score" : 0,
+    "comment_id" : 140892088,
+    "post_id" : 79840541,
+    "body" : "Why is the file read over and over in the first place? Why not load it once and cache it? Additionally Spring Boot 3.3.3 has been out of support for quite a a while already  , I would upgrade to 3.5.8 or at least the latest in the Spring Boot 3.3 series 3.3.13.",
+    "score" : 1,
     "owner" : {
-      "account_id" : 8532578,
-      "reputation" : 49884,
-      "user_id" : 6395627,
+      "account_id" : 3192259,
+      "reputation" : 126810,
+      "user_id" : 2696260,
       "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "Slaw",
-      "link" : "https://stackoverflow.com/users/6395627/slaw"
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
     },
-    "creation_date" : 1764503282,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140879903,
-    "post_id" : 79833584,
-    "body" : "@Slaw My computation graph is acyclic (DAG), so it shouldn&#39;t be a problem. There is no cycle in my graph (at least I don&#39;t see such cycle). If there would be any cycle, then I would observe a problem even with one thread.",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 11193622,
-      "reputation" : 65,
-      "user_id" : 8213093,
-      "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/e638e2a85ee54fa0ad149e284186eba0?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "Piotr Walkusz",
-      "link" : "https://stackoverflow.com/users/8213093/piotr-walkusz"
-    },
-    "creation_date" : 1764496882,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140879864,
-    "post_id" : 79833584,
-    "body" : "I think you&#39;re running into a problem mentioned in the <a href=\"https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/util/concurrent/ForkJoinTask.html\" rel=\"nofollow noreferrer\">class documentation</a>: &quot;<i>Method <code>join()</code> and its variants are appropriate for use only when completion dependencies are acyclic; that is, the parallel computation can be described as a directed acyclic graph (DAG). Otherwise, executions may encounter a form of deadlock as tasks cyclically wait for each other.</i>&quot;",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 8532578,
-      "reputation" : 49884,
-      "user_id" : 6395627,
-      "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "Slaw",
-      "link" : "https://stackoverflow.com/users/6395627/slaw"
-    },
-    "creation_date" : 1764493757,
+    "creation_date" : 1765177429,
     "content_license" : "CC BY-SA 4.0"
   } ],
-  "answer_comments" : {
-    "79833969" : [ {
-      "comment_id" : 140883403,
-      "post_id" : 79833969,
-      "body" : "@Holger I could have worded it better, but I was not encouraging switching over to platform threads. My point is that the threads being virtual is irrelevant to the solution presented here. Configuring the <code>ForkJoinPool</code> to use virtual threads (is that even possible?) would not help. It&#39;s associating each task with its own separate thread that solved the OP&#39;s problem. Or am I mistaken?",
-      "score" : 0,
-      "owner" : {
-        "account_id" : 8532578,
-        "reputation" : 49884,
-        "user_id" : 6395627,
-        "user_type" : "registered",
-        "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
-        "display_name" : "Slaw",
-        "link" : "https://stackoverflow.com/users/6395627/slaw"
-      },
-      "creation_date" : 1764684795,
-      "content_license" : "CC BY-SA 4.0"
-    }, {
-      "comment_id" : 140882912,
-      "post_id" : 79833969,
-      "body" : "@Slaw The problem with the <code>ForkJoinPool</code> occurs precisely because it tries to avoid creating an excessive amount of platform threads. This answer’s solution of using virtual threads still avoids creating additional platform threads. But yes, for small numbers, the same approach could be used with platform threads instead of virtual threads. Which is what virtual threads are all about, no need to structure your software in a different way for the sake of reducing the resource consumption.",
-      "score" : 1,
-      "owner" : {
-        "account_id" : 3211603,
-        "reputation" : 300941,
-        "user_id" : 2711488,
-        "user_type" : "registered",
-        "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
-        "display_name" : "Holger",
-        "link" : "https://stackoverflow.com/users/2711488/holger"
-      },
-      "creation_date" : 1764667726,
-      "content_license" : "CC BY-SA 4.0"
-    }, {
-      "comment_id" : 140880809,
-      "post_id" : 79833969,
-      "body" : "Your two approaches have a different number of threads. The <code>ForkJoinPool</code> in your example has 2 threads that execute all tasks, switching between tasks as appropriate. The approach in this answer has <i>as many threads as tasks</i>. Each task has its own separate thread. That is likely why the deadlock no longer occurs. And the differences in the stack traces you see are due to the different number of threads involved. Note you could be using platform threads instead of virtual threads in this answer&#39;s approach and it should still work (as long as it&#39;s still a thread-per-task pool).",
-      "score" : 0,
-      "owner" : {
-        "account_id" : 8532578,
-        "reputation" : 49884,
-        "user_id" : 6395627,
-        "user_type" : "registered",
-        "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
-        "display_name" : "Slaw",
-        "link" : "https://stackoverflow.com/users/6395627/slaw"
-      },
-      "creation_date" : 1764566871,
-      "content_license" : "CC BY-SA 4.0"
-    } ]
-  }
+  "answer_comments" : { }
 }

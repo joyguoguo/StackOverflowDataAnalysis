@@ -1,146 +1,79 @@
 {
   "question" : {
-    "question_id" : 79764466,
-    "title" : "how should I access things of other directory in the same path in java",
-    "body" : "<p>I have the following file directories:</p>\n<pre><code>project/\n│\n├── A/\n│   └── Fuel.java\n│\n└── B/\n    └── Car.java\n</code></pre>\n<pre><code>package A;\n\npublic class Fuel{\n    public static fuelLevel(){\n        ...\n    }\n}\n</code></pre>\n<pre><code>package B;\nimport A.*;\n\npublic class Car{\n    Fuel.fuelLevel();\n}\n</code></pre>\n<p>If I do the above thing to access a method <code>fuelLevel()</code> from class Fuel.java, I am getting an error that the package cannot be resolved. Please tell me how I can access the method fuelLevel() from the class Car.</p>\n<p>Error Message: The import A cannot be resolved, Java(268435846)</p>\n",
-    "tags" : [ "java", "package" ],
+    "question_id" : 79770036,
+    "title" : "RxJava Maybe.doFinally() executing much later than doOnSuccess() in high-throughput multithreaded environment",
+    "body" : "<p>I'm experiencing a confusing timing issue with RxJava's Maybe operators in a high-throughput service (40 TPS) with concurrent execution. I have two classes that log execution times, but they're showing very different timings for what should be the same operation.</p>\n<p><strong>The Problem</strong></p>\n<p><code>Class A (the actual implementation):</code></p>\n<pre><code>public Maybe&lt;Decision&gt; execute(Input input) {\n    long start = System.nanoTime();\n    \n    return Maybe.fromCallable(() -&gt; {\n        // Some processing that takes ~500ms\n        return callExternalService();\n    })\n    .doOnSuccess(decision -&gt; {\n        log.info(&quot;Implementation took {} ms&quot;, \n                 ((System.nanoTime() - start) / 1000000)); // Logs ~500ms\n    });\n}\n\n</code></pre>\n<p><code>Class B (a decorator that wraps Class A):</code></p>\n<pre><code>public Maybe&lt;Decision&gt; execute(Input input) {\n    return Maybe.defer(() -&gt; {\n        long startTime = System.nanoTime();\n        \n        return delegate.execute(input)  // Calls Class A\n                .doOnSuccess(decision -&gt; {\n                    // Other success logic\n                })\n                .doFinally(() -&gt; {\n                    log.info(&quot;Strategy took {} ms&quot;,\n                             ((System.nanoTime() - startTime) / 1000000)); // Logs ~1300ms\n                });\n    });\n}\n</code></pre>\n<p><strong>The Timing Issue</strong></p>\n<p><em>Class A's <code>doOnSuccess</code>: Logs at ~500ms ✓ (expected)</em></p>\n<p><em>Class B's <code>doFinally</code>: Logs at ~1300ms ❌ (800ms later than expected)</em></p>\n<p>The <code>doFinally</code> in the decorator is executing much later than the <code>doOnSuccess</code> in the implementation, even though they should be measuring the same operation. The log from <code>doFinally</code> gets printed somewhere in-between during the downstream processing (not at the end).</p>\n<p><strong>The Context</strong>\nAll the 'A' like classes are strategies. The strategies are executed by an executor. All high priority strategies are executed first in parallel, followed by medium and then the low priority ones. Class A was a low priority strategy executed at the end.</p>\n<pre><code>@Singleton\npublic class StrategyExecutor {\n    private final Executor executor; // ThreadContextAwareExecutor with cached thread pool\n    \n    public Maybe&lt;Decision&gt; strategyExecute(Request request, /* other params */) {\n        return Maybe.defer(() -&gt; {\n            return Observable.fromArray(HIGH, MEDIUM, LOW)               \n                    .concatMapMaybe(priority -&gt; {\n                        List&lt;Strategy&gt; strategies = strategyMap.get(priority);\n                        \n                        // Convert each strategy to Maybe and run concurrently\n                        List&lt;Maybe&lt;Decision&gt;&gt; maybesFromStrategies = strategies.stream()\n                                .map(strategy -&gt; strategy.execute(input)\n                                        .subscribeOn(Schedulers.from(executor)) \n                                        .onErrorComplete() // Graceful error handling\n                                        .filter(Decision::isValid))\n                                .collect(Collectors.toList());\n\n                        return Maybe.merge(maybesFromStrategies)\n                                .firstElement();\n                    })\n                    .firstElement();\n        });\n    }\n}\n\n</code></pre>\n<ol>\n<li><p>High Throughput Environment:</p>\n</li>\n<li><p>Running at 40 TPS (transactions per second)</p>\n</li>\n<li><p>Multiple concurrent requests being processed</p>\n</li>\n<li><p>Each request runs on cached thread pools, with the executor shown below.</p>\n</li>\n</ol>\n<p><code>Executor Used - Executors.newCachedThreadPool()</code></p>\n<p>The strategy executor's result gets consumed by a top-level class which calls the downstream services. Downstream services are highly latent services</p>\n<pre><code>public Observable&lt;Response&gt; processRequest(Request request) {\n    return strategyExecutor.strategyExecute(request, /* params */)  // Returns Maybe&lt;Decision&gt;\n            .toObservable()\n            .flatMap(decision -&gt; {\n                Service selectedService = serviceMap.get(decision.serviceName());\n                return selectedService.process(request); \n            });\n}\n</code></pre>\n<p><strong>Threading Concerns</strong></p>\n<p>Since we're running at high throughput with concurrent requests:</p>\n<ol>\n<li><p>Could thread scheduling delays cause doFinally to execute much later?</p>\n</li>\n<li><p>Is <code>doFinally</code> waiting for some part of the downstream chain to complete before executing? (this does not happen for high/medium priority strategies)</p>\n</li>\n<li><p>In a multithreaded environment, does doFinally behavior differ from single-threaded execution?</p>\n</li>\n</ol>\n<p><strong>Questions</strong></p>\n<ol>\n<li><p>Is Maybe.merge() with firstElement() causing doFinally to wait for the entire downstream chain?</p>\n</li>\n<li><p>In this concurrent execution model, does doFinally wait until the consumer completely processes the result, not just when the Maybe emits?</p>\n</li>\n<li><p>Could the Executor and thread scheduling at 40 TPS be affecting when doFinally executes?</p>\n</li>\n<li><p>Is there a difference in how doFinally behaves when the Maybe is part of a Maybe.merge() operation vs. standalone execution?</p>\n</li>\n</ol>\n<blockquote>\n<p>What's the correct way to measure just the strategy execution time (not downstream processing) in this concurrent merge scenario?</p>\n</blockquote>\n<p><strong>What I've Tried</strong>\nMoving the timing logic to doOnSuccess and doOnError instead of doFinally, but I want to understand if the high throughput and threading model is contributing to this behavior. If I use <code>timeInterval()</code> in the strategy executor and use a <code>doOnSuccess</code> to log, it works as expected.</p>\n<p>RxJava Version: 3.x</p>\n<p>JDK 17</p>\n",
+    "tags" : [ "java", "rx-java", "reactive-programming" ],
     "owner" : {
-      "account_id" : 42072374,
-      "reputation" : 71,
-      "user_id" : 30580675,
+      "account_id" : 5307034,
+      "reputation" : 419,
+      "user_id" : 4234538,
       "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/84ff1e961ded0b144ff1e4c90de2c8dd?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "0xChaitanya",
-      "link" : "https://stackoverflow.com/users/30580675/0xchaitanya"
+      "profile_image" : "https://i.sstatic.net/KeoIP.png?s=256",
+      "display_name" : "Karthik Bhat",
+      "link" : "https://stackoverflow.com/users/4234538/karthik-bhat"
     },
     "is_answered" : true,
-    "view_count" : 95,
-    "closed_date" : 1757914080,
-    "answer_count" : 2,
-    "score" : -3,
-    "last_activity_date" : 1757944733,
-    "creation_date" : 1757872698,
-    "link" : "https://stackoverflow.com/questions/79764466/how-should-i-access-things-of-other-directory-in-the-same-path-in-java",
-    "closed_reason" : "Not suitable for this site"
+    "view_count" : 89,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1758474664,
+    "creation_date" : 1758327599,
+    "link" : "https://stackoverflow.com/questions/79770036/rxjava-maybe-dofinally-executing-much-later-than-doonsuccess-in-high-through",
+    "content_license" : "CC BY-SA 4.0"
   },
   "answers" : [ {
-    "answer_id" : 79764588,
-    "question_id" : 79764466,
-    "body" : "<p>This is why we have build systems.</p>\n<p>Without these, a few simple rules to work with java files with just the command line tools:</p>\n<ol>\n<li>Projects have a root directory.</li>\n<li>You must always be in this root directory when doing anything.</li>\n<li>package + type name must match a relative path that gets you from the root to that file's content.</li>\n<li>Type names are their package name plus a dot plus their type name.</li>\n</ol>\n<p>To illustrate point 3: You have on your drive:</p>\n<ul>\n<li><code>/home/projects/mycoolproj/A/Fuel.java</code></li>\n<li><code>/home/projects/mycoolproj/B/Car.java</code></li>\n</ul>\n<p>That 'works', if we treat <code>/home/projects/mycoolproj</code> as your project root. You can then run:</p>\n<pre class=\"lang-bash prettyprint-override\"><code>cd /home/projects/mycoolproj\njavac -classpath . A/Fuel.java B/Car.java\njava -classpath . A.Fuel # Assuming Fuel.java has a `main` method.\n</code></pre>\n<p>and it'll all work without error or warning. And usually you don't need the <code>-classpath .</code> option, but it depends on your environment, so for an SO answer that should be widely applicable, best to include it; it won't hurt.</p>\n<p>The arguments to <code>javac</code> are file paths. The argument to <code>java</code> is a fully qualified type name. hence <code>A/Fuel.java</code> (with a slash) when invoking <code>javac</code> and <code>A.Fuel</code> (a dot instead of a slash, and no <code>.java</code>) when invoking <code>java</code>.</p>\n<p>If you delve even a tiny little bit deeper into this, such as:</p>\n<ul>\n<li>I want to compile parts of the project separate from other parts</li>\n<li>I have non-java resources</li>\n<li>I want to script the downloading and inclusion on the classpath of my dependencies</li>\n<li>I have many packages and listing out all the source files to <code>javac</code> is becoming onerous</li>\n</ul>\n<p>You should use a build system; quite a few exist; maven and gradle are the most popular by quite a margin as of time of writing.</p>\n<p>NB: There's a &quot;hack&quot; Where you compile only your <code>Main</code> java file (the one with your <code>main</code> method) and use <code>-sourcepath</code> so the compiler treeshakes its way into a full build. This is a bad idea for a number of reasons. Just.. use a build system. I write it here only so that you recognize when you read this advice, that it isn't a panacea and probably not something you should be investing much time in.</p>\n",
+    "answer_id" : 79770558,
+    "question_id" : 79770036,
+    "body" : "<p>Functionally there is a clear difference between <code>doOnSuccess</code> and <code>doFinally</code>:</p>\n<p><code>Maybe.doOnSuccess</code> uses <a href=\"https://github.com/ReactiveX/RxJava/blob/9cd6b9ebb458e1ebd713abdec1ae7a76d61c510d/src/main/java/io/reactivex/rxjava3/internal/operators/maybe/MaybePeek.java#L109\" rel=\"nofollow noreferrer\"><code>MaybePeek</code></a> internally:</p>\n<pre class=\"lang-java prettyprint-override\"><code>        @Override\n        public void onSuccess(T value) {\n            if (this.upstream == DisposableHelper.DISPOSED) {\n                return;\n            }\n            try {\n                parent.onSuccessCall.accept(value); &lt;-- callback happens here\n            } catch (Throwable ex) {\n                Exceptions.throwIfFatal(ex);\n                onErrorInner(ex);\n                return;\n            }\n            this.upstream = DisposableHelper.DISPOSED;\n\n            downstream.onSuccess(value);\n\n            onAfterTerminate();\n        }\n</code></pre>\n<p><code>Maybe.doFinally</code> uses <a href=\"https://github.com/ReactiveX/RxJava/blob/9cd6b9ebb458e1ebd713abdec1ae7a76d61c510d/src/main/java/io/reactivex/rxjava3/internal/operators/maybe/MaybeDoFinally.java\" rel=\"nofollow noreferrer\"><code>MaybeDoFinally</code></a> internally:</p>\n<pre class=\"lang-java prettyprint-override\"><code>        @Override\n        public void onSuccess(T t) {\n            downstream.onSuccess(t);\n            runFinally(); &lt;-- callback happens here\n        }\n</code></pre>\n<p>So the most likely explanation is that the downstream operator takes 800ms to execute.</p>\n",
     "score" : 1,
     "is_accepted" : false,
     "owner" : {
-      "account_id" : 401843,
-      "reputation" : 107136,
-      "user_id" : 768644,
+      "account_id" : 1562546,
+      "reputation" : 25813,
+      "user_id" : 1452094,
       "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
-      "display_name" : "rzwitserloot",
-      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+      "profile_image" : "https://www.gravatar.com/avatar/7a12b28824b215e4886da2e9f376369f?s=256&d=identicon&r=PG",
+      "display_name" : "Kiskae",
+      "link" : "https://stackoverflow.com/users/1452094/kiskae"
     },
-    "creation_date" : 1757885765,
-    "last_activity_date" : 1757944733,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "answer_id" : 79764528,
-    "question_id" : 79764466,
-    "body" : "<p>Issues in your code</p>\n<p>1.In Fuel.java file return type is missing</p>\n<p>2.If it is void type then you have to call inside the method of Car class</p>\n<p>while you running the code..</p>\n<p>1. Make sure you are in <strong>root folder</strong> of those package then compile both packages and run the java file which contains <strong>main method</strong> in it</p>\n",
-    "score" : -2,
-    "is_accepted" : false,
-    "owner" : {
-      "account_id" : 43890663,
-      "reputation" : 1,
-      "user_id" : 31468544,
-      "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/f7ee3209fd42ab89315ffb27990a32e2?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "Manoj Kumar",
-      "link" : "https://stackoverflow.com/users/31468544/manoj-kumar"
-    },
-    "creation_date" : 1757879127,
-    "last_activity_date" : 1757880335,
+    "creation_date" : 1758404406,
+    "last_activity_date" : 1758404406,
     "content_license" : "CC BY-SA 4.0"
   } ],
-  "question_comments" : [ {
-    "comment_id" : 140735428,
-    "post_id" : 79764466,
-    "body" : "Which IDE are you using? What is the source path configuration?",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 8532578,
-      "reputation" : 49884,
-      "user_id" : 6395627,
-      "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "Slaw",
-      "link" : "https://stackoverflow.com/users/6395627/slaw"
-    },
-    "creation_date" : 1757877274,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140735394,
-    "post_id" : 79764466,
-    "body" : "Did you make sure that you compiled your code from the root directory ?",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 23404229,
-      "reputation" : 1,
-      "user_id" : 31479054,
-      "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/a2de491769498d4f4b5689f0b2184bef?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "StuffedNounou",
-      "link" : "https://stackoverflow.com/users/31479054/stuffednounou"
-    },
-    "creation_date" : 1757876224,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140735324,
-    "post_id" : 79764466,
-    "body" : "Please <a href=\"https://stackoverflow.com/posts/79764466/edit\">edit</a> your question to include a detailed description how you try to compile your source code.",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 108033,
-      "reputation" : 20099,
-      "user_id" : 286934,
-      "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/f16a184d26b72795ff243464d715cffe?s=256&d=identicon&r=PG",
-      "display_name" : "Progman",
-      "link" : "https://stackoverflow.com/users/286934/progman"
-    },
-    "creation_date" : 1757873292,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140735321,
-    "post_id" : 79764466,
-    "body" : "@Progman I have added the full error message",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 42072374,
-      "reputation" : 71,
-      "user_id" : 30580675,
-      "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/84ff1e961ded0b144ff1e4c90de2c8dd?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "0xChaitanya",
-      "link" : "https://stackoverflow.com/users/30580675/0xchaitanya"
-    },
-    "creation_date" : 1757873102,
-    "content_license" : "CC BY-SA 4.0"
-  } ],
+  "question_comments" : [ ],
   "answer_comments" : {
-    "79764528" : [ {
-      "comment_id" : 140735469,
-      "post_id" : 79764528,
-      "body" : "As it’s currently written, your answer is unclear. Please <a href=\"https://stackoverflow.com/posts/79764528/edit\">edit</a> to add additional details that will help others understand how this addresses the question asked. You can find more information on how to write good answers <a href=\"/help/how-to-answer\">in the help center</a>.",
-      "score" : 1,
+    "79770558" : [ {
+      "comment_id" : 140753040,
+      "post_id" : 79770558,
+      "body" : "@KarthikBhat <code>onSuccess</code> flows down from the source observable, so <code>downstream</code> are whatever operators you applied after the <code>doFinally</code> operator. Until it reaches the observer in the <code>.subscribe</code> call.",
+      "score" : 0,
       "owner" : {
-        "account_id" : -1,
-        "reputation" : 1,
-        "user_id" : -1,
-        "user_type" : "moderator",
-        "profile_image" : "https://www.gravatar.com/avatar/a007be5a61f6aa8f3e85ae2fc18dd66e?s=256&d=identicon&r=PG",
-        "display_name" : "Community",
-        "link" : "https://stackoverflow.com/users/-1/community"
+        "account_id" : 1562546,
+        "reputation" : 25813,
+        "user_id" : 1452094,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/7a12b28824b215e4886da2e9f376369f?s=256&d=identicon&r=PG",
+        "display_name" : "Kiskae",
+        "link" : "https://stackoverflow.com/users/1452094/kiskae"
       },
-      "creation_date" : 1757879330,
+      "creation_date" : 1758572779,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140752789,
+      "post_id" : 79770558,
+      "body" : "What is the downstream here? is it - selectedService.process(request);   The selected process here is highly latent and takes way longer than 800ms to complete.     From your experience, do you suspect anything else going on with the scheduler or the internal queue maintained by the maybe.merge?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 5307034,
+        "reputation" : 419,
+        "user_id" : 4234538,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/KeoIP.png?s=256",
+        "display_name" : "Karthik Bhat",
+        "link" : "https://stackoverflow.com/users/4234538/karthik-bhat"
+      },
+      "creation_date" : 1758564502,
       "content_license" : "CC BY-SA 4.0"
     } ]
   }

@@ -1,128 +1,47 @@
 {
   "question" : {
-    "question_id" : 79750309,
-    "title" : "Rethrowing Throwables from EDT",
-    "body" : "<p><em>Related: <a href=\"https://stackoverflow.com/questions/79749938/writing-safe-non-ugly-swing-tests\">Writing safe, non-ugly Swing tests</a></em></p>\n<p>Here's a simple <code>InvocationInterceptor</code> that is designed to run tests in the EDT.</p>\n<pre class=\"lang-java prettyprint-override\"><code>import org.fest.swing.annotation.RunsInEDT;\nimport org.junit.jupiter.api.extension.ExtensionContext;\nimport org.junit.jupiter.api.extension.InvocationInterceptor;\nimport org.junit.jupiter.api.extension.ReflectiveInvocationContext;\nimport org.junit.platform.commons.function.Try;\n\nimport javax.swing.SwingUtilities;\nimport java.lang.annotation.Retention;\nimport java.lang.reflect.AnnotatedElement;\nimport java.lang.reflect.InvocationTargetException;\nimport java.lang.reflect.Method;\n\npublic class EdtExtension implements InvocationInterceptor {\n\n    @Override\n    public void interceptTestMethod(Invocation&lt;Void&gt; invocation, ReflectiveInvocationContext&lt;Method&gt; invocationContext, ExtensionContext extensionContext) throws Throwable {\n        if (shouldRunInEdt(invocationContext)) invokeInEdt(invocation);\n        else invocation.proceed();\n    }\n\n    /**\n     * @apiNote FEST's {@link RunsInEDT} has a default {@link Retention} and hence is not reflectively accessible. We need to check our own runtime annotation instead.\n     */\n    private static boolean shouldRunInEdt(ReflectiveInvocationContext&lt;Method&gt; invocationContext) {\n        Class&lt;?&gt; testClass = invocationContext.getTargetClass();\n        Method testMethod = invocationContext.getExecutable();\n        return hasEdtAnnotation(testClass) || hasEdtAnnotation(testMethod);\n    }\n\n    private static boolean hasEdtAnnotation(AnnotatedElement annotatedElement) {\n        return annotatedElement.getAnnotation(EdtRun.class) != null;\n    }\n\n    private void invokeInEdt(Invocation&lt;Void&gt; invocation) {\n        Try.call(() -&gt; invokeAndWait(invocation));\n    }\n\n    private Void invokeAndWait(Invocation&lt;Void&gt; invocation) throws InterruptedException, InvocationTargetException {\n        SwingUtilities.invokeAndWait(() -&gt; {\n            try {\n                invocation.proceed();\n            } catch (Throwable e) {\n                throw new AssertionError(e);\n            }\n        });\n        return null;\n    }\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>import org.fest.swing.annotation.RunsInEDT;\nimport org.junit.jupiter.api.extension.InvocationInterceptor;\n\nimport java.lang.annotation.ElementType;\nimport java.lang.annotation.Retention;\nimport java.lang.annotation.RetentionPolicy;\nimport java.lang.annotation.Target;\n\n@Target({ElementType.METHOD, ElementType.TYPE})\n@Retention(RetentionPolicy.RUNTIME)\npublic @interface EdtRun {\n}\n</code></pre>\n<p>All tests pass.</p>\n<p>But it's actually a bad thing! I purposefully included a test with a faulty assertion expecting it to fail. Contrary to my expectations, the <code>AssertionError</code> is swallowed by the EDT, so even the faulty test passes with flying colors.</p>\n<pre class=\"lang-java prettyprint-override\"><code>import org.junit.jupiter.api.Nested;\nimport org.junit.jupiter.api.Test;\nimport org.junit.jupiter.api.extension.ExtendWith;\n\nimport java.awt.EventQueue;\n\nimport static org.junit.jupiter.api.Assertions.assertFalse;\nimport static org.junit.jupiter.api.Assertions.assertTrue;\n\nclass EdtExtensionTest {\n\n    @Nested\n    @ExtendWith(EdtExtension.class)\n    class AnnotatedPerMethod {\n\n        @Test\n        void ifNotAnnotated_doesNotRunInEdt() {\n            assertFalse(EventQueue.isDispatchThread());\n        }\n\n        @Test\n        @EdtRun\n        void ifAnnotated_runsInEdt() {\n            assertTrue(EventQueue.isDispatchThread());\n        }\n    }\n\n    @Nested\n    @EdtRun\n    @ExtendWith(EdtExtension.class)\n    class AnnotatedPerClass {\n\n        @Test\n        void ifNotAnnotated_runsInEdt() {\n            // ???\n            boolean isEdt = EventQueue.isDispatchThread(); // true\n            assertFalse(isEdt); // but AssertionError is swallowed by EDT\n        }\n\n        @Test\n        @EdtRun\n        void ifAnnotated_runsInEdt() {\n            assertTrue(EventQueue.isDispatchThread());\n        }\n    }\n\n    @Nested\n    class AnnotatedPerMethodButNotExtended {\n\n        @Test\n        @EdtRun\n        void ifNotAnnotated_doesNotRunInEdt() {\n            assertFalse(EventQueue.isDispatchThread());\n        }\n\n        @Test\n        @EdtRun\n        void ifAnnotated_doesNotRunInEdt() {\n            assertFalse(EventQueue.isDispatchThread());\n        }\n    }\n\n    @Nested\n    @EdtRun\n    class AnnotatedPerClassButNotExtended {\n\n        @Test\n        void ifNotAnnotated_doesNotRunInEdt() {\n            assertFalse(EventQueue.isDispatchThread());\n        }\n\n        @Test\n        @EdtRun\n        void ifAnnotated_doesNotRunInEdt() {\n            assertFalse(EventQueue.isDispatchThread());\n        }\n    }\n}\n</code></pre>\n<p>How do I rethrow it and make my faulty test actually fail?</p>\n",
-    "tags" : [ "java", "swing" ],
+    "question_id" : 79756499,
+    "title" : "lombok getter not working for new class but working for others",
+    "body" : "<p>So I have these 2 classes</p>\n<pre><code>package com.myapp.pojo;\n\nimport com.google.gson.annotations.SerializedName;\n\nimport lombok.Getter;\nimport lombok.Setter;\n\npublic class Visit {\n    @Getter\n    @Setter\n    @SerializedName(&quot;PageName&quot;)\n    private String pageName;\n\n------------------\n\npackage com.myapp.pojo;\n\nimport com.google.gson.annotations.SerializedName;\n\nimport lombok.Getter;\nimport lombok.Setter;\n\npublic class InsertLogResponse {\n    @Getter\n    @Setter\n    @SerializedName(&quot;Success&quot;)\n    private boolean success;\n</code></pre>\n<p>I have the following code in another class</p>\n<pre><code>Visit visit = new Visit(&quot;tests&quot;);\nString test1 = principalVisit.getPageName();\n\nInsertLogResponse insertLogResponse = new InsertLogResponse(true);\nboolean test2 = inserLogResponse.getSuccess();\n</code></pre>\n<p>In both IntelliJ and running &quot;maven clean install&quot; from terminal, I don't get any issue with this line =&gt; &quot;String test1 ....&quot; but I get a build error in &quot;boolean test2....&quot;</p>\n<p>All I get is a message that says &quot;cannot find symbol&quot;.</p>\n<p>Any ideas?</p>\n",
+    "tags" : [ "java", "lombok" ],
     "owner" : {
-      "account_id" : 10187542,
-      "reputation" : 2667,
-      "user_id" : 20692967,
+      "account_id" : 1999161,
+      "reputation" : 2440,
+      "user_id" : 1790598,
       "user_type" : "registered",
-      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
-      "display_name" : "Sergey Zolotarev",
-      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+      "accept_rate" : 59,
+      "profile_image" : "https://www.gravatar.com/avatar/3c33b366ce192e4cefbe9db22f2ad7be?s=256&d=identicon&r=PG",
+      "display_name" : "mrjayviper",
+      "link" : "https://stackoverflow.com/users/1790598/mrjayviper"
     },
-    "is_answered" : true,
-    "view_count" : 122,
-    "answer_count" : 1,
-    "score" : 0,
-    "last_activity_date" : 1756623647,
-    "creation_date" : 1756472514,
-    "link" : "https://stackoverflow.com/questions/79750309/rethrowing-throwables-from-edt",
-    "content_license" : "CC BY-SA 4.0"
+    "is_answered" : false,
+    "view_count" : 31,
+    "closed_date" : 1757057450,
+    "answer_count" : 0,
+    "score" : 1,
+    "last_activity_date" : 1757057267,
+    "creation_date" : 1757057267,
+    "link" : "https://stackoverflow.com/questions/79756499/lombok-getter-not-working-for-new-class-but-working-for-others",
+    "closed_reason" : "Duplicate"
   },
-  "answers" : [ {
-    "answer_id" : 79750333,
-    "question_id" : 79750309,
-    "body" : "<p>Unlike <code>SwingUtilities#invokeLater</code> / <code>SwingUtilities#invokeAndWait</code>, FEST's <code>GuiActionRunner</code> lets you avoid ugly try-catches.</p>\n<p><code>Try#call</code> in <code>invokeInEdt()</code>, which was a way to do without a try-catch, should be removed or properly handled. If it's removed, the method below should become <code>void</code> and contain no return statement.</p>\n<pre class=\"lang-java prettyprint-override\"><code>    private Void invokeAndWait(Invocation&lt;Void&gt; invocation) {\n        GuiActionRunner.execute(new GuiTask() {\n            public void executeInEDT() throws Throwable { \n                invocation.proceed();\n            }\n        });\n        return null;\n    }\n</code></pre>\n",
-    "score" : 0,
-    "is_accepted" : true,
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140716480,
+    "post_id" : 79756499,
+    "body" : "The generated getter is called <code>isSuccess()</code>, not <code>getSuccess()</code>.",
+    "score" : 3,
     "owner" : {
-      "account_id" : 10187542,
-      "reputation" : 2667,
-      "user_id" : 20692967,
+      "account_id" : 6651855,
+      "reputation" : 292025,
+      "user_id" : 5133585,
       "user_type" : "registered",
-      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
-      "display_name" : "Sergey Zolotarev",
-      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+      "accept_rate" : 96,
+      "profile_image" : "https://i.sstatic.net/dfqcw.png?s=256",
+      "display_name" : "Sweeper",
+      "link" : "https://stackoverflow.com/users/5133585/sweeper"
     },
-    "creation_date" : 1756473876,
-    "last_activity_date" : 1756623647,
+    "creation_date" : 1757057507,
     "content_license" : "CC BY-SA 4.0"
   } ],
-  "question_comments" : [ ],
-  "answer_comments" : {
-    "79750333" : [ {
-      "comment_id" : 140704914,
-      "post_id" : 79750333,
-      "body" : "@Slaw It was too much alike to an answer you posted to an identical question from Sergey. It also contained some errors, because the <code>AssertionError</code> from <code>invokeAndWait</code> also needs unwrapping to get proper IDE handling.",
-      "score" : 1,
-      "owner" : {
-        "account_id" : 1211967,
-        "reputation" : 10014,
-        "user_id" : 1180351,
-        "user_type" : "registered",
-        "profile_image" : "https://i.sstatic.net/pKB8y.png?s=256",
-        "display_name" : "Rob Spoor",
-        "link" : "https://stackoverflow.com/users/1180351/rob-spoor"
-      },
-      "creation_date" : 1756637079,
-      "content_license" : "CC BY-SA 4.0"
-    }, {
-      "comment_id" : 140704672,
-      "post_id" : 79750333,
-      "body" : "@RobSpoor true. I did remove it later. I reflected it in my answer",
-      "score" : 0,
-      "owner" : {
-        "account_id" : 10187542,
-        "reputation" : 2667,
-        "user_id" : 20692967,
-        "user_type" : "registered",
-        "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
-        "display_name" : "Sergey Zolotarev",
-        "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
-      },
-      "creation_date" : 1756623397,
-      "content_license" : "CC BY-SA 4.0"
-    }, {
-      "comment_id" : 140704492,
-      "post_id" : 79750333,
-      "body" : "@RobSpoor Ah, I see. I missed the <code>Try.call(..)</code> in the question&#39;s code. May I ask why you deleted your answer?",
-      "score" : 0,
-      "owner" : {
-        "account_id" : 8532578,
-        "reputation" : 49884,
-        "user_id" : 6395627,
-        "user_type" : "registered",
-        "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
-        "display_name" : "Slaw",
-        "link" : "https://stackoverflow.com/users/6395627/slaw"
-      },
-      "creation_date" : 1756607978,
-      "content_license" : "CC BY-SA 4.0"
-    }, {
-      "comment_id" : 140703581,
-      "post_id" : 79750333,
-      "body" : "@Slaw It should, but the exception is swallowed because the <code>Try</code> object containing it is ignored.",
-      "score" : 1,
-      "owner" : {
-        "account_id" : 1211967,
-        "reputation" : 10014,
-        "user_id" : 1180351,
-        "user_type" : "registered",
-        "profile_image" : "https://i.sstatic.net/pKB8y.png?s=256",
-        "display_name" : "Rob Spoor",
-        "link" : "https://stackoverflow.com/users/1180351/rob-spoor"
-      },
-      "creation_date" : 1756558731,
-      "content_license" : "CC BY-SA 4.0"
-    }, {
-      "comment_id" : 140702549,
-      "post_id" : 79750333,
-      "body" : "I would expect <code>SwingUtilities#invokeAndWait</code> to work. That method is specified to throw an <code>InvocationTargetException</code> if the passed <code>Runnable</code> throws. And looking at the source code, it does seem to do that. In other words, <code>invokeAndWait</code> should rethrow exceptions just like <code>GuiActionRunner</code> does.",
-      "score" : 0,
-      "owner" : {
-        "account_id" : 8532578,
-        "reputation" : 49884,
-        "user_id" : 6395627,
-        "user_type" : "registered",
-        "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
-        "display_name" : "Slaw",
-        "link" : "https://stackoverflow.com/users/6395627/slaw"
-      },
-      "creation_date" : 1756495530,
-      "content_license" : "CC BY-SA 4.0"
-    } ]
-  }
+  "answer_comments" : { }
 }

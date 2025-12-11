@@ -1,62 +1,65 @@
 {
   "question" : {
-    "question_id" : 79820508,
-    "title" : "Login infinitely retrying with bad credentials",
-    "body" : "<p>I am using Java Spring boot and Thymeleaf. When trying to login with bad credentials, the page freezes for a few minutes, and it says the page isn't working.</p>\n<p>When I activate debug in application.properties, it prints the following text continuously</p>\n<pre><code>2025-11-14T22:15:24.172+01:00 DEBUG 15420 --- [app] [io-8080-exec-10] o.s.s.a.dao.DaoAuthenticationProvider    : Failed to find user 'mike'\n2025-11-14T22:15:24.173+01:00 DEBUG 15420 --- [app] [io-8080-exec-10] o.s.s.authentication.ProviderManager     : Authentication failed with provider DaoAuthenticationProvider since Bad credentials\n</code></pre>\n<p>From this I understand it is continuously trying to login again and again when the credentials are incorrect instead of just showing the error. I don't know why it does this or how to fix it.</p>\n<p>Here is my security config</p>\n<pre class=\"lang-java prettyprint-override\"><code>package com.labo.app.security;\n\nimport org.springframework.context.annotation.Bean;\nimport org.springframework.context.annotation.Configuration;\nimport org.springframework.security.authentication.AuthenticationManager;\nimport org.springframework.security.config.annotation.authentication.builders.AuthenticationManagerBuilder;\nimport org.springframework.security.config.annotation.web.builders.HttpSecurity;\nimport org.springframework.security.core.userdetails.UserDetailsService;\nimport org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;\nimport org.springframework.security.web.SecurityFilterChain;\nimport org.springframework.security.web.authentication.LoginUrlAuthenticationEntryPoint;\nimport org.springframework.security.web.csrf.CookieCsrfTokenRepository;\n\nimport com.labo.app.service.MyUserDetailService;\n\n@Configuration\npublic class SecurityConfig {\n\n    private final MyUserDetailService myUserDetailService;\n\n    public SecurityConfig(MyUserDetailService myUserDetailService) {\n        this.myUserDetailService = myUserDetailService;\n    }\n    \n    @Bean\n    public SecurityFilterChain securityFilterChain(HttpSecurity httpSecurity) throws Exception {\n        httpSecurity\n            .csrf(csrf -&gt; csrf\n                .csrfTokenRepository(CookieCsrfTokenRepository.withHttpOnlyFalse())\n                .ignoringRequestMatchers(&quot;/logout&quot;) // Disable CSRF for logout\n            )\n            .authorizeHttpRequests(authorize -&gt; {\n                authorize.requestMatchers(&quot;/css/**&quot;, &quot;/js/**&quot;, &quot;/images/**&quot;).permitAll();\n                authorize.requestMatchers(&quot;/login&quot;, &quot;/error/**&quot;, &quot;/logout&quot;, &quot;/&quot;, &quot;/home&quot;, &quot;/test-db&quot;).permitAll();\n                authorize.requestMatchers(&quot;/admin/**&quot;).hasRole(&quot;ADMIN&quot;);\n                authorize.requestMatchers(&quot;/user/**&quot;).hasRole(&quot;USER&quot;);\n                authorize.anyRequest().authenticated();\n            })\n            .formLogin(formLogin -&gt; formLogin\n                .loginPage(&quot;/login&quot;)\n                .loginProcessingUrl(&quot;/login&quot;)\n                .defaultSuccessUrl(&quot;/&quot;, true) // Make sure this matches your form action\n                .failureUrl(&quot;/login?error&quot;) // This should trigger on failure\n                .permitAll()\n            )\n            .logout(logout -&gt; logout\n                .logoutRequestMatcher(request -&gt; &quot;/logout&quot;.equals(request.getRequestURI()) &amp;&amp; &quot;GET&quot;.equalsIgnoreCase(request.getMethod())) // Allow GET for logout\n                .logoutSuccessUrl(&quot;/login?logout&quot;)\n                .invalidateHttpSession(true)\n                .deleteCookies(&quot;JSESSIONID&quot;)\n                .permitAll()\n            )\n            .exceptionHandling(exceptions -&gt; exceptions\n                    .authenticationEntryPoint(new LoginUrlAuthenticationEntryPoint(&quot;/login&quot;))\n            )\n            .sessionManagement(session -&gt; session\n                    .maximumSessions(1)\n                    .expiredUrl(&quot;/login?expired=true&quot;)\n                );\n        \n        return httpSecurity.build();\n    }\n\n    @Bean\n    public UserDetailsService userDetailService() {\n        return myUserDetailService;\n    }\n\n    @Bean\n    public AuthenticationManager authenticationManager(HttpSecurity http) throws Exception {\n        AuthenticationManagerBuilder authenticationManagerBuilder =\n            http.getSharedObject(AuthenticationManagerBuilder.class);\n        authenticationManagerBuilder\n            .userDetailsService(myUserDetailService)\n            .passwordEncoder(bCryptPasswordEncoder());\n        return authenticationManagerBuilder.build();\n    }\n\n    @Bean\n    public BCryptPasswordEncoder bCryptPasswordEncoder() {\n        return new BCryptPasswordEncoder();\n    }\n}\n</code></pre>\n<p>Here is my controller method</p>\n<pre class=\"lang-java prettyprint-override\"><code>@GetMapping(&quot;/login&quot;)\npublic String loginPage(@RequestParam(value = &quot;error&quot;, required = false) String error,\n                        @RequestParam(value = &quot;logout&quot;, required = false) String logout,\n                        Model model) {\n                            \n    if (error != null) {\n        model.addAttribute(&quot;error&quot;, &quot;Invalid username and password!&quot;);\n    }\n\n    if (logout != null) {\n        model.addAttribute(&quot;message&quot;, &quot;You have been logged out successfully.&quot;);\n    }\n    return &quot;login&quot;;\n}\n</code></pre>\n<p>Here is my login page</p>\n<pre class=\"lang-html prettyprint-override\"><code>&lt;!DOCTYPE html&gt;\n&lt;html xmlns:th=&quot;http://www.thymeleaf.org&quot;&gt;\n&lt;head&gt;\n    &lt;meta charset=&quot;UTF-8&quot;&gt;\n    &lt;title&gt;Login Page&lt;/title&gt;\n\n    &lt;link rel=&quot;stylesheet&quot; th:href=&quot;@{/css/styles.css}&quot;&gt;\n\n&lt;/head&gt;\n&lt;body&gt;\n    &lt;div class=&quot;container&quot;&gt;\n        &lt;nav&gt;\n            &lt;a href=&quot;/&quot;&gt;Home&lt;/a&gt; |\n            &lt;a href=&quot;/login&quot;&gt;Login&lt;/a&gt;\n        &lt;/nav&gt;\n        \n        &lt;h1&gt;Login&lt;/h1&gt;\n\n        &lt;div th:if=&quot;${error}&quot; class=&quot;alert alert-error mb-20&quot;&gt;\n            &lt;strong&gt;Error:&lt;/strong&gt; &lt;span th:text=&quot;${error}&quot;&gt;&lt;/span&gt;\n        &lt;/div&gt;\n        \n        &lt;form th:action=&quot;@{/login}&quot; method=&quot;post&quot;&gt;\n            &lt;div class=&quot;form-group&quot;&gt;\n                &lt;label for=&quot;username&quot;&gt;Username:&lt;/label&gt;\n                &lt;input type=&quot;text&quot; id=&quot;username&quot; name=&quot;username&quot; required&gt;\n            &lt;/div&gt;\n            \n            &lt;div class=&quot;form-group&quot;&gt;\n                &lt;label for=&quot;password&quot;&gt;Password:&lt;/label&gt;\n                &lt;input type=&quot;password&quot; id=&quot;password&quot; name=&quot;password&quot; required&gt;\n            &lt;/div&gt;\n            \n            &lt;button type=&quot;submit&quot;&gt;Login&lt;/button&gt;\n        &lt;/form&gt;\n        \n        &lt;div th:if=&quot;${error}&quot;&gt;\n        &lt;script&gt;\n            alert(&quot;[[${error}]]&quot;); // Thymeleaf inline expression\n        &lt;/script&gt;\n    &lt;/div&gt;\n    &lt;/div&gt;\n&lt;/body&gt;\n&lt;/html&gt;\n</code></pre>\n",
-    "tags" : [ "java", "spring-boot", "spring-mvc", "thymeleaf", "spring-thymeleaf" ],
+    "question_id" : 79825199,
+    "title" : "Jooq get sequence increment",
+    "body" : "<p>Maybe there's an easier way to get the Increment with JOOQ?\nThis one looks more like a crutch:</p>\n<pre><code>int increment =\n    Optional.ofNullable(CUSTOMER_ID_SEQ.getIncrementBy())\n        .map(Field::getName)\n        .map(Integer::valueOf)\n        .orElse(1);\n</code></pre>\n",
+    "tags" : [ "java", "postgresql", "jooq" ],
     "owner" : {
-      "account_id" : 27325363,
-      "reputation" : 11,
-      "user_id" : 20838427,
+      "account_id" : 23977999,
+      "reputation" : 155,
+      "user_id" : 17965846,
       "user_type" : "registered",
-      "profile_image" : "https://lh3.googleusercontent.com/a/AEdFTp7xFTL-RoEXvebTHbnap0NQy4mLKXIPUfTC5-l8=k-s256",
-      "display_name" : "Tecco Temtsa",
-      "link" : "https://stackoverflow.com/users/20838427/tecco-temtsa"
+      "profile_image" : "https://www.gravatar.com/avatar/7302523e7fb6666c6bde1fc76520f887?s=256&d=identicon&r=PG",
+      "display_name" : "wuttke",
+      "link" : "https://stackoverflow.com/users/17965846/wuttke"
     },
-    "is_answered" : false,
-    "view_count" : 81,
+    "is_answered" : true,
+    "view_count" : 48,
     "answer_count" : 1,
     "score" : 2,
-    "last_activity_date" : 1763306608,
-    "creation_date" : 1763163995,
-    "link" : "https://stackoverflow.com/questions/79820508/login-infinitely-retrying-with-bad-credentials",
+    "last_activity_date" : 1763632464,
+    "creation_date" : 1763623085,
+    "link" : "https://stackoverflow.com/questions/79825199/jooq-get-sequence-increment",
     "content_license" : "CC BY-SA 4.0"
   },
   "answers" : [ {
-    "answer_id" : 79821551,
-    "question_id" : 79820508,
-    "body" : "<p>If you use login with wildcards that needs to be an allowed path:</p>\n<pre><code>http\n    .authorizeHttpRequests(auth -&gt; auth\n        .requestMatchers(&quot;/login&quot;, &quot;/login/**&quot;).permitAll()\n        .anyRequest().authenticated()\n    )\n    .formLogin(form -&gt; form\n        .loginPage(&quot;/login&quot;)\n        .loginProcessingUrl(&quot;/login&quot;)\n        .defaultSuccessUrl(&quot;/&quot;, true)\n        .failureUrl(&quot;/login?error&quot;)\n        .permitAll()\n    );\n</code></pre>\n<p>In general try not to use the same path for several steps or conditions (like you do in login) unless you are proficient with spring security + thymeleaf</p>\n",
-    "score" : 0,
-    "is_accepted" : false,
+    "answer_id" : 79825300,
+    "question_id" : 79825199,
+    "body" : "<h3>Current API design</h3>\n<p>The reason why these sequence attribute meta data methods return a <a href=\"https://www.jooq.org/javadoc/dev/org.jooq/org/jooq/Field.html\" rel=\"nofollow noreferrer\"><code>Field&lt;T&gt;</code></a> rather than just <code>T</code> is to be able to provide <a href=\"https://www.jooq.org/javadoc/dev/org.jooq/org/jooq/DataType.html\" rel=\"nofollow noreferrer\"><code>DataType&lt;T&gt;</code></a> information, which may occasionally be useful.</p>\n<p>There could be an argument held in favour of returning <a href=\"https://www.jooq.org/javadoc/dev/org.jooq/org/jooq/Param.html\" rel=\"nofollow noreferrer\"><code>Param&lt;T&gt;</code></a>, whose <a href=\"https://www.jooq.org/javadoc/dev/org.jooq/org/jooq/Param.html#getValue()\" rel=\"nofollow noreferrer\"><code>Param::getValue</code></a> method would provide easier access to the actual value. But historically, any such reference to a <code>Param</code> type in the API had to eventually be reconsidered because even in the most param-y use-cases, there will be a RDBMS that would still accept non-param arguments (e.g. expressions). One example is the <code>SELECT .. LIMIT</code> clause, where 99% of all arguments will be a <code>Param</code> (i.e. a constant), but many RDBMS do support expressions, including subqueries.</p>\n<p>It's still very unlikely that sequence flags like <code>INCREMENT BY</code> would accept expressions, but you never know, so <code>Field&lt;T&gt;</code> will remain.</p>\n<h3>Alternative access patterns</h3>\n<p>Knowing that:</p>\n<ol>\n<li>Currently (jOOQ 3.20), the <code>getIncrementBy()</code> return value is <em>always</em> a <code>Param</code></li>\n<li>It is unlikely for this to change in the near future</li>\n</ol>\n<p>You can just downcast like this:</p>\n<pre class=\"lang-java prettyprint-override\"><code>int incrementBy = ((Param&lt;Integer&gt;) CUSTOMER_ID_SEQ.getIncrementBy()).getValue();\n</code></pre>\n<p>Or, alternatively, with a type check, if you want a &quot;safer&quot; route (though, your code would still break if there was a non-param flag):</p>\n<pre class=\"lang-java prettyprint-override\"><code>int incrementBy = CUSTOMER_ID_SEQ.getIncrementBy() instanceof Param&lt;Integer&gt; p \n    ? p.getValue() \n    : 0;\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : true,
     "owner" : {
-      "account_id" : 173785,
-      "reputation" : 1046,
-      "user_id" : 402723,
+      "account_id" : 247217,
+      "reputation" : 223522,
+      "user_id" : 521799,
       "user_type" : "registered",
-      "profile_image" : "https://i.sstatic.net/Q8TPb.jpg?s=256",
-      "display_name" : "Raul Lapeira Herrero",
-      "link" : "https://stackoverflow.com/users/402723/raul-lapeira-herrero"
+      "accept_rate" : 89,
+      "profile_image" : "https://www.gravatar.com/avatar/eb96efa7a5664ba1c4ebf586abd4121f?s=256&d=identicon&r=PG",
+      "display_name" : "Lukas Eder",
+      "link" : "https://stackoverflow.com/users/521799/lukas-eder"
     },
-    "creation_date" : 1763306608,
-    "last_activity_date" : 1763306608,
+    "creation_date" : 1763629070,
+    "last_activity_date" : 1763632464,
     "content_license" : "CC BY-SA 4.0"
   } ],
-  "question_comments" : [ {
-    "comment_id" : 140856836,
-    "post_id" : 79820508,
-    "body" : "ok I see that logout and error messaging is working the same so that is not the issue also the thymeleaf page doesn&#39;t seem to contain any error. I understand that you are using dao authentication, the error suggest that it does something with DAO. Maybe if you do some kind of exception handling it may solve the problem",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 24709367,
-      "reputation" : 13,
-      "user_id" : 18599750,
-      "user_type" : "registered",
-      "profile_image" : "https://i.sstatic.net/IYVGRsMW.jpg?s=256",
-      "display_name" : "bkrawczynski",
-      "link" : "https://stackoverflow.com/users/18599750/bkrawczynski"
-    },
-    "creation_date" : 1763306381,
-    "content_license" : "CC BY-SA 4.0"
-  } ],
-  "answer_comments" : { }
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79825300" : [ {
+      "comment_id" : 140863955,
+      "post_id" : 79825300,
+      "body" : "Thank you for the detailed explanation. I will continue to work on this issue.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 23977999,
+        "reputation" : 155,
+        "user_id" : 17965846,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/7302523e7fb6666c6bde1fc76520f887?s=256&d=identicon&r=PG",
+        "display_name" : "wuttke",
+        "link" : "https://stackoverflow.com/users/17965846/wuttke"
+      },
+      "creation_date" : 1763631357,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
 }

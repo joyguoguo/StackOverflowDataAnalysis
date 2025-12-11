@@ -1,563 +1,62 @@
 {
   "question" : {
-    "question_id" : 79769111,
-    "title" : "Why is the onApplicationEvent method of the ApplicationListener interface in Springboot I implemented reentrant?",
-    "body" : "<p>Below is my code and the running result is that I got twice logs.</p>\n<pre><code>    \n@Slf4j\n@Component\npublic class HandlerMappingAfterSpringInitializationExporter implements ApplicationListener&lt;ContextRefreshedEvent&gt; {\n    @Autowired\n    private ApplicationContext applicationContext;\n    private volatile boolean  exported = false;\n\n    private volatile  int count = 0;\n\n    @Override\n    public void onApplicationEvent(ContextRefreshedEvent event) {\n\n  synchronized (HandlerMappingAfterSpringInitializationExporter.class) {   \n        count+=1;\n\n        if (exported) {\n            return;\n        }\n        try {\n//getAllServletFilters and getAllSpringManagedInterceptor method details are listed at the end.\n             getAllServletFilters();\n             getAllSpringManagedInterceptor();\n            //here are  some other io operations like File.write()  which are ignored\n            log.info(&quot;the value of count is :{}&quot;,count);\n            log.info(&quot;the value of exported is :{}&quot;,exported)\n\n        } catch (Exception e) {\n            System.err.println(&quot;导出Web组件信息失败: &quot; + e.getMessage());\n            e.printStackTrace();\n        }\n    \n        exported = true;\n    }\n}\n}\n</code></pre>\n<p>The first one is as below</p>\n<pre><code>&quot;the value of count is :1&quot;\n&quot;the value of exported is :false&quot;\n</code></pre>\n<p>The second one is as below</p>\n<pre><code>&quot;the value of count is :2&quot;\n&quot;the value of exported is :false&quot;\n</code></pre>\n<p>Here is my springboot version</p>\n<pre><code>&lt;parent&gt;\n    &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;\n    &lt;artifactId&gt;spring-boot-starter-parent&lt;/artifactId&gt;\n    &lt;version&gt;1.5.9.RELEASE&lt;/version&gt;\n    &lt;relativePath/&gt; &lt;!-- lookup parent from repository --&gt;\n  &lt;/parent&gt;\n</code></pre>\n<p>I write the code in order to export some spring beans information just for once, so I use synchronizde and volatile.\nI have logged the thread information and find they are the same one name 'main'.\nI wonder how this happen. Thank you .</p>\n<p>the below is  supplement to the omitted code.</p>\n<pre><code>    public List&lt;WebInterceptorFilterInfo&gt; getAllServletFilters() {\n        List&lt; WebInterceptorFilterInfo&gt; filters = new ArrayList&lt;&gt;();\n\n        \n        if (applicationContext instanceof WebApplicationContext) {\n            WebApplicationContext webApplicationContext = (WebApplicationContext) applicationContext;\n            ServletContext servletContext = webApplicationContext.getServletContext();\n\n\n\n            if (servletContext != null) {\n                \n                Map&lt;String, FilterRegistration&gt; filterRegistrationMap = (Map&lt;String, FilterRegistration&gt;) servletContext.getFilterRegistrations();\n\n                for(Map.Entry&lt;String,FilterRegistration&gt; e: filterRegistrationMap.entrySet()){\n                    FilterRegistration filterRegistration = e.getValue();\n                    String filterName  =filterRegistration.getName();\n                    String fullClassName = filterRegistration.getClassName();\n                    WebInterceptorFilterInfo filterInfo = new WebInterceptorFilterInfo();\n                    filterInfo.setComponentName(filterName);\n                    filterInfo.setComponentType(&quot;servelet-filter&quot;);\n                    filterInfo.setFullClassName(fullClassName);\n                    filters.add(filterInfo);\n                }\n\n            } else {\n                System.err.println(&quot;fail to obtain ServletContext：can not get ServletContext in WebApplicationContext&quot;);\n            }\n        } else {\n            System.err.println(&quot;can not get ServletContext：current ApplicationContext is not WebApplicationContext&quot;);\n        }\n\n        return filters;\n    }\n</code></pre>\n<pre><code>    public List&lt;WebInterceptorFilterInfo&gt; getAllSpringManagedInterceptor() {\n        List&lt;WebInterceptorFilterInfo&gt; result = new ArrayList&lt;&gt;();\n\n\n\n        Map&lt;String, HandlerInterceptor&gt; interceptorBeans = applicationContext.getBeansOfType(HandlerInterceptor.class);\n        for (Map.Entry&lt;String, HandlerInterceptor&gt; entry : interceptorBeans.entrySet()) {\n            WebInterceptorFilterInfo info = new WebInterceptorFilterInfo();\n            info.setComponentName(entry.getKey()); \n            info.setComponentType(&quot;HandlerInterceptor&quot;);\n            info.setFullClassName(entry.getValue().getClass().getName());\n            result.add(info);\n        }\n\n\n        Collections.sort(result, Comparator.comparing(WebInterceptorFilterInfo::getComponentType));\n        return result;\n    }\n\n</code></pre>\n",
-    "tags" : [ "java", "spring", "spring-boot" ],
+    "question_id" : 79774727,
+    "title" : "How to write a custom meta annotation to check for authority when using Spring Security?",
+    "body" : "<p>I have an enum with permission values:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public enum Permission {\n    DASHBOARD_OPEN(&quot;dashboard:open&quot;);\n\n    private final String key;\n\n    Permission(String key) {\n        this.key = key;\n    }\n\n    @Override\n    public String toString() {\n        return key;\n    }\n}\n</code></pre>\n<p>that I want to use in a meta-annotation:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Target({ElementType.METHOD, ElementType.TYPE})\n@Retention(RetentionPolicy.RUNTIME)\n@PreAuthorize(&quot;hasAuthority('{value}')&quot;)\npublic @interface HasPermission {\n    Permission value();\n}\n</code></pre>\n<p>like this:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@HasPermission(DASHBOARD_OPEN)\n@RequestMapping({&quot;/dashboard&quot;,})\npublic String dashboard() {\n    return &quot;dashboard&quot;;\n}\n</code></pre>\n<p>It doesn't work, I get 403 errors no matter how I'm trying to configure this. <code>{value}</code> doesn't work, <code>{value.key}</code> doesn't work and I also tried all the permutations that are possible. I checked and my user has the appropriate authority. If I don't use this meta-annotation then my page is accessible though:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@PreAuthorize(&quot;hasAuthority('dashboard:open')&quot;) // &lt;-- works\n@RequestMapping({&quot;/dashboard&quot;,})\npublic String dashboard() {\n    return &quot;dashboard&quot;;\n}\n</code></pre>\n<p>What am I doing wrong? How can I make the <code>enum</code> solution work (as opposed to just passing <code>String</code>s)?</p>\n<p>Note that I copied the example from the Spring Security documentation and I'm wondering why it doesn't work at all:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Target({ ElementType.METHOD, ElementType.TYPE })\n@Retention(RetentionPolicy.RUNTIME)\n@PreAuthorize(&quot;hasRole('{value}')&quot;)\npublic @interface HasRole {\n    String value();\n}\n</code></pre>\n",
+    "tags" : [ "java", "spring", "spring-security", "authorization" ],
     "owner" : {
-      "account_id" : 21188558,
-      "reputation" : 22,
-      "user_id" : 15581449,
+      "account_id" : 225067,
+      "reputation" : 30772,
+      "user_id" : 485337,
       "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/f884da35440e8c3141797a5dcb6231b8?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "handsomeboy",
-      "link" : "https://stackoverflow.com/users/15581449/handsomeboy"
+      "accept_rate" : 91,
+      "profile_image" : "https://i.sstatic.net/VAz9B.jpg?s=256",
+      "display_name" : "Adam Arold",
+      "link" : "https://stackoverflow.com/users/485337/adam-arold"
     },
     "is_answered" : false,
-    "view_count" : 154,
-    "answer_count" : 3,
-    "score" : 1,
-    "last_activity_date" : 1762825980,
-    "creation_date" : 1758255316,
-    "link" : "https://stackoverflow.com/questions/79769111/why-is-the-onapplicationevent-method-of-the-applicationlistener-interface-in-spr",
+    "view_count" : 45,
+    "answer_count" : 0,
+    "score" : 0,
+    "last_activity_date" : 1758798436,
+    "creation_date" : 1758798436,
+    "link" : "https://stackoverflow.com/questions/79774727/how-to-write-a-custom-meta-annotation-to-check-for-authority-when-using-spring-s",
     "content_license" : "CC BY-SA 4.0"
   },
-  "answers" : [ {
-    "answer_id" : 79816170,
-    "question_id" : 79769111,
-    "body" : "<p>Here is my latest discovering. Through debugging, I found that the code is reentered, and all entries are via the main thread. This might be related to the content of my code. I obtained the ServletContext through ApplicationContext, then retrieved all filters in the servlet container, and subsequently obtained all HandlerInterceptors via reflection.</p>\n",
-    "score" : 0,
-    "is_accepted" : false,
-    "owner" : {
-      "account_id" : 21188558,
-      "reputation" : 22,
-      "user_id" : 15581449,
-      "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/f884da35440e8c3141797a5dcb6231b8?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "handsomeboy",
-      "link" : "https://stackoverflow.com/users/15581449/handsomeboy"
-    },
-    "creation_date" : 1762825980,
-    "last_activity_date" : 1762825980,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "answer_id" : 79769277,
-    "question_id" : 79769111,
-    "body" : "<p>Given that the count is increasing and both calls are made by the <code>main</code> thread, the <code>synchronized</code> block may be a red herring and this is not a concurrency issue at all.</p>\n<p>Rather, it seems that the statement <code>executed = true;</code> is not being executed. In all likelihood, in your actual version of the code, and not the one you posted, you have some statement(s) after the log statements that are throwing an exception which isn't being caught by your <code>catch</code>.</p>\n<p>Try using <code>finally</code> block to set the <code>executed</code> flag, or catch <code>Throwable</code> and see if it resolves your problem.</p>\n",
-    "score" : -1,
-    "is_accepted" : false,
-    "owner" : {
-      "account_id" : 12922445,
-      "reputation" : 724,
-      "user_id" : 9344362,
-      "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/41e439d0216922429effa80331a654de?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "Jeremy Hunt",
-      "link" : "https://stackoverflow.com/users/9344362/jeremy-hunt"
-    },
-    "creation_date" : 1758269746,
-    "last_activity_date" : 1758269746,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "answer_id" : 79769261,
-    "question_id" : 79769111,
-    "body" : "<p>Spring <a href=\"https://docs.spring.io/spring-framework/reference/core/beans/context-introduction.html#context-functionality-events\" rel=\"nofollow noreferrer\">documentation</a> states:</p>\n<blockquote>\n<p>As long as the context has not been closed, a refresh can be triggered multiple times</p>\n</blockquote>\n<p>So, if you're trying to do something only once, you're going to have to account for the fact that the code may be invoked more than once.</p>\n<p>Furthermore:</p>\n<blockquote>\n<p>As of Spring 4.2, the event infrastructure has been significantly improved and offers an annotation-based model</p>\n</blockquote>\n<p>I checked, and Spring Boot 1.5.x uses Spring Framework 4.3.x, so, the annotation-based model is available to you.</p>\n<p>You could do something like this:</p>\n<pre><code>@Component\npublic class ContextEventListener {\n    private volatile boolean executed = false;\n    private final Object lock = new Object();\n    \n    @EventListener\n    public void onContextRefreshed(ContextRefreshedEvent event) {\n        if (!executed) {\n            synchronized (lock) {\n                if (!executed) {\n                    // Code to be executed only once\n                    System.out.println(&quot;Executing the task for the first and only time.&quot;);\n                    // If you need the ApplicationContext\n                    // event.getApplicationContext();\n                    executed = true;\n                }\n            }\n        }\n    }\n}\n</code></pre>\n<ul>\n<li>The <code>executed</code> flag, declared as <code>volatile</code>, ensures that changes to its value are immediately visible to all threads.</li>\n<li>The <code>synchronized (lock)</code> block ensures that only one thread can enter the critical section at a time, where the <code>executed</code> flag is checked and potentially set, and the code is executed.</li>\n<li>The double check (<code>if (!executed)</code>) reduces contention on the lock once the task has already been executed.</li>\n</ul>\n",
-    "score" : -3,
-    "is_accepted" : false,
-    "owner" : {
-      "account_id" : 446597,
-      "reputation" : 25249,
-      "user_id" : 839733,
-      "user_type" : "registered",
-      "accept_rate" : 69,
-      "profile_image" : "https://i.sstatic.net/2s6lO.jpg?s=256",
-      "display_name" : "Abhijit Sarkar",
-      "link" : "https://stackoverflow.com/users/839733/abhijit-sarkar"
-    },
-    "creation_date" : 1758268195,
-    "last_activity_date" : 1758268519,
-    "content_license" : "CC BY-SA 4.0"
-  } ],
+  "answers" : [ ],
   "question_comments" : [ {
-    "comment_id" : 140785949,
-    "post_id" : 79769111,
-    "body" : "<b>When</b> do you get the logs twice? In tests or your production system? What does your application start class look like. If you have multiple contexts, due to your configuration, you will get a <code>ContextRefreshedEvent</code> for each context. Also generally this is a bad idea to implement with an <code>ApplicationListener</code> and you probably should use a <code>ApplicationRunner</code> instead (which will run after the full application has started).",
+    "comment_id" : 140782783,
+    "post_id" : 79774727,
+    "body" : "you are not doing anything wrong, my guess is that templating in annotations like you want does not work, that it will interpret <code>&#39;{value}&#39;</code> as a string literal",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2064278,
+      "reputation" : 15073,
+      "user_id" : 1840146,
+      "user_type" : "registered",
+      "accept_rate" : 86,
+      "profile_image" : "https://i.sstatic.net/JXdxm.png?s=256",
+      "display_name" : "Toerktumlare",
+      "link" : "https://stackoverflow.com/users/1840146/toerktumlare"
+    },
+    "creation_date" : 1759874211,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140759641,
+    "post_id" : 79774727,
+    "body" : "And next to copy/pasting the annotation, you did also include the configuration changes needed for this?",
     "score" : 0,
     "owner" : {
       "account_id" : 3192259,
-      "reputation" : 126777,
+      "reputation" : 126800,
       "user_id" : 2696260,
       "user_type" : "registered",
       "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
       "display_name" : "M. Deinum",
       "link" : "https://stackoverflow.com/users/2696260/m-deinum"
     },
-    "creation_date" : 1760003211,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140785566,
-    "post_id" : 79769111,
-    "body" : "@handsomeboy nobody can tell you, because nobody has your application&#39;s code. Check the stack traces. Even when <code>webApplicationContext.getServletContext</code> is triggering the refresh, it will be &quot;from the main thread&quot;, because your handler is running in the main thread.",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 39208,
-      "reputation" : 269277,
-      "user_id" : 112968,
-      "user_type" : "registered",
-      "accept_rate" : 68,
-      "profile_image" : "https://i.sstatic.net/zHTaT.png?s=256",
-      "display_name" : "knittl",
-      "link" : "https://stackoverflow.com/users/112968/knittl"
-    },
-    "creation_date" : 1759991743,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140785550,
-    "post_id" : 79769111,
-    "body" : "@knittl I am sorry that I have not tracked all the stack traces . But what can be confirmed is  that the main thread reentered the synchrozied  code block  and so the code ran twice. As for why the main thread can enter twice, it&#39;s a somewhat complicated issue for me, and I don&#39;t want to pursue it further now. If someone knows the mechanism  , it will be very nice of him to tell me. Finally Thank everyone here  for the help.",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 21188558,
-      "reputation" : 22,
-      "user_id" : 15581449,
-      "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/f884da35440e8c3141797a5dcb6231b8?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "handsomeboy",
-      "link" : "https://stackoverflow.com/users/15581449/handsomeboy"
-    },
-    "creation_date" : 1759991344,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140785445,
-    "post_id" : 79769111,
-    "body" : "Have you looked at the stack traces of both method invocations and compared them? (as suggested) I&#39;m taking a wild guess here, but maybe <code>webApplicationContext.getServletContext</code> or <code>servletContext.getFilterRegistrations</code> are firing the event? And again, Spring Boot 1.5.9 has been out of support for a really long time, it might as well be a bug that has been fixed since.",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 39208,
-      "reputation" : 269277,
-      "user_id" : 112968,
-      "user_type" : "registered",
-      "accept_rate" : 68,
-      "profile_image" : "https://i.sstatic.net/zHTaT.png?s=256",
-      "display_name" : "knittl",
-      "link" : "https://stackoverflow.com/users/112968/knittl"
-    },
-    "creation_date" : 1759986484,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140785355,
-    "post_id" : 79769111,
-    "body" : "@knittl Through debugging, I found that the code is reentered, and all entries are via the main thread. This might be related to the content of my code. I obtained the ServletContext through ApplicationContext, then retrieved all filters in the servlet container, and subsequently obtained all HandlerInterceptors via reflection. I don&#39;t understand why multiple events are entering the code through the main thread.",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 21188558,
-      "reputation" : 22,
-      "user_id" : 15581449,
-      "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/f884da35440e8c3141797a5dcb6231b8?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "handsomeboy",
-      "link" : "https://stackoverflow.com/users/15581449/handsomeboy"
-    },
-    "creation_date" : 1759980523,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140785354,
-    "post_id" : 79769111,
-    "body" : "@MichałTurczyn thank you for your advice and it helps a lot. Through debugging, I found that the code is reentered, and all entries are via the main thread. This might be related to the content of my code. I obtained the ServletContext through ApplicationContext, then retrieved all filters in the servlet container, and subsequently obtained all HandlerInterceptors via reflection. I don&#39;t understand why multiple events are entering the code through the main thread. I suppose this is the cause.",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 21188558,
-      "reputation" : 22,
-      "user_id" : 15581449,
-      "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/f884da35440e8c3141797a5dcb6231b8?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "handsomeboy",
-      "link" : "https://stackoverflow.com/users/15581449/handsomeboy"
-    },
-    "creation_date" : 1759980500,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140785349,
-    "post_id" : 79769111,
-    "body" : "@JeremyHunt I have tried to catch  the throwable and no one was caught.",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 21188558,
-      "reputation" : 22,
-      "user_id" : 15581449,
-      "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/f884da35440e8c3141797a5dcb6231b8?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "handsomeboy",
-      "link" : "https://stackoverflow.com/users/15581449/handsomeboy"
-    },
-    "creation_date" : 1759980354,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140746607,
-    "post_id" : 79769111,
-    "body" : "Also, there might be something calling the <code>refresh()</code> method on the <code>ConfigurableApplicationContext</code> interface. So you could try looking for such calls in your code.",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 9606741,
-      "reputation" : 41242,
-      "user_id" : 7132550,
-      "user_type" : "registered",
-      "accept_rate" : 75,
-      "profile_image" : "https://graph.facebook.com/1063981417044495/picture?type=large",
-      "display_name" : "Michał Turczyn",
-      "link" : "https://stackoverflow.com/users/7132550/micha%c5%82-turczyn"
-    },
-    "creation_date" : 1758268385,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140746577,
-    "post_id" : 79769111,
-    "body" : "@MichałTurczyn good point about analyzing the stack. You can also do that without a debugger, simply get the current stack trace and write it to the log (but of course it&#39;s easier with a debugger)",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 39208,
-      "reputation" : 269277,
-      "user_id" : 112968,
-      "user_type" : "registered",
-      "accept_rate" : 68,
-      "profile_image" : "https://i.sstatic.net/zHTaT.png?s=256",
-      "display_name" : "knittl",
-      "link" : "https://stackoverflow.com/users/112968/knittl"
-    },
-    "creation_date" : 1758267469,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140746528,
-    "post_id" : 79769111,
-    "body" : "I tried it with fresh spring boot app and <code>onApplicationEvent</code> is executed only once. What i can suggest is to place breakpoint inside the method and see how many times it gets hit. And when they&#39;re hit, you can analyze stack traces, etc. Maybe it is something wrong with log output, rather than the framework working unexpectedly.",
-    "score" : 1,
-    "owner" : {
-      "account_id" : 9606741,
-      "reputation" : 41242,
-      "user_id" : 7132550,
-      "user_type" : "registered",
-      "accept_rate" : 75,
-      "profile_image" : "https://graph.facebook.com/1063981417044495/picture?type=large",
-      "display_name" : "Michał Turczyn",
-      "link" : "https://stackoverflow.com/users/7132550/micha%c5%82-turczyn"
-    },
-    "creation_date" : 1758265533,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140746497,
-    "post_id" : 79769111,
-    "body" : "Since both are happening on <code>main</code> thread, the synchronized stuff is probably a red herring. If exported isn&#39;t being set to <code>true</code> then that code might not be executing. You might be throwing an unchecked exception from your try block. Try catching all <code>Throwable</code>s instead of <code>Exception</code>.",
-    "score" : 1,
-    "owner" : {
-      "account_id" : 12922445,
-      "reputation" : 724,
-      "user_id" : 9344362,
-      "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/41e439d0216922429effa80331a654de?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "Jeremy Hunt",
-      "link" : "https://stackoverflow.com/users/9344362/jeremy-hunt"
-    },
-    "creation_date" : 1758264972,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140746448,
-    "post_id" : 79769111,
-    "body" : "@knittl Yes. I am sorry  I posted the wrong log.  I realised it after your advice and I have corrected it.",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 21188558,
-      "reputation" : 22,
-      "user_id" : 15581449,
-      "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/f884da35440e8c3141797a5dcb6231b8?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "handsomeboy",
-      "link" : "https://stackoverflow.com/users/15581449/handsomeboy"
-    },
-    "creation_date" : 1758263805,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140746439,
-    "post_id" : 79769111,
-    "body" : "@AbhijitSarkar It is a legacy system and your data is interesting.",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 21188558,
-      "reputation" : 22,
-      "user_id" : 15581449,
-      "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/f884da35440e8c3141797a5dcb6231b8?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "handsomeboy",
-      "link" : "https://stackoverflow.com/users/15581449/handsomeboy"
-    },
-    "creation_date" : 1758263552,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140746435,
-    "post_id" : 79769111,
-    "body" : "The original version of the question showed the count being <code>1</code> in both logs.",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 39208,
-      "reputation" : 269277,
-      "user_id" : 112968,
-      "user_type" : "registered",
-      "accept_rate" : 68,
-      "profile_image" : "https://i.sstatic.net/zHTaT.png?s=256",
-      "display_name" : "knittl",
-      "link" : "https://stackoverflow.com/users/112968/knittl"
-    },
-    "creation_date" : 1758263514,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140746429,
-    "post_id" : 79769111,
-    "body" : "@knittl see the comment above, thank you.",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 21188558,
-      "reputation" : 22,
-      "user_id" : 15581449,
-      "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/f884da35440e8c3141797a5dcb6231b8?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "handsomeboy",
-      "link" : "https://stackoverflow.com/users/15581449/handsomeboy"
-    },
-    "creation_date" : 1758263394,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140746423,
-    "post_id" : 79769111,
-    "body" : "@JeremyHunt Thank you for your advice. I have logged this,this.hashCode() and Thread.currentThread(),they are the same. Beside, the I have logged  the variable &#39;count&#39; it is different, so it is not appenders  causing this.",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 21188558,
-      "reputation" : 22,
-      "user_id" : 15581449,
-      "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/f884da35440e8c3141797a5dcb6231b8?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "handsomeboy",
-      "link" : "https://stackoverflow.com/users/15581449/handsomeboy"
-    },
-    "creation_date" : 1758263208,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140746391,
-    "post_id" : 79769111,
-    "body" : "@knittl A recent survey showed that 29% of applications using Java are still on Java 8 (released in 2014), so, ...",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 446597,
-      "reputation" : 25249,
-      "user_id" : 839733,
-      "user_type" : "registered",
-      "accept_rate" : 69,
-      "profile_image" : "https://i.sstatic.net/2s6lO.jpg?s=256",
-      "display_name" : "Abhijit Sarkar",
-      "link" : "https://stackoverflow.com/users/839733/abhijit-sarkar"
-    },
-    "creation_date" : 1758261835,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140746387,
-    "post_id" : 79769111,
-    "body" : "Adding a random ID to each log line can help confirm Jeremy&#39;s assumption of two log appenders writing the same log line twice",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 39208,
-      "reputation" : 269277,
-      "user_id" : 112968,
-      "user_type" : "registered",
-      "accept_rate" : 68,
-      "profile_image" : "https://i.sstatic.net/zHTaT.png?s=256",
-      "display_name" : "knittl",
-      "link" : "https://stackoverflow.com/users/112968/knittl"
-    },
-    "creation_date" : 1758261675,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140746385,
-    "post_id" : 79769111,
-    "body" : "You could log <code>this</code> and see if its the same instance in both log entries. If they are different instances, check your Spring configuration (Component scanning). If they are the same instance, is it possible that it&#39;s a duplicate log entry - perhaps you have multiple appenders writing to the place you&#39;re sending the logs.",
-    "score" : 2,
-    "owner" : {
-      "account_id" : 12922445,
-      "reputation" : 724,
-      "user_id" : 9344362,
-      "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/41e439d0216922429effa80331a654de?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "Jeremy Hunt",
-      "link" : "https://stackoverflow.com/users/9344362/jeremy-hunt"
-    },
-    "creation_date" : 1758261556,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140746382,
-    "post_id" : 79769111,
-    "body" : "Also, why are you using Spring Boot 1.5.9 from <i>2017</i> (8! years! old!)?",
-    "score" : 3,
-    "owner" : {
-      "account_id" : 39208,
-      "reputation" : 269277,
-      "user_id" : 112968,
-      "user_type" : "registered",
-      "accept_rate" : 68,
-      "profile_image" : "https://i.sstatic.net/zHTaT.png?s=256",
-      "display_name" : "knittl",
-      "link" : "https://stackoverflow.com/users/112968/knittl"
-    },
-    "creation_date" : 1758261316,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140746378,
-    "post_id" : 79769111,
-    "body" : "It sounds like you have two listeners. What is the time of the logs and which instance is logging?",
-    "score" : 1,
-    "owner" : {
-      "account_id" : 39208,
-      "reputation" : 269277,
-      "user_id" : 112968,
-      "user_type" : "registered",
-      "accept_rate" : 68,
-      "profile_image" : "https://i.sstatic.net/zHTaT.png?s=256",
-      "display_name" : "knittl",
-      "link" : "https://stackoverflow.com/users/112968/knittl"
-    },
-    "creation_date" : 1758261222,
+    "creation_date" : 1758808592,
     "content_license" : "CC BY-SA 4.0"
   } ],
-  "answer_comments" : {
-    "79769277" : [ {
-      "comment_id" : 140785358,
-      "post_id" : 79769277,
-      "body" : "@AbhijitSarkar Through debugging, I found that the code is reentered, and all entries are via the main thread. This might be related to the content of my code. I obtained the ServletContext through ApplicationContext, then retrieved all filters in the servlet container, and subsequently obtained all HandlerInterceptors via reflection. I don&#39;t understand why multiple events are entering the code through the main thread.  Do you know why this happen.Thank you.",
-      "score" : 0,
-      "owner" : {
-        "account_id" : 21188558,
-        "reputation" : 22,
-        "user_id" : 15581449,
-        "user_type" : "registered",
-        "profile_image" : "https://www.gravatar.com/avatar/f884da35440e8c3141797a5dcb6231b8?s=256&d=identicon&r=PG&f=y&so-version=2",
-        "display_name" : "handsomeboy",
-        "link" : "https://stackoverflow.com/users/15581449/handsomeboy"
-      },
-      "creation_date" : 1759980702,
-      "content_license" : "CC BY-SA 4.0"
-    }, {
-      "comment_id" : 140746983,
-      "post_id" : 79769277,
-      "body" : "Yes! Set executed in a finally block to guarantee its execution. <code>try { log } catch { … } finally { executed = true; }</code>",
-      "score" : 0,
-      "owner" : {
-        "account_id" : 39208,
-        "reputation" : 269277,
-        "user_id" : 112968,
-        "user_type" : "registered",
-        "accept_rate" : 68,
-        "profile_image" : "https://i.sstatic.net/zHTaT.png?s=256",
-        "display_name" : "knittl",
-        "link" : "https://stackoverflow.com/users/112968/knittl"
-      },
-      "creation_date" : 1758278413,
-      "content_license" : "CC BY-SA 4.0"
-    }, {
-      "comment_id" : 140746794,
-      "post_id" : 79769277,
-      "body" : "@AbhijitSarkar The question is not asking why is the method called more than once, but rather it just tells us that it is, and an attempt is made to <code>return</code> early on invocations after the first, but this isn&#39;t working. This answer gives the likely reason.",
-      "score" : 1,
-      "owner" : {
-        "account_id" : 12922445,
-        "reputation" : 724,
-        "user_id" : 9344362,
-        "user_type" : "registered",
-        "profile_image" : "https://www.gravatar.com/avatar/41e439d0216922429effa80331a654de?s=256&d=identicon&r=PG&f=y&so-version=2",
-        "display_name" : "Jeremy Hunt",
-        "link" : "https://stackoverflow.com/users/9344362/jeremy-hunt"
-      },
-      "creation_date" : 1758274058,
-      "content_license" : "CC BY-SA 4.0"
-    }, {
-      "comment_id" : 140746701,
-      "post_id" : 79769277,
-      "body" : "This doesn’t answer the question why is the code invoked more than once. Ironically, as shown in my answer, there’s no such guarantee at all.",
-      "score" : 1,
-      "owner" : {
-        "account_id" : 446597,
-        "reputation" : 25249,
-        "user_id" : 839733,
-        "user_type" : "registered",
-        "accept_rate" : 69,
-        "profile_image" : "https://i.sstatic.net/2s6lO.jpg?s=256",
-        "display_name" : "Abhijit Sarkar",
-        "link" : "https://stackoverflow.com/users/839733/abhijit-sarkar"
-      },
-      "creation_date" : 1758271680,
-      "content_license" : "CC BY-SA 4.0"
-    } ],
-    "79769261" : [ {
-      "comment_id" : 140785365,
-      "post_id" : 79769261,
-      "body" : "great! Here is my latest discovering. Through debugging, I found that the code is reentered, and all entries are via the main thread. This might be related to the content of my code. I obtained the ServletContext through ApplicationContext, then retrieved all filters in the servlet container, and subsequently obtained all HandlerInterceptors via reflection. I don&#39;t understand why multiple events are entering the code through the main thread.  Do you know why this happen.Thank you.",
-      "score" : 0,
-      "owner" : {
-        "account_id" : 21188558,
-        "reputation" : 22,
-        "user_id" : 15581449,
-        "user_type" : "registered",
-        "profile_image" : "https://www.gravatar.com/avatar/f884da35440e8c3141797a5dcb6231b8?s=256&d=identicon&r=PG&f=y&so-version=2",
-        "display_name" : "handsomeboy",
-        "link" : "https://stackoverflow.com/users/15581449/handsomeboy"
-      },
-      "creation_date" : 1759980834,
-      "content_license" : "CC BY-SA 4.0"
-    }, {
-      "comment_id" : 140746795,
-      "post_id" : 79769261,
-      "body" : "The question is not asking why is the method called more than once, but rather it just tells us that it is, and an attempt is made to <code>return</code> early on invocations after the first, but this isn&#39;t working. This answer doesn&#39;t address why that might be the case.",
-      "score" : 1,
-      "owner" : {
-        "account_id" : 12922445,
-        "reputation" : 724,
-        "user_id" : 9344362,
-        "user_type" : "registered",
-        "profile_image" : "https://www.gravatar.com/avatar/41e439d0216922429effa80331a654de?s=256&d=identicon&r=PG&f=y&so-version=2",
-        "display_name" : "Jeremy Hunt",
-        "link" : "https://stackoverflow.com/users/9344362/jeremy-hunt"
-      },
-      "creation_date" : 1758274091,
-      "content_license" : "CC BY-SA 4.0"
-    }, {
-      "comment_id" : 140746694,
-      "post_id" : 79769261,
-      "body" : "@JeremyHunt Yes, this answers the question asked. As stated, the context refresh event isn’t guaranteed to have exactly-once semantics, so, “why is my code called twice” isn’t a problem to be solved.",
-      "score" : 1,
-      "owner" : {
-        "account_id" : 446597,
-        "reputation" : 25249,
-        "user_id" : 839733,
-        "user_type" : "registered",
-        "accept_rate" : 69,
-        "profile_image" : "https://i.sstatic.net/2s6lO.jpg?s=256",
-        "display_name" : "Abhijit Sarkar",
-        "link" : "https://stackoverflow.com/users/839733/abhijit-sarkar"
-      },
-      "creation_date" : 1758271550,
-      "content_license" : "CC BY-SA 4.0"
-    }, {
-      "comment_id" : 140746648,
-      "post_id" : 79769261,
-      "body" : "In my opinion, this doesn&#39;t answer the question because in the original code there is already an attempt to handle the possibility of being run more than once. The <code>volatile</code> flag and <code>synchronized</code> block are already used in much the same way you are suggesting, and the asker wants to know why it hasn&#39;t worked.",
-      "score" : 1,
-      "owner" : {
-        "account_id" : 12922445,
-        "reputation" : 724,
-        "user_id" : 9344362,
-        "user_type" : "registered",
-        "profile_image" : "https://www.gravatar.com/avatar/41e439d0216922429effa80331a654de?s=256&d=identicon&r=PG&f=y&so-version=2",
-        "display_name" : "Jeremy Hunt",
-        "link" : "https://stackoverflow.com/users/9344362/jeremy-hunt"
-      },
-      "creation_date" : 1758269901,
-      "content_license" : "CC BY-SA 4.0"
-    } ]
-  }
+  "answer_comments" : { }
 }

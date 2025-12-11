@@ -1,166 +1,82 @@
 {
   "question" : {
-    "question_id" : 79775491,
-    "title" : "How to insert runtime values into java @interface annotation field?",
-    "body" : "<pre class=\"lang-java prettyprint-override\"><code>@Service\npublic class MyService {\n\n     @Value(&quot;${x.y.z.value}&quot;)\n     private int value;\n\n     @SomeService(\n       service = &quot;XYZ&quot;,\n       dynamicValue = value\n     )\n     public &lt;Some_Object&gt; getSomethingAfterSomeOperation() {\n       return &lt;Some_Object&gt;;\n     }\n}\n</code></pre>\n<p>In my Service class(it is a Spring Boot project), I am reading a value from a YAML file and injecting it into a field <code>value</code> using the <code>@Value</code> annotation.</p>\n<p>On setting the attribute <code>dynamicValue</code> to <code>value</code> which is read from the YAML file, the compiler complains that <em>&quot;Attribute value must be constant&quot;</em>. I know it expects a compile time constant value, but is there any way to insert a runtime value here? Could you please suggest a workaround or anything for this? I have looked everywhere but I am not able to find a way to make this work. The <code>@SomeService</code> is an <code>@interface</code> annotation which has two fields: <code>service</code> takes a string value while <code>dynamicValue</code> accepts an integer. The retention policy is set to <code>RUNTIME</code> in the <code>@SomeService</code> annotation.</p>\n",
-    "tags" : [ "java", "spring-boot" ],
+    "question_id" : 79781962,
+    "title" : "Any way to check a cast to a generic?",
+    "body" : "<p>I am working on a Spring Boot application and there I use JWE - tokens. When generating these tokens I serialize a given DTO. As an example, the generation of an AccessToken looks like this:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public Jwe generateAccessToken(AccessTokenDto dto) throws Exception {\n    return generateToken(\n            dto.getId().toString(),\n            Map.of(\n                    &quot;dto&quot;, dto,\n                    &quot;dtoClassName&quot;, dto.getClass().getName()\n            ),\n            config.getAccessTokenExpiration()\n    );\n}\n\nprivate Jwe generateToken(String subject, Map&lt;String, Object&gt; claims, long expiration) throws Exception {\n    var claimSetBuilder = new JWTClaimsSet.Builder()\n        .subject(subject)\n        .issuer(config.getIssuer())\n        .issueTime(new Date())\n        .expirationTime(new Date(System.currentTimeMillis() + 1000 * expiration));\n    for (Map.Entry&lt;String, Object&gt; claimEntry : claims.entrySet()) {\n        if (claimEntry.getValue() instanceof String value) {\n            claimSetBuilder.claim(claimEntry.getKey(), value);\n        } else {\n            claimSetBuilder.claim(claimEntry.getKey(), serialise(claimEntry.getValue()));\n        }\n    }\n    return new Jwe(\n            claimSetBuilder.build(),\n            config.signingKey(),\n            config.encryptionKey()\n    );\n}\n\nprivate String serialise(Object dto) throws IOException {\n    ByteArrayOutputStream baos = new ByteArrayOutputStream();\n    ObjectOutputStream oos = new ObjectOutputStream(baos);\n    oos.writeObject(dto);\n    oos.close();\n    return Base64.getEncoder().encodeToString(baos.toByteArray());\n}\n</code></pre>\n<p>while the AccessTokenDto itself looks like this:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Data\npublic class AccessTokenDto implements Serializable {\n    @ValidUserId\n    private UUID id;\n    @ValidUserRole\n    private Role role;\n}\n</code></pre>\n<p>When I later want to get from a already, successfully parsed Jwe, I use these three methods:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public &lt;T&gt; T toDto() throws IOException {\n    Class&lt;T&gt; type = (Class&lt;T&gt;) getDtoClass();\n    Object deserializedDto = deserialize();\n    if (!type.isInstance(deserializedDto)) {\n        return null;\n    }\n    return type.cast(deserializedDto);\n}\n\nprivate Class&lt;?&gt; getDtoClass() throws IOException {\n    String className = (String) claims.getClaim(&quot;dtoClassName&quot;);\n    Class&lt;?&gt; type = null;\n    try {\n        type = Class.forName(className);\n    } catch (ClassNotFoundException e) {\n        throw new IOException(&quot;When deserialzing Token - No Class with Name: &quot; + className);\n    }\n    return type;\n}\n\nprivate Object deserialize() {\n    Object serializedDto = claims.getClaim(&quot;dto&quot;);\n    if (!(serializedDto instanceof String)) {\n        return null;\n    }\n    byte[] data = Base64.getDecoder().decode(serializedDto.toString());\n    try {\n        ObjectInputStream ois = new ObjectInputStream(new ByteArrayInputStream(data));\n        Object obj = ois.readObject();\n        ois.close();\n        return obj;\n    } catch (Exception e) {\n        System.out.println(&quot;Error while deserializing token&quot;);\n    }\n    return null;\n}\n</code></pre>\n<p>I know this code works and I also know that there shouldn't be a problem since the &quot;dtoClassName&quot; claim is allays set correctly when generating a token. (As long as I code the method to generate the tokens right.) But IntelliJ gives a warning about an unchecked cast, which I would like to get rid of.</p>\n<p>How do I safely cast to the generic in the first line of this method?</p>\n<pre class=\"lang-java prettyprint-override\"><code>public &lt;T&gt; T toDto() throws IOException {\n    Class&lt;T&gt; type = (Class&lt;T&gt;) getDtoClass();\n    Object deserializedDto = deserialize();\n    if (!type.isInstance(deserializedDto)) {\n        return null;\n    }\n    return type.cast(deserializedDto);\n}\n</code></pre>\n<p>My attempts for a solution/workaround:</p>\n<p>I experimented a bit with Optionals</p>\n<pre class=\"lang-java prettyprint-override\"><code>public Optional&lt;?&gt; toDto() {\n\n    Class&lt;?&gt; targetType = getDtoClass();\n    Object deserializedDto = deserialize();\n    if (!targetType.isInstance(deserializedDto)) {\n        return Optional.empty();\n    }\n    return Optional.of(targetType.cast(deserializedDto));\n}\n</code></pre>\n<p>to work around the problem, but that did not go well since I wanted to be able to access the methods of the DTO, and that was not possible.</p>\n<p>Then I searched for ways to check the cast and found the <code>isAssignableFrom(Class&lt;T&gt; class)</code> method, but I could not get it to work. I also tried ways of using <code>isInstance</code>, but that led to nothing.</p>\n<p>I read somewhere that such a scenario can not be checked because it is a compile time issue, not a runtime issue, but I am not sure.</p>\n",
+    "tags" : [ "java", "spring-boot", "generics", "jwt", "jwe" ],
     "owner" : {
-      "account_id" : 4727528,
-      "reputation" : 31,
-      "user_id" : 3824001,
+      "account_id" : 41950885,
+      "reputation" : 33,
+      "user_id" : 30525100,
       "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/a47c1164f5b3eace0ea1085684e6a9ee?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "user3824001",
-      "link" : "https://stackoverflow.com/users/3824001/user3824001"
+      "profile_image" : "https://www.gravatar.com/avatar/c5f0b09a8c76e317d2bcc6ee0dd19cee?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "LaggyLogic",
+      "link" : "https://stackoverflow.com/users/30525100/laggylogic"
     },
     "is_answered" : true,
-    "view_count" : 114,
+    "view_count" : 107,
     "answer_count" : 2,
-    "score" : 1,
-    "last_activity_date" : 1758915335,
-    "creation_date" : 1758863845,
-    "link" : "https://stackoverflow.com/questions/79775491/how-to-insert-runtime-values-into-java-interface-annotation-field",
+    "score" : 3,
+    "last_activity_date" : 1759593739,
+    "creation_date" : 1759507755,
+    "link" : "https://stackoverflow.com/questions/79781962/any-way-to-check-a-cast-to-a-generic",
     "content_license" : "CC BY-SA 4.0"
   },
   "answers" : [ {
-    "answer_id" : 79776320,
-    "question_id" : 79775491,
-    "body" : "<p>Unfortunately, you <strong>can’t put a runtime value directly into a Java annotation</strong>, because annotation fields must be compile-time constants. A common approach is to put a placeholder string in the annotation, like <code>dynamicValue = &quot;${x.y.z.value}&quot;</code>, and then resolve it at runtime using Spring’s <code>Environment</code>.</p>\n<pre class=\"lang-java prettyprint-override\"><code>String resolved = env.resolvePlaceholders(ann.dynamicValue());\nint value = Integer.parseInt(resolved);\n</code></pre>\n<p>The catch is that this only works if the code processing the annotation has access to the YAML or properties. If it doesn’t (for example, in a separate JAR), there’s really no practical way to do it. In that case, it’s usually better to pass the value through a Spring bean or configuration class instead of trying to cram it into an annotation.</p>\n",
-    "score" : 1,
-    "is_accepted" : true,
-    "owner" : {
-      "account_id" : 27420278,
-      "reputation" : 26,
-      "user_id" : 20918828,
-      "user_type" : "registered",
-      "profile_image" : "https://lh3.googleusercontent.com/a/AEdFTp4olL-AmAmtjt_VIeHg-2iAJMXewVk2eBPvRngdZJE=k-s256",
-      "display_name" : "Hrithik Jagwani",
-      "link" : "https://stackoverflow.com/users/20918828/hrithik-jagwani"
-    },
-    "creation_date" : 1758915335,
-    "last_activity_date" : 1758915335,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "answer_id" : 79775692,
-    "question_id" : 79775491,
-    "body" : "<p>You put expression as value</p>\n<pre><code>     @SomeService(\n       service = &quot;XYZ&quot;,\n       dynamicValue = &quot;${x.y.z.value}&quot;\n     )\n</code></pre>\n<p>Whoever process <code>@SomeService</code> have to deal with it.</p>\n",
-    "score" : 0,
+    "answer_id" : 79781991,
+    "question_id" : 79781962,
+    "body" : "<p>There is nothing you can do to make that cast checked.  You must suppress the exception or accept the warning.</p>\n",
+    "score" : 3,
     "is_accepted" : false,
     "owner" : {
-      "account_id" : 4497436,
-      "reputation" : 20786,
-      "user_id" : 3656904,
+      "account_id" : 465573,
+      "reputation" : 200423,
+      "user_id" : 869736,
       "user_type" : "registered",
-      "accept_rate" : 67,
-      "profile_image" : "https://www.gravatar.com/avatar/8bdbd1f89f8907e8e8b15ab88c084c65?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "talex",
-      "link" : "https://stackoverflow.com/users/3656904/talex"
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/ae7bb06b9a23a4dd7eea69e853d47d12?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Louis Wasserman",
+      "link" : "https://stackoverflow.com/users/869736/louis-wasserman"
     },
-    "creation_date" : 1758878130,
-    "last_activity_date" : 1758878130,
+    "creation_date" : 1759510088,
+    "last_activity_date" : 1759510088,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79782020,
+    "question_id" : 79781962,
+    "body" : "<blockquote>\n<p>So what this question really is about is how to safely cast</p>\n</blockquote>\n<p>In the context of type safety and generics, &quot;safely cast&quot; is an oxymoron.  Type safety is about the compiler being able to prove the safety of type conversions at build time.  A cast is what you fall back on when you want to perform a conversion whose safety is contingent on information that is not available to or not recognized by the compiler. Such conversions are unsafe by definition.</p>\n<p>And please do not think that I am nitpicking your terminology.  Considering your</p>\n<blockquote>\n<pre><code>        Class&lt;T&gt; type = (Class&lt;T&gt;) getDtoClass();\n</code></pre>\n</blockquote>\n<p>, the <code>getDtoClass()</code> method returns a <code>Class&lt;?&gt;</code>.  In that case,  if the conversion is in fact safe in a broad sense then imputing class parameter <code>T</code> to the result is a perfect example of performing a type conversion whose safety is contingent on information that is not available to the compiler. If the compiler doesn't have the needed information then it doesn't have it.  Other than doing without, which doesn't seem viable for you, there can be no typesafe workaround for that.</p>\n",
+    "score" : 3,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 2792262,
+      "reputation" : 190832,
+      "user_id" : 2402272,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+      "display_name" : "John Bollinger",
+      "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+    },
+    "creation_date" : 1759512227,
+    "last_activity_date" : 1759514267,
     "content_license" : "CC BY-SA 4.0"
   } ],
   "question_comments" : [ {
-    "comment_id" : 140761254,
-    "post_id" : 79775491,
-    "body" : "Interfaces expect constants.  Not really sure if this can be done even with Reflection, and even if it can be done, it is not meant for Production, and its behaviour is not constant, because the JVM could cache the values.  Can you change it into a configuration class instead of an interrface?",
+    "comment_id" : 140776081,
+    "post_id" : 79781962,
+    "body" : "Tangentially related: <a href=\"https://stackoverflow.com/q/509076/12567365\">How do I address unchecked cast warnings?</a> (<code>@SuppressWarnings(&quot;unchecked&quot;)</code>)",
     "score" : 1,
     "owner" : {
-      "account_id" : 9504657,
-      "reputation" : 8623,
-      "user_id" : 7064617,
+      "account_id" : 12743722,
+      "reputation" : 22621,
+      "user_id" : 12567365,
       "user_type" : "registered",
-      "profile_image" : "https://i.sstatic.net/Q17Fg.png?s=256",
-      "display_name" : "jcompetence",
-      "link" : "https://stackoverflow.com/users/7064617/jcompetence"
+      "profile_image" : "https://i.sstatic.net/zNR3x.png?s=256",
+      "display_name" : "andrewJames",
+      "link" : "https://stackoverflow.com/users/12567365/andrewjames"
     },
-    "creation_date" : 1758873844,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140761059,
-    "post_id" : 79775491,
-    "body" : "The application I am working on has harcoded values in the application. We are trying to externalize the configuration value.",
-    "score" : 0,
-    "owner" : {
-      "account_id" : 4727528,
-      "reputation" : 31,
-      "user_id" : 3824001,
-      "user_type" : "registered",
-      "profile_image" : "https://www.gravatar.com/avatar/a47c1164f5b3eace0ea1085684e6a9ee?s=256&d=identicon&r=PG&f=y&so-version=2",
-      "display_name" : "user3824001",
-      "link" : "https://stackoverflow.com/users/3824001/user3824001"
-    },
-    "creation_date" : 1758868569,
-    "content_license" : "CC BY-SA 4.0"
-  }, {
-    "comment_id" : 140760962,
-    "post_id" : 79775491,
-    "body" : "No, it’s not possible. Why do you need/want to pass the value like this instead of just passing it normally?",
-    "score" : 3,
-    "owner" : {
-      "account_id" : 2020478,
-      "reputation" : 31412,
-      "user_id" : 1806780,
-      "user_type" : "registered",
-      "accept_rate" : 0,
-      "profile_image" : "https://i.sstatic.net/NCB41.jpg?s=256",
-      "display_name" : "Sami Kuhmonen",
-      "link" : "https://stackoverflow.com/users/1806780/sami-kuhmonen"
-    },
-    "creation_date" : 1758865607,
+    "creation_date" : 1759520133,
     "content_license" : "CC BY-SA 4.0"
   } ],
-  "answer_comments" : {
-    "79775692" : [ {
-      "comment_id" : 140762581,
-      "post_id" : 79775692,
-      "body" : "@user3824001 Do you mean that the YAML file isn&#39;t packaged with the application <i>at all</i>?  It shouldn&#39;t need to be specifically in the same JAR as the annotated class (or at least you have control over that).  If the YAML is not packaged with the application then what you&#39;re trying to do is not data externalization in the conventional sense.  It would be better characterized as <i>code generation</i>.",
-      "score" : 0,
-      "owner" : {
-        "account_id" : 2792262,
-        "reputation" : 190712,
-        "user_id" : 2402272,
-        "user_type" : "registered",
-        "accept_rate" : 85,
-        "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
-        "display_name" : "John Bollinger",
-        "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
-      },
-      "creation_date" : 1758912031,
-      "content_license" : "CC BY-SA 4.0"
-    }, {
-      "comment_id" : 140761454,
-      "post_id" : 79775692,
-      "body" : "@user3824001 Then there is no practical way to do it.",
-      "score" : 0,
-      "owner" : {
-        "account_id" : 4497436,
-        "reputation" : 20786,
-        "user_id" : 3656904,
-        "user_type" : "registered",
-        "accept_rate" : 67,
-        "profile_image" : "https://www.gravatar.com/avatar/8bdbd1f89f8907e8e8b15ab88c084c65?s=256&d=identicon&r=PG&f=y&so-version=2",
-        "display_name" : "talex",
-        "link" : "https://stackoverflow.com/users/3656904/talex"
-      },
-      "creation_date" : 1758880021,
-      "content_license" : "CC BY-SA 4.0"
-    }, {
-      "comment_id" : 140761446,
-      "post_id" : 79775692,
-      "body" : "It is being read in a different jar that does not have access to the yaml file with &#39;x.y.z.value&#39; exposed to it. The value needs to be passed here itself from the yaml file.",
-      "score" : 0,
-      "owner" : {
-        "account_id" : 4727528,
-        "reputation" : 31,
-        "user_id" : 3824001,
-        "user_type" : "registered",
-        "profile_image" : "https://www.gravatar.com/avatar/a47c1164f5b3eace0ea1085684e6a9ee?s=256&d=identicon&r=PG&f=y&so-version=2",
-        "display_name" : "user3824001",
-        "link" : "https://stackoverflow.com/users/3824001/user3824001"
-      },
-      "creation_date" : 1758879826,
-      "content_license" : "CC BY-SA 4.0"
-    } ]
-  }
+  "answer_comments" : { }
 }
