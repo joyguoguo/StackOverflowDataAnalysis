@@ -31,6 +31,9 @@ public class CommentEntity {
     @Column(name = "creation_date")
     private Instant creationDate;
 
+    @Column(name = "content_license", length = 100)
+    private String contentLicense;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "owner_account_id", referencedColumnName = "account_id")
     private UserEntity owner;
@@ -104,6 +107,14 @@ public class CommentEntity {
 
     public void setCreationDate(Instant creationDate) {
         this.creationDate = creationDate;
+    }
+
+    public String getContentLicense() {
+        return contentLicense;
+    }
+
+    public void setContentLicense(String contentLicense) {
+        this.contentLicense = contentLicense;
     }
 
     public UserEntity getOwner() {

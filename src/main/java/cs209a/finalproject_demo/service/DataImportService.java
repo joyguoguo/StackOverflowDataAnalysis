@@ -50,7 +50,10 @@ public class DataImportService {
      * 从指定目录导入所有 JSON 文件到数据库
      */
     public ImportResult importFromDirectory(String directoryPath) {
+        long startTime = System.currentTimeMillis();
+        log.info("========================================");
         log.info("Starting data import from directory: {}", directoryPath);
+        log.info("========================================");
         
         ImportResult result = new ImportResult();
         Path folderPath = Paths.get(directoryPath);
@@ -69,26 +72,43 @@ public class DataImportService {
                     .toList();
 
             log.info("Found {} JSON files to import", jsonFiles.size());
+            log.info("Starting import process...");
 
+            int processedCount = 0;
             for (Path jsonFile : jsonFiles) {
+                processedCount++;
                 try {
                     Optional<QuestionThread> threadOpt = fileLoader.load(jsonFile);
                     if (threadOpt.isPresent()) {
-                        importThread(threadOpt.get());
+                        QuestionThread thread = threadOpt.get();
+                        log.debug("Processing file {}/{}: {}", processedCount, jsonFiles.size(), jsonFile.getFileName());
+                        importThread(thread);
                         result.incrementSuccess();
+                        
+                        // 每10个文件输出一次进度
+                        if (processedCount % 10 == 0) {
+                            log.info("Progress: {}/{} files processed (Success: {}, Failed: {}, Skipped: {})", 
+                                    processedCount, jsonFiles.size(), 
+                                    result.getSuccessCount(), result.getFailedCount(), result.getSkippedCount());
+                        }
                     } else {
                         result.incrementSkipped();
-                        log.warn("Failed to load thread from: {}", jsonFile);
+                        log.warn("Failed to load thread from: {} (file {}/{})", jsonFile.getFileName(), processedCount, jsonFiles.size());
                     }
                 } catch (Exception e) {
                     result.incrementFailed();
-                    result.addError("Failed to import " + jsonFile.getFileName() + ": " + e.getMessage());
-                    log.error("Error importing {}: {}", jsonFile, e.getMessage(), e);
+                    String errorMsg = "Failed to import " + jsonFile.getFileName() + ": " + e.getMessage();
+                    result.addError(errorMsg);
+                    log.error("Error importing {} (file {}/{}): {}", jsonFile.getFileName(), processedCount, jsonFiles.size(), e.getMessage(), e);
                 }
             }
 
-            log.info("Import completed. Success: {}, Failed: {}, Skipped: {}", 
+            long duration = System.currentTimeMillis() - startTime;
+            log.info("========================================");
+            log.info("Import completed in {} seconds", duration / 1000.0);
+            log.info("Summary: Success: {}, Failed: {}, Skipped: {}", 
                     result.getSuccessCount(), result.getFailedCount(), result.getSkippedCount());
+            log.info("========================================");
 
         } catch (Exception e) {
             log.error("Error reading directory: {}", e.getMessage(), e);
@@ -103,13 +123,37 @@ public class DataImportService {
      */
     @Transactional
     public void clearAllData() {
+        log.info("========================================");
+        log.info("Clearing all existing data...");
+        log.info("========================================");
+        
         // 删除顺序需遵守外键依赖：先删子表后删父表
+        long commentCount = commentRepository.count();
+        long answerCount = answerRepository.count();
+        long questionCount = questionRepository.count();
+        long tagCount = tagRepository.count();
+        long userCount = userRepository.count();
+        
+        log.info("Current data counts - Comments: {}, Answers: {}, Questions: {}, Tags: {}, Users: {}", 
+                commentCount, answerCount, questionCount, tagCount, userCount);
+        
         commentRepository.deleteAllInBatch();
+        log.info("Deleted {} comments", commentCount);
+        
         answerRepository.deleteAllInBatch();
+        log.info("Deleted {} answers", answerCount);
+        
         questionRepository.deleteAllInBatch();
+        log.info("Deleted {} questions", questionCount);
+        
         tagRepository.deleteAllInBatch();
+        log.info("Deleted {} tags", tagCount);
+        
         userRepository.deleteAllInBatch();
-        log.info("All existing data cleared before import.");
+        log.info("Deleted {} users", userCount);
+        
+        log.info("All existing data cleared successfully.");
+        log.info("========================================");
     }
 
     /**
@@ -122,11 +166,16 @@ public class DataImportService {
         var questionComments = thread.questionComments();
         var answerComments = thread.answerComments();
 
+        long questionId = question.id();
+        log.debug("Importing thread: question_id={}, title={}", questionId, question.title());
+
         // 1. 导入或获取用户
         UserEntity owner = importOrGetUser(question.owner());
+        log.trace("Imported/retrieved user: account_id={}", owner.getAccountId());
 
         // 2. 导入或获取标签
         List<TagEntity> tags = importTags(question.tags());
+        log.trace("Imported {} tags for question {}", tags.size(), questionId);
 
         // 3. 创建问题实体
         QuestionEntity questionEntity = new QuestionEntity();
@@ -142,48 +191,79 @@ public class DataImportService {
         questionEntity.setAcceptedAnswerId(question.acceptedAnswerId() != null ? 
                 question.acceptedAnswerId().longValue() : null);
         questionEntity.setViewCount(question.viewCount());
+        questionEntity.setLink(question.link());
+        questionEntity.setClosedDate(question.closedDateEpoch() == null ? null : Instant.ofEpochSecond(question.closedDateEpoch()));
+        questionEntity.setClosedReason(question.closedReason());
+        questionEntity.setContentLicense(question.contentLicense());
         questionEntity.setOwner(owner);
         questionEntity.setTags(tags);
 
         // 保存问题
         questionRepository.save(questionEntity);
+        log.debug("Saved question: question_id={}", questionId);
 
         // 4. 导入回答
+        int answerCount = 0;
+        int answerCommentCount = 0;
         for (var answer : answers) {
+            answerCount++;
             UserEntity answerOwner = importOrGetUser(answer.owner());
             AnswerEntity answerEntity = new AnswerEntity();
             answerEntity.setAnswerId(answer.id());
             answerEntity.setQuestion(questionEntity);
-            // 样本回答通常无正文，保持为空。若模型扩展包含 body，再写入。
-            answerEntity.setBody(null);
+            // 写入回答正文（若数据为空则保存为空字符串）
+            answerEntity.setBody(answer.body());
             answerEntity.setScore(answer.score());
             answerEntity.setAccepted(answer.accepted());
             answerEntity.setCreationDate(Instant.ofEpochSecond(answer.creationDateEpoch()));
+            answerEntity.setLastActivityDate(answer.lastActivityDateEpoch() != null ? 
+                    Instant.ofEpochSecond(answer.lastActivityDateEpoch()) : null);
+            answerEntity.setContentLicense(answer.contentLicense());
             answerEntity.setOwner(answerOwner);
             
             answerRepository.save(answerEntity);
             questionEntity.getAnswers().add(answerEntity);
+            log.trace("Saved answer: answer_id={} for question_id={}", answer.id(), questionId);
 
             // 导入回答的评论
-            List<cs209a.finalproject_demo.model.Comment> comments = answerComments.getOrDefault(answer.id(), List.of());
-            for (var comment : comments) {
+            List<cs209a.finalproject_demo.model.Comment> answerCommentList = answerComments.getOrDefault(answer.id(), List.of());
+            if (!answerCommentList.isEmpty()) {
+                log.debug("Importing {} comments for answer {} (question_id={})", answerCommentList.size(), answer.id(), questionId);
+            }
+            for (var comment : answerCommentList) {
                 importComment(comment, questionEntity, answerEntity);
+                answerCommentCount++;
             }
         }
 
         // 5. 导入问题的评论
+        int questionCommentCount = questionComments.size();
+        if (questionCommentCount > 0) {
+            log.debug("Importing {} comments for question {}", questionCommentCount, questionId);
+        }
         for (var comment : questionComments) {
             importComment(comment, questionEntity, null);
         }
 
         // 保存更新后的问题（包含关联）
         questionRepository.save(questionEntity);
+        
+        log.debug("Completed importing thread: question_id={}, answers={}, question_comments={}, answer_comments={}", 
+                questionId, answerCount, questionCommentCount, answerCommentCount);
     }
 
     private UserEntity importOrGetUser(cs209a.finalproject_demo.model.Author author) {
         Optional<UserEntity> existing = userRepository.findByAccountId(author.accountId());
         if (existing.isPresent()) {
-            return existing.get();
+            UserEntity user = existing.get();
+            // 更新可为空的补充信息
+            user.setDisplayName(author.displayName());
+            user.setReputation(author.reputation());
+            user.setUserId(author.userId());
+            user.setUserType(author.userType());
+            user.setProfileImage(author.profileImage());
+            user.setLink(author.link());
+            return userRepository.save(user);
         }
 
         UserEntity user = new UserEntity();
@@ -192,6 +272,8 @@ public class DataImportService {
         user.setDisplayName(author.displayName());
         user.setReputation(author.reputation());
         user.setUserType(author.userType());
+        user.setProfileImage(author.profileImage());
+        user.setLink(author.link());
         return userRepository.save(user);
     }
 
@@ -212,8 +294,10 @@ public class DataImportService {
 
     private void importComment(cs209a.finalproject_demo.model.Comment comment, 
                               QuestionEntity question, AnswerEntity answer) {
+        // 检查是否已存在（使用comment_id作为主键）
         Optional<CommentEntity> existing = commentRepository.findByCommentId(comment.id());
         if (existing.isPresent()) {
+            log.trace("Comment {} already exists, skipping", comment.id());
             return; // 已存在，跳过
         }
 
@@ -225,11 +309,21 @@ public class DataImportService {
         commentEntity.setBody(comment.text());
         commentEntity.setScore(comment.score());
         commentEntity.setCreationDate(Instant.ofEpochSecond(comment.creationDateEpoch()));
+        commentEntity.setContentLicense(comment.contentLicense());
         commentEntity.setOwner(commentOwner);
         commentEntity.setQuestion(question);
         commentEntity.setAnswer(answer);
 
-        commentRepository.save(commentEntity);
+        try {
+            commentRepository.save(commentEntity);
+            log.trace("Successfully imported comment {} for post {} (type: {}, question_id: {})", 
+                     comment.id(), comment.postId(), comment.postType(), 
+                     question != null ? question.getQuestionId() : "N/A");
+        } catch (Exception e) {
+            log.error("Failed to save comment {} for post {} (type: {}): {}", 
+                     comment.id(), comment.postId(), comment.postType(), e.getMessage(), e);
+            throw e;
+        }
     }
 
     /**

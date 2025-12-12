@@ -34,12 +34,16 @@ public class DataImporterApplication {
         return args -> {
             // 从命令行参数、系统属性或环境变量读取目录
             String directory = "Sample_SO_data"; // 默认值
+            boolean cleanBeforeImport = false;   // 默认不清库，避免覆盖已有数据
 
             // 1. 先检查命令行参数 (--import.directory=xxx)
             for (String arg : args) {
                 if (arg.startsWith("--import.directory=")) {
                     directory = arg.substring("--import.directory=".length());
-                    break;
+                    continue;
+                }
+                if (arg.equalsIgnoreCase("--import.clean=true")) {
+                    cleanBeforeImport = true;
                 }
             }
 
@@ -50,6 +54,8 @@ public class DataImporterApplication {
                     directory = propDir;
                 }
             }
+            cleanBeforeImport = cleanBeforeImport ||
+                    Boolean.parseBoolean(System.getProperty("import.clean", "false"));
 
             // 3. 检查环境变量
             if (directory.equals("Sample_SO_data")) {
@@ -58,15 +64,22 @@ public class DataImporterApplication {
                     directory = envDir;
                 }
             }
+            if (!cleanBeforeImport) {
+                cleanBeforeImport = Boolean.parseBoolean(
+                        System.getenv().getOrDefault("IMPORT_CLEAN", "false"));
+            }
 
             log.info("========================================");
             log.info("Stack Overflow Data Importer");
             log.info("========================================");
             log.info("Import directory: {}", directory);
+            log.info("Clean before import: {}", cleanBeforeImport);
             log.info("========================================\n");
 
-            // 每次导入前先清空现有数据，保证库与目录一致
-            importService.clearAllData();
+            // 可选清库：默认不清空，避免覆盖已有数据
+            if (cleanBeforeImport) {
+                importService.clearAllData();
+            }
 
             DataImportService.ImportResult result = importService.importFromDirectory(directory);
 

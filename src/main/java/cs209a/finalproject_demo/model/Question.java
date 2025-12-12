@@ -17,7 +17,11 @@ public record Question(
         long creationDateEpoch,
         long lastActivityDateEpoch,
         Integer acceptedAnswerId,
-        int viewCount
+        int viewCount,
+        String link,
+        Long closedDateEpoch,
+        String closedReason,
+        String contentLicense
 ) {
     public Instant creationInstant() {
         return Instant.ofEpochSecond(creationDateEpoch);

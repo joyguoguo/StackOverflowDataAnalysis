@@ -151,4 +151,8 @@ LIMIT 10;
 
 
 
+```
+mvn "-Dflyway.url=jdbc:postgresql://localhost:5432/stackoverflow_java" "-Dflyway.user=postgres" "-Dflyway.password=123456" flyway:repair
+```
+
 

@@ -66,7 +66,11 @@ public class ThreadFileLoader {
                 node.path("creation_date").asLong(0),
                 node.path("last_activity_date").asLong(0),
                 node.hasNonNull("accepted_answer_id") ? node.path("accepted_answer_id").asInt() : null,
-                node.path("view_count").asInt(0)
+                node.path("view_count").asInt(0),
+                node.path("link").asText(null),
+                node.hasNonNull("closed_date") ? node.path("closed_date").asLong() : null,
+                node.path("closed_reason").asText(null),
+                node.path("content_license").asText(null)
         );
     }
 
@@ -80,10 +84,13 @@ public class ThreadFileLoader {
             answers.add(new Answer(
                     answerNode.path("answer_id").asLong(),
                     answerNode.path("question_id").asLong(),
+                    answerNode.path("body").asText(""),
                     owner,
                     answerNode.path("score").asInt(0),
                     answerNode.path("is_accepted").asBoolean(false),
-                    answerNode.path("creation_date").asLong(0)
+                    answerNode.path("creation_date").asLong(0),
+                    answerNode.hasNonNull("last_activity_date") ? answerNode.path("last_activity_date").asLong() : null,
+                    answerNode.path("content_license").asText(null)
             ));
         });
         return answers;
@@ -103,7 +110,8 @@ public class ThreadFileLoader {
                     owner,
                     commentNode.path("score").asInt(0),
                     commentNode.path("creation_date").asLong(0),
-                    commentNode.path("body").asText("")
+                    commentNode.path("body").asText(""),
+                    commentNode.path("content_license").asText(null)
             ));
         });
         return comments;
@@ -124,14 +132,16 @@ public class ThreadFileLoader {
 
     private Author mapAuthor(JsonNode node) {
         if (node.isMissingNode()) {
-            return new Author(0L, null, "anonymous", 0, "unknown");
+            return new Author(0L, null, "anonymous", 0, "unknown", null, null);
         }
         return new Author(
                 node.path("account_id").asLong(0),
                 node.hasNonNull("user_id") ? node.path("user_id").asLong() : null,
                 node.path("display_name").asText(null),
                 node.path("reputation").asInt(0),
-                node.path("user_type").asText("unknown")
+                node.path("user_type").asText("unknown"),
+                node.path("profile_image").asText(null),
+                node.path("link").asText(null)
         );
     }
 }

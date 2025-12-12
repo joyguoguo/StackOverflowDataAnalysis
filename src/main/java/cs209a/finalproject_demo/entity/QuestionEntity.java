@@ -46,6 +46,18 @@ public class QuestionEntity {
     @Column(name = "view_count")
     private Integer viewCount;
 
+    @Column(name = "link", length = 500)
+    private String link;
+
+    @Column(name = "closed_date")
+    private Instant closedDate;
+
+    @Column(name = "closed_reason", columnDefinition = "TEXT")
+    private String closedReason;
+
+    @Column(name = "content_license", length = 100)
+    private String contentLicense;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "owner_account_id", referencedColumnName = "account_id")
     private UserEntity owner;
@@ -162,6 +174,38 @@ public class QuestionEntity {
 
     public void setViewCount(Integer viewCount) {
         this.viewCount = viewCount;
+    }
+
+    public String getLink() {
+        return link;
+    }
+
+    public void setLink(String link) {
+        this.link = link;
+    }
+
+    public Instant getClosedDate() {
+        return closedDate;
+    }
+
+    public void setClosedDate(Instant closedDate) {
+        this.closedDate = closedDate;
+    }
+
+    public String getClosedReason() {
+        return closedReason;
+    }
+
+    public void setClosedReason(String closedReason) {
+        this.closedReason = closedReason;
+    }
+
+    public String getContentLicense() {
+        return contentLicense;
+    }
+
+    public void setContentLicense(String contentLicense) {
+        this.contentLicense = contentLicense;
     }
 
     public UserEntity getOwner() {

@@ -5,7 +5,9 @@ public record Author(
         Long userId,
         String displayName,
         int reputation,
-        String userType
+        String userType,
+        String profileImage,
+        String link
 ) {
     public String safeDisplayName() {
         return displayName == null ? "anonymous" : displayName;

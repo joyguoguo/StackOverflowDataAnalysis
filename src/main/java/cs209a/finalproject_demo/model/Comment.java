@@ -7,7 +7,8 @@ public record Comment(
         Author owner,
         int score,
         long creationDateEpoch,
-        String text
+        String text,
+        String contentLicense
 ) {
 }
 

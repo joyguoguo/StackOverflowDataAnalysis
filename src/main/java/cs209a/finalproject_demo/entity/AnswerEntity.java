@@ -35,6 +35,12 @@ public class AnswerEntity {
     @Column(name = "creation_date")
     private Instant creationDate;
 
+    @Column(name = "last_activity_date")
+    private Instant lastActivityDate;
+
+    @Column(name = "content_license", length = 100)
+    private String contentLicense;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "owner_account_id", referencedColumnName = "account_id")
     private UserEntity owner;
@@ -103,6 +109,22 @@ public class AnswerEntity {
         this.creationDate = creationDate;
     }
 
+    public Instant getLastActivityDate() {
+        return lastActivityDate;
+    }
+
+    public void setLastActivityDate(Instant lastActivityDate) {
+        this.lastActivityDate = lastActivityDate;
+    }
+
+    public String getContentLicense() {
+        return contentLicense;
+    }
+
+    public void setContentLicense(String contentLicense) {
+        this.contentLicense = contentLicense;
+    }
+
     public UserEntity getOwner() {
         return owner;
     }
@@ -119,6 +141,8 @@ public class AnswerEntity {
         this.comments = comments;
     }
 }
+
+
 
 
 

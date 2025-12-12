@@ -32,6 +32,12 @@ public class UserEntity {
     @Column(name = "user_type", length = 50)
     private String userType;
 
+    @Column(name = "profile_image", length = 500)
+    private String profileImage;
+
+    @Column(name = "link", length = 500)
+    private String link;
+
     @OneToMany(mappedBy = "owner", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<QuestionEntity> questions = new ArrayList<>();
 
@@ -100,6 +106,22 @@ public class UserEntity {
 
     public void setUserType(String userType) {
         this.userType = userType;
+    }
+
+    public String getProfileImage() {
+        return profileImage;
+    }
+
+    public void setProfileImage(String profileImage) {
+        this.profileImage = profileImage;
+    }
+
+    public String getLink() {
+        return link;
+    }
+
+    public void setLink(String link) {
+        this.link = link;
     }
 
     public List<QuestionEntity> getQuestions() {
