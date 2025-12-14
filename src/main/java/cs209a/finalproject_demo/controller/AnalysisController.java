@@ -55,8 +55,9 @@ public class AnalysisController {
 
     @GetMapping("/cooccurrence")
     public ApiResponse<TopicCooccurrenceResponse> cooccurrence(
-            @RequestParam(defaultValue = "10") @Min(1) @Max(50) int topN) {
-        TopicCooccurrenceResponse response = topicCooccurrenceService.topPairs(topN);
+            @RequestParam(defaultValue = "10") @Min(1) @Max(50) int topN,
+            @RequestParam(defaultValue = "false") boolean filterCoreTopics) {
+        TopicCooccurrenceResponse response = topicCooccurrenceService.topPairs(topN, filterCoreTopics);
         return ApiResponse.of(response);
     }
 

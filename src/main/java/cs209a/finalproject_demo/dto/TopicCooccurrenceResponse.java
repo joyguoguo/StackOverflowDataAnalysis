@@ -1,53 +1,21 @@
 package cs209a.finalproject_demo.dto;
 
 import java.util.List;
-import java.util.Map;
 
 /**
  * 话题共现响应
+ * 用于力导向图可视化
  */
 public record TopicCooccurrenceResponse(
-        List<TopicPair> pairs,
-        VennDiagramData vennDiagram
+        List<TopicPair> pairs
 ) {
-    public TopicCooccurrenceResponse(List<TopicPair> pairs) {
-        this(pairs, null);
-    }
-
     /**
      * 话题对
+     * 符合要求的 JSON 结构：{ "topic_pair": [...], "frequency": ... }
      */
     public record TopicPair(
-            List<String> topics,
-            long count
-    ) {
-    }
-
-    /**
-     * 韦恩图数据
-     * 用于展示前几个最强共现对的重叠关系
-     */
-    public record VennDiagramData(
-            List<VennSet> sets,
-            List<VennIntersection> intersections
-    ) {
-    }
-
-    /**
-     * 韦恩图集合（单个话题）
-     */
-    public record VennSet(
-            String name,
-            long size
-    ) {
-    }
-
-    /**
-     * 韦恩图交集（两个话题的共现）
-     */
-    public record VennIntersection(
-            List<String> sets,
-            long size
+            List<String> topic_pair,  // 话题对列表
+            long frequency             // 共现频率
     ) {
     }
 }
