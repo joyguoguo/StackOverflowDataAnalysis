@@ -152,16 +152,16 @@
     <section class="panel">
         <div class="panel-header">
             <div>
-                <h2>多线程常见问题</h2>
-                <p>基于标签、标题、正文和代码片段识别多线程相关问题并分类</p>
+                <h2>Multithreading Common Pitfalls</h2>
+                <p>Identify and categorize multithreading-related issues based on tags, titles, body text, and code snippets</p>
             </div>
             <div>
-                <label for="pitfallSelect">Top N:</label>
-                <input id="pitfallSelect" type="number" min="3" max="10" value="5">
-                <button id="refreshPitfalls">刷新</button>
+                <label for="pitfallSelect">Top N Categories:</label>
+                <input id="pitfallSelect" type="number" min="1" max="10" value="5" title="Number of top categories to display (1-10)">
+                <button id="refreshPitfalls">Refresh</button>
             </div>
-    </div>
-        <canvas id="pitfallChart"></canvas>
+        </div>
+        <div id="sunburstContainer" style="width: 100%; height: 600px; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff;"></div>
     </section>
 
     <section class="panel">
@@ -507,29 +507,199 @@
         }
     }
 
+    let sunburstData = null;
+
     function initPitfallChart() {
-        const ctx = document.getElementById('pitfallChart').getContext('2d');
-        charts.pitfall = new Chart(ctx, {
-            type: 'bar',
-            data: { labels: [], datasets: [{ label: '出现次数', data: [], backgroundColor: '#FF9F40' }] },
-            options: {
-                indexAxis: 'y',
-                responsive: true,
-                plugins: { legend: { display: false } }
-            }
-        });
         document.getElementById('refreshPitfalls').addEventListener('click', loadPitfalls);
+        document.getElementById('pitfallSelect').addEventListener('change', loadPitfalls);
         loadPitfalls();
     }
 
     async function loadPitfalls() {
         const topN = document.getElementById('pitfallSelect').value;
         const payload = await fetchJson(`/api/multithreading/pitfalls?topN=${topN}`);
-        const labels = payload.data.pitfalls.map(item => item.label);
-        const data = payload.data.pitfalls.map(item => item.count);
-        charts.pitfall.data.labels = labels;
-        charts.pitfall.data.datasets[0].data = data;
-        charts.pitfall.update();
+        sunburstData = payload.data;
+        renderSunburstChart(sunburstData);
+    }
+
+    function renderSunburstChart(data) {
+        const container = document.getElementById('sunburstContainer');
+        container.innerHTML = '';
+        
+        if (!data || !data.categories || data.categories.length === 0) {
+            container.innerHTML = '<p style="text-align: center; padding: 50px; color: #6b7280;">No data available</p>';
+            return;
+        }
+
+        const width = container.clientWidth;
+        const height = 600;
+        const radius = Math.min(width, height) / 2 - 10;
+
+        // Create SVG
+        const svg = d3.select(container)
+            .append('svg')
+            .attr('width', width)
+            .attr('height', height)
+            .append('g')
+            .attr('transform', `translate(${width / 2},${height / 2})`);
+
+        // Color scheme for categories
+        const categoryColors = {
+            'Synchronization Issues': '#FF6384',
+            'Memory Consistency': '#36A2EB',
+            'Concurrent Data Structures': '#FFCE56',
+            'Thread Pool & Executors': '#4BC0C0',
+            'Performance Issues': '#9966FF',
+            'Others': '#FF9F40'
+        };
+
+        // Build hierarchical data structure
+        // Ensure inner ring value equals sum of outer ring values
+        const root = {
+            name: 'Multithreading Pitfalls',
+            children: data.categories.map(category => {
+                // Calculate actual sum from pitfalls
+                const actualTotal = category.pitfalls.reduce((sum, p) => sum + p.count, 0);
+                return {
+                    name: category.category,
+                    value: actualTotal, // Use actual sum instead of totalCount to ensure consistency
+                    children: category.pitfalls.map(pitfall => ({
+                        name: pitfall.label,
+                        value: pitfall.count,
+                        category: category.category
+                    }))
+                };
+            })
+        };
+
+        // Create partition layout
+        const partition = d3.partition()
+            .size([2 * Math.PI, radius]);
+
+        const rootNode = d3.hierarchy(root)
+            .sum(d => d.value)
+            .sort((a, b) => b.value - a.value);
+
+        partition(rootNode);
+
+        // Color function
+        const color = d3.scaleOrdinal()
+            .domain(Object.keys(categoryColors))
+            .range(Object.values(categoryColors));
+
+        // Create arcs
+        const arc = d3.arc()
+            .startAngle(d => d.x0)
+            .endAngle(d => d.x1)
+            .innerRadius(d => d.y0)
+            .outerRadius(d => d.y1);
+
+        // Draw arcs
+        const arcs = svg.selectAll('path')
+            .data(rootNode.descendants())
+            .enter()
+            .append('path')
+            .attr('d', arc)
+            .attr('fill', d => {
+                if (d.depth === 0) return '#f0f0f0';
+                if (d.depth === 1) return color(d.data.name) || '#999';
+                return d3.color(color(d.data.category) || '#999').brighter(0.5);
+            })
+            .attr('stroke', '#fff')
+            .attr('stroke-width', 2)
+            .style('cursor', 'pointer')
+            .on('mouseover', function(event, d) {
+                d3.select(this)
+                    .attr('opacity', 0.8)
+                    .attr('stroke-width', 3);
+                
+                // Show tooltip
+                const tooltip = d3.select('body').append('div')
+                    .attr('class', 'tooltip')
+                    .style('opacity', 0)
+                    .style('position', 'absolute')
+                    .style('background', 'rgba(0, 0, 0, 0.8)')
+                    .style('color', 'white')
+                    .style('padding', '8px')
+                    .style('border-radius', '4px')
+                    .style('pointer-events', 'none')
+                    .style('font-size', '12px');
+                
+                let label, count;
+                if (d.depth === 1) {
+                    // Category level
+                    label = d.data.name;
+                    count = d.value;
+                } else {
+                    // Pitfall level
+                    label = `${d.data.category} - ${d.data.name}`;
+                    count = d.value;
+                }
+                tooltip.html(`${label}<br/>Count: ${count}`)
+                    .style('left', (event.pageX + 10) + 'px')
+                    .style('top', (event.pageY - 10) + 'px')
+                    .transition()
+                    .duration(200)
+                    .style('opacity', 1);
+            })
+            .on('mousemove', function(event) {
+                d3.select('.tooltip')
+                    .style('left', (event.pageX + 10) + 'px')
+                    .style('top', (event.pageY - 10) + 'px');
+            })
+            .on('mouseout', function() {
+                d3.select(this)
+                    .attr('opacity', 1)
+                    .attr('stroke-width', 2);
+                d3.select('.tooltip').remove();
+            });
+
+        // Add labels for categories (inner ring) with better positioning
+        svg.selectAll('text.category')
+            .data(rootNode.children || [])
+            .enter()
+            .append('text')
+            .attr('class', 'category')
+            .attr('transform', d => {
+                const angle = (d.x0 + d.x1) / 2;
+                const radius = (d.y0 + d.y1) / 2;
+                const x = Math.cos(angle - Math.PI / 2) * radius;
+                const y = Math.sin(angle - Math.PI / 2) * radius;
+                const rotation = angle * 180 / Math.PI;
+                return `translate(${x},${y}) rotate(${rotation < 90 || rotation > 270 ? rotation : rotation + 180})`;
+            })
+            .attr('dy', '0.35em')
+            .attr('text-anchor', 'middle')
+            .attr('font-size', '13px')
+            .attr('font-weight', 'bold')
+            .attr('fill', '#333')
+            .attr('stroke', '#fff')
+            .attr('stroke-width', '0.3px')
+            .attr('paint-order', 'stroke')
+            .text(d => d.data.name)
+            .style('pointer-events', 'none');
+
+        // Add labels for pitfalls (outer ring) - only if space allows
+        svg.selectAll('text.pitfall')
+            .data(rootNode.descendants().filter(d => d.depth === 2 && d.value > 0))
+            .enter()
+            .append('text')
+            .attr('class', 'pitfall')
+            .attr('transform', d => {
+                const x = ((d.x0 + d.x1) / 2) * 180 / Math.PI;
+                const y = -(d.y0 + d.y1) / 2;
+                return `rotate(${x - 90}) translate(${y},0) rotate(${x < 180 ? 0 : 180})`;
+            })
+            .attr('dy', '0.35em')
+            .attr('text-anchor', d => (d.x0 + d.x1) / 2 < Math.PI ? 'start' : 'end')
+            .attr('font-size', '10px')
+            .attr('fill', '#666')
+            .text(d => {
+                // Only show label if arc is large enough
+                const angle = (d.x1 - d.x0) * 180 / Math.PI;
+                return angle > 10 ? d.data.name : '';
+            })
+            .style('pointer-events', 'none');
     }
 
     function initSolvabilityChart() {

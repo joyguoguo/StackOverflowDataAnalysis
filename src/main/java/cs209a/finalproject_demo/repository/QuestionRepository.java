@@ -40,6 +40,19 @@ public interface QuestionRepository extends JpaRepository<QuestionEntity, Long> 
            "JOIN q.tags t " +
            "WHERE q.questionId IN :questionIds")
     List<Object[]> findQuestionTagsByQuestionIds(List<Long> questionIds);
+    
+    /**
+     * 查找潜在的多线程相关问题（数据库初筛）
+     * 通过标签进行初步筛选，同时加载答案和所有者信息，避免N+1查询
+     */
+    @Query("SELECT DISTINCT q FROM QuestionEntity q " +
+           "LEFT JOIN FETCH q.answers " +
+           "LEFT JOIN FETCH q.owner " +
+           "JOIN q.tags t " +
+           "WHERE LOWER(t.name) IN ('multithreading', 'concurrency', 'thread', 'thread-safety', 'synchronization', 'executor', 'locks', 'parallel', 'async') " +
+           "OR LOWER(t.name) LIKE '%thread%' " +
+           "OR LOWER(t.name) LIKE '%concurrent%'")
+    List<QuestionEntity> findPotentialMultithreadingQuestions();
 }
 
 

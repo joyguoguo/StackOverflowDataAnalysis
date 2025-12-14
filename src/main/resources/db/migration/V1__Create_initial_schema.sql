@@ -100,3 +100,4 @@ CREATE INDEX IF NOT EXISTS idx_comment_post_type ON comments(post_type);
 
 
 
+
