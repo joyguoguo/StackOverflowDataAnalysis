@@ -1,7 +1,8 @@
 package cs209a.finalproject_demo.dataset;
 
 import cs209a.finalproject_demo.entity.AnswerEntity;
-import cs209a.finalproject_demo.entity.CommentEntity;
+import cs209a.finalproject_demo.entity.QuestionCommentEntity;
+import cs209a.finalproject_demo.entity.AnswerCommentEntity;
 import cs209a.finalproject_demo.entity.QuestionEntity;
 import cs209a.finalproject_demo.entity.TagEntity;
 import cs209a.finalproject_demo.entity.UserEntity;
@@ -11,6 +12,8 @@ import cs209a.finalproject_demo.model.Comment;
 import cs209a.finalproject_demo.model.Question;
 import cs209a.finalproject_demo.model.QuestionThread;
 import cs209a.finalproject_demo.repository.QuestionRepository;
+import cs209a.finalproject_demo.repository.QuestionCommentRepository;
+import cs209a.finalproject_demo.repository.AnswerCommentRepository;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -20,22 +23,87 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.stream.Collectors;
 
 @Component
 public class LocalDatasetRepository {
 
     private final QuestionRepository questionRepository;
+    private final QuestionCommentRepository questionCommentRepository;
+    private final AnswerCommentRepository answerCommentRepository;
 
-    public LocalDatasetRepository(QuestionRepository questionRepository) {
+    public LocalDatasetRepository(QuestionRepository questionRepository,
+                                  QuestionCommentRepository questionCommentRepository,
+                                  AnswerCommentRepository answerCommentRepository) {
         this.questionRepository = questionRepository;
+        this.questionCommentRepository = questionCommentRepository;
+        this.answerCommentRepository = answerCommentRepository;
     }
 
     /**
      * 注意：现在从数据库实时读取，而不是启动时缓存 JSON。
+     * 使用JOIN FETCH优化查询，避免N+1查询问题。
+     * 使用批量查询加载comments，避免MultipleBagFetchException。
      */
     @Transactional(readOnly = true)
     public List<QuestionThread> findAllThreads() {
-        List<QuestionEntity> questions = questionRepository.findAll();
+        // 1. 加载questions、answers、owner（使用JOIN FETCH，只fetch一个List集合）
+        List<QuestionEntity> questions = questionRepository.findAllWithAssociations();
+        
+        if (questions.isEmpty()) {
+            return List.of();
+        }
+        
+        List<Long> questionIds = questions.stream()
+                .map(QuestionEntity::getQuestionId)
+                .toList();
+        
+        // 2. 批量加载tags（通过question_tags关联表）
+        List<Object[]> questionTags = questionRepository.findQuestionTagsByQuestionIds(questionIds);
+        Map<Long, List<TagEntity>> tagsMap = new java.util.HashMap<>();
+        for (Object[] row : questionTags) {
+            Long qId = (Long) row[0];
+            TagEntity tag = (TagEntity) row[1];
+            tagsMap.computeIfAbsent(qId, k -> new java.util.ArrayList<>()).add(tag);
+        }
+        
+        // 3. 批量加载questionComments
+        List<QuestionCommentEntity> allQuestionComments = questionCommentRepository.findByQuestionQuestionIdIn(questionIds);
+        Map<Long, List<QuestionCommentEntity>> questionCommentsMap = allQuestionComments.stream()
+                .collect(Collectors.groupingBy(c -> c.getQuestion().getQuestionId()));
+        
+        // 4. 批量加载answerComments
+        List<Long> answerIds = questions.stream()
+                .flatMap(q -> q.getAnswers().stream())
+                .map(AnswerEntity::getAnswerId)
+                .toList();
+        List<AnswerCommentEntity> allAnswerComments = answerIds.isEmpty() ? List.of() :
+                answerCommentRepository.findByAnswerAnswerIdIn(answerIds);
+        Map<Long, List<AnswerCommentEntity>> answerCommentsMap = allAnswerComments.stream()
+                .collect(Collectors.groupingBy(c -> c.getAnswer().getAnswerId()));
+        
+        // 5. 手动关联tags和comments到entities
+        for (QuestionEntity question : questions) {
+            // 关联tags
+            question.getTags().clear();
+            question.getTags().addAll(tagsMap.getOrDefault(question.getQuestionId(), List.of()));
+            
+            // 关联questionComments
+            question.getQuestionComments().clear();
+            question.getQuestionComments().addAll(
+                    questionCommentsMap.getOrDefault(question.getQuestionId(), List.of())
+            );
+            
+            // 关联answerComments
+            for (AnswerEntity answer : question.getAnswers()) {
+                answer.getAnswerComments().clear();
+                answer.getAnswerComments().addAll(
+                        answerCommentsMap.getOrDefault(answer.getAnswerId(), List.of())
+                );
+            }
+        }
+        
+        // 6. 映射为QuestionThread
         return questions.stream()
                 .map(this::mapQuestionThread)
                 .toList();
@@ -84,14 +152,14 @@ public class LocalDatasetRepository {
                 .map(this::mapAnswer)
                 .toList();
 
-        List<Comment> questionComments = questionEntity.getComments().stream()
-                .map(this::mapComment)
+        List<Comment> questionComments = questionEntity.getQuestionComments().stream()
+                .map(c -> mapQuestionComment(c, questionEntity.getQuestionId()))
                 .toList();
 
         Map<Long, List<Comment>> answerComments = new LinkedHashMap<>();
         for (AnswerEntity answerEntity : questionEntity.getAnswers()) {
-            List<Comment> comments = answerEntity.getComments().stream()
-                    .map(this::mapComment)
+            List<Comment> comments = answerEntity.getAnswerComments().stream()
+                    .map(c -> mapAnswerComment(c, answerEntity.getAnswerId()))
                     .toList();
             answerComments.put(answerEntity.getAnswerId(), comments);
         }
@@ -140,12 +208,26 @@ public class LocalDatasetRepository {
         );
     }
 
-    private Comment mapComment(CommentEntity entity) {
+    private Comment mapQuestionComment(QuestionCommentEntity entity, Long questionId) {
         Author owner = mapAuthor(entity.getOwner());
         return new Comment(
                 entity.getCommentId(),
-                entity.getPostId(),
-                entity.getPostType(),
+                questionId,
+                "question",
+                owner,
+                entity.getScore() == null ? 0 : entity.getScore(),
+                entity.getCreationDate() == null ? 0 : entity.getCreationDate().getEpochSecond(),
+                entity.getBody(),
+                entity.getContentLicense()
+        );
+    }
+
+    private Comment mapAnswerComment(AnswerCommentEntity entity, Long answerId) {
+        Author owner = mapAuthor(entity.getOwner());
+        return new Comment(
+                entity.getCommentId(),
+                answerId,
+                "answer",
                 owner,
                 entity.getScore() == null ? 0 : entity.getScore(),
                 entity.getCreationDate() == null ? 0 : entity.getCreationDate().getEpochSecond(),

@@ -46,7 +46,7 @@ public class AnswerEntity {
     private UserEntity owner;
 
     @OneToMany(mappedBy = "answer", cascade = CascadeType.ALL, orphanRemoval = true)
-    private List<CommentEntity> comments = new ArrayList<>();
+    private List<AnswerCommentEntity> answerComments = new ArrayList<>();
 
     // Constructors
     public AnswerEntity() {
@@ -133,12 +133,12 @@ public class AnswerEntity {
         this.owner = owner;
     }
 
-    public List<CommentEntity> getComments() {
-        return comments;
+    public List<AnswerCommentEntity> getAnswerComments() {
+        return answerComments;
     }
 
-    public void setComments(List<CommentEntity> comments) {
-        this.comments = comments;
+    public void setAnswerComments(List<AnswerCommentEntity> answerComments) {
+        this.answerComments = answerComments;
     }
 }
 

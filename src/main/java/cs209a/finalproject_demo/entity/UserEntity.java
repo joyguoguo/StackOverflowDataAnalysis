@@ -44,9 +44,6 @@ public class UserEntity {
     @OneToMany(mappedBy = "owner", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<AnswerEntity> answers = new ArrayList<>();
 
-    @OneToMany(mappedBy = "owner", cascade = CascadeType.ALL, orphanRemoval = true)
-    private List<CommentEntity> comments = new ArrayList<>();
-
     // Constructors
     public UserEntity() {
     }
@@ -138,14 +135,6 @@ public class UserEntity {
 
     public void setAnswers(List<AnswerEntity> answers) {
         this.answers = answers;
-    }
-
-    public List<CommentEntity> getComments() {
-        return comments;
-    }
-
-    public void setComments(List<CommentEntity> comments) {
-        this.comments = comments;
     }
 }
 

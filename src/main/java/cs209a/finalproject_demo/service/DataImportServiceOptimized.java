@@ -36,20 +36,23 @@ public class DataImportServiceOptimized {
     private final UserRepository userRepository;
     private final QuestionRepository questionRepository;
     private final AnswerRepository answerRepository;
-    private final CommentRepository commentRepository;
+    private final QuestionCommentRepository questionCommentRepository;
+    private final AnswerCommentRepository answerCommentRepository;
     private final TagRepository tagRepository;
 
     public DataImportServiceOptimized(ThreadFileLoader fileLoader,
                                     UserRepository userRepository,
                                     QuestionRepository questionRepository,
                                     AnswerRepository answerRepository,
-                                    CommentRepository commentRepository,
+                                    QuestionCommentRepository questionCommentRepository,
+                                    AnswerCommentRepository answerCommentRepository,
                                     TagRepository tagRepository) {
         this.fileLoader = fileLoader;
         this.userRepository = userRepository;
         this.questionRepository = questionRepository;
         this.answerRepository = answerRepository;
-        this.commentRepository = commentRepository;
+        this.questionCommentRepository = questionCommentRepository;
+        this.answerCommentRepository = answerCommentRepository;
         this.tagRepository = tagRepository;
     }
 
@@ -183,12 +186,13 @@ public class DataImportServiceOptimized {
             List<TagEntity> newTags = new ArrayList<>();
             List<QuestionEntity> questions = new ArrayList<>();
             List<AnswerEntity> answers = new ArrayList<>();
-            List<CommentEntity> comments = new ArrayList<>();
+            List<QuestionCommentEntity> questionComments = new ArrayList<>();
+            List<AnswerCommentEntity> answerComments = new ArrayList<>();
 
             for (QuestionThread thread : threads) {
                 try {
                     processThread(thread, userCache, tagCache, newUsers, newTags, 
-                                 questions, answers, comments);
+                                 questions, answers, questionComments, answerComments);
                     result.incrementSuccess();
                 } catch (Exception e) {
                     result.incrementFailed();
@@ -198,8 +202,8 @@ public class DataImportServiceOptimized {
             }
 
             // 批量保存
-            log.debug("Batch statistics - Questions: {}, Answers: {}, Comments: {}, New Users: {}, New Tags: {}", 
-                     questions.size(), answers.size(), comments.size(), newUsers.size(), newTags.size());
+            log.debug("Batch statistics - Questions: {}, Answers: {}, Question Comments: {}, Answer Comments: {}, New Users: {}, New Tags: {}", 
+                     questions.size(), answers.size(), questionComments.size(), answerComments.size(), newUsers.size(), newTags.size());
             
             if (!newUsers.isEmpty()) {
                 userRepository.saveAll(newUsers);
@@ -221,9 +225,13 @@ public class DataImportServiceOptimized {
                 answerRepository.saveAll(answers);
                 log.debug("Saved {} answers", answers.size());
             }
-            if (!comments.isEmpty()) {
-                commentRepository.saveAll(comments);
-                log.debug("Saved {} comments", comments.size());
+            if (!questionComments.isEmpty()) {
+                questionCommentRepository.saveAll(questionComments);
+                log.debug("Saved {} question comments", questionComments.size());
+            }
+            if (!answerComments.isEmpty()) {
+                answerCommentRepository.saveAll(answerComments);
+                log.debug("Saved {} answer comments", answerComments.size());
             }
 
             log.debug("Completed batch import of {} threads", threads.size());
@@ -243,11 +251,12 @@ public class DataImportServiceOptimized {
                                List<TagEntity> newTags,
                                List<QuestionEntity> questions,
                                List<AnswerEntity> answers,
-                               List<CommentEntity> comments) {
+                               List<QuestionCommentEntity> questionComments,
+                               List<AnswerCommentEntity> answerComments) {
         var question = thread.question();
         var questionAnswers = thread.answers();
-        var questionComments = thread.questionComments();
-        var answerComments = thread.answerComments();
+        var questionCommentList = thread.questionComments();
+        var answerCommentMap = thread.answerComments();
 
         // 1. 获取或创建用户
         UserEntity owner = getOrCreateUser(question.owner(), userCache, newUsers);
@@ -298,22 +307,22 @@ public class DataImportServiceOptimized {
         }
 
         // 5. 创建问题的评论
-        for (var comment : questionComments) {
-            CommentEntity commentEntity = createCommentEntity(comment, questionEntity, null, userCache, newUsers);
-            comments.add(commentEntity);
-            questionEntity.getComments().add(commentEntity);
+        for (var comment : questionCommentList) {
+            QuestionCommentEntity commentEntity = createQuestionCommentEntity(comment, questionEntity, userCache, newUsers);
+            questionComments.add(commentEntity);
+            questionEntity.getQuestionComments().add(commentEntity);
         }
 
         // 6. 创建回答的评论
-        for (var entry : answerComments.entrySet()) {
+        for (var entry : answerCommentMap.entrySet()) {
             Long answerId = entry.getKey();
             AnswerEntity answerEntity = answerMap.get(answerId);
             if (answerEntity != null) {
                 for (var comment : entry.getValue()) {
-                    CommentEntity commentEntity = createCommentEntity(comment, questionEntity, answerEntity, 
-                                                                     userCache, newUsers);
-                    comments.add(commentEntity);
-                    answerEntity.getComments().add(commentEntity);
+                    AnswerCommentEntity commentEntity = createAnswerCommentEntity(comment, answerEntity, 
+                                                                                 userCache, newUsers);
+                    answerComments.add(commentEntity);
+                    answerEntity.getAnswerComments().add(commentEntity);
                 }
             }
         }
@@ -355,22 +364,34 @@ public class DataImportServiceOptimized {
         return tags;
     }
 
-    private CommentEntity createCommentEntity(cs209a.finalproject_demo.model.Comment comment,
-                                             QuestionEntity question,
-                                             AnswerEntity answer,
-                                             Map<Long, UserEntity> userCache,
-                                             List<UserEntity> newUsers) {
+    private QuestionCommentEntity createQuestionCommentEntity(cs209a.finalproject_demo.model.Comment comment,
+                                                             QuestionEntity question,
+                                                             Map<Long, UserEntity> userCache,
+                                                             List<UserEntity> newUsers) {
         UserEntity commentOwner = getOrCreateUser(comment.owner(), userCache, newUsers);
-        CommentEntity commentEntity = new CommentEntity();
+        QuestionCommentEntity commentEntity = new QuestionCommentEntity();
         commentEntity.setCommentId(comment.id());
-        commentEntity.setPostId(comment.postId());
-        commentEntity.setPostType(comment.postType());
         commentEntity.setBody(comment.text());
         commentEntity.setScore(comment.score());
         commentEntity.setCreationDate(Instant.ofEpochSecond(comment.creationDateEpoch()));
         commentEntity.setContentLicense(comment.contentLicense());
         commentEntity.setOwner(commentOwner);
         commentEntity.setQuestion(question);
+        return commentEntity;
+    }
+
+    private AnswerCommentEntity createAnswerCommentEntity(cs209a.finalproject_demo.model.Comment comment,
+                                                         AnswerEntity answer,
+                                                         Map<Long, UserEntity> userCache,
+                                                         List<UserEntity> newUsers) {
+        UserEntity commentOwner = getOrCreateUser(comment.owner(), userCache, newUsers);
+        AnswerCommentEntity commentEntity = new AnswerCommentEntity();
+        commentEntity.setCommentId(comment.id());
+        commentEntity.setBody(comment.text());
+        commentEntity.setScore(comment.score());
+        commentEntity.setCreationDate(Instant.ofEpochSecond(comment.creationDateEpoch()));
+        commentEntity.setContentLicense(comment.contentLicense());
+        commentEntity.setOwner(commentOwner);
         commentEntity.setAnswer(answer);
         return commentEntity;
     }
@@ -385,17 +406,21 @@ public class DataImportServiceOptimized {
         log.info("========================================");
         
         // 删除顺序需遵守外键依赖：先删子表后删父表
-        long commentCount = commentRepository.count();
+        long answerCommentCount = answerCommentRepository.count();
+        long questionCommentCount = questionCommentRepository.count();
         long answerCount = answerRepository.count();
         long questionCount = questionRepository.count();
         long tagCount = tagRepository.count();
         long userCount = userRepository.count();
         
-        log.info("Current data counts - Comments: {}, Answers: {}, Questions: {}, Tags: {}, Users: {}", 
-                commentCount, answerCount, questionCount, tagCount, userCount);
+        log.info("Current data counts - Answer Comments: {}, Question Comments: {}, Answers: {}, Questions: {}, Tags: {}, Users: {}", 
+                answerCommentCount, questionCommentCount, answerCount, questionCount, tagCount, userCount);
         
-        commentRepository.deleteAllInBatch();
-        log.info("Deleted {} comments", commentCount);
+        answerCommentRepository.deleteAllInBatch();
+        log.info("Deleted {} answer comments", answerCommentCount);
+        
+        questionCommentRepository.deleteAllInBatch();
+        log.info("Deleted {} question comments", questionCommentCount);
         
         answerRepository.deleteAllInBatch();
         log.info("Deleted {} answers", answerCount);

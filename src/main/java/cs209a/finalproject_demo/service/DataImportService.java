@@ -29,20 +29,23 @@ public class DataImportService {
     private final UserRepository userRepository;
     private final QuestionRepository questionRepository;
     private final AnswerRepository answerRepository;
-    private final CommentRepository commentRepository;
+    private final QuestionCommentRepository questionCommentRepository;
+    private final AnswerCommentRepository answerCommentRepository;
     private final TagRepository tagRepository;
 
     public DataImportService(ThreadFileLoader fileLoader,
                             UserRepository userRepository,
                             QuestionRepository questionRepository,
                             AnswerRepository answerRepository,
-                            CommentRepository commentRepository,
+                            QuestionCommentRepository questionCommentRepository,
+                            AnswerCommentRepository answerCommentRepository,
                             TagRepository tagRepository) {
         this.fileLoader = fileLoader;
         this.userRepository = userRepository;
         this.questionRepository = questionRepository;
         this.answerRepository = answerRepository;
-        this.commentRepository = commentRepository;
+        this.questionCommentRepository = questionCommentRepository;
+        this.answerCommentRepository = answerCommentRepository;
         this.tagRepository = tagRepository;
     }
 
@@ -128,17 +131,21 @@ public class DataImportService {
         log.info("========================================");
         
         // 删除顺序需遵守外键依赖：先删子表后删父表
-        long commentCount = commentRepository.count();
+        long answerCommentCount = answerCommentRepository.count();
+        long questionCommentCount = questionCommentRepository.count();
         long answerCount = answerRepository.count();
         long questionCount = questionRepository.count();
         long tagCount = tagRepository.count();
         long userCount = userRepository.count();
         
-        log.info("Current data counts - Comments: {}, Answers: {}, Questions: {}, Tags: {}, Users: {}", 
-                commentCount, answerCount, questionCount, tagCount, userCount);
+        log.info("Current data counts - Answer Comments: {}, Question Comments: {}, Answers: {}, Questions: {}, Tags: {}, Users: {}", 
+                answerCommentCount, questionCommentCount, answerCount, questionCount, tagCount, userCount);
         
-        commentRepository.deleteAllInBatch();
-        log.info("Deleted {} comments", commentCount);
+        answerCommentRepository.deleteAllInBatch();
+        log.info("Deleted {} answer comments", answerCommentCount);
+        
+        questionCommentRepository.deleteAllInBatch();
+        log.info("Deleted {} question comments", questionCommentCount);
         
         answerRepository.deleteAllInBatch();
         log.info("Deleted {} answers", answerCount);
@@ -231,7 +238,7 @@ public class DataImportService {
                 log.debug("Importing {} comments for answer {} (question_id={})", answerCommentList.size(), answer.id(), questionId);
             }
             for (var comment : answerCommentList) {
-                importComment(comment, questionEntity, answerEntity);
+                importAnswerComment(comment, answerEntity);
                 answerCommentCount++;
             }
         }
@@ -242,7 +249,7 @@ public class DataImportService {
             log.debug("Importing {} comments for question {}", questionCommentCount, questionId);
         }
         for (var comment : questionComments) {
-            importComment(comment, questionEntity, null);
+            importQuestionComment(comment, questionEntity);
         }
 
         // 保存更新后的问题（包含关联）
@@ -292,36 +299,64 @@ public class DataImportService {
         return tags;
     }
 
-    private void importComment(cs209a.finalproject_demo.model.Comment comment, 
-                              QuestionEntity question, AnswerEntity answer) {
+    private void importQuestionComment(cs209a.finalproject_demo.model.Comment comment, 
+                                      QuestionEntity question) {
         // 检查是否已存在（使用comment_id作为主键）
-        Optional<CommentEntity> existing = commentRepository.findByCommentId(comment.id());
+        Optional<QuestionCommentEntity> existing = questionCommentRepository.findByCommentId(comment.id());
         if (existing.isPresent()) {
-            log.trace("Comment {} already exists, skipping", comment.id());
+            log.trace("Question comment {} already exists, skipping", comment.id());
             return; // 已存在，跳过
         }
 
         UserEntity commentOwner = importOrGetUser(comment.owner());
-        CommentEntity commentEntity = new CommentEntity();
+        QuestionCommentEntity commentEntity = new QuestionCommentEntity();
         commentEntity.setCommentId(comment.id());
-        commentEntity.setPostId(comment.postId());
-        commentEntity.setPostType(comment.postType());
         commentEntity.setBody(comment.text());
         commentEntity.setScore(comment.score());
         commentEntity.setCreationDate(Instant.ofEpochSecond(comment.creationDateEpoch()));
         commentEntity.setContentLicense(comment.contentLicense());
         commentEntity.setOwner(commentOwner);
         commentEntity.setQuestion(question);
+
+        try {
+            questionCommentRepository.save(commentEntity);
+            question.getQuestionComments().add(commentEntity);
+            log.trace("Successfully imported question comment {} for question_id: {}", 
+                     comment.id(), question.getQuestionId());
+        } catch (Exception e) {
+            log.error("Failed to save question comment {} for question_id {}: {}", 
+                     comment.id(), question.getQuestionId(), e.getMessage(), e);
+            throw e;
+        }
+    }
+
+    private void importAnswerComment(cs209a.finalproject_demo.model.Comment comment, 
+                                    AnswerEntity answer) {
+        // 检查是否已存在（使用comment_id作为主键）
+        Optional<AnswerCommentEntity> existing = answerCommentRepository.findByCommentId(comment.id());
+        if (existing.isPresent()) {
+            log.trace("Answer comment {} already exists, skipping", comment.id());
+            return; // 已存在，跳过
+        }
+
+        UserEntity commentOwner = importOrGetUser(comment.owner());
+        AnswerCommentEntity commentEntity = new AnswerCommentEntity();
+        commentEntity.setCommentId(comment.id());
+        commentEntity.setBody(comment.text());
+        commentEntity.setScore(comment.score());
+        commentEntity.setCreationDate(Instant.ofEpochSecond(comment.creationDateEpoch()));
+        commentEntity.setContentLicense(comment.contentLicense());
+        commentEntity.setOwner(commentOwner);
         commentEntity.setAnswer(answer);
 
         try {
-            commentRepository.save(commentEntity);
-            log.trace("Successfully imported comment {} for post {} (type: {}, question_id: {})", 
-                     comment.id(), comment.postId(), comment.postType(), 
-                     question != null ? question.getQuestionId() : "N/A");
+            answerCommentRepository.save(commentEntity);
+            answer.getAnswerComments().add(commentEntity);
+            log.trace("Successfully imported answer comment {} for answer_id: {}", 
+                     comment.id(), answer.getAnswerId());
         } catch (Exception e) {
-            log.error("Failed to save comment {} for post {} (type: {}): {}", 
-                     comment.id(), comment.postId(), comment.postType(), e.getMessage(), e);
+            log.error("Failed to save answer comment {} for answer_id {}: {}", 
+                     comment.id(), answer.getAnswerId(), e.getMessage(), e);
             throw e;
         }
     }

@@ -7,6 +7,7 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.WebApplicationType;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 
 /**
@@ -24,12 +25,19 @@ public class DataImporterApplication {
     private static final Logger log = LoggerFactory.getLogger(DataImporterApplication.class);
 
     public static void main(String[] args) {
+        // 设置属性，确保CommandLineRunner被启用
+        System.setProperty("import.importer", "true");
         SpringApplication app = new SpringApplication(DataImporterApplication.class);
         app.setWebApplicationType(WebApplicationType.NONE); // 不启动 Web 服务器
         app.run(args);
     }
 
+    /**
+     * 只有在明确指定使用DataImporterApplication作为主类时才启用
+     * 或者设置了import.importer=true属性时才启用
+     */
     @Bean
+    @ConditionalOnProperty(name = "import.importer", havingValue = "true", matchIfMissing = false)
     public CommandLineRunner importRunner(DataImportService importService) {
         return args -> {
             // 从命令行参数、系统属性或环境变量读取目录

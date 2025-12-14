@@ -66,7 +66,7 @@ public class QuestionEntity {
     private List<AnswerEntity> answers = new ArrayList<>();
 
     @OneToMany(mappedBy = "question", cascade = CascadeType.ALL, orphanRemoval = true)
-    private List<CommentEntity> comments = new ArrayList<>();
+    private List<QuestionCommentEntity> questionComments = new ArrayList<>();
 
     @ManyToMany(fetch = FetchType.LAZY)
     @JoinTable(
@@ -224,12 +224,12 @@ public class QuestionEntity {
         this.answers = answers;
     }
 
-    public List<CommentEntity> getComments() {
-        return comments;
+    public List<QuestionCommentEntity> getQuestionComments() {
+        return questionComments;
     }
 
-    public void setComments(List<CommentEntity> comments) {
-        this.comments = comments;
+    public void setQuestionComments(List<QuestionCommentEntity> questionComments) {
+        this.questionComments = questionComments;
     }
 
     public List<TagEntity> getTags() {
