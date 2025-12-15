@@ -176,9 +176,24 @@
                 <label for="toDate">To</label>
                 <input type="date" id="toDate">
                 <button id="refreshSolvability">应用</button>
-    </div>
-    </div>
-        <canvas id="solvabilityChart"></canvas>
+            </div>
+        </div>
+        <div style="margin-bottom: 24px;">
+            <h3 style="margin-bottom: 12px;">分组柱状图（百分比和比例数据）</h3>
+            <canvas id="solvabilityBarChart"></canvas>
+        </div>
+        <div style="margin-bottom: 24px;">
+            <h3 style="margin-bottom: 12px;">箱形图（连续数据分布）</h3>
+            <canvas id="solvabilityBoxChart"></canvas>
+        </div>
+        <div style="margin-bottom: 24px;">
+            <h3 style="margin-bottom: 12px;">标签频率对比（前10个标签，排除java）</h3>
+            <canvas id="tagFrequencyChart"></canvas>
+        </div>
+        <div>
+            <h3 style="margin-bottom: 12px;">问题评论频率对比</h3>
+            <canvas id="commentFrequencyChart"></canvas>
+        </div>
     </section>
 </div>
 
@@ -388,7 +403,7 @@
                 .id(d => d.id)
                 .distance(d => {
                     // 频率越高，距离越近（但保持最小距离）
-                    return Math.max(20, 200 - (d.frequency / maxFreq) * 120);
+                    return Math.max(10, 200 - (d.frequency / maxFreq) * 120);
                 }))
             .force('charge', d3.forceManyBody().strength(-100))  // 增加排斥力，让节点分布更均匀
             .force('center', d3.forceCenter(width / 2, height / 2))
@@ -451,10 +466,12 @@
             .text(d => d.frequency)
             .attr('font-size', '10px')
             .attr('font-weight', 'bold')
-            .attr('fill', '#374151')  // 深灰色
+            .attr('fill', '#000000')         // 黑色字体
+            .attr('stroke', 'white')         // <--- 添加白色描边
+            .attr('stroke-width', 2.5)       // <--- 设置描边宽度（增加对比度）
+            .attr('paint-order', 'stroke')   // <--- 确保先绘制描边，再绘制填充
             .attr('text-anchor', 'middle')
-            .style('pointer-events', 'none')
-            .style('filter', 'url(#text-background)');  // 添加背景以提高可读性
+            .style('pointer-events', 'none');       
 
         // 更新位置函数
         function ticked() {
@@ -703,18 +720,218 @@
     }
 
     function initSolvabilityChart() {
-        const ctx = document.getElementById('solvabilityChart').getContext('2d');
-        charts.solvability = new Chart(ctx, {
-            type: 'radar',
+        // 初始化分组柱状图
+        const barCtx = document.getElementById('solvabilityBarChart').getContext('2d');
+        charts.solvabilityBar = new Chart(barCtx, {
+            type: 'bar',
             data: {
                 labels: [],
                 datasets: [
-                    { label: '易解决', data: [], borderColor: '#4BC0C0', backgroundColor: 'rgba(75,192,192,0.2)' },
-                    { label: '难解决', data: [], borderColor: '#E91E63', backgroundColor: 'rgba(233,30,99,0.2)' }
+                    { 
+                        label: '易解决', 
+                        data: [], 
+                        backgroundColor: 'rgba(75, 192, 192, 0.7)',
+                        borderColor: '#4BC0C0',
+                        borderWidth: 1
+                    },
+                    { 
+                        label: '难解决', 
+                        data: [], 
+                        backgroundColor: 'rgba(233, 30, 99, 0.7)',
+                        borderColor: '#E91E63',
+                        borderWidth: 1
+                    }
                 ]
             },
-            options: { responsive: true }
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {
+                    legend: { position: 'top' },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                const value = context.parsed.y;
+                                const unit = context.dataset.unit || '';
+                                return context.dataset.label + ': ' + value.toFixed(2) + ' ' + unit;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: '值'
+                        }
+                    }
+                }
+            }
         });
+        
+        // 初始化箱形图（使用折线图模拟，显示平均值）
+        const boxCtx = document.getElementById('solvabilityBoxChart').getContext('2d');
+        charts.solvabilityBox = new Chart(boxCtx, {
+            type: 'bar',
+            data: {
+                labels: [],
+                datasets: [
+                    { 
+                        label: '易解决（平均值）', 
+                        data: [], 
+                        backgroundColor: 'rgba(75, 192, 192, 0.5)',
+                        borderColor: '#4BC0C0',
+                        borderWidth: 2
+                    },
+                    { 
+                        label: '难解决（平均值）', 
+                        data: [], 
+                        backgroundColor: 'rgba(233, 30, 99, 0.5)',
+                        borderColor: '#E91E63',
+                        borderWidth: 2
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {
+                    legend: { position: 'top' },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                const value = context.parsed.y;
+                                const unit = context.dataset.unit || '';
+                                return context.dataset.label + ': ' + value.toFixed(2) + ' ' + unit;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: '值'
+                        }
+                    }
+                }
+            }
+        });
+        
+        // 初始化标签频率折线图
+        const tagFreqCtx = document.getElementById('tagFrequencyChart').getContext('2d');
+        charts.tagFrequency = new Chart(tagFreqCtx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [
+                    {
+                        label: '易解决',
+                        data: [],
+                        borderColor: '#4BC0C0',
+                        backgroundColor: 'rgba(75, 192, 192, 0.1)',
+                        tension: 0.3,
+                        fill: false
+                    },
+                    {
+                        label: '难解决',
+                        data: [],
+                        borderColor: '#E91E63',
+                        backgroundColor: 'rgba(233, 30, 99, 0.1)',
+                        tension: 0.3,
+                        fill: false
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {
+                    legend: { position: 'top' },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                return context.dataset.label + ': ' + context.parsed.y + ' 次';
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: '频次'
+                        }
+                    },
+                    x: {
+                        title: {
+                            display: true,
+                            text: '标签'
+                        }
+                    }
+                }
+            }
+        });
+        
+        // 初始化评论频率折线图
+        const commentFreqCtx = document.getElementById('commentFrequencyChart').getContext('2d');
+        charts.commentFrequency = new Chart(commentFreqCtx, {
+            type: 'line',
+            data: {
+                labels: ['有评论', '无评论'],
+                datasets: [
+                    {
+                        label: '易解决',
+                        data: [0, 0],
+                        borderColor: '#4BC0C0',
+                        backgroundColor: 'rgba(75, 192, 192, 0.1)',
+                        tension: 0.3,
+                        fill: false
+                    },
+                    {
+                        label: '难解决',
+                        data: [0, 0],
+                        borderColor: '#E91E63',
+                        backgroundColor: 'rgba(233, 30, 99, 0.1)',
+                        tension: 0.3,
+                        fill: false
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: true,
+                plugins: {
+                    legend: { position: 'top' },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                return context.dataset.label + ': ' + context.parsed.y + ' 个问题';
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: {
+                            display: true,
+                            text: '问题数量'
+                        }
+                    },
+                    x: {
+                        title: {
+                            display: true,
+                            text: '评论状态'
+                        }
+                    }
+                }
+            }
+        });
+        
         document.getElementById('refreshSolvability').addEventListener('click', loadSolvability);
         loadSolvability();
     }
@@ -727,13 +944,93 @@
         if (to) params.append('to', to);
         const query = params.toString();
         const payload = await fetchJson(query ? `/api/solvability/contrast?${query}` : '/api/solvability/contrast');
-        const labels = payload.data.features.map(feature => feature.name);
-        const solvable = payload.data.features.map(feature => feature.solvable.average);
-        const hard = payload.data.features.map(feature => feature.hard.average);
-        charts.solvability.data.labels = labels;
-        charts.solvability.data.datasets[0].data = solvable;
-        charts.solvability.data.datasets[1].data = hard;
-        charts.solvability.update();
+        
+        if (!payload.data || !payload.data.comparison_data) {
+            console.error('Invalid data format');
+            return;
+        }
+        
+        const features = payload.data.comparison_data;
+        
+        // 分离百分比特征和连续值特征
+        const percentageFeatures = features.filter(f => f.unit === 'Percentage');
+        const continuousFeatures = features.filter(f => f.unit !== 'Percentage');
+        
+        // 更新分组柱状图（百分比数据）
+        if (percentageFeatures.length > 0) {
+            const barLabels = percentageFeatures.map(f => f.feature_name);
+            const solvableBarData = percentageFeatures.map(f => f.solvable_group);
+            const hardBarData = percentageFeatures.map(f => f.hard_group);
+            
+            charts.solvabilityBar.data.labels = barLabels;
+            charts.solvabilityBar.data.datasets[0].data = solvableBarData;
+            charts.solvabilityBar.data.datasets[0].unit = 'Percentage';
+            charts.solvabilityBar.data.datasets[1].data = hardBarData;
+            charts.solvabilityBar.data.datasets[1].unit = 'Percentage';
+            charts.solvabilityBar.update();
+        } else {
+            charts.solvabilityBar.data.labels = [];
+            charts.solvabilityBar.data.datasets[0].data = [];
+            charts.solvabilityBar.data.datasets[1].data = [];
+            charts.solvabilityBar.update();
+        }
+        
+        // 更新箱形图（连续数据，这里显示平均值）
+        if (continuousFeatures.length > 0) {
+            const boxLabels = continuousFeatures.map(f => f.feature_name);
+            const solvableBoxData = continuousFeatures.map(f => f.solvable_group);
+            const hardBoxData = continuousFeatures.map(f => f.hard_group);
+            const unit = continuousFeatures[0]?.unit || '';
+            
+            charts.solvabilityBox.data.labels = boxLabels;
+            charts.solvabilityBox.data.datasets[0].data = solvableBoxData;
+            charts.solvabilityBox.data.datasets[0].unit = unit;
+            charts.solvabilityBox.data.datasets[1].data = hardBoxData;
+            charts.solvabilityBox.data.datasets[1].unit = unit;
+            charts.solvabilityBox.update();
+        } else {
+            charts.solvabilityBox.data.labels = [];
+            charts.solvabilityBox.data.datasets[0].data = [];
+            charts.solvabilityBox.data.labels = [];
+            charts.solvabilityBox.data.datasets[0].data = [];
+            charts.solvabilityBox.data.datasets[1].data = [];
+            charts.solvabilityBox.update();
+        }
+        
+        // 更新标签频率折线图
+        if (payload.data.tag_frequency_data && payload.data.tag_frequency_data.length > 0) {
+            const tagData = payload.data.tag_frequency_data;
+            const tagLabels = tagData.map(t => t.tag_name);
+            const solvableTagCounts = tagData.map(t => t.solvable_count);
+            const hardTagCounts = tagData.map(t => t.hard_count);
+            
+            charts.tagFrequency.data.labels = tagLabels;
+            charts.tagFrequency.data.datasets[0].data = solvableTagCounts;
+            charts.tagFrequency.data.datasets[1].data = hardTagCounts;
+            charts.tagFrequency.update();
+        } else {
+            charts.tagFrequency.data.labels = [];
+            charts.tagFrequency.data.datasets[0].data = [];
+            charts.tagFrequency.data.datasets[1].data = [];
+            charts.tagFrequency.update();
+        }
+        
+        // 更新评论频率折线图
+        if (payload.data.comment_frequency_data) {
+            const commentData = payload.data.comment_frequency_data;
+            const solvableWithComments = commentData.solvable_with_comments;
+            const solvableWithoutComments = commentData.solvable_total - solvableWithComments;
+            const hardWithComments = commentData.hard_with_comments;
+            const hardWithoutComments = commentData.hard_total - hardWithComments;
+            
+            charts.commentFrequency.data.datasets[0].data = [solvableWithComments, solvableWithoutComments];
+            charts.commentFrequency.data.datasets[1].data = [hardWithComments, hardWithoutComments];
+            charts.commentFrequency.update();
+        } else {
+            charts.commentFrequency.data.datasets[0].data = [0, 0];
+            charts.commentFrequency.data.datasets[1].data = [0, 0];
+            charts.commentFrequency.update();
+        }
     }
 </script>
 </body>
