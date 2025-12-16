@@ -14,7 +14,9 @@ public record SolvabilityContrastResponse(
         BoxPlotData reputation_boxplot_data,
         BoxPlotData title_words_boxplot_data,
         BoxPlotData code_ratio_boxplot_data,
-        BoxPlotData view_count_boxplot_data
+        BoxPlotData view_count_boxplot_data,
+        DistributionData title_words_distribution,
+        DistributionData view_count_distribution
 ) {
 
     public record FeatureComparison(
@@ -59,7 +61,8 @@ public record SolvabilityContrastResponse(
             double median,  // 中位数
             double q3,      // 第三四分位数
             double max,
-            List<Double> outliers  // 异常值列表
+            List<Double> outliers,  // 异常值列表
+            int sample_count         // 样本数量
     ) {
     }
 }

@@ -108,6 +108,8 @@ public class SolvabilityContrastService {
         DistributionData questionLengthDistribution = calculateQuestionLengthDistribution(solvableQuestions, hardQuestions);
         DistributionData reputationDistribution = calculateReputationDistribution(solvableQuestions, hardQuestions);
         DistributionData commentCountDistribution = calculateCommentCountDistribution(solvableQuestions, hardQuestions);
+        DistributionData titleWordsDistribution = calculateTitleWordsDistribution(solvableQuestions, hardQuestions);
+        DistributionData viewCountDistribution = calculateViewCountDistribution(solvableQuestions, hardQuestions);
         
         // 计算声誉箱线图数据
         BoxPlotData reputationBoxPlotData = calculateReputationBoxPlotData(solvableQuestions, hardQuestions);
@@ -127,7 +129,9 @@ public class SolvabilityContrastService {
                 reputationBoxPlotData,
                 titleWordsBoxPlotData,
                 codeRatioBoxPlotData,
-                viewCountBoxPlotData
+                viewCountBoxPlotData,
+                titleWordsDistribution,
+                viewCountDistribution
         );
     }
     
@@ -301,23 +305,22 @@ public class SolvabilityContrastService {
     private FeatureComparison calculateReputationFeature(
             List<QuestionEntity> solvable, List<QuestionEntity> hard) {
         
+        // 平均声誉不再做 log10 变换，直接使用原始 reputation 值
         double solvableAvg = solvable.stream()
                 .mapToInt(this::getOwnerReputation)
-                .mapToDouble(this::log10Reputation)
                 .average()
                 .orElse(0.0);
         
         double hardAvg = hard.stream()
                 .mapToInt(this::getOwnerReputation)
-                .mapToDouble(this::log10Reputation)
                 .average()
                 .orElse(0.0);
         
         return new FeatureComparison(
-                "Avg Asker Reputation (log10)",
+                "Avg Asker Reputation",
                 solvableAvg,
                 hardAvg,
-                "log10(Points)"
+                "Points"
         );
     }
     
@@ -928,7 +931,7 @@ public class SolvabilityContrastService {
      */
     private BoxPlotStats calculateBoxPlotStats(List<Integer> values) {
         if (values.isEmpty()) {
-            return new BoxPlotStats(0, 0, 0, 0, 0, List.of());
+            return new BoxPlotStats(0, 0, 0, 0, 0, List.of(), 0);
         }
         
         // 排序
@@ -946,7 +949,7 @@ public class SolvabilityContrastService {
         // 检测异常值
         List<Double> outliers = detectOutliers(sorted, q1, q3);
         
-        return new BoxPlotStats(min, q1, median, q3, max, outliers);
+        return new BoxPlotStats(min, q1, median, q3, max, outliers, values.size());
     }
     
     /**
@@ -954,7 +957,7 @@ public class SolvabilityContrastService {
      */
     private BoxPlotStats calculateBoxPlotStatsDouble(List<Double> values) {
         if (values.isEmpty()) {
-            return new BoxPlotStats(0, 0, 0, 0, 0, List.of());
+            return new BoxPlotStats(0, 0, 0, 0, 0, List.of(), 0);
         }
         
         // 排序
@@ -972,7 +975,7 @@ public class SolvabilityContrastService {
         // 检测异常值
         List<Double> outliers = detectOutliersDouble(sorted, q1, q3);
         
-        return new BoxPlotStats(min, q1, median, q3, max, outliers);
+        return new BoxPlotStats(min, q1, median, q3, max, outliers, values.size());
     }
     
     /**
@@ -1049,5 +1052,93 @@ public class SolvabilityContrastService {
         return values.stream()
                 .filter(v -> v < lowerBound || v > upperBound)
                 .collect(Collectors.toList());
+    }
+
+    /**
+     * 计算标题词数分布（用于小提琴图）
+     */
+    private DistributionData calculateTitleWordsDistribution(
+            List<QuestionEntity> solvable, List<QuestionEntity> hard) {
+
+        // 定义标题词数区间：0-3, 3-6, 6-10, 10-20, 20+
+        List<String> bins = List.of("0-3", "3-6", "6-10", "10-20", "20+");
+        int[] solvableCounts = new int[bins.size()];
+        int[] hardCounts = new int[bins.size()];
+
+        for (QuestionEntity q : solvable) {
+            int words = getTitleWordCount(q);
+            int binIndex = getTitleWordsBinIndex(words);
+            solvableCounts[binIndex]++;
+        }
+
+        for (QuestionEntity q : hard) {
+            int words = getTitleWordCount(q);
+            int binIndex = getTitleWordsBinIndex(words);
+            hardCounts[binIndex]++;
+        }
+
+        List<Double> solvableFreq = new ArrayList<>();
+        List<Double> hardFreq = new ArrayList<>();
+        double solvableTotal = solvable.isEmpty() ? 1 : solvable.size();
+        double hardTotal = hard.isEmpty() ? 1 : hard.size();
+
+        for (int i = 0; i < bins.size(); i++) {
+            solvableFreq.add((solvableCounts[i] / solvableTotal) * 100.0);
+            hardFreq.add((hardCounts[i] / hardTotal) * 100.0);
+        }
+
+        return new DistributionData(bins, solvableFreq, hardFreq);
+    }
+
+    private int getTitleWordsBinIndex(int words) {
+        if (words < 3) return 0;
+        if (words < 6) return 1;
+        if (words < 10) return 2;
+        if (words < 20) return 3;
+        return 4; // 20+
+    }
+
+    /**
+     * 计算浏览量分布（用于小提琴图）
+     */
+    private DistributionData calculateViewCountDistribution(
+            List<QuestionEntity> solvable, List<QuestionEntity> hard) {
+
+        // 定义浏览量区间：0-100, 100-500, 500-2000, 2000-10000, 10000+
+        List<String> bins = List.of("0-100", "100-500", "500-2000", "2000-10000", "10000+");
+        int[] solvableCounts = new int[bins.size()];
+        int[] hardCounts = new int[bins.size()];
+
+        for (QuestionEntity q : solvable) {
+            int views = getViewCount(q);
+            int binIndex = getViewCountBinIndex(views);
+            solvableCounts[binIndex]++;
+        }
+
+        for (QuestionEntity q : hard) {
+            int views = getViewCount(q);
+            int binIndex = getViewCountBinIndex(views);
+            hardCounts[binIndex]++;
+        }
+
+        List<Double> solvableFreq = new ArrayList<>();
+        List<Double> hardFreq = new ArrayList<>();
+        double solvableTotal = solvable.isEmpty() ? 1 : solvable.size();
+        double hardTotal = hard.isEmpty() ? 1 : hard.size();
+
+        for (int i = 0; i < bins.size(); i++) {
+            solvableFreq.add((solvableCounts[i] / solvableTotal) * 100.0);
+            hardFreq.add((hardCounts[i] / hardTotal) * 100.0);
+        }
+
+        return new DistributionData(bins, solvableFreq, hardFreq);
+    }
+
+    private int getViewCountBinIndex(int views) {
+        if (views < 100) return 0;
+        if (views < 500) return 1;
+        if (views < 2000) return 2;
+        if (views < 10000) return 3;
+        return 4; // 10000+
     }
 }
