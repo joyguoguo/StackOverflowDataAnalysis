@@ -184,7 +184,7 @@
         </div>
         <div style="margin-bottom: 24px;">
             <h3 style="margin-bottom: 12px;">箱形图（连续数据分布）</h3>
-            <canvas id="solvabilityBoxChart"></canvas>
+            <canvas id="solvabilityBoxChart" style="max-height: 400px;"></canvas>
         </div>
         <div style="margin-bottom: 24px;">
             <h3 style="margin-bottom: 12px;">标签频率对比（前10个标签，排除java）</h3>
@@ -207,8 +207,12 @@
             <canvas id="questionLengthChart"></canvas>
         </div>
         <div style="margin-bottom: 24px;">
-            <h3 style="margin-bottom: 12px;">提问者声誉分布</h3>
+            <h3 style="margin-bottom: 12px;">提问者声誉分布 (log10变换)</h3>
             <canvas id="reputationChart"></canvas>
+        </div>
+        <div style="margin-bottom: 24px;">
+            <h3 style="margin-bottom: 12px;">提问者声誉分布箱线图 (log10变换)</h3>
+            <div id="reputationBoxPlotContainer" style="width: 100%; height: 400px; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff;"></div>
         </div>
         <div>
             <h3 style="margin-bottom: 12px;">评论数量分布</h3>
@@ -544,6 +548,184 @@
         }
     }
 
+    // 绘制声誉箱线图（使用 D3）
+    function renderReputationBoxPlot(boxData) {
+        const container = document.getElementById('reputationBoxPlotContainer');
+        container.innerHTML = '';
+
+        if (!boxData || !boxData.solvable || !boxData.hard) {
+            container.innerHTML = '<p style="text-align: center; padding: 40px; color: #6b7280;">暂无数据</p>';
+            return;
+        }
+
+        const data = [
+            { label: '易解决', stats: boxData.solvable },
+            { label: '难解决', stats: boxData.hard }
+        ];
+
+        const margin = { top: 20, right: 20, bottom: 40, left: 60 };
+        const width = container.clientWidth - margin.left - margin.right;
+        const height = 360 - margin.top - margin.bottom;
+
+        const allValues = [
+            ...data.flatMap(d => [d.stats.min, d.stats.q1, d.stats.median, d.stats.q3, d.stats.max]),
+            ...data.flatMap(d => d.stats.outliers || [])
+        ];
+        const yMin = Math.min(...allValues);
+        const yMax = Math.max(...allValues);
+        const yPadding = (yMax - yMin) * 0.05 || 10;
+
+        const svg = d3.select(container)
+            .append('svg')
+            .attr('width', width + margin.left + margin.right)
+            .attr('height', height + margin.top + margin.bottom)
+            .append('g')
+            .attr('transform', `translate(${margin.left},${margin.top})`);
+
+        const x = d3.scaleBand()
+            .domain(data.map(d => d.label))
+            .range([0, width])
+            .paddingInner(0.4)
+            .paddingOuter(0.2);
+
+        const y = d3.scaleLinear()
+            .domain([yMin - yPadding, yMax + yPadding])
+            .range([height, 0]);
+
+        // 轴
+        svg.append('g')
+            .attr('transform', `translate(0,${height})`)
+            .call(d3.axisBottom(x));
+
+        svg.append('g')
+            .call(d3.axisLeft(y));
+        
+        // 添加Y轴标题
+        svg.append('text')
+            .attr('transform', 'rotate(-90)')
+            .attr('y', 0 - margin.left)
+            .attr('x', 0 - (height / 2))
+            .attr('dy', '1em')
+            .style('text-anchor', 'middle')
+            .style('font-size', '12px')
+            .text('声誉 (log₁₀ Reputation)');
+        
+        // 添加X轴标题
+        svg.append('text')
+            .attr('transform', `translate(${width / 2}, ${height + margin.bottom - 5})`)
+            .style('text-anchor', 'middle')
+            .style('font-size', '12px')
+            .text('问题类型');
+
+        const boxWidth = x.bandwidth();
+
+        // 绘制箱线图
+        data.forEach(d => {
+            const cx = x(d.label) + boxWidth / 2;
+            const { min, q1, median, q3, max, outliers } = d.stats;
+            
+            // 计算IQR和异常值边界
+            const iqr = q3 - q1;
+            const lowerBound = q1 - 1.5 * iqr;
+            const upperBound = q3 + 1.5 * iqr;
+            
+            // 计算非异常值的最小值和最大值（用于绘制须线）
+            // 下须：延伸到所有非异常值中的最小值
+            // 如果min是异常值，则延伸到lowerBound；否则延伸到min
+            const outlierSet = new Set((outliers || []).map(v => Math.round(v * 100) / 100));
+            const isMinOutlier = outlierSet.has(Math.round(min * 100) / 100);
+            const lowerWhisker = isMinOutlier ? Math.max(lowerBound, 0) : min;
+            
+            // 上须：延伸到所有非异常值中的最大值
+            // 如果max是异常值，则延伸到upperBound；否则延伸到max
+            const isMaxOutlier = outlierSet.has(Math.round(max * 100) / 100);
+            const upperWhisker = isMaxOutlier ? Math.min(upperBound, max) : max;
+            
+            // 确保lowerWhisker <= q1 和 upperWhisker >= q3
+            const finalLowerWhisker = Math.min(lowerWhisker, q1);
+            const finalUpperWhisker = Math.max(upperWhisker, q3);
+            
+            // 绘制箱体 (Q1到Q3) - 先绘制箱体，这样其他元素会在上面
+            const boxHeight = Math.max(1, y(q1) - y(q3));
+            svg.append('rect')
+                .attr('x', x(d.label))
+                .attr('y', y(q3))
+                .attr('width', boxWidth)
+                .attr('height', boxHeight)
+                .attr('fill', d.label === '易解决' ? 'rgba(75, 192, 192, 0.4)' : 'rgba(233, 30, 99, 0.4)')
+                .attr('stroke', d.label === '易解决' ? '#4BC0C0' : '#E91E63')
+                .attr('stroke-width', 1.5);
+            
+            // 绘制中位数线（横穿箱体）
+            svg.append('line')
+                .attr('x1', x(d.label))
+                .attr('x2', x(d.label) + boxWidth)
+                .attr('y1', y(median))
+                .attr('y2', y(median))
+                .attr('stroke', '#111827')
+                .attr('stroke-width', 2);
+            
+            // 绘制下须（从Q1到finalLowerWhisker）
+            svg.append('line')
+                .attr('x1', cx)
+                .attr('x2', cx)
+                .attr('y1', y(q1))
+                .attr('y2', y(finalLowerWhisker))
+                .attr('stroke', '#374151')
+                .attr('stroke-width', 1.5);
+            
+            // 绘制上须（从Q3到finalUpperWhisker）
+            svg.append('line')
+                .attr('x1', cx)
+                .attr('x2', cx)
+                .attr('y1', y(q3))
+                .attr('y2', y(finalUpperWhisker))
+                .attr('stroke', '#374151')
+                .attr('stroke-width', 1.5);
+            
+            // 绘制下须端点（横线）
+            svg.append('line')
+                .attr('x1', cx - boxWidth * 0.2)
+                .attr('x2', cx + boxWidth * 0.2)
+                .attr('y1', y(finalLowerWhisker))
+                .attr('y2', y(finalLowerWhisker))
+                .attr('stroke', '#374151')
+                .attr('stroke-width', 1.5);
+            
+            // 绘制上须端点（横线）
+            svg.append('line')
+                .attr('x1', cx - boxWidth * 0.2)
+                .attr('x2', cx + boxWidth * 0.2)
+                .attr('y1', y(finalUpperWhisker))
+                .attr('y2', y(finalUpperWhisker))
+                .attr('stroke', '#374151')
+                .attr('stroke-width', 1.5);
+            
+            // 绘制异常值点
+            (outliers || []).forEach(v => {
+                svg.append('circle')
+                    .attr('cx', cx)
+                    .attr('cy', y(v))
+                    .attr('r', 4)
+                    .attr('fill', d.label === '易解决' ? '#4BC0C0' : '#E91E63')
+                    .attr('stroke', '#fff')
+                    .attr('stroke-width', 1.5)
+                    .attr('opacity', 0.8)
+                    .append('title')
+                    .text(`异常值: ${v.toFixed(0)}`);
+            });
+        });
+
+        // 添加标题
+        svg.append('text')
+            .attr('x', width / 2)
+            .attr('y', -6)
+            .attr('text-anchor', 'middle')
+            .attr('fill', '#111827')
+            .attr('font-size', '14px')
+            .text('提问者声誉分布箱线图 (log₁₀变换)');
+    }
+
     let sunburstData = null;
 
     function initPitfallChart() {
@@ -834,6 +1016,12 @@
                         title: {
                             display: true,
                             text: '值'
+                        }
+                    },
+                    x: {
+                        title: {
+                            display: true,
+                            text: '特征'
                         }
                     }
                 }
@@ -1161,7 +1349,7 @@
                     x: {
                         title: {
                             display: true,
-                            text: '提问者声誉'
+                            text: '提问者声誉 (log₁₀)'
                         }
                     }
                 }
@@ -1266,7 +1454,7 @@
         }
         
         // 更新箱形图（连续数据，这里显示平均值）
-        if (continuousFeatures.length > 0) {
+        if (continuousFeatures && continuousFeatures.length > 0) {
             const boxLabels = continuousFeatures.map(f => f.feature_name);
             const solvableBoxData = continuousFeatures.map(f => f.solvable_group);
             const hardBoxData = continuousFeatures.map(f => f.hard_group);
@@ -1278,13 +1466,20 @@
             charts.solvabilityBox.data.datasets[1].data = hardBoxData;
             charts.solvabilityBox.data.datasets[1].unit = unit;
             charts.solvabilityBox.update();
+            console.log('箱形图数据已更新:', { boxLabels, solvableBoxData, hardBoxData });
         } else {
-            charts.solvabilityBox.data.labels = [];
-            charts.solvabilityBox.data.datasets[0].data = [];
             charts.solvabilityBox.data.labels = [];
             charts.solvabilityBox.data.datasets[0].data = [];
             charts.solvabilityBox.data.datasets[1].data = [];
             charts.solvabilityBox.update();
+            console.log('箱形图：无连续数据特征');
+        }
+
+        // 更新声誉箱线图（D3 绘制）
+        if (payload.data.reputation_boxplot_data) {
+            renderReputationBoxPlot(payload.data.reputation_boxplot_data);
+        } else {
+            renderReputationBoxPlot(null);
         }
         
         // 更新标签频率折线图

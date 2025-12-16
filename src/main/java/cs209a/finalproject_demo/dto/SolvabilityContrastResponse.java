@@ -10,7 +10,8 @@ public record SolvabilityContrastResponse(
         DistributionData tag_count_distribution,
         DistributionData question_length_distribution,
         DistributionData reputation_distribution,
-        DistributionData comment_count_distribution
+        DistributionData comment_count_distribution,
+        BoxPlotData reputation_boxplot_data
 ) {
 
     public record FeatureComparison(
@@ -40,6 +41,22 @@ public record SolvabilityContrastResponse(
             List<String> bins,  // 区间标签
             List<Double> solvable_frequencies,  // 易解决组的频率（百分比）
             List<Double> hard_frequencies  // 难解决组的频率（百分比）
+    ) {
+    }
+    
+    public record BoxPlotData(
+            BoxPlotStats solvable,
+            BoxPlotStats hard
+    ) {
+    }
+    
+    public record BoxPlotStats(
+            double min,
+            double q1,      // 第一四分位数
+            double median,  // 中位数
+            double q3,      // 第三四分位数
+            double max,
+            List<Double> outliers  // 异常值列表
     ) {
     }
 }

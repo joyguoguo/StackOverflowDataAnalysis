@@ -1,6 +1,8 @@
 package cs209a.finalproject_demo.service;
 
 import cs209a.finalproject_demo.dto.SolvabilityContrastResponse;
+import cs209a.finalproject_demo.dto.SolvabilityContrastResponse.BoxPlotData;
+import cs209a.finalproject_demo.dto.SolvabilityContrastResponse.BoxPlotStats;
 import cs209a.finalproject_demo.dto.SolvabilityContrastResponse.CommentFrequencyData;
 import cs209a.finalproject_demo.dto.SolvabilityContrastResponse.DistributionData;
 import cs209a.finalproject_demo.dto.SolvabilityContrastResponse.FeatureComparison;
@@ -14,7 +16,6 @@ import cs209a.finalproject_demo.repository.QuestionRepository;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
-import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.ArrayList;
@@ -108,6 +109,9 @@ public class SolvabilityContrastService {
         DistributionData reputationDistribution = calculateReputationDistribution(solvableQuestions, hardQuestions);
         DistributionData commentCountDistribution = calculateCommentCountDistribution(solvableQuestions, hardQuestions);
         
+        // 计算声誉箱线图数据
+        BoxPlotData reputationBoxPlotData = calculateReputationBoxPlotData(solvableQuestions, hardQuestions);
+        
         return new SolvabilityContrastResponse(
                 features, 
                 tagFrequencyData, 
@@ -116,7 +120,8 @@ public class SolvabilityContrastService {
                 tagCountDistribution,
                 questionLengthDistribution,
                 reputationDistribution,
-                commentCountDistribution
+                commentCountDistribution,
+                reputationBoxPlotData
         );
     }
     
@@ -285,26 +290,28 @@ public class SolvabilityContrastService {
     }
     
     /**
-     * 计算提问者声誉特征（平均分数）
+     * 计算提问者声誉特征（平均分数，log10变换后）
      */
     private FeatureComparison calculateReputationFeature(
             List<QuestionEntity> solvable, List<QuestionEntity> hard) {
         
         double solvableAvg = solvable.stream()
                 .mapToInt(this::getOwnerReputation)
+                .mapToDouble(this::log10Reputation)
                 .average()
                 .orElse(0.0);
         
         double hardAvg = hard.stream()
                 .mapToInt(this::getOwnerReputation)
+                .mapToDouble(this::log10Reputation)
                 .average()
                 .orElse(0.0);
         
         return new FeatureComparison(
-                "Avg Asker Reputation",
+                "Avg Asker Reputation (log10)",
                 solvableAvg,
                 hardAvg,
-                "Points"
+                "log10(Points)"
         );
     }
     
@@ -367,6 +374,17 @@ public class SolvabilityContrastService {
         }
         Integer reputation = question.getOwner().getReputation();
         return reputation != null ? reputation : 0;
+    }
+    
+    /**
+     * 对声誉值进行log10变换
+     * 处理边界情况：如果reputation <= 0，返回log10(1) = 0
+     */
+    private double log10Reputation(int reputation) {
+        if (reputation <= 0) {
+            return 0.0; // log10(1) = 0
+        }
+        return Math.log10(reputation);
     }
     
     /**
@@ -695,27 +713,30 @@ public class SolvabilityContrastService {
     }
     
     /**
-     * 计算提问者声誉分布
+     * 计算提问者声誉分布（log10变换后）
      */
     private DistributionData calculateReputationDistribution(
             List<QuestionEntity> solvable, List<QuestionEntity> hard) {
         
-        // 定义声誉区间：0-100, 100-500, 500-1000, 1000-5000, 5000+
-        List<String> bins = List.of("0-100", "100-500", "500-1000", "1000-5000", "5000+");
+        // 定义log10变换后的声誉区间：0-1, 1-2, 2-3, 3-4, 4+
+        // 对应原始值大致为：1-10, 10-100, 100-1000, 1000-10000, 10000+
+        List<String> bins = List.of("0-1", "1-2", "2-3", "3-4", "4+");
         int[] solvableCounts = new int[5];
         int[] hardCounts = new int[5];
         
         // 统计易解决问题
         for (QuestionEntity question : solvable) {
             int reputation = getOwnerReputation(question);
-            int binIndex = getReputationBinIndex(reputation);
+            double logReputation = log10Reputation(reputation);
+            int binIndex = getLogReputationBinIndex(logReputation);
             solvableCounts[binIndex]++;
         }
         
         // 统计难解决问题
         for (QuestionEntity question : hard) {
             int reputation = getOwnerReputation(question);
-            int binIndex = getReputationBinIndex(reputation);
+            double logReputation = log10Reputation(reputation);
+            int binIndex = getLogReputationBinIndex(logReputation);
             hardCounts[binIndex]++;
         }
         
@@ -734,14 +755,14 @@ public class SolvabilityContrastService {
     }
     
     /**
-     * 获取声誉的区间索引
+     * 获取log10变换后声誉的区间索引
      */
-    private int getReputationBinIndex(int reputation) {
-        if (reputation < 100) return 0;
-        if (reputation < 500) return 1;
-        if (reputation < 1000) return 2;
-        if (reputation < 5000) return 3;
-        return 4; // 5000+
+    private int getLogReputationBinIndex(double logReputation) {
+        if (logReputation < 1.0) return 0;
+        if (logReputation < 2.0) return 1;
+        if (logReputation < 3.0) return 2;
+        if (logReputation < 4.0) return 3;
+        return 4; // 4+
     }
     
     /**
@@ -792,5 +813,159 @@ public class SolvabilityContrastService {
         if (commentCount >= 2 && commentCount <= 5) return 2;
         if (commentCount >= 6 && commentCount <= 10) return 3;
         return 4; // 10+
+    }
+    
+    /**
+     * 计算声誉箱线图数据（log10变换后）
+     */
+    private BoxPlotData calculateReputationBoxPlotData(
+            List<QuestionEntity> solvable, List<QuestionEntity> hard) {
+        
+        // 收集易解决组的声誉值（log10变换后）
+        List<Double> solvableReputations = solvable.stream()
+                .mapToInt(this::getOwnerReputation)
+                .mapToDouble(this::log10Reputation)
+                .boxed()
+                .collect(Collectors.toList());
+        
+        // 收集难解决组的声誉值（log10变换后）
+        List<Double> hardReputations = hard.stream()
+                .mapToInt(this::getOwnerReputation)
+                .mapToDouble(this::log10Reputation)
+                .boxed()
+                .collect(Collectors.toList());
+        
+        BoxPlotStats solvableStats = calculateBoxPlotStatsDouble(solvableReputations);
+        BoxPlotStats hardStats = calculateBoxPlotStatsDouble(hardReputations);
+        
+        return new BoxPlotData(solvableStats, hardStats);
+    }
+    
+    /**
+     * 计算箱线图统计数据（Integer版本）
+     */
+    private BoxPlotStats calculateBoxPlotStats(List<Integer> values) {
+        if (values.isEmpty()) {
+            return new BoxPlotStats(0, 0, 0, 0, 0, List.of());
+        }
+        
+        // 排序
+        List<Integer> sorted = new ArrayList<>(values);
+        sorted.sort(Integer::compareTo);
+        
+        // 计算百分位数
+        double q1 = calculatePercentile(sorted, 0.25);
+        double median = calculatePercentile(sorted, 0.50);
+        double q3 = calculatePercentile(sorted, 0.75);
+        
+        double min = sorted.get(0);
+        double max = sorted.get(sorted.size() - 1);
+        
+        // 检测异常值
+        List<Double> outliers = detectOutliers(sorted, q1, q3);
+        
+        return new BoxPlotStats(min, q1, median, q3, max, outliers);
+    }
+    
+    /**
+     * 计算箱线图统计数据（Double版本，用于log10变换后的值）
+     */
+    private BoxPlotStats calculateBoxPlotStatsDouble(List<Double> values) {
+        if (values.isEmpty()) {
+            return new BoxPlotStats(0, 0, 0, 0, 0, List.of());
+        }
+        
+        // 排序
+        List<Double> sorted = new ArrayList<>(values);
+        sorted.sort(Double::compareTo);
+        
+        // 计算百分位数
+        double q1 = calculatePercentileDouble(sorted, 0.25);
+        double median = calculatePercentileDouble(sorted, 0.50);
+        double q3 = calculatePercentileDouble(sorted, 0.75);
+        
+        double min = sorted.get(0);
+        double max = sorted.get(sorted.size() - 1);
+        
+        // 检测异常值
+        List<Double> outliers = detectOutliersDouble(sorted, q1, q3);
+        
+        return new BoxPlotStats(min, q1, median, q3, max, outliers);
+    }
+    
+    /**
+     * 计算百分位数（Integer版本）
+     */
+    private double calculatePercentile(List<Integer> sortedValues, double percentile) {
+        if (sortedValues.isEmpty()) {
+            return 0.0;
+        }
+        
+        if (sortedValues.size() == 1) {
+            return sortedValues.get(0);
+        }
+        
+        double index = percentile * (sortedValues.size() - 1);
+        int lower = (int) Math.floor(index);
+        int upper = (int) Math.ceil(index);
+        
+        if (lower == upper) {
+            return sortedValues.get(lower);
+        }
+        
+        double weight = index - lower;
+        return sortedValues.get(lower) * (1 - weight) + sortedValues.get(upper) * weight;
+    }
+    
+    /**
+     * 计算百分位数（Double版本）
+     */
+    private double calculatePercentileDouble(List<Double> sortedValues, double percentile) {
+        if (sortedValues.isEmpty()) {
+            return 0.0;
+        }
+        
+        if (sortedValues.size() == 1) {
+            return sortedValues.get(0);
+        }
+        
+        double index = percentile * (sortedValues.size() - 1);
+        int lower = (int) Math.floor(index);
+        int upper = (int) Math.ceil(index);
+        
+        if (lower == upper) {
+            return sortedValues.get(lower);
+        }
+        
+        double weight = index - lower;
+        return sortedValues.get(lower) * (1 - weight) + sortedValues.get(upper) * weight;
+    }
+    
+    /**
+     * 检测异常值（使用IQR方法，Integer版本）
+     */
+    private List<Double> detectOutliers(List<Integer> values, double q1, double q3) {
+        double iqr = q3 - q1;
+        double lowerBound = q1 - 0.5 * iqr;
+        double upperBound = q3 + 0.5 * iqr;
+        
+        return values.stream()
+                .mapToDouble(Integer::doubleValue)
+                .filter(v -> v < lowerBound || v > upperBound)
+                .boxed()
+                .collect(Collectors.toList());
+    }
+    
+    /**
+     * 检测异常值（使用IQR方法，Double版本）
+     */
+    private List<Double> detectOutliersDouble(List<Double> values, double q1, double q3) {
+        double iqr = q3 - q1;
+        double lowerBound = q1 - 1.5 * iqr;
+        double upperBound = q3 + 1.5 * iqr;
+        
+        return values.stream()
+                .filter(v -> v < lowerBound || v > upperBound)
+                .collect(Collectors.toList());
     }
 }
