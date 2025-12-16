@@ -170,11 +170,11 @@
             </div>
             <div>
                 <label for="pitfallSelect">Top N Categories:</label>
-                <input id="pitfallSelect" type="number" min="1" max="10" value="5" title="Number of top categories to display (1-10)">
+                <input id="pitfallSelect" type="number" min="1" max="9" value="5" title="Number of top categories to display (1-9)">
                 <button id="refreshPitfalls">Refresh</button>
             </div>
         </div>
-        <div id="sunburstContainer" style="width: 100%; height: 600px; border: 1px solid #e5e7eb; border-radius: 8px; background: #fff;"></div>
+        <canvas id="pitfallChart" style="max-height: 500px;"></canvas>
     </section>
 
     <section class="panel">
@@ -463,16 +463,20 @@
 
         // 创建力导向图模拟
         // 注意：distance 函数中的参数是 link，频率越高，距离越近
+        // 同时减弱斥力、增加软性边界约束，避免节点飞出视野
         forceGraphSimulation = d3.forceSimulation(nodes)
             .force('link', d3.forceLink(links)
                 .id(d => d.id)
                 .distance(d => {
                     // 频率越高，距离越近（但保持最小距离）
-                    return Math.max(10, 200 - (d.frequency / maxFreq) * 120);
-                }))
-            .force('charge', d3.forceManyBody().strength(-100))  // 增加排斥力，让节点分布更均匀
+                    return Math.max(40, 220 - (d.frequency / maxFreq) * 140);
+                })
+                .strength(0.4))
+            .force('charge', d3.forceManyBody()
+                .strength(-45)          // 斥力绝对值调小，避免节点飞得太远
+                .distanceMax(260))      // 超过该距离斥力变弱，有利于整体收拢
             .force('center', d3.forceCenter(width / 2, height / 2))
-            .force('collision', d3.forceCollide().radius(10));  // 增加碰撞半径，避免节点重叠
+            .force('collision', d3.forceCollide().radius(14));  // 稍微加大碰撞半径，减少重叠
 
         // 绘制链接（边）
         const link = svg.append('g')
@@ -538,17 +542,33 @@
             .attr('text-anchor', 'middle')
             .style('pointer-events', 'none');       
 
-        // 更新位置函数
+        // 更新位置函数，增加边界约束，防止节点“出画”
         function ticked() {
+            const margin = 30;
+
+            function clampX(x) {
+                return Math.max(margin, Math.min(width - margin, x));
+            }
+
+            function clampY(y) {
+                return Math.max(margin, Math.min(height - margin, y));
+            }
+
             link
-                .attr('x1', d => d.source.x)
-                .attr('y1', d => d.source.y)
-                .attr('x2', d => d.target.x)
-                .attr('y2', d => d.target.y);
+                .attr('x1', d => clampX(d.source.x))
+                .attr('y1', d => clampY(d.source.y))
+                .attr('x2', d => clampX(d.target.x))
+                .attr('y2', d => clampY(d.target.y));
 
             node
-                .attr('cx', d => d.x)
-                .attr('cy', d => d.y);
+                .attr('cx', d => {
+                    d.x = clampX(d.x);
+                    return d.x;
+                })
+                .attr('cy', d => {
+                    d.y = clampY(d.y);
+                    return d.y;
+                });
 
             label
                 .attr('x', d => d.x)
@@ -556,8 +576,8 @@
             
             // 更新边的标签位置（在边的中点）
             linkLabel
-                .attr('x', d => (d.source.x + d.target.x) / 2)
-                .attr('y', d => (d.source.y + d.target.y) / 2);
+                .attr('x', d => (clampX(d.source.x) + clampX(d.target.x)) / 2)
+                .attr('y', d => (clampY(d.source.y) + clampY(d.target.y)) / 2);
         }
 
         // 启动模拟
@@ -1189,16 +1209,64 @@
     }
 
     function initPitfallChart() {
+        const ctx = document.getElementById('pitfallChart').getContext('2d');
+        charts.pitfall = new Chart(ctx, {
+            type: 'bar',
+            data: {
+                labels: [],
+                datasets: [{
+                    label: 'Number of Questions',
+                    data: [],
+                    backgroundColor: '#FF9F40'
+                }]
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: function(context) {
+                                return 'Count: ' + context.parsed.x;
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        beginAtZero: true,
+                        title: { display: true, text: 'Question Count' }
+                    },
+                    y: {
+                        title: { display: true, text: 'Pitfall Category' }
+                    }
+                }
+            }
+        });
+
         document.getElementById('refreshPitfalls').addEventListener('click', loadPitfalls);
         document.getElementById('pitfallSelect').addEventListener('change', loadPitfalls);
         loadPitfalls();
     }
 
     async function loadPitfalls() {
-        const topN = document.getElementById('pitfallSelect').value;
+        let topN = parseInt(document.getElementById('pitfallSelect').value || '5', 10);
+        if (Number.isNaN(topN)) {
+            topN = 5;
+        }
+        topN = Math.max(1, Math.min(9, topN));
+        document.getElementById('pitfallSelect').value = topN;
+
         const payload = await fetchJson(`/api/multithreading/pitfalls?topN=${topN}`);
-        sunburstData = payload.data;
-        renderSunburstChart(sunburstData);
+        const pitfalls = payload.data.pitfalls || [];
+
+        const labels = pitfalls.map(p => `${p.code}: ${p.label}`);
+        const data = pitfalls.map(p => p.count);
+
+        charts.pitfall.data.labels = labels;
+        charts.pitfall.data.datasets[0].data = data;
+        charts.pitfall.update();
     }
 
     function renderSunburstChart(data) {
