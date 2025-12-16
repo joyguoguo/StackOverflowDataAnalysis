@@ -853,7 +853,7 @@
 
     let sunburstData = null;
 
-    // 通用小提琴图绘制：上下对称，左侧为易解决，右侧为难解决
+    // 通用小提琴图绘制：上下对称，左侧为易解决，右侧为难解决，并在内部叠加对比箱线
     // statsData 对应后端的 BoxPlotData，用于在 tooltip 中补充整体统计信息
     function renderViolinPlot(containerId, distributionData, statsData, xLabel, titleText) {
         const container = document.getElementById(containerId);
@@ -947,6 +947,54 @@
             return result;
         }
 
+        // 通过频率分布近似计算对应组在各分位点上的 y 位置（用于在小提琴内部画箱线）
+        function buildBoxPositions(freqArray) {
+            const total = freqArray.reduce((acc, v) => acc + (v || 0), 0);
+            if (total <= 0) {
+                return null;
+            }
+
+            // 计算最小/最大（第一个和最后一个有频率的区间）
+            let minBinIndex = null;
+            let maxBinIndex = null;
+            freqArray.forEach((v, idx) => {
+                if ((v || 0) > 0) {
+                    if (minBinIndex === null) {
+                        minBinIndex = idx;
+                    }
+                    maxBinIndex = idx;
+                }
+            });
+            if (minBinIndex === null || maxBinIndex === null) {
+                return null;
+            }
+
+            function findQuantileY(q) {
+                const target = q * total;
+                let cum = 0;
+                for (let i = 0; i < freqArray.length; i++) {
+                    cum += (freqArray[i] || 0);
+                    if (cum >= target) {
+                        const bin = bins[i];
+                        return y(bin) + y.bandwidth() / 2;
+                    }
+                }
+                const lastBin = bins[bins.length - 1];
+                return y(lastBin) + y.bandwidth() / 2;
+            }
+
+            const minBin = bins[minBinIndex];
+            const maxBin = bins[maxBinIndex];
+
+            return {
+                minY: y(minBin) + y.bandwidth() / 2,
+                q1Y: findQuantileY(0.25),
+                medianY: findQuantileY(0.5),
+                q3Y: findQuantileY(0.75),
+                maxY: y(maxBin) + y.bandwidth() / 2
+            };
+        }
+
         const solvablePath = d3.path();
         const leftPoints = buildHalfViolin(solvableFreq, 'left');
         leftPoints.forEach((p, i) => {
@@ -972,6 +1020,79 @@
             .attr('fill', 'rgba(233, 30, 99, 0.45)')
             .attr('stroke', '#E91E63')
             .attr('stroke-width', 1.5);
+
+        // 在小提琴内部叠加对比箱线（左右各一套）
+        const solvBoxPos = buildBoxPositions(solvableFreq);
+        const hardBoxPos = buildBoxPositions(hardFreq);
+        const violinFullWidth = x(maxFreq) - x(-maxFreq);
+        const boxHalfWidth = Math.max(4, violinFullWidth * 0.025);
+        // 让两类箱线紧靠轴线，对称分布：只做一个很小的左右偏移
+        const boxOffset = boxHalfWidth * 1.4;
+
+        if (solvBoxPos) {
+            const boxX = centerX - boxOffset;
+            const boxRectY = Math.min(solvBoxPos.q1Y, solvBoxPos.q3Y);
+            const boxRectH = Math.max(1, Math.abs(solvBoxPos.q1Y - solvBoxPos.q3Y));
+
+            // 竖线（须）
+            svg.append('line')
+                .attr('x1', boxX)
+                .attr('x2', boxX)
+                .attr('y1', solvBoxPos.minY)
+                .attr('y2', solvBoxPos.maxY)
+                .attr('stroke', '#0f766e')
+                .attr('stroke-width', 1.2);
+
+            // 箱体
+            svg.append('rect')
+                .attr('x', boxX - boxHalfWidth)
+                .attr('y', boxRectY)
+                .attr('width', boxHalfWidth * 2)
+                .attr('height', boxRectH)
+                .attr('fill', 'rgba(16, 185, 129, 0.8)')
+                .attr('stroke', '#064e3b')
+                .attr('stroke-width', 1.2);
+
+            // 中位数线
+            svg.append('line')
+                .attr('x1', boxX - boxHalfWidth)
+                .attr('x2', boxX + boxHalfWidth)
+                .attr('y1', solvBoxPos.medianY)
+                .attr('y2', solvBoxPos.medianY)
+                .attr('stroke', '#022c22')
+                .attr('stroke-width', 1.6);
+        }
+
+        if (hardBoxPos) {
+            const boxX = centerX + boxOffset;
+            const boxRectY = Math.min(hardBoxPos.q1Y, hardBoxPos.q3Y);
+            const boxRectH = Math.max(1, Math.abs(hardBoxPos.q1Y - hardBoxPos.q3Y));
+
+            svg.append('line')
+                .attr('x1', boxX)
+                .attr('x2', boxX)
+                .attr('y1', hardBoxPos.minY)
+                .attr('y2', hardBoxPos.maxY)
+                .attr('stroke', '#9f1239')
+                .attr('stroke-width', 1.2);
+
+            svg.append('rect')
+                .attr('x', boxX - boxHalfWidth)
+                .attr('y', boxRectY)
+                .attr('width', boxHalfWidth * 2)
+                .attr('height', boxRectH)
+                .attr('fill', 'rgba(244, 63, 94, 0.8)')
+                .attr('stroke', '#881337')
+                .attr('stroke-width', 1.2);
+
+            svg.append('line')
+                .attr('x1', boxX - boxHalfWidth)
+                .attr('x2', boxX + boxHalfWidth)
+                .attr('y1', hardBoxPos.medianY)
+                .attr('y2', hardBoxPos.medianY)
+                .attr('stroke', '#450a0a')
+                .attr('stroke-width', 1.6);
+        }
 
         const legend = svg.append('g')
             .attr('transform', `translate(${width - 140}, 0)`);
