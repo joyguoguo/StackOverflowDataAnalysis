@@ -1,0 +1,110 @@
+{
+  "question" : {
+    "question_id" : 79692009,
+    "title" : "Using JDK16+ unix domain socket support to connect to clamd randomly fails for the n-th connection (n &gt; 1) when using non-blocking IO",
+    "body" : "<p>I try to connect to the clamd service (antivirus) on an Ubuntu Linux System. clamd on Ubuntu Linux can be contacted using a unix domain socket, which is by default registered under the path <code>/var/run/clamav/clamd.ctl</code>.</p>\n<p>Accessing that socket works from java using the UnixDomainSocketAdress support added in JDK16+, when the corresponding SocketChannel is run in blocking mode. For a basic communication test the clamd PING command is used, which causes the server to reply with a PONG. In blocking mode 100 connections where tested sequentially and worked ok (i.e. all received a PONG). When switching to non-blocking mode the first connection always works, but subsequent connections fail. Sometimes the first few connections work.</p>\n<p>Using non-blocking IO has the aim to be able to enforce a timeout for the operations executed in clamd.</p>\n<p>This is the test code I use:</p>\n<pre class=\"lang-java prettyprint-override\"><code>import java.io.ByteArrayOutputStream;\nimport java.io.IOException;\nimport java.net.ProtocolFamily;\nimport java.net.SocketAddress;\nimport java.net.StandardProtocolFamily;\nimport java.net.UnixDomainSocketAddress;\nimport java.nio.ByteBuffer;\nimport java.nio.channels.SelectionKey;\nimport java.nio.channels.Selector;\nimport java.nio.channels.SocketChannel;\nimport java.nio.charset.StandardCharsets;\n\nimport static java.nio.charset.StandardCharsets.UTF_8;\n\npublic class ClamdTest3 {\n\n    private static final byte[] PING_CMD = &quot;zPING\\0&quot;.getBytes(UTF_8);\n\n    public static void main(String[] args) throws IOException {\n        ProtocolFamily protocolFamily = StandardProtocolFamily.UNIX;\n        SocketAddress socketAddress = UnixDomainSocketAddress.of(&quot;/var/run/clamav/clamd.ctl&quot;);\n        for (int i = 0; i &lt; 100; i++) {\n            try (SocketChannel socketChannel = SocketChannel.open(protocolFamily);\n                    Selector selector = Selector.open();) {\n                socketChannel.configureBlocking(false);\n                socketChannel.connect(socketAddress);\n                SelectionKey selectionKey = socketChannel.register(selector, 0);\n                selectionKey.interestOps(SelectionKey.OP_CONNECT);\n                selectionKey.selector().select(10_000);\n                if (!socketChannel.finishConnect()) {\n                    throw new IOException(&quot;Connection failed&quot;);\n                }\n                System.out.println(&quot;Connected connection: &quot; + i);\n                writeToChannel(socketChannel, selectionKey, ByteBuffer.wrap(PING_CMD), 5000);\n                System.out.println(new String(readFromChannel(socketChannel, selectionKey, 10000), StandardCharsets.UTF_8));\n            }\n        }\n    }\n\n    private static byte[] readFromChannel(SocketChannel socketChannel, SelectionKey selectionKey, long timeout_milli) throws IOException {\n        ByteArrayOutputStream baos = new ByteArrayOutputStream();\n        long start = System.nanoTime();\n        ByteBuffer bb = ByteBuffer.allocate(4096);\n        selectionKey.interestOps(SelectionKey.OP_READ);\n        while (socketChannel.read(bb) &gt;= 0) {\n            bb.flip();\n            baos.write(bb.array(), bb.position(), bb.limit() - bb.position());\n            if (bb.limit() &gt; 0 &amp;&amp; bb.get(bb.limit() - 1) == 0) {\n                break;\n            }\n            if (isTimeout(start, timeout_milli)) {\n                throw new IOException(&quot;Timeout while reading&quot;);\n            }\n            if (!selectionKey.isReadable()) {\n                selectionKey.selector().select(timeout_milli / 10);\n            }\n        }\n        return baos.toByteArray();\n    }\n\n    private static void writeToChannel(SocketChannel socketChannel, SelectionKey selectionKey, ByteBuffer bb, long timeout_milli) throws IOException {\n        long start = System.nanoTime();\n        selectionKey.interestOps(SelectionKey.OP_WRITE);\n        while (socketChannel.write(bb) &gt;= 0) {\n            if (bb.position() &gt;= bb.limit()) {\n                break;\n            }\n            if (isTimeout(start, timeout_milli)) {\n                throw new IOException(&quot;Timeout while writing&quot;);\n            }\n            if (!selectionKey.isWritable()) {\n                selectionKey.selector().select(timeout_milli / 10);\n            }\n        }\n    }\n\n    private static boolean isTimeout(long start, long timeout_milli) {\n        long timeout_nano = timeout_milli * 1000L * 1000L;\n        Long now = System.nanoTime();\n        Long timeoutComp = now - timeout_nano;\n        boolean isTimout = Long.compare(timeoutComp, start) &gt; 0;\n        return isTimout;\n    }\n}\n</code></pre>\n<p>What I would expect is a sequence of &quot;Connected connection...PONG&quot; messages, that start at <code>Connected connection: 0</code> and finish with the 99th connection.</p>\n<p>However I observe:</p>\n<pre><code>Connected connection: 0\nPONG\nConnected connection: 1\nPONG\nConnected connection: 2\nPONG\nConnected connection: 3\nException in thread &quot;main&quot; java.io.IOException: Timeout while reading\n    at ClamdTest3.readFromChannel(ClamdTest3.java:53)\n    at ClamdTest3.main(ClamdTest3.java:36)\n</code></pre>\n<p>Tried:</p>\n<ul>\n<li>adding a delay after the try-catch block (Thread#sleep, 1s, 10s), same result</li>\n<li>adding a explicit GC call, same result</li>\n<li>opening multiple SocketChannels to clamd in blocking mode also works in parallel, so it does not seem to be a problem on the receiving side</li>\n</ul>\n",
+    "tags" : [ "java", "nio", "nonblocking", "unix-socket" ],
+    "owner" : {
+      "account_id" : 13027886,
+      "reputation" : 371,
+      "user_id" : 9415272,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/7cf16ca6dcfa8e7b337d9dad9c0445d0?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Matthias Bl&#228;sing",
+      "link" : "https://stackoverflow.com/users/9415272/matthias-bl%c3%a4sing"
+    },
+    "is_answered" : false,
+    "view_count" : 71,
+    "answer_count" : 0,
+    "score" : 2,
+    "last_activity_date" : 1751829448,
+    "creation_date" : 1751827652,
+    "link" : "https://stackoverflow.com/questions/79692009/using-jdk16-unix-domain-socket-support-to-connect-to-clamd-randomly-fails-for-t",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140633679,
+    "post_id" : 79692009,
+    "body" : "Testing showed, that indeed selecting before read fixes the situation.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 13027886,
+      "reputation" : 371,
+      "user_id" : 9415272,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/7cf16ca6dcfa8e7b337d9dad9c0445d0?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Matthias Bl&#228;sing",
+      "link" : "https://stackoverflow.com/users/9415272/matthias-bl%c3%a4sing"
+    },
+    "creation_date" : 1753987475,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140569163,
+    "post_id" : 79692009,
+    "body" : "I know such behavior from HTTP servers. If all worker/io threads are busy you can open the connection but nothing happens if you send data/requests to the server unless at least one thread is free for processing your request.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 50585,
+      "reputation" : 43469,
+      "user_id" : 150978,
+      "user_type" : "registered",
+      "accept_rate" : 78,
+      "profile_image" : "https://www.gravatar.com/avatar/feadc214792e2581c3c750140e3eb2c7?s=256&d=identicon&r=PG",
+      "display_name" : "Robert",
+      "link" : "https://stackoverflow.com/users/150978/robert"
+    },
+    "creation_date" : 1751835860,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140569131,
+    "post_id" : 79692009,
+    "body" : "I think I found the problem: when I add a <code>selectionKey.selector().select(timeout_milli &#47; 10)</code> before the read call the runs stabilize.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 13027886,
+      "reputation" : 371,
+      "user_id" : 9415272,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/7cf16ca6dcfa8e7b337d9dad9c0445d0?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Matthias Bl&#228;sing",
+      "link" : "https://stackoverflow.com/users/9415272/matthias-bl%c3%a4sing"
+    },
+    "creation_date" : 1751834061,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140569067,
+    "post_id" : 79692009,
+    "body" : "Even if the file descriptor/socket is released delayed, that does not explain why I can connect the unix domain socket and then fail in the read. The example problem output shows that the connect and write succeed, but the read fails.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 13027886,
+      "reputation" : 371,
+      "user_id" : 9415272,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/7cf16ca6dcfa8e7b337d9dad9c0445d0?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Matthias Bl&#228;sing",
+      "link" : "https://stackoverflow.com/users/9415272/matthias-bl%c3%a4sing"
+    },
+    "creation_date" : 1751830892,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140569036,
+    "post_id" : 79692009,
+    "body" : "I don&#39;t know exactly how SocketChannel is implemented but on File channel I had the case that calling <code>close()</code> does not directly releases the underlying file handle. If the same is true for SocketChannel then your code will keep a large number if open sockets if you have no delay in your code.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 50585,
+      "reputation" : 43469,
+      "user_id" : 150978,
+      "user_type" : "registered",
+      "accept_rate" : 78,
+      "profile_image" : "https://www.gravatar.com/avatar/feadc214792e2581c3c750140e3eb2c7?s=256&d=identicon&r=PG",
+      "display_name" : "Robert",
+      "link" : "https://stackoverflow.com/users/150978/robert"
+    },
+    "creation_date" : 1751829719,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

@@ -1,0 +1,252 @@
+{
+  "question" : {
+    "question_id" : 79663560,
+    "title" : "Simplify mocking dependencies with @InjectMocks",
+    "body" : "<p>In my Spring Boot app, I have some tests that look like this</p>\n<pre class=\"lang-java prettyprint-override\"><code>@ExtendWith(MockitoExtension.class)\nclass InviteServiceTests {\n\n    @Mock\n    private UserService userService;\n\n    @Mock\n    private EmailSendingService emailSendingService;\n\n    @InjectMocks\n    private InviteService inviteService;\n\n    @Test\n    void testSomething() {\n        inviteService.inviteUser(&quot;user@example.com&quot;);\n        verify(emailSendingService).sendEmail(&quot;user@example.com&quot;);\n    }\n}\n</code></pre>\n<p>I have to declare <code>userService</code> because it's a dependency of <code>inviteService</code> that is called during <code>inviteService.inviteUser</code>. However I don't need to mock or verify any <code>userService</code> methods, so IntelliJ marks this as an unused field.</p>\n<p>I'm aware I could tell IntelliJ to ignore any used fields annotated with <code>@Mock</code>, but what I'd prefer is to not have to declare this field at all. In other words, when a dependency of <code>InviteService</code> is found that does not have a corresponding <code>@Mock</code> field, Mockito will automatically create a default mock for the dependency.</p>\n<p>Currently, if the <code>userService</code> field is removed, the dependency is set to null, which causes a <code>NullPointerException</code> when the test runs.</p>\n",
+    "tags" : [ "java", "junit", "mockito" ],
+    "owner" : {
+      "account_id" : 1921,
+      "reputation" : 187582,
+      "user_id" : 2648,
+      "user_type" : "registered",
+      "accept_rate" : 52,
+      "profile_image" : "https://www.gravatar.com/avatar/8b2d39a59a961ef26440e9c1453d1939?s=256&d=identicon&r=PG",
+      "display_name" : "D&#243;nal",
+      "link" : "https://stackoverflow.com/users/2648/d%c3%b3nal"
+    },
+    "is_answered" : true,
+    "view_count" : 188,
+    "answer_count" : 2,
+    "score" : 1,
+    "last_activity_date" : 1750105288,
+    "creation_date" : 1749732018,
+    "link" : "https://stackoverflow.com/questions/79663560/simplify-mocking-dependencies-with-injectmocks",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79663823,
+    "question_id" : 79663560,
+    "body" : "<p>To achieve this behavior, it seems that there is no out-of-the-box solution in Mockito. However, you can write your own custom extension that inspects your test class, finds a field annotated with <code>@InjectMocks</code>, examines its fields, and if any of them are null, instantiates them with mock objects. It could look something like this:</p>\n<pre><code>import org.junit.jupiter.api.extension.BeforeEachCallback;\nimport org.junit.jupiter.api.extension.ExtensionContext;\nimport org.mockito.InjectMocks;\nimport org.mockito.Mockito;\nimport org.mockito.exceptions.misusing.InjectMocksException;\nimport org.springframework.util.ReflectionUtils;\n\nimport java.lang.reflect.Modifier;\nimport java.util.Arrays;\n\npublic class AutoMockitoExtension implements BeforeEachCallback {\n\n    @Override\n    public void beforeEach(ExtensionContext context) throws Exception {\n        var testInstance = context.getRequiredTestInstance();\n\n        var injectMocksField = Arrays.stream(testInstance.getClass().getDeclaredFields())\n            .filter(field -&gt; field.isAnnotationPresent(InjectMocks.class))\n            .findFirst()\n            .orElseThrow(() -&gt; new IllegalStateException(&quot;@InjectMocks field not found&quot;));\n\n        injectMocksField.setAccessible(true);\n        var injectMocksObject = injectMocksField.get(testInstance);\n\n        if (injectMocksObject == null) {\n            throw new IllegalStateException(&quot;&quot;&quot;\n                @InjectMocks field is null.\n                You may need to add MockitoExtension.class to the beginning of the @ExtendWith extensions list&quot;&quot;&quot;);\n        }\n        // Assign a mock object to any null instance field of the @InjectMocks object\n        ReflectionUtils.doWithFields(injectMocksObject.getClass(),\n            field -&gt; field.set(injectMocksObject, Mockito.mock(field.getType())),\n            field -&gt; {\n                var isInstanceField = !Modifier.isStatic(field.getModifiers());\n                field.setAccessible(true);\n                try {\n                    return isInstanceField &amp;&amp; field.get(injectMocksObject) == null;\n                } catch (IllegalAccessException e) {\n                    throw new InjectMocksException(&quot;Failed to access field: &quot; + field, e);\n                }\n            });\n    }\n}\n</code></pre>\n<p>And then test:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@ExtendWith({MockitoExtension.class, AutoMockitoExtension.class})\nclass InviteServiceTests {\n\n    @Mock\n    private EmailSendingService emailSendingService;\n\n    @InjectMocks\n    private InviteService inviteService;\n\n    @Test\n    void testSomething() {\n        inviteService.inviteUser(&quot;user@example.com&quot;);\n        verify(emailSendingService).sendEmail(&quot;user@example.com&quot;);\n    }\n}\n</code></pre>\n<p>In this example, I haven’t accounted for all the possible details and pitfalls that might need to be considered, but it works.</p>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 18586978,
+      "reputation" : 3850,
+      "user_id" : 15000097,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/yFl4M.jpg?s=256",
+      "display_name" : "Georgii Lvov",
+      "link" : "https://stackoverflow.com/users/15000097/georgii-lvov"
+    },
+    "creation_date" : 1749743571,
+    "last_activity_date" : 1750105288,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79663767,
+    "question_id" : 79663560,
+    "body" : "<p>You could achieve this with constructor injection.</p>\n<p>In your service, make sure the dependencies are injected using the constructor:</p>\n<pre class=\"lang-java prettyprint-override\"><code>private final UserService userService;\nprivate final EmailSendingService emailService;\n\npublic InviteService(EmailSendingService emailService, UserService service) {\n    this.emailService = emailService; \n    this.service = service;\n}\n</code></pre>\n<p>In your test class you can call your constructor using the mocked services:</p>\n<pre><code>@Mock\nprivate EmailSendingService emailSendingService;\n\n@Mock\nprivate UserService userService;\n\nprivate InviteService inviteService = new InviteService(emailSendingService, userService);\n</code></pre>\n",
+    "score" : -2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 42342614,
+      "reputation" : 17,
+      "user_id" : 30706449,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/19fe2a2ece285ada2a4b88a2609258e8?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Hans van den pol",
+      "link" : "https://stackoverflow.com/users/30706449/hans-van-den-pol"
+    },
+    "creation_date" : 1749741125,
+    "last_activity_date" : 1749741125,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140510643,
+    "post_id" : 79663560,
+    "body" : "@D&#243;nal yeah, kind of weird that&#39;s not the default behaviour, seems that it&#39;d be more useful than setting it to <code>null</code>.  Would be nice to add a new field to <code>@injectMocks</code> that when set to <code>true</code> would do what @Georgii Lvov suggests.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 18182,
+      "reputation" : 34581,
+      "user_id" : 41423,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://i.sstatic.net/Z3ixY.jpg?s=256",
+      "display_name" : "Nick Holt",
+      "link" : "https://stackoverflow.com/users/41423/nick-holt"
+    },
+    "creation_date" : 1749801473,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140509488,
+    "post_id" : 79663560,
+    "body" : "@NickHolt I don&#39;t want <code>UserService</code> to be set to null, I want it to be set to a default mock, i.e. the same object that is returned by <code>Mockito.mock(UserService.class)</code>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1921,
+      "reputation" : 187582,
+      "user_id" : 2648,
+      "user_type" : "registered",
+      "accept_rate" : 52,
+      "profile_image" : "https://www.gravatar.com/avatar/8b2d39a59a961ef26440e9c1453d1939?s=256&d=identicon&r=PG",
+      "display_name" : "D&#243;nal",
+      "link" : "https://stackoverflow.com/users/2648/d%c3%b3nal"
+    },
+    "creation_date" : 1749753517,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140509058,
+    "post_id" : 79663560,
+    "body" : "Works-for-me... <code>UserService</code> is <code>null</code> in <code>InviteService</code>, so I assume the NPE is coming from within <code>InviteService</code>, which presumably interacts with <code>UserService</code>.  Guessing, either you need some expectations on <code>UserService</code> (which will remove the unused field warning) or there might be some concerns that need separating.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 18182,
+      "reputation" : 34581,
+      "user_id" : 41423,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://i.sstatic.net/Z3ixY.jpg?s=256",
+      "display_name" : "Nick Holt",
+      "link" : "https://stackoverflow.com/users/41423/nick-holt"
+    },
+    "creation_date" : 1749742220,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140508866,
+    "post_id" : 79663560,
+    "body" : "I don&#39;t think it&#39;s possible to do what you are asking for. You need to define all mocks instances that are required for your test to run.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 39208,
+      "reputation" : 269427,
+      "user_id" : 112968,
+      "user_type" : "registered",
+      "accept_rate" : 68,
+      "profile_image" : "https://i.sstatic.net/zHTaT.png?s=256",
+      "display_name" : "knittl",
+      "link" : "https://stackoverflow.com/users/112968/knittl"
+    },
+    "creation_date" : 1749737404,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79663823" : [ {
+      "comment_id" : 140512235,
+      "post_id" : 79663823,
+      "body" : "Also, note that <code>MockitoExtension</code> does more than just initialize <code>@Mock</code> and <code>@InjectMocks</code> fields. Therefore, I recommend using custom extensions together with <code>MockitoExtension</code>",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 18586978,
+        "reputation" : 3850,
+        "user_id" : 15000097,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/yFl4M.jpg?s=256",
+        "display_name" : "Georgii Lvov",
+        "link" : "https://stackoverflow.com/users/15000097/georgii-lvov"
+      },
+      "creation_date" : 1749840182,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140512228,
+      "post_id" : 79663823,
+      "body" : "By the way, the order of extension registrations is described in the javadoc for the <code>@ExtendWith</code> annotation, in the Registration Order section",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 18586978,
+        "reputation" : 3850,
+        "user_id" : 15000097,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/yFl4M.jpg?s=256",
+        "display_name" : "Georgii Lvov",
+        "link" : "https://stackoverflow.com/users/15000097/georgii-lvov"
+      },
+      "creation_date" : 1749839927,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140511299,
+      "post_id" : 79663823,
+      "body" : "I updated the solution so that it handles fields in parent classes",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 1921,
+        "reputation" : 187582,
+        "user_id" : 2648,
+        "user_type" : "registered",
+        "accept_rate" : 52,
+        "profile_image" : "https://www.gravatar.com/avatar/8b2d39a59a961ef26440e9c1453d1939?s=256&d=identicon&r=PG",
+        "display_name" : "D&#243;nal",
+        "link" : "https://stackoverflow.com/users/2648/d%c3%b3nal"
+      },
+      "creation_date" : 1749817707,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140509525,
+      "post_id" : 79663823,
+      "body" : "This looks very promising. I&#39;ll try it out tomorrow, thanks.   I wonder if you could ensure <code>MockitoExtension</code> always runs before <code>AutoMockExtension</code> by annotating the latter with <code>@ExtendWith(MockitoExtension.class)</code>",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 1921,
+        "reputation" : 187582,
+        "user_id" : 2648,
+        "user_type" : "registered",
+        "accept_rate" : 52,
+        "profile_image" : "https://www.gravatar.com/avatar/8b2d39a59a961ef26440e9c1453d1939?s=256&d=identicon&r=PG",
+        "display_name" : "D&#243;nal",
+        "link" : "https://stackoverflow.com/users/2648/d%c3%b3nal"
+      },
+      "creation_date" : 1749754524,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79663767" : [ {
+      "comment_id" : 140509479,
+      "post_id" : 79663767,
+      "body" : "@Hansvandenpol IntelliJ marking the field as unused is not the point. I can fix this just by telling IntelliJ not to mark any fields annotated with <code>@Mock</code> as unused",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1921,
+        "reputation" : 187582,
+        "user_id" : 2648,
+        "user_type" : "registered",
+        "accept_rate" : 52,
+        "profile_image" : "https://www.gravatar.com/avatar/8b2d39a59a961ef26440e9c1453d1939?s=256&d=identicon&r=PG",
+        "display_name" : "D&#243;nal",
+        "link" : "https://stackoverflow.com/users/2648/d%c3%b3nal"
+      },
+      "creation_date" : 1749753375,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140509094,
+      "post_id" : 79663767,
+      "body" : "@c-otto I thought the point is IntelliJ marks the field as unused. Instead of configuring to ignore any used fields annotated with Mock, I thought this might work.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 42342614,
+        "reputation" : 17,
+        "user_id" : 30706449,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/19fe2a2ece285ada2a4b88a2609258e8?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Hans van den pol",
+        "link" : "https://stackoverflow.com/users/30706449/hans-van-den-pol"
+      },
+      "creation_date" : 1749743059,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140509031,
+      "post_id" : 79663767,
+      "body" : "<code>userService</code> still needs to be declared, though - I think your answer misses the point?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 914392,
+        "reputation" : 5902,
+        "user_id" : 947526,
+        "user_type" : "registered",
+        "accept_rate" : 46,
+        "profile_image" : "https://www.gravatar.com/avatar/6a84b61e353299d7f9306e99bfce8854?s=256&d=identicon&r=PG",
+        "display_name" : "C-Otto",
+        "link" : "https://stackoverflow.com/users/947526/c-otto"
+      },
+      "creation_date" : 1749741509,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

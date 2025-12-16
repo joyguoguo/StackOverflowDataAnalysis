@@ -1,0 +1,133 @@
+{
+  "question" : {
+    "question_id" : 79776201,
+    "title" : "Java FFM - Unexpected behavior with &quot;pointers&quot;",
+    "body" : "<p>To try out the Java 25 FFM API, I wanted to call C++ code through a C wrapper.</p>\n<p>To do that, I created a small C++ class and a C wrapper following an example from <a href=\"https://stackoverflow.com/questions/78461891/how-to-represent-c-class-in-java-to-be-used-via-ffi\">here</a>.</p>\n<p>Printer.h</p>\n<pre class=\"lang-cpp prettyprint-override\"><code>#pragma once\n\n#include &lt;iostream&gt;\n\nclass Printer\n{\npublic:\n    void print(const std::string&amp; message);\n};\n</code></pre>\n<p>Printer.cpp</p>\n<pre class=\"lang-cpp prettyprint-override\"><code>#include &quot;Printer.h&quot;\n\nvoid Printer::print(const std::string&amp; message)\n{\n    std::cout &lt;&lt; message &lt;&lt; &quot;\\n&quot;;\n}\n</code></pre>\n<p>PrinterWrapper.h</p>\n<pre class=\"lang-cpp prettyprint-override\"><code>#pragma once\n\n#ifdef __cplusplus\nextern &quot;C&quot; {\n#endif\n\ntypedef struct Printer Printer;\n\n__declspec(dllexport)\nPrinter* newPrinter();\n\n__declspec(dllexport)\nvoid Printer_print(Printer*, const char []);\n\n__declspec(dllexport)\nvoid deletePrinter(Printer*);\n\n#ifdef __cplusplus\n}\n#endif\n</code></pre>\n<p>PrinterWrapper.cpp</p>\n<pre class=\"lang-cpp prettyprint-override\"><code>#include &quot;Printer.h&quot;\n#include &quot;PrinterWrapper.h&quot;\n\nextern &quot;C&quot; {\n\nPrinter* newPrinter()\n{\n    return new Printer();\n}\n\nvoid Printer_print(Printer* printer, const char message[])\n{\n    printer-&gt;print(message);\n}\n\nvoid deletePrinter(Printer* printer)\n{\n    delete printer;\n}\n\n}\n</code></pre>\n<p>Printer.java</p>\n<pre class=\"lang-java prettyprint-override\"><code>import java.lang.foreign.Arena;\nimport java.lang.foreign.FunctionDescriptor;\nimport java.lang.foreign.Linker;\nimport java.lang.foreign.MemorySegment;\nimport java.lang.foreign.SymbolLookup;\nimport java.lang.foreign.ValueLayout;\nimport java.lang.invoke.MethodHandle;\n\npublic class Printer {\n\n    private static final MethodHandle NEW_PRINTER;\n    private static final MethodHandle PRINTER_PRINT;\n    private static final MethodHandle DELETE_PRINTER;\n\n    private MemorySegment printerPointer;\n\n    static {\n        System.load(&quot;Path/to/shared/library&quot;);\n\n        Linker linker = Linker.nativeLinker();\n        SymbolLookup lookup = SymbolLookup.loaderLookup();\n\n        NEW_PRINTER = linker.downcallHandle(lookup.findOrThrow(&quot;newPrinter&quot;),\n                FunctionDescriptor.of(ValueLayout.ADDRESS));\n        PRINTER_PRINT = linker.downcallHandle(lookup.findOrThrow(&quot;Printer_print&quot;),\n                FunctionDescriptor.ofVoid(ValueLayout.ADDRESS, ValueLayout.ADDRESS));\n        DELETE_PRINTER = linker.downcallHandle(lookup.findOrThrow(&quot;deletePrinter&quot;),\n                FunctionDescriptor.ofVoid(ValueLayout.ADDRESS));\n    }\n\n    public Printer() {\n        try {\n            printerPointer = (MemorySegment) NEW_PRINTER.invoke();\n        } catch (Throwable e) {\n            e.printStackTrace();\n        }\n    }\n\n    public void print(String message) {\n        try (Arena arena = Arena.ofConfined()) {\n            MemorySegment nativeString = arena.allocateFrom(message);\n            PRINTER_PRINT.invokeExact(printerPointer, nativeString);\n        } catch (Throwable e) {\n            e.printStackTrace();\n        }\n    }\n\n    public void delete() {\n        try {\n            DELETE_PRINTER.invokeExact(printerPointer);\n        } catch (Throwable e) {\n            e.printStackTrace();\n        }\n    }\n\n}\n</code></pre>\n<p>Main.java</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class Main {\n    public static void main(String[] args) {    \n        Printer printer = new Printer();\n        printer.print(&quot;Hello World!&quot;);\n        printer.delete();\n    }\n}\n</code></pre>\n<p>If I run the program, everything works fine. But, here is the unexpected behavior: If I change the variable <code>printerPointer</code> to <code>MemorySegment.NULL</code> or any zero-length memory segment (see <a href=\"https://cr.openjdk.org/%7Emcimadamore/jdk/8295044/v3/javadoc/java.base/java/lang/foreign/MemorySegment.html#wrapping-addresses\" rel=\"nofollow noreferrer\">zero-length memory segments</a> in the java documentation) of any address, e.g. <code>MemorySegment.ofAddress(73928298)</code>, the program still executes correctly.</p>\n<p>First change:</p>\n<pre class=\"lang-java prettyprint-override\"><code>    public Printer() {\n        printerPointer = MemorySegment.NULL;\n    }\n</code></pre>\n<p>Second change:</p>\n<pre class=\"lang-java prettyprint-override\"><code>    public Printer() {\n        printerPointer = MemorySegment.ofAddress(73928298);\n    }\n</code></pre>\n<p>Both times, <code>Hello World!</code> is printed on the console. But I don't know why it is working both times, as my expectation was that it does not. Is there something wrong with the wrapper? (As I learned, calling C++ code produces undefined behavior). Or, is this intended, for whatever reason? Or, is it just a bug in the API?</p>\n",
+    "tags" : [ "java", "c++", "c", "ffi", "java-ffm" ],
+    "owner" : {
+      "account_id" : 26796672,
+      "reputation" : 53,
+      "user_id" : 20389311,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/nJOCH.jpg?s=256",
+      "display_name" : "Morgoth",
+      "link" : "https://stackoverflow.com/users/20389311/morgoth"
+    },
+    "is_answered" : true,
+    "view_count" : 220,
+    "closed_date" : 1758907414,
+    "answer_count" : 1,
+    "score" : 3,
+    "last_activity_date" : 1760966890,
+    "creation_date" : 1758905015,
+    "link" : "https://stackoverflow.com/questions/79776201/java-ffm-unexpected-behavior-with-pointers",
+    "closed_reason" : "Duplicate"
+  },
+  "answers" : [ {
+    "answer_id" : 79776226,
+    "question_id" : 79776201,
+    "body" : "<p>The changed code invokes undefined behaviour.</p>\n<p><code>Printer::print</code> is effectively a class (&quot;<code>static</code>&quot;) method rather than an instance method. The caller's pointer is passed in to it, but it's never used.</p>\n<p><code>Printer::print</code> doesn't use <code>this</code> (which has the value of the caller's pointer), either implicitly or explicitly. It doesn't access any data members of the object, and it doesn't call any virtual methods on the object. All it needs to know is the type of the variable <code>printer</code>, and that is known at compile-time.</p>\n<p>That's why you get away with calling <code>Printer::print</code> on an invalid pointer. But it is undefined behaviour to do this. You can't rely on always getting this behaviour.</p>\n",
+    "score" : 6,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 289134,
+      "reputation" : 391228,
+      "user_id" : 589924,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/b2cf53d5a3d25f95c0db4e025aed4153?s=256&d=identicon&r=PG",
+      "display_name" : "ikegami",
+      "link" : "https://stackoverflow.com/users/589924/ikegami"
+    },
+    "creation_date" : 1758907346,
+    "last_activity_date" : 1760966890,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140763256,
+    "post_id" : 79776201,
+    "body" : "You should read <a href=\"https://en.cppreference.com/w/cpp/language/ub.html\" rel=\"nofollow noreferrer\">undefined behaviour</a> (including the linked articles).",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7815078,
+      "reputation" : 32200,
+      "user_id" : 5910058,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/65115f4b33b2b8c333cb11f890a0f786?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Jesper Juhl",
+      "link" : "https://stackoverflow.com/users/5910058/jesper-juhl"
+    },
+    "creation_date" : 1758959079,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140762458,
+    "post_id" : 79776201,
+    "body" : "C and C++ proceed from the assumption that the programmer correctly described the behaviour they wanted and rarely makes any sanity checks that would have a cost because those costs would be passed on to every program where the programmer didn&#39;t screw up. You tend to get faster code, but more programmer hair-pulling",
+    "score" : 4,
+    "owner" : {
+      "account_id" : 5809836,
+      "reputation" : 34104,
+      "user_id" : 4581301,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/267cc01507d1d9ddcdeaafdc3beaa7b7?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "user4581301",
+      "link" : "https://stackoverflow.com/users/4581301/user4581301"
+    },
+    "creation_date" : 1758907897,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140762348,
+    "post_id" : 79776201,
+    "body" : "One of the few times where it makes sense to include the C and C++ tags",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 289134,
+      "reputation" : 391228,
+      "user_id" : 589924,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/b2cf53d5a3d25f95c0db4e025aed4153?s=256&d=identicon&r=PG",
+      "display_name" : "ikegami",
+      "link" : "https://stackoverflow.com/users/589924/ikegami"
+    },
+    "creation_date" : 1758905099,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79776226" : [ {
+      "comment_id" : 140763488,
+      "post_id" : 79776226,
+      "body" : "@RemyLebeau Not so. It&#39;s like you don&#39;t know what &quot;effectively&quot; means. It means to act as. Something can be one thing and act as another. This is contrast with something <i>actually</i> being another. And that&#39;s the case here. Yes, it&#39;s an instance (&quot;non-static&quot;) method. But yes, it&#39;s also effectively a class method. It accesses no attributes or methods of the instance.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 289134,
+        "reputation" : 391228,
+        "user_id" : 589924,
+        "user_type" : "registered",
+        "accept_rate" : 100,
+        "profile_image" : "https://www.gravatar.com/avatar/b2cf53d5a3d25f95c0db4e025aed4153?s=256&d=identicon&r=PG",
+        "display_name" : "ikegami",
+        "link" : "https://stackoverflow.com/users/589924/ikegami"
+      },
+      "creation_date" : 1758971190,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140762464,
+      "post_id" : 79776226,
+      "body" : "Yes, it is Undefined Behavior",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 25589,
+        "reputation" : 609643,
+        "user_id" : 65863,
+        "user_type" : "registered",
+        "accept_rate" : 75,
+        "profile_image" : "https://www.gravatar.com/avatar/f00013ceab8fb1928885c5c172fbfd4a?s=256&d=identicon&r=PG",
+        "display_name" : "Remy Lebeau",
+        "link" : "https://stackoverflow.com/users/65863/remy-lebeau"
+      },
+      "creation_date" : 1758907976,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

@@ -1,0 +1,378 @@
+{
+  "question" : {
+    "question_id" : 79695127,
+    "title" : "Migrating from Joda-Time to java.time: How to replace time.toDateTimeToday().getMillis()?",
+    "body" : "<p>I'm currently migrating my codebase from Joda-Time to the java.time API (Java 8+).</p>\n<p>In one part of my application, I schedule tasks to run at a specific time either today or tomorrow, depending on business logic.</p>\n<p>Below is a simplified and working version of the existing implementation using Joda-Time:</p>\n<pre><code>private synchronized void scheduleToday(LocalTime time) {\n    long now = System.currentTimeMillis();\n    task = normalScheduler.schedule(this, time.toDateTimeToday().getMillis() - now, TimeUnit.MILLISECONDS);\n}\n\nprivate synchronized void scheduleTomorrow(LocalTime time) {\n    LocalDate tomorrow = new LocalDate().plusDays(1);\n    long now = System.currentTimeMillis();\n    task = normalScheduler.schedule(this, tomorrow.toDateTime(time).getMillis() - now, TimeUnit.MILLISECONDS);\n}\nI’m trying to migrate these methods to use java.time API instead of Joda-Time, without changing the functionality.\n\n✅ What I’ve tried for scheduleToday():\nI tried replacing it with the following:\n\nprivate synchronized void scheduleToday(LocalTime time) {\n    long now = System.currentTimeMillis();\n    LocalDateTime dateTimeToday = LocalDateTime.of(LocalDate.now(), time);\n    long millis = dateTimeToday.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();\n    task = normalScheduler.schedule(this, millis - now, TimeUnit.MILLISECONDS);\n}\n\nMy questions:\nIs the above scheduleToday() code a correct and reliable replacement for the Joda-Time version? Will it handle edge cases (e.g., past time or daylight saving time shifts)?\n\nHow should I rewrite the scheduleTomorrow() method using java.time to match this equivalent functionality?\n</code></pre>\n",
+    "tags" : [ "java", "scheduler", "java-time", "localtime" ],
+    "owner" : {
+      "account_id" : 26076115,
+      "reputation" : 11,
+      "user_id" : 19775065,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/1a848d7e3d4a7bad55c91338ad183d93?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "dragon4",
+      "link" : "https://stackoverflow.com/users/19775065/dragon4"
+    },
+    "is_answered" : true,
+    "view_count" : 190,
+    "closed_date" : 1752139824,
+    "answer_count" : 3,
+    "score" : -1,
+    "last_activity_date" : 1752598447,
+    "creation_date" : 1752040825,
+    "link" : "https://stackoverflow.com/questions/79695127/migrating-from-joda-time-to-java-time-how-to-replace-time-todatetimetoday-get",
+    "closed_reason" : "Needs details or clarity"
+  },
+  "answers" : [ {
+    "answer_id" : 79695289,
+    "question_id" : 79695127,
+    "body" : "<h2>tl;dr</h2>\n<pre class=\"lang-java prettyprint-override\"><code>ZonedDateTime.now().with( myLocalTime ).toInstant().toEpochMilli()\n</code></pre>\n<h2>Time zone</h2>\n<p>Your Question ignores the crucial issue of time zone. Determining the moment when that time-of-day happens today requires the context of a time zone. Noon, for example, happens several hours earlier in Tokyo Japan than in Toledo Ohio US. And be aware that some days in some time zones are not 24 hours long.</p>\n<p>The <a href=\"https://www.joda.org/joda-time/apidocs/org/joda/time/LocalTime.html#toDateTimeToday--\" rel=\"nofollow noreferrer\"><code>org.joda.time.LocalTime#toDateTimeToday</code></a> method implicitly applies the JVM’s current time zone if you do not <a href=\"https://www.joda.org/joda-time/apidocs/org/joda/time/LocalTime.html#toDateTimeToday-org.joda.time.DateTimeZone-\" rel=\"nofollow noreferrer\">pass one</a>.</p>\n<h3><code>ZoneId</code></h3>\n<p>In <em>java.time</em>, the <code>ZoneId</code> class represents a time zone.</p>\n<pre><code>ZoneId z = ZoneId.of ( &quot;Asia/Tokyo&quot; ) ;\n</code></pre>\n<p>Or access the JVM’s current default time zone.</p>\n<pre><code>ZoneId z = ZoneId.systemDefault () ;\n</code></pre>\n<h3><code>ZonedDateTime</code></h3>\n<p>Capture the current moment as seen in that time zone.</p>\n<pre><code>ZonedDateTime now = ZonedDateTime.now ( z ) ;\n</code></pre>\n<p>Change to your desired time of day.</p>\n<pre><code>ZonedDateTime zdt = now.with ( myLocalTime ) ;\n</code></pre>\n<p>Notice how <em>java.time</em> uses <a href=\"https://en.wikipedia.org/wiki/Immutable_object\" rel=\"nofollow noreferrer\">immutable objects</a>. A fresh new object is returned rather than altering (“mutating”) the original.</p>\n<p>Be aware that your desired time of day may not exist on that date in that zone, or may even exist twice. For example in Daylight Saving Time (DST), a Spring cut-over jumps the clock ahead, say from 02:00 to 03:00. In this case, the two o’clock hour does not exist. In the Autumn cut-over falls back an hour, repeating for example the 02:00 hour. In both cases of spring-ahead, and fall-back, the <code>ZonedDateTime</code> class makes an adjustment as needed. Be sure to study the algorithm used by <code>ZonedDateTime</code> to see if it fits your business rules, and to see if it differs from the behavior of Joda-Time (I don’t know).</p>\n<h3>Count of milliseconds from UTC</h3>\n<p>Apparently your code is written to work with a count of milliseconds since the epoch reference of the first moment of 1970 as seen in UTC (offset of zero).</p>\n<pre><code>long millis = = zdt.toInstant().toEpochMilli () ;\n</code></pre>\n<p>Beware of data loss. The <em>java.time</em> classes resolve to nanoseconds rather than mere milliseconds.</p>\n<h4><code>Duration</code></h4>\n<p>Instead of using a count, I suggest you use the <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api//java.base/java/time/Duration.html\" rel=\"nofollow noreferrer\"><code>Duration</code></a> class to represent a span of time unattached to the timeline.</p>\n<pre><code>Duration d = Duration.between ( now , zdt ) ;\n</code></pre>\n<h4><code>Interval</code></h4>\n<p>For a span of time attached to the timeline, a pair of <code>Instant</code> objects, I recommend adding the <em>ThreeTen-Extra</em> library to your project to access its <code>Interval</code> class.</p>\n<h3><code>LocalDateTime</code></h3>\n<p>The <code>LocalDateTime</code> class has no place here.</p>\n<p>That class represents merely a date with a time of day, but lacks the context of a time zone or offset-from-UTC. Objects of this class are inherently ambiguous with respect to the timeline. A <code>LocalDateTime</code> object does <em>not</em> represent a moment, is not a point on the timeline.</p>\n<p>To represent a moment, use only the classes <code>Instant</code>, <code>OffsetDateTime</code>, or <code>ZonedDateTime</code>.</p>\n",
+    "score" : 3,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 322981,
+      "reputation" : 347089,
+      "user_id" : 642706,
+      "user_type" : "registered",
+      "accept_rate" : 58,
+      "profile_image" : "https://i.sstatic.net/ZWEI3.jpg?s=256",
+      "display_name" : "Basil Bourque",
+      "link" : "https://stackoverflow.com/users/642706/basil-bourque"
+    },
+    "creation_date" : 1752048138,
+    "last_activity_date" : 1752598447,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79695431,
+    "question_id" : 79695127,
+    "body" : "<p>Update: as the comments pointed out, we need to take care of daylight savings time transitions. The following two methods should work correctly:</p>\n<pre><code>\n    private synchronized void scheduleToday(LocalTime time) {\n        ZonedDateTime targetTime = ZonedDateTime.now().with(time);\n        long millis = ZonedDateTime.now().until(targetTime, ChronoUnit.MILLIS);\n        task = normalScheduler.schedule(this, millis, TimeUnit.MILLISECONDS);\n    }\n\n    private synchronized void scheduleTomorrow(LocalTime time) {\n        ZonedDateTime targetTime = ZonedDateTime.now().plusDays(1).with(time);\n        long millis = ZonedDateTime.now().until(targetTime, ChronoUnit.MILLIS);\n        task = normalScheduler.schedule(this, millis, TimeUnit.MILLISECONDS);\n    }\n</code></pre>\n<hr />\n<p>Previous answer below for historical context:</p>\n<p>Since you're taking a <code>LocalTime</code> time, the simplest way to code your function is to stay with <code>LocalTime</code> and don't mess with time zones or with <code>System.currentTimeMillis</code>. Just get the current <code>LocalTime</code> which will be in the same time zone as the passed argument.</p>\n<pre><code>private synchronized void scheduleToday(LocalTime time) {\n    long nanos = LocalTime.now().until(time, ChronoUnit.NANOS);\n    task = normalScheduler.schedule(this, nanos, TimeUnit.NANOSECONDS);\n}\n</code></pre>\n<p>(I've also changed the code to use nanoseconds as that's what the library uses internally, so eliminating unnecessary conversions.)</p>\n<p>Having said this, you should heed advice in the comments about what happens around midnight and if the time argument is earlier than the current time. In such a case, you need to decide if it means the time has already passed and you should start the task immediately, or if it means the time should be tomorrow, so add 24 hours (converted to nanoseconds).</p>\n<p>Update: as your latest question update shows that you have a <code>scheduleTomorrow</code> method, this is how I would write it:</p>\n<pre><code>private synchronized void scheduleTomorrow(LocalTime time) {\n    long nanos = LocalTime.now().until(time, ChronoUnit.NANOS)\n            + TimeUnit.DAYS.toNanos(1);\n    task = normalScheduler.schedule(this, nanos, TimeUnit.NANOSECONDS);\n}\n</code></pre>\n",
+    "score" : 2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 19118721,
+      "reputation" : 12499,
+      "user_id" : 13963086,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/9df2c3c4c87d8050b8fd6a59c88c7133?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "k314159",
+      "link" : "https://stackoverflow.com/users/13963086/k314159"
+    },
+    "creation_date" : 1752054826,
+    "last_activity_date" : 1752140452,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79695341,
+    "question_id" : 79695127,
+    "body" : "<p>the code can work.</p>\n<p>tip: If <code>millis - now</code> is negative, the task will be executed immediately. Make sure to handle this according to your business logic.</p>\n",
+    "score" : -1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 29850716,
+      "reputation" : 9,
+      "user_id" : 22876658,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/ACg8ocKDVErUBjy9R3gjjIgcmzAmN3m3NuhtxUHCxAMecWyE=k-s256",
+      "display_name" : "su rui",
+      "link" : "https://stackoverflow.com/users/22876658/su-rui"
+    },
+    "creation_date" : 1752050937,
+    "last_activity_date" : 1752050937,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140576426,
+    "post_id" : 79695127,
+    "body" : "So, with the provisos above (checking required) and Basil&#39;s code, maybe <code>millis = 1000L * (ZonedDateTime.now().toEpochSecond() - ZonedDateTime.now().with(time).toEpochSecond()); </code>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 22124137,
+      "reputation" : 4244,
+      "user_id" : 16376827,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/1ImPw.png?s=256",
+      "display_name" : "g00se",
+      "link" : "https://stackoverflow.com/users/16376827/g00se"
+    },
+    "creation_date" : 1752057832,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140575898,
+    "post_id" : 79695127,
+    "body" : "I kind of disagree.  The body of the question asks &quot;Will the below code will be correct?&quot; ... not &quot;Will it produce the same results as the old code&quot;.  So the OP is literally asking two different questions, even if he didn&#39;t intend to.  And ... shouldn&#39;t we be warning someone if they appear to be about to shoot themselves in the foot?",
+    "score" : 9,
+    "owner" : {
+      "account_id" : 47283,
+      "reputation" : 723470,
+      "user_id" : 139985,
+      "user_type" : "registered",
+      "accept_rate" : 69,
+      "profile_image" : "https://www.gravatar.com/avatar/147c5a9cc1feec049c50da791ac7d144?s=256&d=identicon&r=PG",
+      "display_name" : "Stephen C",
+      "link" : "https://stackoverflow.com/users/139985/stephen-c"
+    },
+    "creation_date" : 1752045443,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140575890,
+    "post_id" : 79695127,
+    "body" : "@StephenC – Although you are right with your comment, the question is regarding a replacement of JodaTime&#39;s <code>LocalTime#toDateTimeToday</code>, and for that it does not really matter whether the calling function is correct or not – only that both versions of the method would return the same (probably wrong) results.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1692034,
+      "reputation" : 4140,
+      "user_id" : 1554195,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b67f6a3639e7924c531053212048be5c?s=256&d=identicon&r=PG",
+      "display_name" : "tquadrat",
+      "link" : "https://stackoverflow.com/users/1554195/tquadrat"
+    },
+    "creation_date" : 1752045212,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140575877,
+    "post_id" : 79695127,
+    "body" : "What about writing a test program that compares the results from the JodaTime implementation with that from the <code>java.time</code> implementation?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1692034,
+      "reputation" : 4140,
+      "user_id" : 1554195,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b67f6a3639e7924c531053212048be5c?s=256&d=identicon&r=PG",
+      "display_name" : "tquadrat",
+      "link" : "https://stackoverflow.com/users/1554195/tquadrat"
+    },
+    "creation_date" : 1752044896,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140575873,
+    "post_id" : 79695127,
+    "body" : "And to reinforce what Sweeper said, it <i>looks like</i> the code you were converting could have been wrong to start with.  At the very least it should check that <code>time</code> is after <code>now</code>.  And there is also the question of what should happen around midnight.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 47283,
+      "reputation" : 723470,
+      "user_id" : 139985,
+      "user_type" : "registered",
+      "accept_rate" : 69,
+      "profile_image" : "https://www.gravatar.com/avatar/147c5a9cc1feec049c50da791ac7d144?s=256&d=identicon&r=PG",
+      "display_name" : "Stephen C",
+      "link" : "https://stackoverflow.com/users/139985/stephen-c"
+    },
+    "creation_date" : 1752044818,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140575854,
+    "post_id" : 79695127,
+    "body" : "<i>&quot;I tried but not sure the code will work or not.&quot;</i>  What do you mean by &quot;tried&quot;?  Surely trying <i>includes</i> testing to see if the code compiles, runs, and produces the expected results.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 47283,
+      "reputation" : 723470,
+      "user_id" : 139985,
+      "user_type" : "registered",
+      "accept_rate" : 69,
+      "profile_image" : "https://www.gravatar.com/avatar/147c5a9cc1feec049c50da791ac7d144?s=256&d=identicon&r=PG",
+      "display_name" : "Stephen C",
+      "link" : "https://stackoverflow.com/users/139985/stephen-c"
+    },
+    "creation_date" : 1752044397,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140575771,
+    "post_id" : 79695127,
+    "body" : "&quot;<i>can anyone confirm it</i>&quot; -&gt; have <b>you</b> tested it? -- Also please check <a href=\"https://meta.stackoverflow.com/q/387765/85421\">What is the preferred method for formatting code?</a>",
+    "score" : 3,
+    "owner" : {
+      "account_id" : 31180,
+      "reputation" : 29752,
+      "user_id" : 85421,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/kKvXH.gif?s=256",
+      "display_name" : "user85421",
+      "link" : "https://stackoverflow.com/users/85421/user85421"
+    },
+    "creation_date" : 1752042408,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140575727,
+    "post_id" : 79695127,
+    "body" : "There are many hidden assumptions. What if the time represented by the <code>LocalTime</code> parameter does not occur today, or what if it occurs multiple times today? What if it has <i>already</i> occurred (i.e. what does <code>normalScheduler.schedule</code> do if the first parameter is negative)?",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 6651855,
+      "reputation" : 292280,
+      "user_id" : 5133585,
+      "user_type" : "registered",
+      "accept_rate" : 96,
+      "profile_image" : "https://i.sstatic.net/dfqcw.png?s=256",
+      "display_name" : "Sweeper",
+      "link" : "https://stackoverflow.com/users/5133585/sweeper"
+    },
+    "creation_date" : 1752041352,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79695431" : [ {
+      "comment_id" : 140579322,
+      "post_id" : 79695431,
+      "body" : "@dragon4 I&#39;ve updated my answer to use ZonedDateTime which should take care of DST transitions.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 19118721,
+        "reputation" : 12499,
+        "user_id" : 13963086,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/9df2c3c4c87d8050b8fd6a59c88c7133?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "k314159",
+        "link" : "https://stackoverflow.com/users/13963086/k314159"
+      },
+      "creation_date" : 1752140505,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140579117,
+      "post_id" : 79695431,
+      "body" : "And for tomorrow, <code>LocalDate.now().plusDays(1)</code>",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 19118721,
+        "reputation" : 12499,
+        "user_id" : 13963086,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/9df2c3c4c87d8050b8fd6a59c88c7133?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "k314159",
+        "link" : "https://stackoverflow.com/users/13963086/k314159"
+      },
+      "creation_date" : 1752136337,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140579114,
+      "post_id" : 79695431,
+      "body" : "You can use <code>ZonedDateTime targetTime = time.atDate(LocalDate.now()).atZone(ZoneId.systemDefault()); long millis = ZonedDateTime.now().until(targetTime, ChronoUnit.MILLIS);</code>",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 19118721,
+        "reputation" : 12499,
+        "user_id" : 13963086,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/9df2c3c4c87d8050b8fd6a59c88c7133?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "k314159",
+        "link" : "https://stackoverflow.com/users/13963086/k314159"
+      },
+      "creation_date" : 1752136314,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140577282,
+      "post_id" : 79695431,
+      "body" : "@dragon4 sure, just use <code>ZonedDateTime.now().with( time ).toInstant().toEpochMilli()</code> and subtract <code>System.currentTimeMillis()</code> to get the milliseconds to pass to the scheduler.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 19118721,
+        "reputation" : 12499,
+        "user_id" : 13963086,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/9df2c3c4c87d8050b8fd6a59c88c7133?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "k314159",
+        "link" : "https://stackoverflow.com/users/13963086/k314159"
+      },
+      "creation_date" : 1752074110,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140577141,
+      "post_id" : 79695431,
+      "body" : "@dragon4 yes, I hadn&#39;t thought about DST transitions. So I think it would be safer to use ZonedDateTime - in which case, it&#39;s better to use <a href=\"https://stackoverflow.com/a/79695289/13963086\">Basil&#39;s answer</a>.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 19118721,
+        "reputation" : 12499,
+        "user_id" : 13963086,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/9df2c3c4c87d8050b8fd6a59c88c7133?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "k314159",
+        "link" : "https://stackoverflow.com/users/13963086/k314159"
+      },
+      "creation_date" : 1752071473,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140577096,
+      "post_id" : 79695431,
+      "body" : "one more think, this code will not work as expected in this situation:  Daylight Saving Time (DST) Transitions.    can i use ZonedDateTime instead of LocalTime?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 26076115,
+        "reputation" : 11,
+        "user_id" : 19775065,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/1a848d7e3d4a7bad55c91338ad183d93?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "dragon4",
+        "link" : "https://stackoverflow.com/users/19775065/dragon4"
+      },
+      "creation_date" : 1752071107,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140577079,
+      "post_id" : 79695431,
+      "body" : "Yes, you can certainly use milliseconds. I used nanoseconds only because the Java standard library classes use nanoseconds internally.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 19118721,
+        "reputation" : 12499,
+        "user_id" : 13963086,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/9df2c3c4c87d8050b8fd6a59c88c7133?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "k314159",
+        "link" : "https://stackoverflow.com/users/13963086/k314159"
+      },
+      "creation_date" : 1752070952,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140577053,
+      "post_id" : 79695431,
+      "body" : "i really appreciate your comment. One more doubt, can i use milliseconds instead of nano seconds? As it matches the precision and behavior of my original Joda-Time code.       private synchronized void scheduleToday(LocalTime time) {      long millis = LocalTime.now().until(time, ChronoUnit.MILLIS);      task = normalScheduler.schedule(this, millis, TimeUnit.MILLISECONDS);  }    private synchronized void scheduleTomorrow(LocalTime time) {      long millis = LocalTime.now().until(time, ChronoUnit.MILLIS)              + TimeUnit.DAYS.toMillis(1);      task = normalScheduler.schedule(thi",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 26076115,
+        "reputation" : 11,
+        "user_id" : 19775065,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/1a848d7e3d4a7bad55c91338ad183d93?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "dragon4",
+        "link" : "https://stackoverflow.com/users/19775065/dragon4"
+      },
+      "creation_date" : 1752070600,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140576818,
+      "post_id" : 79695431,
+      "body" : "@dragon4 it <code>LocalTime.until</code> definitely exists, see <a href=\"https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/time/LocalTime.html#until(java.time.temporal.Temporal,java.time.temporal.TemporalUnit)\" rel=\"nofollow noreferrer\">javadoc</a>. Make sure the method takes the <code>java.time</code> version of <code>LocalTime</code> as its argument.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 19118721,
+        "reputation" : 12499,
+        "user_id" : 13963086,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/9df2c3c4c87d8050b8fd6a59c88c7133?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "k314159",
+        "link" : "https://stackoverflow.com/users/13963086/k314159"
+      },
+      "creation_date" : 1752066577,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140576716,
+      "post_id" : 79695431,
+      "body" : "Using this code :    private synchronized void scheduleTomorrow(LocalTime time) {      long nanos = LocalTime.now().until(time, ChronoUnit.NANOS)              + TimeUnit.DAYS.toNanos(1);      task = normalScheduler.schedule(this, nanos, TimeUnit.NANOSECONDS);  }      Giving this below error how to fix it if you know?  The method until(LocalTime, ChronoUnit) is undefined for the type LocalTime.  (i have imported this: import java.time.temporal.ChronoUnit; )",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 26076115,
+        "reputation" : 11,
+        "user_id" : 19775065,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/1a848d7e3d4a7bad55c91338ad183d93?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "dragon4",
+        "link" : "https://stackoverflow.com/users/19775065/dragon4"
+      },
+      "creation_date" : 1752064567,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

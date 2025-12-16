@@ -1,0 +1,112 @@
+{
+  "question" : {
+    "question_id" : 79720056,
+    "title" : "How to refresh the service account credentials in GCP pubsub Spring implementation",
+    "body" : "<p>Currently we are using a third party library <code>CredClient</code> to get the credentials which has methods to get credentials and to refresh credentials.</p>\n<p>We are using Spring auto configuration and manually creating <code>CredentialsProvider</code> bean and utilizing auto configured <code>PubSubTemplate</code> to publish the messages.</p>\n<pre><code>@Bean\n@RefreshScope\npublic CredentialsProvider getCredentialsProvider(){\n   return FixedCredentialsProvider.create(CredClient.createInstance(authURL, host, clientId, secret).getCredential(projId,serviceAccount).createdScoped(defaultServiceScopes()));\n}\n\n\n@Autowired\nprivate PubSubTemplate pubSubTemplate;\n\npubSubTemplate.publish(topic, message);\n</code></pre>\n<p>It's working fine, when the credentials get expired we re forced to restart the application because its giving <code>Invalid Authentication</code> error message when publish a message. I tried removing the <code>credentialsProivder</code> bean from context and manually registered but its not reinitializing the <code>PubSubTemplate</code>. Alternatively I used <code>RefreshScope</code> annotation on <code>CredenialsProvider</code> and published the <code>RefreshEvent</code>, though it refreshed many beans but not this.</p>\n<p>How to refresh the credentials without restarting the application?</p>\n<p>Edit 1: everytime we call <code>CredClient</code>, it provides valid credentials, but the credentials does not load to the system.</p>\n",
+    "tags" : [ "java", "spring", "google-cloud-pubsub", "spring-cloud-gcp" ],
+    "owner" : {
+      "account_id" : 18421626,
+      "reputation" : 307,
+      "user_id" : 13419106,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/0c521946fbcff7b70c0ee923ab1149c2?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "krishna thota",
+      "link" : "https://stackoverflow.com/users/13419106/krishna-thota"
+    },
+    "is_answered" : false,
+    "view_count" : 112,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1754029617,
+    "creation_date" : 1753883036,
+    "link" : "https://stackoverflow.com/questions/79720056/how-to-refresh-the-service-account-credentials-in-gcp-pubsub-spring-implementati",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79720409,
+    "question_id" : 79720056,
+    "body" : "<p>Try this, use <a href=\"https://cloud.google.com/java/docs/reference/gax/latest/com.google.api.gax.core.CredentialsProvider\" rel=\"nofollow noreferrer\">CredentialsProvider</a> rather than <code>CredClient</code>, it is best to use Google’s official credentials. <code>RefreshScope</code> can reload some beans but not the internal Google Pub/Sub client because it was built once with the old credentials.</p>\n<p>Your <code>FixedCredentialsProvider</code> always uses the same credentials, it can’t get new ones when it expires, your Pub/Sub keep using the expired token.</p>\n<p>Try something like this: (this is just for reference)</p>\n<pre><code>    GoogleCredentials credentials = ServiceAccountCredentials.fromStream(\n       new FileInputStream(&quot;/path/to/key.json&quot;)\n    ).createScoped(&quot;https://www.googleapis.com/auth/cloud-platform&quot;);\n\n    CredentialsProvider provider = FixedCredentialsProvider.create(credentials);\n</code></pre>\n<p><a href=\"https://cloud.google.com/java/docs/reference/google-auth-library/latest/com.google.auth.oauth2.GoogleCredentials\" rel=\"nofollow noreferrer\">GoogleCredentials</a> do auto-refresh, this way <code>FixedCredentialsProvider</code> will work because credentials inside refresh on its own.</p>\n<p>UPDATE:</p>\n<p>In that case, don’t use <em><code>FixedCredentialsProvider</code></em> as it has static credentials. Use custom, <em><code>CredentialsProvider</code></em> that can delegate to <em><code>CredClient</code></em></p>\n<p>Try this instead,</p>\n<pre><code>@Bean\npublic CredentialsProvider getCredentialsProvider() {\n  return () -&gt; CredClient.createInstance(authURL, host, clientId, secret)\n                         .getCredential(projId, serviceAccount)\n                         .createScoped(defaultServiceScopes());\n}\n</code></pre>\n<p>In this way it will not stick to the old credentials or expired credentials, instead of ‘keep using my credentials’ it will ask <code>CredClient</code> for the latest one and use it.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 34641587,
+      "reputation" : 510,
+      "user_id" : 26682978,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/3b5f8fd5a47230789c5e2bb95db8e71b?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "marky",
+      "link" : "https://stackoverflow.com/users/26682978/marky"
+    },
+    "creation_date" : 1753901560,
+    "last_activity_date" : 1753983348,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140630096,
+    "post_id" : 79720056,
+    "body" : "Thanks for suggestion, I have limited knowledge in this, do you mind sharing an example or a code reference?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 18421626,
+      "reputation" : 307,
+      "user_id" : 13419106,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/0c521946fbcff7b70c0ee923ab1149c2?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "krishna thota",
+      "link" : "https://stackoverflow.com/users/13419106/krishna-thota"
+    },
+    "creation_date" : 1753884649,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140630067,
+    "post_id" : 79720056,
+    "body" : "If you mark your <code>CredentialsProvider</code> with refresh scope, if the properties it uses aren&#39;t refreshed in the class the <code>@Bean</code> is defined it refreshing won&#39;t help a bit. You would need to refresh the config class as well (or inject the properties with <code>@Value</code> into this method instead of the class).",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126826,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1753884094,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79720409" : [ {
+      "comment_id" : 140632071,
+      "post_id" : 79720409,
+      "body" : "Unfortunately, we don&#39;t have access to google credentials. We need to depend on <code>CredClient</code> as the IAM team providing this library.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 18421626,
+        "reputation" : 307,
+        "user_id" : 13419106,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/0c521946fbcff7b70c0ee923ab1149c2?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "krishna thota",
+        "link" : "https://stackoverflow.com/users/13419106/krishna-thota"
+      },
+      "creation_date" : 1753948833,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140631786,
+      "post_id" : 79720409,
+      "body" : "The <code>FixedCredentialsProvider</code> cannot but that is the bean that gets recreated with the new credentials which then will be used by the template. Which is the whole point of the `@RefreshScope&#167;.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 3192259,
+        "reputation" : 126826,
+        "user_id" : 2696260,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+        "display_name" : "M. Deinum",
+        "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+      },
+      "creation_date" : 1753941141,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

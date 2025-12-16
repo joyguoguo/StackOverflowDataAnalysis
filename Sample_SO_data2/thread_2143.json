@@ -1,0 +1,131 @@
+{
+  "question" : {
+    "question_id" : 79646127,
+    "title" : "Spring Boot JPA: delete() returns 204 but record is not deleted from database",
+    "body" : "<p>As in the title - the delete method does not remove the record from the database, but the controller returns code 204, which means that the request was processed correctly.</p>\n<p>FlashcardSet service:</p>\n<pre><code>@Transactional\n    public void deleteFlashcardSet(Long userId, Long flashcardSetId) {\n\n        entityManager.clear();\n\n        FlashcardSet flashcardSet = flashcardSetRepository.findById(flashcardSetId)\n                .orElseThrow(() -&gt; new ResourceNotFoundException(&quot;Flashcard set not found&quot;));\n\n        if(!flashcardSet.getUser().getUserId().equals(userId)){\n            throw new UnauthorizedException(&quot;User does not have permission to delete this flashcard set&quot;);\n        }\n\n        flashcardSetRepository.delete(flashcardSet);\n    }\n</code></pre>\n<p>FlashcardSet Entity:</p>\n<pre><code>@Entity\n@Data\n@AllArgsConstructor\n@NoArgsConstructor\n@Table(name = &quot;FlashcardSets&quot;)\npublic class FlashcardSet {\n\n    @Id\n    @GeneratedValue(strategy = GenerationType.IDENTITY)\n    private Long flashcardSetId;\n    private String name;\n    private Date createdAt;\n\n    @ManyToOne\n    @JoinColumn(name = &quot;user_id&quot;, nullable = false)\n    @JsonBackReference\n    private User user;\n\n    @OneToMany(mappedBy = &quot;flashcardSet&quot;, cascade = CascadeType.ALL, orphanRemoval = true)\n    @JsonManagedReference\n    private List&lt;Flashcard&gt; flashcards;\n\n    @PrePersist\n    protected void onCreate() {\n        this.createdAt = new Date();\n    }\n}\n</code></pre>\n<p>Flashcard Entity (I don't know if needed but I'll add this too):</p>\n<pre><code>@Data\n@AllArgsConstructor\n@NoArgsConstructor\n@Entity\n@Table(name = &quot;Flashcards&quot;)\npublic class Flashcard {\n\n    @Id\n    @GeneratedValue(strategy = GenerationType.IDENTITY)\n    private Long flashcardId;\n    private String frontContent;\n    private String backContent;\n    private int repetitionCount;\n    private Date createdAt;\n    private int xpReward;\n\n    @ManyToOne\n    @JoinColumn(name = &quot;flashcard_set_id&quot;, nullable = false)\n    @JsonBackReference\n    private FlashcardSet flashcardSet;\n\n    @PrePersist\n    protected void onCreate() {\n        this.createdAt = new Date();\n    }\n\n}\n</code></pre>\n<p>From what I have checked so far, delete() only works in two cases:</p>\n<ol>\n<li>adding entityManager.clear() (as in the FlashcardSet service code above)</li>\n<li>making a direct query to the database:</li>\n</ol>\n<pre><code>@Modifying\n    @Query(&quot;DELETE FROM FlashcardSet fs WHERE fs.flashcardSetId = :flashcardSetId AND fs.user.userId = :userId&quot;)\n    void deleteByIdAndUserId(@Param(&quot;flashcardSetId&quot;) Long flashcardSetId, @Param(&quot;userId&quot;) Long userId);\n</code></pre>\n<p>and then using deleteByIdAndUserId() in the service instead of regular delete().\nI think the problem is somewhere in the persistence context. I don't know if my solution is good or if it can be done better. Btw deleteById doesn't work too.</p>\n",
+    "tags" : [ "java", "spring-boot", "hibernate", "spring-data-jpa" ],
+    "owner" : {
+      "account_id" : 42288218,
+      "reputation" : 11,
+      "user_id" : 30680553,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/0c5e0258b7e99bca322d9c8f9d3ceeeb?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Gruncio",
+      "link" : "https://stackoverflow.com/users/30680553/gruncio"
+    },
+    "is_answered" : false,
+    "view_count" : 118,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1748792718,
+    "creation_date" : 1748641387,
+    "link" : "https://stackoverflow.com/questions/79646127/spring-boot-jpa-delete-returns-204-but-record-is-not-deleted-from-database",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79647689,
+    "question_id" : 79646127,
+    "body" : "<p>I managed to find a solution. I replaced <code>flashcardSetRepository.delete(flashcardSet)</code> with</p>\n<pre><code>flashcardSet.getUser().getFlashcardSets().remove(flashcardSet);\n</code></pre>\n<p>Full code:</p>\n<pre><code>@Transactional\npublic void deleteFlashcardSet(Long userId, Long flashcardSetId) {\n\n    FlashcardSet flashcardSet = flashcardSetRepository.findById(flashcardSetId)\n            .orElseThrow(() -&gt; new ResourceNotFoundException(&quot;Flashcard set not found&quot;));\n\n    if(!flashcardSet.getUser().getUserId().equals(userId)){\n        throw new UnauthorizedException(&quot;User does not have permission to delete this flashcard set&quot;);\n    }\n\n    flashcardSet.getUser().getFlashcardSets().remove(flashcardSet);\n}\n</code></pre>\n<p>Now I don't have to use <code>entityManager.clear()</code> or direct query.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 42288218,
+      "reputation" : 11,
+      "user_id" : 30680553,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/0c5e0258b7e99bca322d9c8f9d3ceeeb?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Gruncio",
+      "link" : "https://stackoverflow.com/users/30680553/gruncio"
+    },
+    "creation_date" : 1748792718,
+    "last_activity_date" : 1748792718,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140474102,
+    "post_id" : 79646127,
+    "body" : "Sooo: &quot;it removes all entities from the persistence context&quot; and &quot;the delete method does not remove the record from the database&quot; doesn&#39;t it rings a bell ? :)",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 209503,
+      "reputation" : 23867,
+      "user_id" : 460557,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/b4565f97815833390c9c880e9e8522e4?s=256&d=identicon&r=PG",
+      "display_name" : "Jorge Campos",
+      "link" : "https://stackoverflow.com/users/460557/jorge-campos"
+    },
+    "creation_date" : 1748650480,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140474020,
+    "post_id" : 79646127,
+    "body" : "@JorgeCampos yes, I meant that the controller returns code 204. As for entityManager.clear(), from what I understand, it removes all entities from the persistence context, which is a kind of &quot;cache&quot;. I&#39;m a beginner in Spring Boot and I&#39;m doing my first bigger project.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 42288218,
+      "reputation" : 11,
+      "user_id" : 30680553,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/0c5e0258b7e99bca322d9c8f9d3ceeeb?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Gruncio",
+      "link" : "https://stackoverflow.com/users/30680553/gruncio"
+    },
+    "creation_date" : 1748645786,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140473935,
+    "post_id" : 79646127,
+    "body" : "What you mean: <code>but the query ends with code 204</code> are you talking about the actual controller? 204 is an HTTP code for a web request, not a query result code. The other thing I have to ask is is: do you know what this <code>entityManager.clear();</code> does? If you don&#39;t you should read the <a href=\"https://jakarta.ee/specifications/persistence/3.1/apidocs/jakarta.persistence/jakarta/persistence/entitymanager#clear()\" rel=\"nofollow noreferrer\">documentation</a>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 209503,
+      "reputation" : 23867,
+      "user_id" : 460557,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/b4565f97815833390c9c880e9e8522e4?s=256&d=identicon&r=PG",
+      "display_name" : "Jorge Campos",
+      "link" : "https://stackoverflow.com/users/460557/jorge-campos"
+    },
+    "creation_date" : 1748642068,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79647689" : [ {
+      "comment_id" : 140477333,
+      "post_id" : 79647689,
+      "body" : "Yes, but I didn&#39;t know how to do it in a different, correctly way ;)",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 42288218,
+        "reputation" : 11,
+        "user_id" : 30680553,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/0c5e0258b7e99bca322d9c8f9d3ceeeb?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Gruncio",
+        "link" : "https://stackoverflow.com/users/30680553/gruncio"
+      },
+      "creation_date" : 1748799841,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140477277,
+      "post_id" : 79647689,
+      "body" : "You never had to use #clear nor <code>entityManager</code> in the first place.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 1658807,
+        "reputation" : 32708,
+        "user_id" : 1527544,
+        "user_type" : "registered",
+        "accept_rate" : 54,
+        "profile_image" : "https://www.gravatar.com/avatar/6665878d41d42307eb53e9fae311a471?s=256&d=identicon&r=PG",
+        "display_name" : "Antoniossss",
+        "link" : "https://stackoverflow.com/users/1527544/antoniossss"
+      },
+      "creation_date" : 1748797397,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

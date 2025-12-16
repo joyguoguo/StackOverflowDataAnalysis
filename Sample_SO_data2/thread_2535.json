@@ -1,0 +1,82 @@
+{
+  "question" : {
+    "question_id" : 79616363,
+    "title" : "Detailed debug logging in bucket4j-spring-boot-starter",
+    "body" : "<p>I am using Spring Boot 2.7.18 with <a href=\"https://github.com/MarcGiffing/bucket4j-spring-boot-starter\" rel=\"nofollow noreferrer\">bucket4j-spring-boot-starter</a> to rate limit my endpoints in an MVC application.</p>\n<p>I am trying to configure bucket4j solely with the use of a properties file. While I succeeded to provide the right configuration in <code>application.properties</code>, and the actual rate limiting seems to work in my local environment, the same seems not to work on another deployment.</p>\n<p>I would like to enable detailed <code>DEBUG</code> logging of what is going on with bucket4j, but cannot seem to make it work. Even in my local environment where rate limiting seems to be correctly configured, bucket4j does not seem to write anything during its operation. I suspect that I need to define some kind of aspect handling in order to print these messages myself - but I cannot find a proper example for that.</p>\n<p>Here's an excerpt from my <code>application.properties</code> (changing log levels for other packages work fine):</p>\n<pre class=\"lang-ini prettyprint-override\"><code>logging.file.name=c:/temp/myapp.log\nlogging.level.root=INFO\nlogging.level.org.hibernate.SQL=INFO\nlogging.level.org.hibernate.type.descriptor.sql.BasicBinder=INFO\n\n# the following do not have any result\nlogging.level.com.giffing.bucket4j.spring.boot.starter=DEBUG\nlogging.level.io.github.bucket4j=TRACE\n</code></pre>\n<p>The dependencies I used specifically to make rate limiting work:</p>\n<pre class=\"lang-xml prettyprint-override\"><code>&lt;dependency&gt; \n    &lt;groupId&gt;com.giffing.bucket4j.spring.boot.starter&lt;/groupId&gt;\n    &lt;artifactId&gt;bucket4j-spring-boot-starter&lt;/artifactId&gt;\n    &lt;version&gt;0.8.1&lt;/version&gt; &lt;!-- can't use higher, need Spring Boot 3 --&gt;\n&lt;/dependency&gt;\n&lt;dependency&gt;\n    &lt;groupId&gt;com.github.ben-manes.caffeine&lt;/groupId&gt;\n    &lt;artifactId&gt;caffeine&lt;/artifactId&gt;\n    &lt;version&gt;3.1.8&lt;/version&gt;\n&lt;/dependency&gt;\n&lt;dependency&gt;\n    &lt;groupId&gt;com.github.ben-manes.caffeine&lt;/groupId&gt;\n    &lt;artifactId&gt;jcache&lt;/artifactId&gt;\n    &lt;version&gt;3.1.8&lt;/version&gt;\n&lt;/dependency&gt;      \n&lt;dependency&gt;\n    &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;\n    &lt;artifactId&gt;spring-boot-starter-cache&lt;/artifactId&gt;\n&lt;/dependency&gt;\n&lt;dependency&gt;\n    &lt;groupId&gt;org.springframework&lt;/groupId&gt;\n    &lt;artifactId&gt;spring-context-support&lt;/artifactId&gt;\n&lt;/dependency&gt;\n</code></pre>\n<p>[edit - adding bucket4j-spring-boot-starter configuration]</p>\n<pre class=\"lang-ini prettyprint-override\"><code>spring.cache.cache-names=rate-limit-bucket\nspring.cache.jcache.provider=com.github.benmanes.caffeine.jcache.spi.CaffeineCachingProvider\nspring.cache.caffeine.spec=maximumSize=1000000,expireAfterAccess=3600s\n\nbucket4j.enabled=true\nbucket4j.filters[0].cache-name=rate-limit-bucket\nbucket4j.filters[0].cache-key=getRemoteAddr()\nbucket4j.filters[0].url=^.*/(download?|cancel|someaction).*$\nbucket4j.filters[0].http-response-body=&quot;{ \\&quot;status\\&quot;: 429, \\&quot;error\\&quot;: \\&quot;Too Many Requests\\&quot;, \\&quot;message\\&quot;: \\&quot;You have exhausted your API Request Quota\\&quot; }&quot;\nbucket4j.filters[0].rate-limits[0].bandwidths[0].capacity=1\nbucket4j.filters[0].rate-limits[0].bandwidths[0].time=5\nbucket4j.filters[0].rate-limits[0].bandwidths[0].unit=seconds\n</code></pre>\n<p>Any ideas?</p>\n",
+    "tags" : [ "java", "spring-boot", "bucket4j" ],
+    "owner" : {
+      "account_id" : 22929,
+      "reputation" : 1659,
+      "user_id" : 57033,
+      "user_type" : "registered",
+      "accept_rate" : 80,
+      "profile_image" : "https://www.gravatar.com/avatar/c2391bf9668024d9e442f011358df881?s=256&d=identicon&r=PG",
+      "display_name" : "hello_earth",
+      "link" : "https://stackoverflow.com/users/57033/hello-earth"
+    },
+    "is_answered" : true,
+    "view_count" : 339,
+    "answer_count" : 1,
+    "score" : 2,
+    "last_activity_date" : 1746961242,
+    "creation_date" : 1746956908,
+    "link" : "https://stackoverflow.com/questions/79616363/detailed-debug-logging-in-bucket4j-spring-boot-starter",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79616398,
+    "question_id" : 79616363,
+    "body" : "<p>You can try this simple workaround.</p>\n<p>In Spring Web (Servlet API), every HTTP request goes through a filter chain. Each filter can do something before and after the actual processing.</p>\n<p>You can add a simple custom filter to this chain observe what's going on at runtime:</p>\n<pre><code>@Component\npublic class LoggingFilter extends OncePerRequestFilter {\n    @Override\n    protected void doFilterInternal(HttpServletRequest request,\n                                    HttpServletResponse response,\n                                    FilterChain filterChain) throws ServletException, IOException {\n\n        String ip = request.getRemoteAddr();\n        String path = request.getRequestURI();\n\n        log.info(&quot;Request from IP {} to {}&quot;, ip, path);\n\n        filterChain.doFilter(request, response);\n\n        String rate = response.getHeader(&quot;X-Rate-Limit-Remaining&quot;);\n        log.info(&quot;Rate limit remaining: {} (path: {})&quot;, rate, path);\n    }\n}\n</code></pre>\n<p>This filter will automatically be picked up by Spring Boot and added to the filter chain.</p>\n<p>Even if Bucket4j doesn't log, this will confirm that rate limiting is happening -\nand how many tokens are left per request.</p>\n<p>The <code>X-Rate-Limit-Remaining</code> header is commonly used by rate limiters, but may vary depending on your version or config. Try to check the actual response headers or Bucket4j documentation to confirm which one is used.</p>\n",
+    "score" : 2,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 38931631,
+      "reputation" : 671,
+      "user_id" : 29023248,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/WxoZEuKw.png?s=256",
+      "display_name" : "Aleksey Bykov",
+      "link" : "https://stackoverflow.com/users/29023248/aleksey-bykov"
+    },
+    "creation_date" : 1746959751,
+    "last_activity_date" : 1746959751,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79616398" : [ {
+      "comment_id" : 140421672,
+      "post_id" : 79616398,
+      "body" : "Glad to hear it helped - and thank you for sharing the detail about WAR deployment on a standalone container. That&#39;s a really useful clarification for others in a similar setup.Good luck with the rest of your integration!",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 38931631,
+        "reputation" : 671,
+        "user_id" : 29023248,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/WxoZEuKw.png?s=256",
+        "display_name" : "Aleksey Bykov",
+        "link" : "https://stackoverflow.com/users/29023248/aleksey-bykov"
+      },
+      "creation_date" : 1747144541,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140421554,
+      "post_id" : 79616398,
+      "body" : "Thank you very much for the suggestion. It steered me into the right direction - indeed this is the name of the header used. In the process I discovered that the root of my problem (the reason I wanted the detailed DEBUG info) was that <code>bucket4j-spring-boot-starter</code> <a href=\"https://github.com/MarcGiffing/bucket4j-spring-boot-starter/issues/118\" rel=\"nofollow noreferrer\">will not register its filters correctly</a> in a scenario where it is run as part of a WAR file deployed on a standalone servlet container like Tomcat. But it&#39;s another story entirely.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 22929,
+        "reputation" : 1659,
+        "user_id" : 57033,
+        "user_type" : "registered",
+        "accept_rate" : 80,
+        "profile_image" : "https://www.gravatar.com/avatar/c2391bf9668024d9e442f011358df881?s=256&d=identicon&r=PG",
+        "display_name" : "hello_earth",
+        "link" : "https://stackoverflow.com/users/57033/hello-earth"
+      },
+      "creation_date" : 1747142525,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

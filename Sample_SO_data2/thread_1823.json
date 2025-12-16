@@ -1,0 +1,82 @@
+{
+  "question" : {
+    "question_id" : 79674867,
+    "title" : "How does a custom JsonSerializer concat multiple fields into a single string, using each field&#39;s own serializer during the concatenation in Jackson?",
+    "body" : "<p>I am learning to use Jackson's custom <strong>serialization</strong> and <strong>deserialization</strong> capabilities to handle the <code>DatePair</code> class. I hope to concatenate the fields of <code>DatePair</code> into a single string.<br />\nHere is a <strong>MCVE</strong> code:<br />\n<code>DatePair</code> is a <strong>unmodifiable</strong> class within a third-party library:</p>\n<pre class=\"lang-java prettyprint-override\"><code>\nimport lombok.Data;\nimport java.util.Date;\n\n@Data\npublic class DatePair {\n    Date date1;\n    Date date2;\n}\n</code></pre>\n<p>My example:</p>\n<pre class=\"lang-java prettyprint-override\"><code>\nimport com.fasterxml.jackson.annotation.JsonFormat;\nimport com.fasterxml.jackson.core.JsonGenerator;\nimport com.fasterxml.jackson.databind.JsonSerializer;\nimport com.fasterxml.jackson.databind.ObjectMapper;\nimport com.fasterxml.jackson.databind.SerializerProvider;\nimport com.fasterxml.jackson.databind.module.SimpleModule;\nimport lombok.Data;\n\nimport java.io.IOException;\nimport java.text.SimpleDateFormat;\nimport java.util.Date;\n\n\n@Data\npublic class Example {\n\n    @Data\n    public static class Model1 {\n        @JsonFormat(pattern = &quot;yyyy/MM/dd HH:mm:ss.SSS&quot;, timezone = &quot;GMT+2&quot;)\n        DatePair datePair;\n    }\n\n    public static class DatePairJsonSerializer extends JsonSerializer&lt;DatePair&gt; {\n        @Override\n        public void serialize(DatePair value, JsonGenerator gen, SerializerProvider serializers) throws IOException {\n            gen.writeRaw(&quot;(&quot;);\n            serializers.defaultSerializeValue(value.date1, gen);\n            gen.writeRaw(&quot;, &quot;);\n            /*\n             When serialize Model1\n             will throw JsonGenerationException: Can not write a string, expecting field name (context: Object)\n             */\n            serializers.defaultSerializeValue(value.date2, gen);\n            gen.writeRaw(&quot;)&quot;);\n        }\n    }\n\n    public static void main(String[] args) {\n        ObjectMapper mapper = new ObjectMapper();\n        mapper.setDateFormat(new SimpleDateFormat(&quot;yyyy-MM-dd HH:mm:ss&quot;));\n        SimpleModule simpleModule = new SimpleModule();\n        simpleModule.addSerializer(DatePair.class, new DatePairJsonSerializer());\n        mapper.registerModule(simpleModule);\n\n        DatePair datePair = new DatePair();\n        datePair.setDate1(new Date());\n        datePair.setDate2(new Date());\n\n        Model1 model1 = new Model1();\n        model1.setDatePair(datePair);\n        try {\n            /*\n             serialize  DatePair\n             */\n            String json = mapper.writeValueAsString(datePair);\n            System.out.println(json);   // output: (&quot;2025-06-22 10:02:48&quot;,  &quot;2025-06-22 10:02:48&quot;)\n\n            /*\n             serialize  Model1\n             will throw JsonGenerationException: Can not write a string, expecting field name (context: Object)\n             */\n            json = mapper.writeValueAsString(model1);       // expected output:    {&quot;datePair&quot;: &quot;(2025/06/22 10:02:48.000,  2025/06/22 10:02:48.000)&quot;}\n            System.out.println(json);\n        } catch (Exception e) {\n            e.printStackTrace();\n        }\n    }\n}\n\n\n</code></pre>\n<p>dependencies:</p>\n<pre><code>        &lt;dependency&gt;\n            &lt;groupId&gt;com.fasterxml.jackson.core&lt;/groupId&gt;\n            &lt;artifactId&gt;jackson-databind&lt;/artifactId&gt;\n            &lt;version&gt;2.18.2&lt;/version&gt;\n        &lt;/dependency&gt;\n</code></pre>\n<p>I encountered some issues:</p>\n<ol>\n<li>When serializing <code>DatePair</code> alone, I want the output <code>Date</code> to ​​not have quotes​​, like: <code>(2025-06-22 10:02:48, 2025-06-22 10:02:48)</code>, instead of <code>(&quot;2025-06-22 10:02:48&quot;, &quot;2025-06-22 10:02:48&quot;)</code></li>\n<li>When serializing <code>Model1</code>, I want <code>@JsonFormat</code> applied to the <code>date</code> fields in <code>DatePair</code></li>\n<li>Current serialization of <code>Model1</code> throws errors. How to resolve?</li>\n<li>Could you provide a deserialization example matching the serialization logic?</li>\n</ol>\n",
+    "tags" : [ "java", "json", "jackson", "json-deserialization", "jsonserializer" ],
+    "owner" : {
+      "account_id" : 7537904,
+      "reputation" : 1823,
+      "user_id" : 5723609,
+      "user_type" : "registered",
+      "accept_rate" : 65,
+      "profile_image" : "https://i.sstatic.net/zsoe5.jpg?s=256",
+      "display_name" : "Guo",
+      "link" : "https://stackoverflow.com/users/5723609/guo"
+    },
+    "is_answered" : false,
+    "view_count" : 66,
+    "answer_count" : 2,
+    "score" : 0,
+    "last_activity_date" : 1750852879,
+    "creation_date" : 1750562944,
+    "link" : "https://stackoverflow.com/questions/79674867/how-does-a-custom-jsonserializer-concat-multiple-fields-into-a-single-string-us",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79674996,
+    "question_id" : 79674867,
+    "body" : "<p>Jackson's serialization might be tricky. You can achieve your goal by <code>StdConverter</code>.</p>\n<p>Here's an example:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Data\npublic static class Model1 {\n    @JsonSerialize(converter = DatePairSerializerConverter.class)\n    @JsonDeserialize(converter = DatePairDeserializerConverter.class)\n    DatePair datePair;\n}\n\npublic static class DatePairSerializerConverter extends StdConverter&lt;DatePair, String&gt; {\n    private static final DateFormat FIRST_DATE_FORMAT = new SimpleDateFormat(&quot;(yyyy/MM/dd HH:mm:ss.SSS, &quot;);\n    private static final DateFormat SECOND_DATE_FORMAT = new SimpleDateFormat(&quot;yyyy/MM/dd HH:mm:ss.SSS)&quot;);\n\n    @Override\n    public String convert(DatePair datePair) {\n        return FIRST_DATE_FORMAT.format(datePair.date1) + SECOND_DATE_FORMAT.format(datePair.date2);\n    }\n}\n\npublic static class DatePairDeserializerConverter extends StdConverter&lt;String, DatePair&gt; {\n    private static final String DELIMITER = &quot;, &quot;;\n    private static final DateFormat FIRST_DATE_FORMAT = new SimpleDateFormat(&quot;(yyyy/MM/dd HH:mm:ss.SSS&quot;);\n    private static final DateFormat SECOND_DATE_FORMAT = new SimpleDateFormat(&quot;yyyy/MM/dd HH:mm:ss.SSS)&quot;);\n\n    @Override\n    public DatePair convert(String value) {\n        String[] dates = value.split(DELIMITER);\n        DatePair datePair = new DatePair();\n\n        try {\n            datePair.setDate1(FIRST_DATE_FORMAT.parse(dates[0]));\n            datePair.setDate2(SECOND_DATE_FORMAT.parse(dates[1]));\n\n            return datePair;\n        } catch (ParseException e) {\n            throw new RuntimeException(e);\n        }\n    }\n}\n</code></pre>\n<p>A few side notes:</p>\n<ol>\n<li>If you want to register <code>DatePairSerializerConverter</code> &amp; <code>DatePairDeserializerConverter</code> globally (so you don't need to specify <code>@JsonSerialize</code> &amp; <code>@JsonDeserialize</code> in each model explicitly), you might need to look into <code>StdDelegatingSerializer</code> &amp; <code>StdDelegatingDeserializer</code>, because there's no such method as <code>objectMapper.addConverter(new DatePairSerializerConverter())</code>, unfortunatelly.</li>\n<li>It's recommended to store each class in a separate file.</li>\n<li>It's recommended to add <code>private</code> modifier to the fields your model classes.</li>\n<li>If you're on Java 17+, try migrating your model classes to <code>record</code>, so you don't have to bother with Lombok annotations.</li>\n</ol>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 27812898,
+      "reputation" : 119,
+      "user_id" : 21234935,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/595621ece7f5b2a084e6ab53826cc60e?s=256&d=identicon&r=PG",
+      "display_name" : "Yevhen Vasyliev",
+      "link" : "https://stackoverflow.com/users/21234935/yevhen-vasyliev"
+    },
+    "creation_date" : 1750581535,
+    "last_activity_date" : 1750581535,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79679010,
+    "question_id" : 79674867,
+    "body" : "<p>First, the output <code>(&quot;2025-06-22 10:02:48&quot;, &quot;2025-06-22 10:02:48&quot;)</code> of serialized  <code>DatePair</code> is not a standard JSON, that mean's you can not using <code>SerializerProvider.defaultSerializeValue</code> . You need create a format with <code>JsonFormat</code>or define a default, and the <code>Serializer</code> (recommended extends <code>StdSerializer</code>) should implements <code>ContextualSerializer</code>. You can refer to the implementation of <code>DateSerializer</code> and <code>DateTimeSerializerBase</code>.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 10549957,
+      "reputation" : 356,
+      "user_id" : 7772947,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/be9b27baf13b0575b4d77aa46fa2f0fc?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "xmcx",
+      "link" : "https://stackoverflow.com/users/7772947/xmcx"
+    },
+    "creation_date" : 1750852879,
+    "last_activity_date" : 1750852879,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140532426,
+    "post_id" : 79674867,
+    "body" : "Try writing the &quot; that should surround your ( enclosed dates as well, looks like currently you are missing those.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2843847,
+      "reputation" : 57516,
+      "user_id" : 2442804,
+      "user_type" : "registered",
+      "accept_rate" : 80,
+      "profile_image" : "https://i.sstatic.net/51a3aQOH.jpg?s=256",
+      "display_name" : "luk2302",
+      "link" : "https://stackoverflow.com/users/2442804/luk2302"
+    },
+    "creation_date" : 1750564771,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

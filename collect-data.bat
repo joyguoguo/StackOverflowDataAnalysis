@@ -4,22 +4,22 @@ REM 数据采集工具启动脚本 (Windows)
 REM 检查参数
 if "%1"=="" (
     echo Usage: collect-data.bat [count] [output_dir] [api_key]
-    echo Example: collect-data.bat 10000 Sample_SO_data rl_iyRnJYLzYdHXWn2GhMRt9iSk6
+    echo Example: collect-data.bat 3500 Sample_SO_data2 rl_iyRnJYLzYdHXWn2GhMRt9iSk6
     echo.
-    echo Using default values: count=10000, output_dir=Sample_SO_data
+    echo Using default values: count=3500, output_dir=Sample_SO_data2
     echo Note: You can also set SO_API_KEY environment variable instead
-    set COUNT=10000
-    set OUTPUT=Sample_SO_data
+    set COUNT=3500
+    set OUTPUT=Sample_SO_data2
     set API_KEY=
 ) else (
     set COUNT=%1
     if "%2"=="" (
-        set OUTPUT=Sample_SO_data
+        set OUTPUT=Sample_SO_data2
     ) else (
         set OUTPUT=%2
     )
     if "%3"=="" (
-        set API_KEY=
+        set API_KEY=rl_iyRnJYLzYdHXWn2GhMRt9iSk6
     ) else (
         set API_KEY=%3
     )

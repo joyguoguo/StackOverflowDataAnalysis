@@ -1,0 +1,79 @@
+{
+  "question" : {
+    "question_id" : 79671438,
+    "title" : "Can thread-unsafe combiner be used in Stream.collect method in java 8?",
+    "body" : "<p>For a parallel <code>Stream</code>, the <code>collect</code> method has a 3-arg variant: (source: <a href=\"https://docs.oracle.com/javase/8/docs/api/java/util/stream/Stream.html#collect-java.util.function.Supplier-java.util.function.BiConsumer-java.util.function.BiConsumer-\" rel=\"nofollow noreferrer\">oracle documentation</a> )</p>\n<pre class=\"lang-java prettyprint-override\"><code>/**\nParameters:\nsupplier - a function that creates a new result container. For a parallel execution, this function may be called multiple times and must return a fresh value each time.\naccumulator - an associative, non-interfering, stateless function for incorporating an additional element into a result\ncombiner - an associative, non-interfering, stateless function for combining two values, which must be compatible with the accumulator function\nReturns:\nthe result of the reduction\n*/\n&lt;R&gt; R collect(Supplier&lt;R&gt; supplier,\n              BiConsumer&lt;R,? super T&gt; accumulator,\n              BiConsumer&lt;R,R&gt; combiner)\n</code></pre>\n<p>I've seen a lot of examples in which thread-unsafe combiners are used, both in blogs online or books. For example, <a href=\"https://www.digitalocean.com/community/tutorials/java-stream-collect-method-examples\" rel=\"nofollow noreferrer\">this post</a> gives the example where a thread-unsafe <code>StringBuilder</code> is used in the combiner function:</p>\n<pre class=\"lang-java prettyprint-override\"><code>List&lt;String&gt; vowels = List.of(&quot;a&quot;, &quot;e&quot;, &quot;i&quot;, &quot;o&quot;, &quot;u&quot;);\n\n// sequential stream - nothing to combine\nStringBuilder result = vowels.stream().collect(StringBuilder::new, (x, y) -&gt; x.append(y),\n        (a, b) -&gt; a.append(&quot;,&quot;).append(b));\nSystem.out.println(result.toString());\n\n// parallel stream - combiner is combining partial results\nStringBuilder result1 = vowels.parallelStream().collect(StringBuilder::new, (x, y) -&gt; x.append(y),\n        (a, b) -&gt; a.append(&quot;,&quot;).append(b));\nSystem.out.println(result1.toString());\n</code></pre>\n<p>I know that the <code>BiConsumer&lt;R,? super T&gt; accumulator</code> can be thread-unsafe, since the <code>identity</code> is created for each thread so that threads does not need to synchronize because they don't even share states.</p>\n<p>However, the problem is, why thread-unsafe combiners are used? In my understanding these combiners are run parallel in order to combine the results of the <code>accumulator</code>. If the <code>combiner</code> is not run in parallel, then the whole process becomes serial, not taking advantage of concurrency. For example if the whole process is adding identity 0 with an array of 1 to N. For a parallel stream, operations of <code>(0+1), (0+2), .... (0+N)</code> are executed in parallel, but if the <code>combiner</code> is serial, the final combing step <code>1+2+ .... N</code> is no faster than the serial stream where this process is directly executed by the accumulator function.</p>\n",
+    "tags" : [ "java", "java-stream", "java.util.concurrent" ],
+    "owner" : {
+      "account_id" : 17436033,
+      "reputation" : 518,
+      "user_id" : 12639005,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a-/AAuE7mD9BKI5xQp34xippuV_CnsMhoCVSn_rzQJzfqiD=k-s256",
+      "display_name" : "Name Null",
+      "link" : "https://stackoverflow.com/users/12639005/name-null"
+    },
+    "is_answered" : true,
+    "view_count" : 91,
+    "answer_count" : 1,
+    "score" : 2,
+    "last_activity_date" : 1751341188,
+    "creation_date" : 1750296167,
+    "link" : "https://stackoverflow.com/questions/79671438/can-thread-unsafe-combiner-be-used-in-stream-collect-method-in-java-8",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79671451,
+    "question_id" : 79671438,
+    "body" : "<p><a href=\"https://stackoverflow.com/questions/29916881/how-to-implement-a-thread-safe-collector/29920375#29920375\">This answer</a> in a similar question says that if a collector is non-concurrent, &quot;the framework will perform the necessary steps to use it in a thread-safe but still efficient manner&quot;.</p>\n<p>That is, each thread creates its own identity value using <code>supplier</code>, uses <code>accumulator</code> inside its own thread, and uses <code>combiner</code> to combine thread values <strong>after they have finished their own work</strong>.</p>\n<p>Although the answer specifically answers a question asking about a user-defined <code>Collector</code> object passed to one-arg <code>collect</code> method, I think my question of 3-arg <code>collector</code> follows the same logic (it is just a variant). And the 3-arg <code>collector</code> method's parameters should be regarded non-concurrent as a whole by library designers/implementors because it is unwise to assume that user must provide thread-safe arguments.</p>\n<p>So it does not matter if <code>combiner</code> is thread-safe or not, because the <code>combiner</code> only <strong>accepts</strong> results of parallel executions and combines them afterwards and locally.</p>\n<p>In my example, the <code>combiner</code> 's arguments are two <code>StringBuilder</code> but they're just local variables, not shared, and have nothing to do with concurrency:</p>\n<pre><code>(a, b) -&gt; a.append(&quot;,&quot;).append(b)\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 17436033,
+      "reputation" : 518,
+      "user_id" : 12639005,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a-/AAuE7mD9BKI5xQp34xippuV_CnsMhoCVSn_rzQJzfqiD=k-s256",
+      "display_name" : "Name Null",
+      "link" : "https://stackoverflow.com/users/12639005/name-null"
+    },
+    "creation_date" : 1750297502,
+    "last_activity_date" : 1751341188,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140534667,
+    "post_id" : 79671438,
+    "body" : "Not an exact duplicate, but <a href=\"https://stackoverflow.com/a/29920375/2711488\">this answer</a> sums it up",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 3211603,
+      "reputation" : 301001,
+      "user_id" : 2711488,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+      "display_name" : "Holger",
+      "link" : "https://stackoverflow.com/users/2711488/holger"
+    },
+    "creation_date" : 1750671635,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140525492,
+    "post_id" : 79671438,
+    "body" : "If it&#39;s thread-unsafe it would also be stateful, and that is not allowed.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 71739,
+      "reputation" : 311888,
+      "user_id" : 207421,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/5cfe5f7d64f44be04f147295f5c7b88e?s=256&d=identicon&r=PG",
+      "display_name" : "user207421",
+      "link" : "https://stackoverflow.com/users/207421/user207421"
+    },
+    "creation_date" : 1750300008,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

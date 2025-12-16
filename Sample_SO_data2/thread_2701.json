@@ -1,0 +1,28 @@
+{
+  "question" : {
+    "question_id" : 79604904,
+    "title" : "Application not selecting rows from sharded db",
+    "body" : "<p>I'm working on a very &quot;high loaded&quot; project (Java, Spring, PostgreSQL, K8s), and we needed to split our DB on partition, and then on shards. There is also a scheduler on each shard, and a few pods for application instances (no schedlock here, because it's not default Spring's scheduler), and there is 100% guarantee that schedulers are starting at different time.</p>\n<pre class=\"lang-java prettyprint-override\"><code>ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor( r -&gt; {\n                Thread thread = new Thread(r);\n                thread.setName(shard);\n                return thread;\n            });\nexecutors.add(executor);\n\nService service = serviceFactory.create(shard);\nexecutor.scheduleAtFixedRate(service::process, (long) (Math.random() * 1001), config.getFetchInterval(), TimeUnit.MILLISECONDS);\n</code></pre>\n<p>So, they can't try to select the same rows on startup, even when working on the same shard.</p>\n<p>The problem is, that after long transactions, like vacuum full or creating new partitions. So, literally, every <em>long</em> transactions, that lock the table, are breaking the function.</p>\n<p>In the function there are a few selects.</p>\n<p>First, it is something like:</p>\n<pre class=\"lang-none prettyprint-override\"><code>select * from TABLE_A where ... for update skip locked fetch first ? rows only\n</code></pre>\n<p>And second one, select records, connected to <code>TABLE_A</code> (one to many relationship, records from <code>TABLE_A</code> has references to <code>TABLE_B</code>, so one record from <code>TABLE_B</code> can have many connected records in <code>TABLE_A</code>) and then there is an update operation for records from <code>TABLE_B</code>.</p>\n<p>I'm not going to explain all business logic here, because I think everything is fine here due to the fact, that function is being broken only and only after long transactions and being fixed by one or two restarts of application.</p>\n<p>I was thinking, that may be the problem is connected to the fact that during vacuum full, or other transactions that are blocking the table, schedulers for the same shard from multiple pods are trying to select the same records, but I think it can not be true because first pod would lock first, for example, 500 records and then second one will be able to acquire next 500 records and so on.</p>\n<p>Another question, which is bothering me - is it possible that because all the schedulers are starting to wait to lock the records, when they are doing this, they are trying to acquire the same records from <code>TABLE_B</code> ? If so, I think we would see an exception in logs, but logs are totally clear:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public void process() {\n        TenantContext.setCurrentTenant(SHARD_NAME);\n        log.info(&quot;Start function&quot;);\n        long startMillis = System.currentTimeMillis();\n        LocalDateTime fromDate = lastStartDateParam = lastStartDateParam != null ? lastStartDateParam : config.getStartDate();\n        LocalDateTime toDate = fromDate.plusDays(3);\n\n        transactionRunner.doInTransaction(() -&gt; {\n            // business logic here\n            return null\n        });\n\n        log.info(&quot;Finish deferred message import in date range {} - {} by {} ms&quot;,\n                fromDate, toDate, System.currentTimeMillis() - startMillis);\n    } \n</code></pre>\n<p>From here, we only can see first log and the second one, totally no exceptions, execution time is is a few ms.</p>\n",
+    "tags" : [ "java", "spring", "postgresql", "transactions", "sharding" ],
+    "owner" : {
+      "account_id" : 23090602,
+      "reputation" : 366,
+      "user_id" : 18073200,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/d221ed174f855f0377335079c5121b61?s=256&d=identicon&r=PG",
+      "display_name" : "denstran",
+      "link" : "https://stackoverflow.com/users/18073200/denstran"
+    },
+    "is_answered" : false,
+    "view_count" : 56,
+    "answer_count" : 0,
+    "score" : 1,
+    "last_activity_date" : 1746425973,
+    "creation_date" : 1746290102,
+    "link" : "https://stackoverflow.com/questions/79604904/application-not-selecting-rows-from-sharded-db",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ ],
+  "answer_comments" : { }
+}

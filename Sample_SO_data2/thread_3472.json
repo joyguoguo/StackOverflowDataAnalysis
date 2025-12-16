@@ -1,0 +1,64 @@
+{
+  "question" : {
+    "question_id" : 79549337,
+    "title" : "False success-message due to race conditions and eventual consistency caused by cqrs with event sourcing",
+    "body" : "<p>I'm very new to the concepts of CQRS and Event Sourcing, so don't be too hard on me (my English isn't that good either), so I'm sorry if there are any understanding problems.</p>\n<p>I want to program a microservice that handles user authentication. This microservice will be written in Java using Spring Boot. At the moment I have a REST API with an endpoint /register. This endpoint has a dto with the attributes &quot;email&quot;, &quot;username&quot; and &quot;password&quot;.</p>\n<p>The first methods called within this endpoint are <code>isEmailUniqueQueryHandler</code> and <code>isUsernameUniqueQueryHandler with</code> the corresponding query objects. If any of these attributes are not unique, the endpoint will return an error.</p>\n<p>So far, so good. The next method called after validation is the (async) handle method of <code>registerUserCommandHandler</code>. This method is designed to be &quot;fire and forget&quot;, so if an error occurs within this method, the controller will not know about it.</p>\n<p>The only error that can occur within this method is on the line where the user object is stored in database</p>\n<pre class=\"lang-java prettyprint-override\"><code>user.register(eventPublisher);\n</code></pre>\n<p>This line can throw a <code>DataIntegrityViolationException</code> if the given username or email is not unique. This exception will only be thrown if two requests have been sent within 2 seconds (when the application is running locally) because the validation in the controller has returned that the username and email are unique, due to the race conditions and the separation of the write (event store) db and the read db (postgres db). The exception was caught within the function, but not returned to the function within the controller, due to the &quot;fire and forget&quot; principle.</p>\n<p>Now the question is, is this false success message critical in a real world scenario?</p>\n<p>I hope somebody understand what I'm asking for. Thank you in advance and have a nice day!</p>\n",
+    "tags" : [ "java", "spring-boot", "performance", "event-sourcing", "command-query-separation" ],
+    "owner" : {
+      "account_id" : 30064205,
+      "reputation" : 13,
+      "user_id" : 23039707,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/ACg8ocKvJHo6FszAg5RluRDhWcgdh6E3CPXpj53Kc56Qa134bvQ=k-s256",
+      "display_name" : "Pascal H.",
+      "link" : "https://stackoverflow.com/users/23039707/pascal-h"
+    },
+    "is_answered" : true,
+    "view_count" : 63,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1743605789,
+    "creation_date" : 1743547465,
+    "link" : "https://stackoverflow.com/questions/79549337/false-success-message-due-to-race-conditions-and-eventual-consistency-caused-by",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79550980,
+    "question_id" : 79549337,
+    "body" : "<p>My answer will be language and framework agnostic. Treat is from the design perspective.</p>\n<p>Yes, such false success is critical in a real scenario. What you are doing is called set validation and is a very good question to think about in the context of CQRS/ES. There are a couple of ways how you can improve the flow.</p>\n<p>First, let's distribute the responsibilities across the components.</p>\n<p>An endpoint handler is responsible for translating HTTP requests into something domain-specific (a command). And translating a domain-specific response back to HTTP response. It is not the handler's responsibility to validate uniqueness.</p>\n<p>A command handler calls validation methods and makes up a decision, whether to store event or not. When event is stored successfully, the command handler may return all the generated ids.</p>\n<p>If <code>registerUserCommandHandler</code> is fire-and-forget - it means, at the end of handling HTTP request you cannot be sure whether the operation succeeded or not. You can only be sure that the command is submitted.</p>\n<p>As an alternative, the command handler can register user synchronously, but the user will be considered &quot;not approved&quot; yet.</p>\n<p>Next, an asynchronous process will pick up &quot;UserRegistered&quot; event, do a set validation and issue &quot;UserActivated&quot; event. Or &quot;UserSuspended&quot; event in the case of validation failure.</p>\n<p>To avoid race conditions, the validating process could use a lock on a read model to be sure that it is handled by a single instance at a time.</p>\n<p>In the meantime, the frontend may periodically (say, every second) poll the corresponding read model to eventually learn the outcome.</p>\n<p>On the one hand, this approach requires writing additional code and running a validating job. On the other hand, it eliminates the race condition and makes the flow more robust and explicit. You can event discuss it with a domain expert.</p>\n",
+    "score" : 0,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 4044460,
+      "reputation" : 1119,
+      "user_id" : 3605090,
+      "user_type" : "registered",
+      "accept_rate" : 60,
+      "profile_image" : "https://www.gravatar.com/avatar/f22c8995e3bb91cd793d35e4460525d1?s=256&d=identicon&r=PG",
+      "display_name" : "iTollu",
+      "link" : "https://stackoverflow.com/users/3605090/itollu"
+    },
+    "creation_date" : 1743605789,
+    "last_activity_date" : 1743605789,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140288483,
+    "post_id" : 79549337,
+    "body" : "Show your pom.xml or build.gradle . Show few methods what involve to your problem.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 4597208,
+      "reputation" : 1,
+      "user_id" : 3728901,
+      "user_type" : "registered",
+      "accept_rate" : 58,
+      "profile_image" : "https://www.gravatar.com/avatar/8621a1f0563a46ea809098b960d7923f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Vy Do",
+      "link" : "https://stackoverflow.com/users/3728901/vy-do"
+    },
+    "creation_date" : 1743559623,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

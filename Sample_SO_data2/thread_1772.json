@@ -1,0 +1,94 @@
+{
+  "question" : {
+    "question_id" : 79679455,
+    "title" : "Mapstruct Mapper produces NullPointerException because autowired mapper is null",
+    "body" : "<p>I would like to understand why my DateMapper is not working.</p>\n<p>here's my mappers:</p>\n<pre><code>@Mapper(componentModel = MappingConstants.ComponentModel.SPRING,\n        uses = {ProductMapper.class, TagMapper.class})\npublic interface DateMapper {\n    DateMapper INSTANCE = Mappers.getMapper(DateMapper.class);\n\n    @Named(&quot;mapStringToLocalDateTime&quot;)\n    default LocalDateTime mapStringToLocalDateTime(String date) {\n        return LocalDateTime.parse(date, DateTimeFormatter.ofPattern(&quot;yyyy-MM-dd HH:mm&quot;));\n    }\n}\n</code></pre>\n<pre><code>@Mapper(componentModel = MappingConstants.ComponentModel.SPRING,\n        uses = {TagMapper.class, DateMapper.class})\npublic interface ProductMapper {\n    ProductMapper INSTANCE = Mappers.getMapper(ProductMapper.class);\n\n    @Mapping(target = &quot;tags&quot;, source = &quot;tagDTOs&quot;, qualifiedByName = &quot;tagDTOsToTagSet&quot;)\n    @Mapping(target = &quot;dateOfCreated&quot;, source = &quot;stringDate&quot;, dateFormat = &quot;yyyy-MM-dd HH:mm&quot;, qualifiedByName = &quot;mapStringToLocalDateTime&quot;)\n    Product productDTOtoProduct(ProductDTO productDTO);\n\n    @Mapping(target = &quot;tagDTOs&quot;, source = &quot;tags&quot;, qualifiedByName = &quot;TagSetToTagDTOs&quot;)\n    @Mapping(target = &quot;stringDate&quot;, source = &quot;dateOfCreated&quot;, dateFormat = &quot;yyyy-MM-dd HH:mm&quot;, qualifiedByName = &quot;mapStringToLocalDateTime&quot;)\n    ProductDTO productToProductDTO(Product product);\n\n    @Named(&quot;tagDTOsToTagSet&quot;)\n    default Set&lt;Tag&gt; tagDTOsToTagSet(TagDTO[] tagDTOs) {\n/// logic ///\n    }\n\n    @Named(&quot;TagSetToTagDTOs&quot;)\n    default TagDTO[] TagSetTotagDTOs(Set&lt;Tag&gt; tagSet) {\n/// logic ///\n    }\n}\n</code></pre>\n<pre><code>@Mapper(componentModel = MappingConstants.ComponentModel.SPRING,\n        uses = {ProductMapper.class, DateMapper.class})\npublic interface TagMapper {\n    TagMapper INSTANCE = Mappers.getMapper(TagMapper.class);\n\n    @Mapping(target = &quot;products&quot;, source = &quot;productTitles&quot;, qualifiedByName = &quot;productSetToProductTitles&quot;)\n    @Mapping(target = &quot;dateOfCreated&quot;, source = &quot;stringDate&quot;, dateFormat = &quot;yyyy-MM-dd HH:mm&quot;, qualifiedByName = &quot;mapStringToLocalDateTime&quot;)\n    Tag tagDTOtoTag(TagDTO tagDTO);\n\n    @Mapping(target = &quot;productTitles&quot;, source = &quot;products&quot;, qualifiedByName = &quot;ProductTitlesToProductSet&quot;)\n    @Mapping(target = &quot;stringDate&quot;, source = &quot;dateOfCreated&quot;, dateFormat = &quot;yyyy-MM-dd HH:mm&quot;, qualifiedByName = &quot;mapStringToLocalDateTime&quot;)\n    TagDTO tagToTagDTO(Tag tag);\n\n    @Named(&quot;productSetToProductTitles&quot;)\n    default String[] productSetToProductTitles(Set&lt;Product&gt; products) {\n        /// logic ///\n    }\n\n    @Named(&quot;ProductTitlesToProductSet&quot;)\n    default Set&lt;Product&gt; ProductTitlesToProductSet(String[] productTitles) {\n        /// logic ///\n    }\n}\n</code></pre>\n<p>here's my DTOs:</p>\n<pre><code>@Setter\n@Getter\n@ToString\n@NoArgsConstructor\n@AllArgsConstructor\n@Builder\npublic class ProductDTO {\n    private Long id;\n    private TagDTO[] tagDTOs;\n    private Double price;\n    private String stringDate;\n    private String title;\n    private String description;\n    private String city;\n    private int amount;\n}\n</code></pre>\n<pre><code>@Setter\n@Getter\n@ToString\n@AllArgsConstructor\n@NoArgsConstructor\n@Builder\npublic class TagDTO {\n    Long id;\n    String name;\n    String[] productTitles;\n    String stringDate;\n\n    public TagDTO(String name) {\n        this.name = name;\n    }\n\n    public TagDTO(Long id) {\n        this.id = id;\n    }\n}\n</code></pre>\n<p>Here's my POJOs:</p>\n<p>Product:</p>\n<pre><code>@Entity\n@Table(name = &quot;products&quot;)\n@Setter\n@Getter\n@AllArgsConstructor\n@NoArgsConstructor\n@ToString\n@Builder\npublic class Product {\n    @Id\n    @GeneratedValue(strategy = GenerationType.IDENTITY)\n    private Long id;\n    private String title;\n    private String description;\n    private Double price;\n    private String city;\n    private int amount = 1;\n    @ManyToMany(mappedBy = &quot;products&quot;)\n    private Set&lt;Tag&gt; tags = new HashSet&lt;&gt;();\n    private LocalDateTime dateOfCreated;\n\n    public Product(String title) {\n        this.title = title;\n    }\n\n    @PrePersist\n    private void onCreate() { dateOfCreated = LocalDateTime.now(); }\n\n/// custom logic ///\n\n}\n</code></pre>\n<p>Tag:</p>\n<pre><code>@Entity\n@Table(name = &quot;tags&quot;)\n@Setter\n@Getter\n@AllArgsConstructor\n@NoArgsConstructor\n@ToString\npublic class Tag {\n    @Id\n    @GeneratedValue(strategy = GenerationType.IDENTITY)\n    private Long id;\n    private String name;\n    @ManyToMany(cascade = CascadeType.REFRESH, fetch = FetchType.LAZY)\n    @JoinTable(\n            name = &quot;tags_Products&quot;,\n            joinColumns = @JoinColumn(name = &quot;Tag_id&quot;),\n            inverseJoinColumns = @JoinColumn(name = &quot;product_id&quot;))\n    private Set&lt;Product&gt; products = new HashSet&lt;&gt;();\n    private LocalDateTime dateOfCreated;\n\n    @PrePersist\n    private void onCreate() {\n        dateOfCreated = LocalDateTime.now();\n    }\n\n/// custom logic ///\n\n}\n</code></pre>\n<p>my pom.xml:</p>\n<pre><code>&lt;properties&gt;\n        &lt;java.version&gt;24&lt;/java.version&gt;\n        &lt;lombok.version&gt;1.18.38&lt;/lombok.version&gt;\n        &lt;mapstruct.version&gt;1.6.3&lt;/mapstruct.version&gt;\n    &lt;/properties&gt;\n    &lt;dependencies&gt;\n        &lt;dependency&gt;\n            &lt;groupId&gt;org.mapstruct&lt;/groupId&gt;\n            &lt;artifactId&gt;mapstruct-processor&lt;/artifactId&gt;\n            &lt;version&gt;${mapstruct.version}&lt;/version&gt;\n        &lt;/dependency&gt;\n        &lt;dependency&gt;\n            &lt;groupId&gt;org.mapstruct&lt;/groupId&gt;\n            &lt;artifactId&gt;mapstruct&lt;/artifactId&gt;\n            &lt;version&gt;${mapstruct.version}&lt;/version&gt;\n        &lt;/dependency&gt;\n        &lt;dependency&gt;\n            &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;\n            &lt;artifactId&gt;spring-boot-starter-data-jdbc&lt;/artifactId&gt;\n        &lt;/dependency&gt;\n        &lt;dependency&gt;\n            &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;\n            &lt;artifactId&gt;spring-boot-starter-data-rest&lt;/artifactId&gt;\n        &lt;/dependency&gt;\n        &lt;dependency&gt;\n            &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;\n            &lt;artifactId&gt;spring-boot-starter-web&lt;/artifactId&gt;\n        &lt;/dependency&gt;\n        &lt;dependency&gt;\n            &lt;groupId&gt;com.fasterxml.jackson.datatype&lt;/groupId&gt;\n            &lt;artifactId&gt;jackson-datatype-jsr310&lt;/artifactId&gt;\n            &lt;version&gt;2.18.2&lt;/version&gt;\n        &lt;/dependency&gt;\n        &lt;dependency&gt;\n            &lt;groupId&gt;com.fasterxml.jackson.core&lt;/groupId&gt;\n            &lt;artifactId&gt;jackson-databind&lt;/artifactId&gt;\n            &lt;version&gt;2.18.2&lt;/version&gt;\n        &lt;/dependency&gt;\n\n        &lt;dependency&gt;\n            &lt;groupId&gt;com.h2database&lt;/groupId&gt;\n            &lt;artifactId&gt;h2&lt;/artifactId&gt;\n            &lt;scope&gt;runtime&lt;/scope&gt;\n        &lt;/dependency&gt;\n        &lt;dependency&gt;\n            &lt;groupId&gt;org.postgresql&lt;/groupId&gt;\n            &lt;artifactId&gt;postgresql&lt;/artifactId&gt;\n            &lt;scope&gt;runtime&lt;/scope&gt;\n        &lt;/dependency&gt;\n        &lt;dependency&gt;\n            &lt;groupId&gt;org.projectlombok&lt;/groupId&gt;\n            &lt;artifactId&gt;lombok&lt;/artifactId&gt;\n            &lt;version&gt;${lombok.version}&lt;/version&gt;\n            &lt;scope&gt;provided&lt;/scope&gt;\n        &lt;/dependency&gt;\n        &lt;dependency&gt;\n            &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;\n            &lt;artifactId&gt;spring-boot-starter-test&lt;/artifactId&gt;\n            &lt;scope&gt;test&lt;/scope&gt;\n        &lt;/dependency&gt;\n        &lt;dependency&gt;\n            &lt;groupId&gt;jakarta.validation&lt;/groupId&gt;\n            &lt;artifactId&gt;jakarta.validation-api&lt;/artifactId&gt;\n            &lt;version&gt;3.1.0&lt;/version&gt;\n        &lt;/dependency&gt;\n        &lt;dependency&gt;\n            &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;\n            &lt;artifactId&gt;spring-boot-starter-data-jpa&lt;/artifactId&gt;\n            &lt;version&gt;3.4.0&lt;/version&gt;\n        &lt;/dependency&gt;\n        &lt;dependency&gt;\n            &lt;groupId&gt;org.jetbrains&lt;/groupId&gt;\n            &lt;artifactId&gt;annotations&lt;/artifactId&gt;\n            &lt;version&gt;RELEASE&lt;/version&gt;\n            &lt;scope&gt;compile&lt;/scope&gt;\n        &lt;/dependency&gt;\n    &lt;/dependencies&gt;\n\n    &lt;build&gt;\n        &lt;plugins&gt;\n            &lt;plugin&gt;\n                &lt;groupId&gt;org.apache.maven.plugins&lt;/groupId&gt;\n                &lt;artifactId&gt;maven-compiler-plugin&lt;/artifactId&gt;\n                &lt;configuration&gt;\n                    &lt;annotationProcessorPaths&gt;\n                        &lt;path&gt;\n                            &lt;groupId&gt;org.projectlombok&lt;/groupId&gt;\n                            &lt;artifactId&gt;lombok&lt;/artifactId&gt;\n                            &lt;version&gt;${lombok.version}&lt;/version&gt;\n                        &lt;/path&gt;\n                    &lt;/annotationProcessorPaths&gt;\n                &lt;/configuration&gt;\n            &lt;/plugin&gt;\n            &lt;plugin&gt;\n                &lt;groupId&gt;org.apache.maven.plugins&lt;/groupId&gt;\n                &lt;artifactId&gt;maven-compiler-plugin&lt;/artifactId&gt;\n                &lt;version&gt;3.11.0&lt;/version&gt;\n                &lt;configuration&gt;\n                    &lt;annotationProcessorPaths&gt;\n                        &lt;path&gt;\n                            &lt;groupId&gt;org.mapstruct&lt;/groupId&gt;\n                            &lt;artifactId&gt;mapstruct-processor&lt;/artifactId&gt;\n                            &lt;version&gt;${mapstruct.version}&lt;/version&gt;\n                        &lt;/path&gt;\n                    &lt;/annotationProcessorPaths&gt;\n                &lt;/configuration&gt;\n            &lt;/plugin&gt;\n        &lt;/plugins&gt;\n    &lt;/build&gt;\n</code></pre>\n<p>Generated by mapstruct MapperImpl have this @Autowired DateMapper field:</p>\n<pre><code>@Component\npublic class TagMapperImpl implements TagMapper {\n    @Autowired\n    private DateMapper dateMapper;\n/// logic ///\n}\n</code></pre>\n<pre><code>@Component\npublic class ProductMapperImpl implements ProductMapper {\n    @Autowired\n    private DateMapper dateMapper;\n/// logic ///\n}\n</code></pre>\n<p>Generated by mapstruct DateMapperImpl also have @Component annotation:</p>\n<pre><code>@Component\npublic class DateMapperImpl implements DateMapper {\n    public DateMapperImpl() {\n        super();\n    }\n}\n</code></pre>\n<p>Error log:</p>\n<pre><code>2025-06-26T00:02:42.904+07:00 ERROR 23612 --- [demo] [nio-8060-exec-2] o.a.c.c.C.[.[.[/].[dispatcherServlet]    : Servlet.service() for servlet [dispatcherServlet] in context with path [] threw exception [Request processing failed: java.lang.NullPointerException: Cannot invoke &quot;com.example.demo.Mappers.DateMapper.mapStringToLocalDateTime(String)&quot; because &quot;this.dateMapper&quot; is null] with root cause\n\njava.lang.NullPointerException: Cannot invoke &quot;com.example.demo.Mappers.DateMapper.mapStringToLocalDateTime(String)&quot; because &quot;this.dateMapper&quot; is null\n    at com.example.demo.Mappers.TagMapperImpl.tagDTOtoTag(TagMapperImpl.java:30) ~[classes/:na]\n    at com.example.demo.Mappers.ProductMapper.tagDTOsToTagSet(ProductMapper.java:39) ~[classes/:na]\n    at com.example.demo.Mappers.ProductMapperImpl.productDTOtoProduct(ProductMapperImpl.java:32) ~[classes/:na]\n    at com.example.demo.Services.Impl.ProductServiceImpl.saveProduct(ProductServiceImpl.java:69) ~[classes/:na]\n    at com.example.demo.Controllers.ProductControler.mainCreateProduct(ProductControler.java:26) ~[classes/:na]\n    at com.example.demo.Controllers.ProductControler.createProductBodyDTO(ProductControler.java:48) ~[classes/:na]\n    at jakarta.servlet.http.HttpServlet.service(HttpServlet.java:590) ~[tomcat-embed-core-10.1.33.jar:6.0]\n    at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:885) ~[spring-webmvc-6.2.0.jar:6.2.0]\n    at jakarta.servlet.http.HttpServlet.service(HttpServlet.java:658) ~[tomcat-embed-core-10.1.33.jar:6.0]\n</code></pre>\n<p>I simply don't understand why this can produces NPE, When DateMapperImpl is @Component, TagMapperImpl and ProductMapperImpl are both have @Autowired DateMapper field</p>\n",
+    "tags" : [ "java", "spring", "nullpointerexception", "mapstruct" ],
+    "owner" : {
+      "account_id" : 42724567,
+      "reputation" : 1,
+      "user_id" : 30892213,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/1b0f576d2d8126f67e91e752d5e28e58?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "user30892213",
+      "link" : "https://stackoverflow.com/users/30892213/user30892213"
+    },
+    "is_answered" : true,
+    "view_count" : 163,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1751330879,
+    "creation_date" : 1750873089,
+    "link" : "https://stackoverflow.com/questions/79679455/mapstruct-mapper-produces-nullpointerexception-because-autowired-mapper-is-null",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79685393,
+    "question_id" : 79679455,
+    "body" : "<p>Remove <code>INSTANCE = Mappers.getMapper(...)</code> from all mappers.</p>\n<p>Instead, rely fully on Spring’s dependency injection (<code>@ComponentModel = SPRING</code> is enough for this).</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 29375070,
+      "reputation" : 11,
+      "user_id" : 22506813,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/AAcHTteCQyBXT6oQHkWOLFZT-3ugYQboz4ACOHT9f6cPfAAY=k-s256",
+      "display_name" : "uijin kim",
+      "link" : "https://stackoverflow.com/users/22506813/uijin-kim"
+    },
+    "creation_date" : 1751328517,
+    "last_activity_date" : 1751330879,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140549020,
+    "post_id" : 79679455,
+    "body" : "Try merging two <code>maven-compiler-plugin</code> plugins into one in your <code>pom.xml</code>. <code>mapstruct-processor</code> should go AFTER <code>lombok</code> in <code>annotationProcessorPaths</code>.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 27812898,
+      "reputation" : 119,
+      "user_id" : 21234935,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/595621ece7f5b2a084e6ab53826cc60e?s=256&d=identicon&r=PG",
+      "display_name" : "Yevhen Vasyliev",
+      "link" : "https://stackoverflow.com/users/21234935/yevhen-vasyliev"
+    },
+    "creation_date" : 1751097182,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140547842,
+    "post_id" : 79679455,
+    "body" : "Try to implement all getters and setters and constructor without lombok, sometimes the generated classes came before the code injection by lombok.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 14902199,
+      "reputation" : 229,
+      "user_id" : 10760729,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/A9BHq.jpg?s=256",
+      "display_name" : "Daniele Asteggiante",
+      "link" : "https://stackoverflow.com/users/10760729/daniele-asteggiante"
+    },
+    "creation_date" : 1751040357,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140542683,
+    "post_id" : 79679455,
+    "body" : "Since you use <code>componentModel = MappingConstants.ComponentModel.SPRING</code>, remove all <code>INSTANCE</code> fields from your mapper interfaces, and try again, it could help",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 18586978,
+      "reputation" : 3850,
+      "user_id" : 15000097,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/yFl4M.jpg?s=256",
+      "display_name" : "Georgii Lvov",
+      "link" : "https://stackoverflow.com/users/15000097/georgii-lvov"
+    },
+    "creation_date" : 1750889095,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

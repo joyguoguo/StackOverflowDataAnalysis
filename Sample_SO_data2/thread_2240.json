@@ -1,0 +1,166 @@
+{
+  "question" : {
+    "question_id" : 79638860,
+    "title" : "JsonUnwrapped annotation seems to be ignored for deserialization",
+    "body" : "<p>I seem to have problems with deserialization using Jackson. I use a field that serializes to multiple fields in JSON (unwrapped) and it only seems to work in one direction. When trying to deserialize, the deserializer seems to only receive the JSON node for one property instead of the full class and I am not sure what I am doing wrong.</p>\n<p>On my class, there are a few <code>String</code> fields that need to support additional languages</p>\n<pre class=\"lang-json prettyprint-override\"><code>{\n  &quot;name&quot;: &quot;The name&quot;,\n  &quot;description&quot;: &quot;The description&quot;\n}\n</code></pre>\n<p>I want to add a map with localizations right next to the field</p>\n<pre class=\"lang-json prettyprint-override\"><code>{\n  &quot;name&quot;: &quot;The name&quot;,\n  &quot;name_l10n&quot;: {\n    &quot;en&quot;: &quot;The name&quot;,\n    &quot;fr&quot;: &quot;Le nom&quot;\n  }\n  &quot;description&quot;: &quot;The description.&quot;,\n  &quot;description_l10n&quot;: {\n    &quot;en&quot;: &quot;The description.&quot;,\n    &quot;fr&quot;: &quot;La description nom.&quot;\n  }\n}\n</code></pre>\n<p>So, I replace the <code>String</code> fields on my original class ...</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class MyFancyClass {\n\n  private String name;\n  private String description;\n\n  // ... getters and setters\n\n}\n</code></pre>\n<p>to <code>LocalizedField</code>s</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class MyFancyClass {\n\n  private LocalizedField name;\n  private LocalizedField description;\n\n  // ... getters and setters\n\n}\n</code></pre>\n<p>The class that represents a field with its localizations is very straigforward:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class LocalizedField {\n\n  private String value;\n  private Map&lt;String, String&gt; value_l10n;\n\n  // ... getters and setters\n</code></pre>\n<p>For serialization, I need to add <code>@JsonUnwrapped</code> to the field definition and I also set <a href=\"https://javadoc.io/static/com.fasterxml.jackson.core/jackson-databind/2.19.0/com/fasterxml/jackson/databind/JsonSerializer.html#isUnwrappingSerializer\" rel=\"nofollow noreferrer\">isUnwrappingSerializer</a> to <code>true</code> because it does not seem to work otherwise. Effectively, this is the serializer code</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Override\npublic void serialize(LocalizedField field, JsonGenerator jgen, SerializerProvider provider) throws IOException, JsonGenerationException {\n    String value = field.getValue();\n    if (value != null &amp;&amp; !value.trim().isEmpty()) {\n        jgen.writeStringField(name, value);\n    }\n    LocalizedString l10n = field.getValue_l10n();\n    if (l10n != null &amp;&amp; !l10n.isEmpty()) {\n        jgen.writeFieldName(name + &quot;_l10n&quot;);\n        jgen.writeStartObject();\n        for (Map.Entry&lt;String, String&gt; e : l10n.entrySet()) {\n            jgen.writeStringField(e.getKey(), e.getValue());\n        }\n        jgen.writeEndObject();\n    }\n}\n</code></pre>\n<p>I do the same for the deserializer, but I only receive a string, that matches the property (i.e. only the value of <code>value</code> and I cannot access <code>value_l10n</code>).</p>\n<pre class=\"lang-java prettyprint-override\"><code>public LocalizedField deserialize(JsonParser p, DeserializationContext ctxt) throws IOException {\n    LocalizedField result = new LocalizedField();\n\n    JsonNode node = ctxt.readTree(p);     // (1) only receives a string\n    result.setValue(getText(node, name)); \n\n    JsonNode i18n = node.get(name + &quot;_i18n&quot;);\n    if (i18n != null &amp;&amp; i18n.isObject()) {\n        // parse into map\n        // ...\n    }\n\n    return result.isEmpty() ? null : result;\n}\n</code></pre>\n<p>Also, I only get to this point when I set <code>JsonIgnoreProperties</code>.</p>\n<p>How should this work? I want to use that <code>LocalizedField</code> on a few classes and map it to a corresponding <a href=\"https://javadoc.io/static/javax.persistence/javax.persistence-api/2.2/javax/persistence/Embeddable.html\" rel=\"nofollow noreferrer\">JPA embeddable</a>.</p>\n<p>The current version of what I have is here: <a href=\"https://github.com/kariem/jackson-multiple-fields\" rel=\"nofollow noreferrer\">github: kariem/jackson-multiple-fields</a>, test failure: <a href=\"https://github.com/kariem/jackson-multiple-fields/actions/runs/15254791438/job/42899732941\" rel=\"nofollow noreferrer\">GH action</a></p>\n",
+    "tags" : [ "java", "jackson", "jackson-databind" ],
+    "owner" : {
+      "account_id" : 7046,
+      "reputation" : 4981,
+      "user_id" : 12039,
+      "user_type" : "registered",
+      "accept_rate" : 89,
+      "profile_image" : "https://www.gravatar.com/avatar/0934abb1b1207c8f0968697c0594bef0?s=256&d=identicon&r=PG",
+      "display_name" : "Kariem",
+      "link" : "https://stackoverflow.com/users/12039/kariem"
+    },
+    "is_answered" : false,
+    "view_count" : 95,
+    "answer_count" : 1,
+    "score" : -1,
+    "last_activity_date" : 1748330963,
+    "creation_date" : 1748260309,
+    "link" : "https://stackoverflow.com/questions/79638860/jsonunwrapped-annotation-seems-to-be-ignored-for-deserialization",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79639170,
+    "question_id" : 79638860,
+    "body" : "<p>Jackson can't link <code>&quot;name&quot;</code> and <code>&quot;name_l10n&quot;</code> to one <code>LocalizedField</code> during deserialization. Instead of using <code>@JsonUnwrapped</code>, you define a regular POJO and use <code>@JsonAnySetter</code> to manually map incoming JSON fields.</p>\n<pre class=\"lang-java prettyprint-override\"><code>@JsonIgnoreProperties(ignoreUnknown = true)\npublic class MyFancyClass {\n\n @JsonIgnore\n private LocalizedField name = new LocalizedField();\n\n    public LocalizedField getName() {\n        return name;\n    }\n\n    public void setName(LocalizedField name) {\n        this.name = name;\n    }\n\n    @JsonAnySetter\n    public void handleUnknown(String key, Object value) {\n        if (key.equals(&quot;name&quot;) &amp;&amp; value instanceof String) {\n            name.setValue((String) value);\n        } else if (key.equals(&quot;name_l10n&quot;) &amp;&amp; value instanceof Map) {\n            // Warning: the type of `value` can be LinkedHashMap at runtime\n            Map&lt;String, String&gt; l10nMap = new HashMap&lt;&gt;();\n            ((Map&lt;?, ?&gt;) value).forEach((k, v) -&gt; {\n                if (k instanceof String &amp;&amp; v instanceof String) {\n                    l10nMap.put((String) k, (String) v);\n                }\n            });\n            name.setValue_l10n(l10nMap);\n        }\n    }\n}\n</code></pre>\n<p>TEST:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public static void main(String[] args) throws JsonProcessingException {\n    ObjectMapper mapper = new ObjectMapper();\n    String json = &quot;&quot;&quot;\n            {\n              &quot;name&quot;: &quot;The name&quot;,\n              &quot;name_l10n&quot;: {\n                &quot;en&quot;: &quot;The name&quot;,\n                &quot;fr&quot;: &quot;Le nom&quot;\n              }\n            }\n            &quot;&quot;&quot;;\n\n    MyFancyClass result = mapper.readValue(json, MyFancyClass.class);\n\n    System.out.println(result.getName().getValue()); // &quot;The name&quot;\n    System.out.println(result.getName().getValue_l10n().get(&quot;fr&quot;)); // &quot;Le nom&quot;\n\n}\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 18239208,
+      "reputation" : 647,
+      "user_id" : 13276541,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a-/AOh14GgPsMth9rUGvp9lxK_Nky2OaBid5MNfuotaqiF9Bg=k-s256",
+      "display_name" : "Ahmed Mera",
+      "link" : "https://stackoverflow.com/users/13276541/ahmed-mera"
+    },
+    "creation_date" : 1748271685,
+    "last_activity_date" : 1748271685,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140461575,
+    "post_id" : 79638860,
+    "body" : "Also, I just noticed that I&#39;ve used <code>i18n</code> instead of <code>l10n</code>. Just corrected this in the samples and the code.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7046,
+      "reputation" : 4981,
+      "user_id" : 12039,
+      "user_type" : "registered",
+      "accept_rate" : 89,
+      "profile_image" : "https://www.gravatar.com/avatar/0934abb1b1207c8f0968697c0594bef0?s=256&d=identicon&r=PG",
+      "display_name" : "Kariem",
+      "link" : "https://stackoverflow.com/users/12039/kariem"
+    },
+    "creation_date" : 1748331010,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140461564,
+    "post_id" : 79638860,
+    "body" : "<code>name</code> comes from the property about to be parsed. I use a ContextualDeserializer for this, see <a href=\"https://github.com/kariem/jackson-multiple-fields/blob/0f802b11ee91651244d601764f53a7774d3601c9/src/main/java/com/github/kariem/samples/jacksonfields/LocalizingDeserializer.java#L63\" rel=\"nofollow noreferrer\">github.com/kariem/jackson-multiple-fields/blob/&hellip;</a>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7046,
+      "reputation" : 4981,
+      "user_id" : 12039,
+      "user_type" : "registered",
+      "accept_rate" : 89,
+      "profile_image" : "https://www.gravatar.com/avatar/0934abb1b1207c8f0968697c0594bef0?s=256&d=identicon&r=PG",
+      "display_name" : "Kariem",
+      "link" : "https://stackoverflow.com/users/12039/kariem"
+    },
+    "creation_date" : 1748330872,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140459697,
+    "post_id" : 79638860,
+    "body" : "Where does <code>name</code> come from within your method <code>deserialize</code>? Couldn&#39;t it be that it is a member that already has the postfix &quot;_i18n&quot;?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3391382,
+      "reputation" : 5350,
+      "user_id" : 2846138,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/2sp68.png?s=256",
+      "display_name" : "cyberbrain",
+      "link" : "https://stackoverflow.com/users/2846138/cyberbrain"
+    },
+    "creation_date" : 1748266209,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140459605,
+    "post_id" : 79638860,
+    "body" : "Also, not sure what you mean by <code>you assume that the fields always are in the order you showed in your example</code>. I do not think this is the case. We are getting the field by name not index.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7046,
+      "reputation" : 4981,
+      "user_id" : 12039,
+      "user_type" : "registered",
+      "accept_rate" : 89,
+      "profile_image" : "https://www.gravatar.com/avatar/0934abb1b1207c8f0968697c0594bef0?s=256&d=identicon&r=PG",
+      "display_name" : "Kariem",
+      "link" : "https://stackoverflow.com/users/12039/kariem"
+    },
+    "creation_date" : 1748265176,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140459599,
+    "post_id" : 79638860,
+    "body" : "I have added a link to the sample, did not want to make the question too long.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7046,
+      "reputation" : 4981,
+      "user_id" : 12039,
+      "user_type" : "registered",
+      "accept_rate" : 89,
+      "profile_image" : "https://www.gravatar.com/avatar/0934abb1b1207c8f0968697c0594bef0?s=256&d=identicon&r=PG",
+      "display_name" : "Kariem",
+      "link" : "https://stackoverflow.com/users/12039/kariem"
+    },
+    "creation_date" : 1748265140,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140459341,
+    "post_id" : 79638860,
+    "body" : "You already asked the right question: How should this work? The order of fields in JSON has to be irrelevant but in your <code>deserialize</code> method you assume that the fields always are in the order you showed in your example. It would be really good for the first step if you provide a <a href=\"https://stackoverflow.com/help/minimal-reproducible-example\">minimal reproducible example</a> since now you mention a <code>@JsonUnwrapped</code> annotation but don&#39;t show it in your examples.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3391382,
+      "reputation" : 5350,
+      "user_id" : 2846138,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/2sp68.png?s=256",
+      "display_name" : "cyberbrain",
+      "link" : "https://stackoverflow.com/users/2846138/cyberbrain"
+    },
+    "creation_date" : 1748261152,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79639170" : [ {
+      "comment_id" : 140461561,
+      "post_id" : 79639170,
+      "body" : "Thank you for the suggestion! I want to use that field in different classes and I think it would be very verbose to do the custom parsing for every class. Also, I think JsonUnwrapped should work for serialization and deserialization, see <a href=\"https://github.com/FasterXML/jackson-databind/blob/2.19/src/test/java/com/fasterxml/jackson/databind/struct/TestUnwrapped.java#L176-L185\" rel=\"nofollow noreferrer\">github.com/FasterXML/jackson-databind/blob/2.19/src/test/jav&zwnj;&#8203;a/&hellip;</a>",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 7046,
+        "reputation" : 4981,
+        "user_id" : 12039,
+        "user_type" : "registered",
+        "accept_rate" : 89,
+        "profile_image" : "https://www.gravatar.com/avatar/0934abb1b1207c8f0968697c0594bef0?s=256&d=identicon&r=PG",
+        "display_name" : "Kariem",
+        "link" : "https://stackoverflow.com/users/12039/kariem"
+      },
+      "creation_date" : 1748330790,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

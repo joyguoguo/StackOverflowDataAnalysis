@@ -1,0 +1,83 @@
+{
+  "question" : {
+    "question_id" : 79608910,
+    "title" : "How to get XmlEnumValue in gson conversions?",
+    "body" : "<p>I use gson.toJson and gson.fromGson methods. I have a class like below.</p>\n<pre><code>@XmlType(name = &quot;CBPR_CancellationReasonCode&quot;)\n@XmlEnum\npublic enum CBPRCancellationReasonCode {\n\n    DUPL(&quot;DUPL&quot;),\n    CUTA(&quot;CUTA&quot;),\n    UPAY(&quot;UPAY&quot;),\n    CUST(&quot;CUST&quot;),\n    CURR(&quot;CURR&quot;),\n    AGNT(&quot;AGNT&quot;),\n    TECH(&quot;TECH&quot;),\n    FRAD(&quot;FRAD&quot;),\n    COVR(&quot;COVR&quot;),\n    @XmlEnumValue(&quot;AM09&quot;)\n    AM_09(&quot;AM09&quot;),\n    NARR(&quot;NARR&quot;);\n    private final String value;\n\n    CBPRCancellationReasonCode(String v) {\n        value = v;\n    }\n\n    public String value() {\n        return value;\n    }\n\n    public static CBPRCancellationReasonCode fromValue(String v) {\n        for (CBPRCancellationReasonCode c: CBPRCancellationReasonCode.values()) {\n            if (c.value.equals(v)) {\n                return c;\n            }\n        }\n        throw new IllegalArgumentException(v);\n    }\n\n}\n</code></pre>\n<p>I have problem converting values from xml to json or json to xml while using</p>\n<pre><code>@XmlEnumValue(&quot;AM09&quot;)\nAM_09(&quot;AM09&quot;)\n</code></pre>\n<p>I expect to see &quot;AM09&quot; value but it takes AM_09.</p>\n<p>How can I solve this problem?</p>\n<p>Some parts of my code are as follows.</p>\n<pre><code> Gson gson = new GsonBuilder().setFieldNamingStrategy(new XsdAnnotation()).setPrettyPrinting()\n                .registerTypeHierarchyAdapter(XMLGregorianCalendar.class,\n                        new XMLGregorianCalendarConverter.Serializer())\n                .registerTypeHierarchyAdapter(XMLGregorianCalendar.class,\n                        new XMLGregorianCalendarConverter.Deserializer())\n                .create();\n\ngson.toJson(testObject)\n\n</code></pre>\n<pre><code>public class XsdAnnotation implements FieldNamingStrategy {\n\n    @Override\n    public String translateName(Field field) {\n        XmlElement fieldNamingPolicyElement = field.getAnnotation(XmlElement.class);\n        XmlAttribute fieldNamingPolicyAttribute = field.getAnnotation(XmlAttribute.class);\n\n        return fieldNamingPolicyElement != null\n                ? fieldNamingPolicyElement.name()\n                : (fieldNamingPolicyAttribute != null ? fieldNamingPolicyAttribute.name() : field.getName());\n    }\n\n}\n</code></pre>\n",
+    "tags" : [ "java", "json", "xml", "gson" ],
+    "owner" : {
+      "account_id" : 7333894,
+      "reputation" : 1369,
+      "user_id" : 5585923,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/cebb1c8b28bc246d639250e079a2923c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Uğur Yeşilyurt",
+      "link" : "https://stackoverflow.com/users/5585923/u%c4%9fur-ye%c5%9filyurt"
+    },
+    "is_answered" : true,
+    "view_count" : 56,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1746603501,
+    "creation_date" : 1746541422,
+    "link" : "https://stackoverflow.com/questions/79608910/how-to-get-xmlenumvalue-in-gson-conversions",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79610019,
+    "question_id" : 79608910,
+    "body" : "<p>With @Vijay's guidance, my problem was solved with the following code.</p>\n<pre><code>import com.google.gson.Gson;\nimport com.google.gson.TypeAdapter;\nimport com.google.gson.TypeAdapterFactory;\nimport com.google.gson.reflect.TypeToken;\nimport com.google.gson.stream.JsonReader;\nimport com.google.gson.stream.JsonToken;\nimport com.google.gson.stream.JsonWriter;\nimport jakarta.xml.bind.annotation.XmlEnumValue;\n\nimport java.io.IOException;\nimport java.util.HashMap;\nimport java.util.Map;\n\npublic class EnumTypeAdapter&lt;T extends Enum&lt;T&gt;&gt; extends TypeAdapter&lt;T&gt; {\n    private final Map&lt;String, T&gt; nameToConstant = new HashMap&lt;String, T&gt;();\n    private final Map&lt;T, String&gt; constantToName = new HashMap&lt;T, String&gt;();\n\n    public EnumTypeAdapter(Class&lt;T&gt; classOfT) {\n        try {\n            for (T constant : classOfT.getEnumConstants()) {\n                String name = constant.name();\n                XmlEnumValue annotation = classOfT.getField(name).getAnnotation(XmlEnumValue.class);\n                if (annotation != null) {\n                    name = annotation.value();\n                }\n                nameToConstant.put(name, constant);\n                constantToName.put(constant, name);\n            }\n        } catch (NoSuchFieldException e) {\n            throw new AssertionError();\n        }\n    }\n\n    public T read(JsonReader in) throws IOException {\n        if (in.peek() == JsonToken.NULL) {\n            in.nextNull();\n            return null;\n        }\n        return nameToConstant.get(in.nextString());\n    }\n\n    public void write(JsonWriter out, T value) throws IOException {\n        out.value(value == null ? null : constantToName.get(value));\n    }\n\n    public static final TypeAdapterFactory ENUM_FACTORY = new TypeAdapterFactory() {\n        @SuppressWarnings({&quot;rawtypes&quot;, &quot;unchecked&quot;})\n        @Override public &lt;T&gt; TypeAdapter&lt;T&gt; create(Gson gson, TypeToken&lt;T&gt; typeToken) {\n            Class&lt;? super T&gt; rawType = typeToken.getRawType();\n            if (!Enum.class.isAssignableFrom(rawType) || rawType == Enum.class) {\n                return null;\n            }\n            if (!rawType.isEnum()) {\n                rawType = rawType.getSuperclass();\n            }\n            return (TypeAdapter&lt;T&gt;) new EnumTypeAdapter(rawType);\n        }\n    };\n}\n</code></pre>\n<pre><code>Gson gson = new GsonBuilder().setFieldNamingStrategy(new XsdAnnotation()).setPrettyPrinting()\n                .registerTypeHierarchyAdapter(XMLGregorianCalendar.class,\n                        new XMLGregorianCalendarConverter.Serializer())\n                .registerTypeHierarchyAdapter(XMLGregorianCalendar.class,\n                        new XMLGregorianCalendarConverter.Deserializer())\n                .registerTypeAdapterFactory(EnumTypeAdapter.ENUM_FACTORY)\n                .create();\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 7333894,
+      "reputation" : 1369,
+      "user_id" : 5585923,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/cebb1c8b28bc246d639250e079a2923c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Uğur Yeşilyurt",
+      "link" : "https://stackoverflow.com/users/5585923/u%c4%9fur-ye%c5%9filyurt"
+    },
+    "creation_date" : 1746603501,
+    "last_activity_date" : 1746603501,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140401254,
+    "post_id" : 79608910,
+    "body" : "You can try writing TypeAdapter for CBPRCancellationReasonCode. Which override the value() method for serialization, fromValue() for deserialization. Register it to builder and use.  <code>builder.registerTypeAdapter(CBPRCancellationReasonCode.class&zwnj;&#8203;, new CBPRCancellationReasonCodeAdapter())&#39;&#39;  </code>public class CBPRCancellationReasonCodeAdapter extends TypeAdapter&lt;CBPRCancellationReasonCode&gt; {``",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 7645025,
+      "reputation" : 440,
+      "user_id" : 5795975,
+      "user_type" : "registered",
+      "profile_image" : "https://lh6.googleusercontent.com/-6KwPUS4RnyA/AAAAAAAAAAI/AAAAAAAAC8w/auZqreI45x0/s256-rj/photo.jpg",
+      "display_name" : "Vijay",
+      "link" : "https://stackoverflow.com/users/5795975/vijay"
+    },
+    "creation_date" : 1746549325,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79610019" : [ {
+      "comment_id" : 140455754,
+      "post_id" : 79610019,
+      "body" : "Your solution solves this generally for all enum constants annotated with <code>XmlEnumValue</code>. But if this only affects very few constants a simple alternative would be to additionally add Gson&#39;s <code>@SerializedName(&quot;AM09&quot;)</code> (or similar) to the enum constant.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 5384013,
+        "reputation" : 7209,
+        "user_id" : 4288506,
+        "user_type" : "registered",
+        "accept_rate" : 77,
+        "profile_image" : "https://www.gravatar.com/avatar/e4dd357b6d026a2f4a9fa090ff2a414c?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Marcono1234",
+        "link" : "https://stackoverflow.com/users/4288506/marcono1234"
+      },
+      "creation_date" : 1748107037,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

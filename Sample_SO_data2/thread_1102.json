@@ -1,0 +1,234 @@
+{
+  "question" : {
+    "question_id" : 79747407,
+    "title" : "Intermittent `java.net.SocketException: Broken pipe` during Android Multipart Upload - Client-Side Stream Corruption or Premature Close?",
+    "body" : "<p>I'm grappling with a highly intermittent <code>java.net.SocketException: Broken pipe</code> error while uploading multiple images from my developemnt Android app using <code>HttpURLConnection</code> to a production Java server. The core frustration is its unpredictability: the upload <strong>occasionally succeeds (perhaps 1 in 20 tries)</strong>, but most attempts terminate prematurely with either a &quot;Broken pipe&quot; or &quot;Connection reset&quot; error. It often appears that the client doesn't even finish sending all data before the connection drops, as the &quot;Broken pipe&quot; error gets thrown when attempting to interact with the connection post-write (via <code>conn.getResponseCode();</code>). This makes me suspect a subtle client-side stream handling issue or a miscalculation that usually, but not always, leads to a problem.</p>\n<p><strong>The Core Problem &amp; Symptoms:</strong></p>\n<ul>\n<li>A <code>java.net.SocketException: Broken pipe</code> is thrown. The exact point can vary, sometimes seemingly during the body write, other times when trying to get the response. * <strong>Intermittent Success:</strong> Very rarely, the entire upload completes, a 201 response is received, and images are correctly sent to the server.</li>\n<li><strong>Partial Server Success on Failure:</strong> In many failed attempts, no images appear on the server, but the webmaster reports seeing the POST request in the logs, suggesting the server received and processed at least part of the request before the connection was severed.</li>\n<li>The error seems more prevalent with more/larger images but not always. The exception stack trace can vary, often pointing to the writing phase (e.g., within <code>SocketOutputStream.socketWrite</code> called from my <code>ConnectionHandler.transferFileTo</code>) or the post-write/pre-response phase (e.g., within <code>HttpURLConnectionImpl.getResponseCode</code> called from my <code>ConnectionHandler.uploadImages</code>). Both scenarios originate from the upload process initiated by <code>CameraFragment</code> via <code>ConnectionHandler</code>.</li>\n</ul>\n<p><strong>My Client-Side Implementation (Key Components):</strong> I have three main Java files involved:</p>\n<ol>\n<li><strong><code>CameraFragment.java</code>:</strong> * Manages image capture (using <code>File[] capturedImages</code> and <code>imageCount</code>). * Prepares a correctly sized <code>File[] imagesToUpload</code> subset for upload. * Launches a <code>new Thread</code> to call <code>connectionHandler.uploadImages()</code>.</li>\n</ol>\n<ul>\n<li><strong>Potential issue source:</strong> How robust is the <code>File</code> object handling? Could an image file be inadvertently modified or become inaccessible between the time its length is calculated and the time its bytes are actually streamed?</li>\n</ul>\n<ol start=\"2\">\n<li><strong><code>ConnectionHandler.java</code>:</strong> Its <code>uploadImages()</code> method sets up <code>HttpURLConnection</code>, calculates <code>Content-Length</code> via a &quot;dry run&quot; of my <code>constructAndSendMultipartFormData()</code> method, sets headers, opens the <code>OutputStream</code>, and then calls <code>constructAndSendMultipartFormData()</code> again to write the actual data stream. The &quot;Broken pipe&quot; might occur during this write phase or when subsequently attempting <code>conn.getResponseCode()</code>.</li>\n</ol>\n<ul>\n<li>The <code>constructAndSendMultipartFormData()</code> method is dual-purpose (length calculation and actual write), iteratively calling helper methods (<code>writeFormField()</code>, <code>writeImageField()</code>) to build each part.</li>\n<li>The <code>transferFileTo()</code> method, also dual-purpose, either returns <code>file.length()</code> (for dry run) or reads from a <code>FileInputStream</code> and writes directly to the connection's <code>OutputStream</code>. This is a key area where a &quot;Broken pipe&quot; during the write could occur.</li>\n</ul>\n<p><strong>Why I Suspect a Client-Side Issue:</strong></p>\n<ul>\n<li><strong>Intermittency &amp; Rare Success:</strong> A consistently misconfigured server would likely fail 100% of the time, and the webmaster reports that the server operates normally with browsers uploading files regularly - the only file upload-related errors he sees all relate to my app. The rare successes strongly suggest a client-side condition that is <em>usually</em> problematic but occasionally aligns correctly.</li>\n<li><strong><code>Content-Length</code> as a Factor:</strong> Even if the pipe breaks <em>during</em> the write, an incorrect <code>Content-Length</code> could be the root cause for the server to decide to close the connection prematurely.</li>\n<li><strong>Streaming Complexity:</strong> Manually constructing and streaming multipart data is error-prone. Timing of flushes, buffer handling, and stream interactions could hide subtle bugs.</li>\n</ul>\n<p><strong>What I've Tried:</strong></p>\n<ol>\n<li><strong><code>Content-Length</code> &amp; Body:</strong> Pre-computing the request payload, using the resulting totalled up size for <code>Content-Length</code>, and then actually writing the request payload using the same methods that were used to calculate the content length, except this time with a non-null output stream passed in. The intermittent &quot;Broken pipe&quot; <em>still occurs</em>. This is particularly baffling.</li>\n<li>Ensuring all streams are properly closed (using try-with-resources).</li>\n<li>Varying connect and read timeouts. (The webmaster reports that the server's read-timeout is 30 seconds)</li>\n</ol>\n<p><strong>My Core Question &amp; Plea for &quot;Fresh Eyes&quot; on Client-Side:</strong> Given the highly intermittent nature of this &quot;Broken pipe,&quot; which can occur <em>during the data transmission phase</em> or immediately after, and the details of my manual multipart construction:</p>\n<ul>\n<li>What client-side mechanisms could cause the output stream of an <code>HttpURLConnection</code> to break prematurely when writing a multipart body, especially if <code>Content-Length</code> is <em>thought</em> to be correct (e.g., via <code>BAOS</code> pre-generation)?</li>\n<li>Are there subtle ways <code>FileInputStream.read()</code> interacting with <code>SocketOutputStream.write()</code> for large files could lead to non-deterministic failures or data corruption that an HTTP server would reject by closing the connection?</li>\n<li>Could the issue be related to how Android manages network buffers or background network activity that might interfere with a long-running stream, causing it to break intermittently?</li>\n<li>If the <code>BAOS</code> approach (pre-calculating entire body) still fails, does this point away from <code>Content-Length</code> as the <em>direct</em> cause during streaming, and more towards an issue with how <code>HttpURLConnection</code> handles the <em>act</em> of sending a large, pre-defined block of data, or an underlying network stack instability? I'm seeking explanations for why a connection might break <em>during the write operation itself</em> or just before response handling, specifically in the context of Android, <code>HttpURLConnection</code>, and multipart uploads.</li>\n</ul>\n<p><strong>What did you try and what were you expecting?</strong> I've implemented a manual multipart/form-data upload mechanism in Android using <code>HttpURLConnection</code> to send multiple images and form fields.</p>\n<p><strong>What I tried:</strong></p>\n<ol>\n<li><strong>Dual-Pass <code>Content-Length</code> Calculation:</strong></li>\n</ol>\n<ul>\n<li>My <code>ConnectionHandler.java</code> first calculates the total <code>Content-Length</code> by simulating the write of all parts (form data headers and values, file headers, and using <code>file.length()</code> for file data sizes) without actually writing to the network stream (passing a <code>null</code> OutputStream to my helper methods).</li>\n<li>It then sets this calculated <code>Content-Length</code> on the <code>HttpURLConnection</code>. * Finally, it performs a second pass, writing the actual multipart data (including streaming file bytes from <code>FileInputStream</code>) to the connection's <code>OutputStream</code>.</li>\n<li><em>Expected:</em> The <code>Content-Length</code> would be accurate, and the server would receive all data, process it, and return a success (e.g., 200/201) response.</li>\n</ul>\n<ol start=\"2\">\n<li><strong><code>ByteArrayOutputStream</code> (BAOS) for Body and <code>Content-Length</code>:</strong></li>\n</ol>\n<ul>\n<li>To eliminate potential discrepancies in the dual-pass calculation, I modified the approach to write the <em>entire</em> multipart body into a <code>ByteArrayOutputStream</code> first. * I then used <code>baos.size()</code> as the <code>Content-Length</code>.</li>\n<li>The <code>baos.toByteArray()</code> was then written to the <code>HttpURLConnection</code>'s <code>OutputStream</code>.</li>\n<li><em>Expected:</em> This would guarantee an accurate <code>Content-Length</code> and body match, leading to a consistently successful upload and server response.</li>\n</ul>\n<ol start=\"3\">\n<li><strong>Varying Number/Size of Images:</strong> Tested with single small images up to multiple larger images.</li>\n<li><strong>Field Naming Convention:</strong> Tried both <code>fieldName</code> and <code>fieldName[]</code> for the array of images being sent to the PHP server.</li>\n<li><strong>Ensuring Stream Closure:</strong> Used try-with-resources for all <code>InputStream</code> and <code>OutputStream</code> objects to ensure they are closed properly.</li>\n<li><strong>Adjusting Timeouts:</strong> Set connection and read timeouts on <code>HttpURLConnection</code> to reasonable values (15-30 seconds).</li>\n</ol>\n<p><strong>What I was expecting:</strong> I expected that after correctly constructing the multipart body and providing an accurate <code>Content-Length</code>, the client would successfully transmit all data to the server. Following this, I expected to receive a standard HTTP success response (e.g., 201 Created) from the server when calling <code>conn.getResponseCode()</code>. The connection should remain open until the client has read this response.</p>\n<p><strong>Actual Result (the problem):</strong> Instead, the upload process is highly intermittent.</p>\n<ul>\n<li><strong>Most of the time (approx. 19 out of 20 tries):</strong> I get a <code>java.net.SocketException: Broken pipe</code>. This exception can occur either seemingly <em>during</em> the writing of the multipart body to the <code>OutputStream</code> or when I later attempt to call <code>conn.getResponseCode()</code>.</li>\n<li><strong>Rarely (approx. 1 out of 20 tries):</strong> The upload works perfectly, and I get a success response. The core issue is the unpredictable &quot;Broken pipe&quot; and the inability to reliably complete the data transfer and receive a server response, even when using methods like BAOS that should ensure <code>Content-Length</code> accuracy..</li>\n</ul>\n<p><strong>ConnectionHandler.java: RELEVANT CODE - PLEASE ASK FOR MORE IF NEEDED</strong></p>\n<pre><code>// In ConnectionHandler.java\npackage com.example.authtest.Tools;\n\nimport android.util.Log;\nimport java.io.File;\nimport java.io.FileInputStream;\nimport java.io.IOException;\nimport java.io.OutputStream;\nimport java.net.HttpURLConnection;\nimport java.net.URL;\nimport java.nio.charset.StandardCharsets;\n// ... other necessary imports ...\n\npublic class ConnectionHandler {\n    private static final String TAG = &quot;ConnectionHandler&quot;;\n    private static final String UPLOAD_URL_STRING = &quot;REDACTED&quot;;\n    // Method called by CameraFragment\n    public void uploadImages(String serviceToken, String username, String jobNum, String maxFileSize, File[] images, boolean overviewShot, boolean checkingIn, String checkingInDate, UploadCallback callback) {\n        HttpURLConnection conn = null;\n        String boundary = &quot;Boundary-&quot; + System.currentTimeMillis(); // Unique boundary for each request\n        try {\n            // 1. Calculate Content-Length using a &quot;dry run&quot;\n            long contentLength = constructAndSendMultipartFormData(null, boundary, username, jobNum, maxFileSize, images, overviewShot, checkingIn, checkingInDate);\n            Log.d(TAG, &quot;Calculated Content-Length: &quot; + contentLength);\n\n            URL url = new URL(&quot;REDACTED&quot;);\n            URL conn = (HttpURLConnection) url.openConnection();\n            conn.setConnectTimeout(15000); // 15 seconds\n            conn.setReadTimeout(30000); // 30 seconds\n            conn.setRequestMethod(&quot;POST&quot;);\n            conn.setRequestProperty(&quot;Connection&quot;, &quot;close&quot;);\n            conn.setRequestProperty(&quot;Authorization&quot;, &quot;REDACTED&quot;);\n            conn.setRequestProperty(&quot;Cookie&quot;, &quot;REDACTED&quot;);\n            conn.setRequestProperty(&quot;User-Agent&quot;, &quot;MyApp/1.0&quot;);\n            conn.setRequestProperty(&quot;Content-Type&quot;, &quot;multipart/form-data; boundary=&quot; + boundary);\n            conn.setRequestProperty(&quot;Content-Length&quot;, Long.toString(contentLength));\n            conn.setDoOutput(true);\n            conn.setUseCaches(false);\n\n            // 2. Write the actual body\n            OutputStream os = null; // Declare os outside try to check if it was opened\n            try (OutputStream os = conn.getOutputStream()) {\n                constructAndSendMultipartFormData(os, boundary, username, jobNum, maxFileSize, images, overviewShot, checkingIn, checkingInDate);\n                os.flush();\n            } catch (IOException e) {\n                Log.e(TAG, &quot;IOException during body write to REDACTED: &quot; + e.getMessage(), e); // If &quot;Broken pipe&quot; happens here, it means connection dropped during write\n                callback.onUploadError(e);\n                return; // Don't proceed to getResponseCode\n            }\n\n            // 3. Get response\n            int responseCode = conn.getResponseCode(); // &quot;Broken pipe&quot; frequently occurs here if not during write Log.d(TAG, &quot;Response Code from REDACTED: &quot; + responseCode); // Logic to read response (success or error stream)\n            \n            if (responseCode &gt;= 200 &amp;&amp; responseCode &lt; 300) {\n                callback.onUploadComplete(&quot;Success - &quot; + responseCode); // Provide more info if needed\n            } else {\n                callback.onUploadError(new IOException(&quot;Server at REDACTED returned HTTP error: &quot; + responseCode));\n            }\n        } catch (IOException e) {\n            // General IOExceptions, including &quot;Broken pipe&quot; if it happens at getOutputStream() or getResponseCode()\n            Log.e(TAG, &quot;General IOException during upload to REDACTED: &quot; + e.getMessage(), e);\n            callback.onUploadError(e);\n        } finally {\n            if (conn != null) {\n                conn.disconnect();\n            }\n        }\n    }\n    \n    // Dual-purpose method: calculates length if outputStream is null, otherwise writes.\n    private long constructAndSendMultipartFormData(OutputStream outputStream, String boundary, String username, String jobNum, String maxFileSize, File[] images, boolean overviewShot, boolean checkingIn, String checkingInDate) throws IOException {\n        long totalLength = 0L; final String CRLF = &quot;\\r\\n&quot;;\n        final byte[] CRLF_BYTES = CRLF.getBytes(StandardCharsets.UTF_8);\n        totalLength += writeFormField(outputStream, boundary, &quot;username&quot;, username);\n        totalLength += writeFormField(outputStream, boundary, &quot;jobNum&quot;, jobNum);\n        \n        String usernamePartHeader = &quot;--&quot; + boundary + CRLF + &quot;Content-Disposition: form-data; name=\\&quot;username\\&quot;&quot; + CRLF + CRLF;\n        byte[] usernamePartHeaderBytes = usernamePartHeader.getBytes(StandardCharsets.UTF_8);\n        byte[] usernameBytes = username.getBytes(StandardCharsets.UTF_8);\n        totalLength += usernamePartHeaderBytes.length;\n        totalLength += usernameBytes.length;\n        totalLength += CRLF_BYTES.length;\n        if (outputStream != null) {\n            outputStream.write(usernamePartHeaderBytes);\n            outputStream.write(usernameBytes);\n            outputStream.write(CRLF_BYTES);\n        }\n\n        String overviewShotStr = overviewShot ? &quot;1&quot; : &quot;0&quot;;\n        String overviewShotHeader = &quot;--&quot; + boundary + CRLF + &quot;Content-Disposition: form-data; name=\\&quot;overviewShot\\&quot;&quot; + CRLF + CRLF;\n        byte[] overviewShotHeaderBytes = overviewShotHeader.getBytes(StandardCharsets.UTF_8); byte[] overviewShotBytes = overviewShotStr.getBytes(StandardCharsets.UTF_8);\n        totalLength += overviewShotHeaderBytes.length + overviewShotBytes.length + CRLF_BYTES.length;\n        if (outputStream != null) {\n            outputStream.write(overviewShotHeaderBytes);\n            outputStream.write(overviewShotBytes);\n            outputStream.write(CRLF_BYTES);\n        }\n\n        // Image files\n        if (images != null) {\n            for (File imageFile : images) {\n                if (imageFile == null || !imageFile.exists() || imageFile.length() == 0) {\n                    Log.w(TAG, &quot;Skipping invalid or empty image file: &quot; + (imageFile != null ? imageFile.getName() : &quot;null file&quot;));\n                    continue;\n                } \n                String fieldNameInForm = &quot;technicianPictures&quot;;\n                String originalFileName = imageFile.getName();\n                String filePartHeader = &quot;--&quot; + boundary + CRLF + &quot;Content-Disposition: form-data; name=\\&quot;&quot; + fieldNameInForm + &quot;\\&quot;; filename=\\&quot;&quot; + originalFileName + &quot;\\&quot;&quot; + CRLF + &quot;Content-Type: image/jpeg&quot; + CRLF + // Assuming JPEG, make dynamic if other types\n                &quot;Content-Transfer-Encoding: binary&quot; + CRLF + // Optional, usually implied for files\n                CRLF; // Empty line before file data\n                byte[] filePartHeaderBytes = filePartHeader.getBytes(StandardCharsets.UTF_8);\n                totalLength += filePartHeaderBytes.length;\n                if (outputStream != null) {\n                    outputStream.write(filePartHeaderBytes);\n                }\n                long fileLength = transferFileTo(imageFile, outputStream);\n                totalLength += fileLength; // CRLF after file data\n                totalLength += CRLF_BYTES.length;\n                if (outputStream != null) {\n                    outputStream.write(CRLF_BYTES);\n                }\n            }\n        }\n        \n        // End boundary: --boundary--CRLF\n        String endBoundaryStr = &quot;--&quot; + boundary + &quot;--&quot; + CRLF;\n        byte[] endBoundaryBytes = endBoundaryStr.getBytes(StandardCharsets.UTF_8);\n        totalLength += endBoundaryBytes.length;\n        if (outputStream != null) {\n            outputStream.write(endBoundaryBytes);\n        }\n        return totalLength;\n    }\n    \n    // Dual-purpose file transfer: returns length if outStream is null, otherwise writes.\n    private long transferFileTo(File file, OutputStream outStream) throws IOException {\n        if (outStream == null) {\n            // Calculate length only\n            if (!file.isFile()) return 0L;\n            return file.length();\n        }\n\n        // Write mode\n        long writtenLength = 0L;\n        if(file.isFile()) {\n            try (FileInputStream fis = new FileInputStream(file)) {\n                byte[] buffer = new byte[4096]; // Common buffer size\n                int bytesRead;\n                while ((bytesRead = fis.read(buffer)) != -1) {\n                    outStream.write(buffer, 0, bytesRead); // &quot;Broken pipe&quot; can occur here during the stream\n                    writtenLength += bytesRead;\n                }\n            }\n        }\n        Log.d(TAG, &quot;Transferred &quot; + writtenLength + &quot; bytes for file &quot; + file.getName());\n        return writtenLength;\n    }\n    \n    // Callback interface for upload status\n    public interface UploadCallback {\n        void onUploadComplete(String response);\n        void onUploadError(Exception e);\n    }\n}\n</code></pre>\n<ul>\n<li><strong>CameraFragment.java: RELEVANT CODE - PLEASE ASK FOR MORE IF NEEDED</strong></li>\n</ul>\n<pre><code>// In CameraFragment.java\n// ... (Initializes File[] capturedImages and imageCount) ...\n// Inside an upload button's OnClickListener:\n// ... (Code to get user credentials, job details, etc., as Strings) ...\nString authToken = ...;\nString currentUsername = ...;\nString currentJobNumber = ...;\nString maxFileSizeAllowed = ...; // e.g., &quot;10485760&quot;\nFile[] imagesToUploadArray = new File[imageCount];\nif (imageCount &gt; 0) {\n    System.arraycopy(capturedImages, 0, imagesToUploadArray, 0, imageCount);\n}\n\nnew Thread(() -&gt; {\n    try { // Simplified call to ConnectionHandler\n        connectionHandler.uploadImages(authToken, currentUsername, currentJobNumber, maxFileSizeAllowed, imagesToUploadArray, isOverviewShot, isCheckingIn, checkingInDate, new ConnectionHandler.UploadCallback() {\n            @Override public void onUploadComplete(String response) {\n                // Update UI: Upload successful\n                Log.d(&quot;CameraFragment&quot;, &quot;Upload successful: &quot; + response);\n            }\n            @Override\n            public void onUploadError(Exception e) {\n                // Update UI: Upload failed\n                Log.e(&quot;CameraFragment&quot;, &quot;Upload error reported by callback&quot;, e);\n                // This is where the &quot;Broken pipe&quot; or other IOExceptions often land\n            }\n        });\n    } catch (Exception e) {\n        Log.e(&quot;CameraFragment&quot;, &quot;Exception launching upload thread&quot;, e);\n    }\n}).start();\n</code></pre>\n",
+    "tags" : [ "java", "android", "http", "network-programming", "request" ],
+    "owner" : {
+      "account_id" : 38736797,
+      "reputation" : 3,
+      "user_id" : 31358543,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/8f0be2a29e20841da122f777d65b9b39?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Tyler",
+      "link" : "https://stackoverflow.com/users/31358543/tyler"
+    },
+    "is_answered" : true,
+    "view_count" : 111,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1756321710,
+    "creation_date" : 1756251490,
+    "link" : "https://stackoverflow.com/questions/79747407/intermittent-java-net-socketexception-broken-pipe-during-android-multipart-up",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79748383,
+    "question_id" : 79747407,
+    "body" : "<p>After performing some experiments on-site, we determined that the root cause of this issue is the cell towers resetting outgoing connections with large amounts of upload data, as the problem does not surface on Wi-Fi or ethernet connections going through a proper ISP, only on mobile devices using mobile data.<br />\nThe same error can be replicated (at least in our geographical area) by using any cell phone and any modern internet browser, and then turning Wi-Fi off and then attempting to upload files to the server.</p>\n<p>Unfortunately, our solution is to have Tyler prompt the end-users to turn Wi-Fi on and re-submit when it detects this error condition.</p>\n",
+    "score" : 0,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 2787201,
+      "reputation" : 558,
+      "user_id" : 2398263,
+      "user_type" : "registered",
+      "accept_rate" : 75,
+      "profile_image" : "https://www.gravatar.com/avatar/307c4b34b8e135ec042c80b418af5d0a?s=256&d=identicon&r=PG",
+      "display_name" : "Brian_Entei",
+      "link" : "https://stackoverflow.com/users/2398263/brian-entei"
+    },
+    "creation_date" : 1756321710,
+    "last_activity_date" : 1756321710,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140696095,
+    "post_id" : 79747407,
+    "body" : "Tyler, try using <code>conn.setFixedLengthStreamingMode(contentLength);</code> before calling <code>conn.getOutputStream()</code> instead, this will disable HttpURLConnection&#39;s internal buffering of the request payload, and will ensure it sends the payload in a timely manner. However, bear in mind that everything we tried together last week points to this not being an issue of content-length or payload enctype formatting, but is more indicitive of a networking issue of some sort.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2787201,
+      "reputation" : 558,
+      "user_id" : 2398263,
+      "user_type" : "registered",
+      "accept_rate" : 75,
+      "profile_image" : "https://www.gravatar.com/avatar/307c4b34b8e135ec042c80b418af5d0a?s=256&d=identicon&r=PG",
+      "display_name" : "Brian_Entei",
+      "link" : "https://stackoverflow.com/users/2398263/brian-entei"
+    },
+    "creation_date" : 1756302278,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140696067,
+    "post_id" : 79747407,
+    "body" : "The server will not accept POST requests without a Content-Length header, as it does not support POST requests using only <code>Transfer-Encoding: chunked</code>.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2787201,
+      "reputation" : 558,
+      "user_id" : 2398263,
+      "user_type" : "registered",
+      "accept_rate" : 75,
+      "profile_image" : "https://www.gravatar.com/avatar/307c4b34b8e135ec042c80b418af5d0a?s=256&d=identicon&r=PG",
+      "display_name" : "Brian_Entei",
+      "link" : "https://stackoverflow.com/users/2398263/brian-entei"
+    },
+    "creation_date" : 1756301867,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140695126,
+    "post_id" : 79747407,
+    "body" : "@OP You should not set the <code>Content-length</code> header at all with <code>HttpURLConnection</code>. It will put one on for you, and by default it will buffer the entire response so it can do so, which you don&#39;t want when sending large request bodies. In this case I suggest you should use chunked streaming mode.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 71739,
+      "reputation" : 311888,
+      "user_id" : 207421,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/5cfe5f7d64f44be04f147295f5c7b88e?s=256&d=identicon&r=PG",
+      "display_name" : "user207421",
+      "link" : "https://stackoverflow.com/users/207421/user207421"
+    },
+    "creation_date" : 1756279307,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140694981,
+    "post_id" : 79747407,
+    "body" : "@Brian_Entei No thanks, let&#39;s continue here.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 71739,
+      "reputation" : 311888,
+      "user_id" : 207421,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/5cfe5f7d64f44be04f147295f5c7b88e?s=256&d=identicon&r=PG",
+      "display_name" : "user207421",
+      "link" : "https://stackoverflow.com/users/207421/user207421"
+    },
+    "creation_date" : 1756272934,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140694794,
+    "post_id" : 79747407,
+    "body" : "Let us <a href=\"https://chat.stackoverflow.com/rooms/259763/discussion-between-brian-entei-and-user207421\">continue this discussion in chat</a>.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2787201,
+      "reputation" : 558,
+      "user_id" : 2398263,
+      "user_type" : "registered",
+      "accept_rate" : 75,
+      "profile_image" : "https://www.gravatar.com/avatar/307c4b34b8e135ec042c80b418af5d0a?s=256&d=identicon&r=PG",
+      "display_name" : "Brian_Entei",
+      "link" : "https://stackoverflow.com/users/2398263/brian-entei"
+    },
+    "creation_date" : 1756263035,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140694758,
+    "post_id" : 79747407,
+    "body" : "@Brian_Entei So that means he isn&#39;t sending fast enough after the initial connect for your timeout, so you&#39;re closing the connection, so when he eventually sends he gets the broken pipe.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 71739,
+      "reputation" : 311888,
+      "user_id" : 207421,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/5cfe5f7d64f44be04f147295f5c7b88e?s=256&d=identicon&r=PG",
+      "display_name" : "user207421",
+      "link" : "https://stackoverflow.com/users/207421/user207421"
+    },
+    "creation_date" : 1756261421,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140694700,
+    "post_id" : 79747407,
+    "body" : "The error in the log on my end is read timed out, and none of my other client machines have any issues uploading files in the exact same way. Additionally, the error is instantaneous, i.e. after the server finishes reading the HTTP headers and gets ready to start reading the POST request payload, the network error is thrown.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2787201,
+      "reputation" : 558,
+      "user_id" : 2398263,
+      "user_type" : "registered",
+      "accept_rate" : 75,
+      "profile_image" : "https://www.gravatar.com/avatar/307c4b34b8e135ec042c80b418af5d0a?s=256&d=identicon&r=PG",
+      "display_name" : "Brian_Entei",
+      "link" : "https://stackoverflow.com/users/2398263/brian-entei"
+    },
+    "creation_date" : 1756256622,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140694690,
+    "post_id" : 79747407,
+    "body" : "@Brian_Entei This error means that your server has prematurely closed the connection while the client is still writing to it. That can be in response to invalid input such as <code>Content-Length</code> not matching the actual data, but I don&#39;t see how it can be due to anything else at the client end.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 71739,
+      "reputation" : 311888,
+      "user_id" : 207421,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/5cfe5f7d64f44be04f147295f5c7b88e?s=256&d=identicon&r=PG",
+      "display_name" : "user207421",
+      "link" : "https://stackoverflow.com/users/207421/user207421"
+    },
+    "creation_date" : 1756256321,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140694679,
+    "post_id" : 79747407,
+    "body" : "I actually wrote him a nice API for packaging and uploading multipart/form-data, and I tested it in a desktop app, so I know it&#39;s not the form data itself, nor the content length.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2787201,
+      "reputation" : 558,
+      "user_id" : 2398263,
+      "user_type" : "registered",
+      "accept_rate" : 75,
+      "profile_image" : "https://www.gravatar.com/avatar/307c4b34b8e135ec042c80b418af5d0a?s=256&d=identicon&r=PG",
+      "display_name" : "Brian_Entei",
+      "link" : "https://stackoverflow.com/users/2398263/brian-entei"
+    },
+    "creation_date" : 1756255141,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140694676,
+    "post_id" : 79747407,
+    "body" : "Hello, webmaster of the server he&#39;s uploading to here! It&#39;s not the content-length, on my end the client connection gets interrupted sometimes before it actually sends the POST request payload, and sometimes right in the middle of it. He&#39;s got something going on either with his android environment or with his usage of HttpURLConnection.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2787201,
+      "reputation" : 558,
+      "user_id" : 2398263,
+      "user_type" : "registered",
+      "accept_rate" : 75,
+      "profile_image" : "https://www.gravatar.com/avatar/307c4b34b8e135ec042c80b418af5d0a?s=256&d=identicon&r=PG",
+      "display_name" : "Brian_Entei",
+      "link" : "https://stackoverflow.com/users/2398263/brian-entei"
+    },
+    "creation_date" : 1756255054,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140694615,
+    "post_id" : 79747407,
+    "body" : "<code>Content-length</code> is probably the problem all right, but don&#39;t write all this stuff yourself. It&#39;s non-trivial. There are existing libraries for multipart form data. Use them.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 71739,
+      "reputation" : 311888,
+      "user_id" : 207421,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/5cfe5f7d64f44be04f147295f5c7b88e?s=256&d=identicon&r=PG",
+      "display_name" : "user207421",
+      "link" : "https://stackoverflow.com/users/207421/user207421"
+    },
+    "creation_date" : 1756251586,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

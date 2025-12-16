@@ -1,0 +1,65 @@
+{
+  "question" : {
+    "question_id" : 79712242,
+    "title" : "Data corruption with high throughput",
+    "body" : "<p>I wrote a small client-server system with Netty. The client(s) send messages to a server, and the server responds with an ACK once the message is processed. This ACK contains an ever incrementing offset, so I can remove it from my list of pending messages.</p>\n<p>If the throughput is low (~1000 messages per second), all is good. However, with a higher throughput (above 2000 ps), I start to see that sometimes when the decoder reads the offset (a long), it gets a very large offset, something like 4755801206503331182 (when the usual offset is in the 6-digits range). The number of errors seems proportional to the throughput, the higher the throughput, the more frequent the errors (I'd estimate it at 2 errors every 1000 messages)</p>\n<p>This is my decoder:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class HeartbeatAckDecoder extends ByteToMessageDecoder {\n\n  @Override\n  protected void decode(ChannelHandlerContext ctx, ByteBuf in, List&lt;Object&gt; out) throws Exception {\n    byte channelId = in.readByte();\n\n    in.markReaderIndex();\n    if (channelId == CHANNEL_ACK) {\n      if (in.readableBytes() &lt; 8) { // long minimum\n        in.resetReaderIndex();\n      } else {\n        long offset = in.readLong();\n        out.add(ChannelMessage.ack(offset));\n      }\n    } else {\n      out.add(ChannelMessage.heartbeat());\n    }\n  }\n}\n</code></pre>\n<p>This decoder handles 2 types of messages, ACKs and heartbeats. The first byte tells the type of message, if it's a HB, then there's nothing more to read.</p>\n<p>However, if it's an ACK, the next 8 bytes (a long) it's the offset.\nI believe this logic is correct, so I don't know why I get this issue. It doesn't seem like the throughput is too high for Netty, because I'm sending the same number of messages from the client to the server (in fact, double of that because I have 2 clients), and the server reads the messages perfectly.</p>\n<p>Any ideas?</p>\n",
+    "tags" : [ "java", "netty" ],
+    "owner" : {
+      "account_id" : 290076,
+      "reputation" : 276,
+      "user_id" : 591417,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f67a9106f4930a85aeb8fcb309c1108b?s=256&d=identicon&r=PG",
+      "display_name" : "Alex",
+      "link" : "https://stackoverflow.com/users/591417/alex"
+    },
+    "is_answered" : true,
+    "view_count" : 104,
+    "answer_count" : 1,
+    "score" : 2,
+    "last_activity_date" : 1753343383,
+    "creation_date" : 1753286534,
+    "link" : "https://stackoverflow.com/questions/79712242/data-corruption-with-high-throughput",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79712264,
+    "question_id" : 79712242,
+    "body" : "<p>The problem is that you call in.markReaderIndex() after reading the first byte (channelId). So when you do resetReaderIndex(), it resets only to after that byte, causing partial reads of the offset.</p>\n<p>To fix, call in.markReaderIndex() before reading anything. Then if there aren’t enough bytes for the full message (1 byte channelId + 8 bytes offset), reset to the start and wait for more data.</p>\n<pre class=\"lang-java prettyprint-override\"><code>protected void decode(ChannelHandlerContext ctx, ByteBuf in, List&lt;Object&gt; out) throws Exception {\n  in.markReaderIndex();\n  if (in.readableBytes() &lt; 1) return; // need channelId byte\n\n  byte channelId = in.readByte();\n  if (channelId == HEARTBEAT) { \n    out.add(ChannelMessage.heartbeat());\n  } else if (channelId == CHANNEL_ACK) {\n    if (in.readableBytes() &lt; 8) {\n      in.resetReaderIndex(); // not enough bytes for offset, reset\n      return;\n    }\n    out.add(ChannelMessage.ack(in.readLong()));\n  } else {\n    throw new Exception(&quot;Unsupported channelId &quot; + channelId);\n  }\n}\n</code></pre>\n<p>This ensures you only read the offset once the full 9 bytes are available, preventing corrupted values at high throughput.</p>\n",
+    "score" : 4,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 1096470,
+      "reputation" : 29424,
+      "user_id" : 1089967,
+      "user_type" : "registered",
+      "accept_rate" : 59,
+      "profile_image" : "https://www.gravatar.com/avatar/1f256b904ff621d678598d8fa49f86c5?s=256&d=identicon&r=PG",
+      "display_name" : "lance-java",
+      "link" : "https://stackoverflow.com/users/1089967/lance-java"
+    },
+    "creation_date" : 1753287182,
+    "last_activity_date" : 1753343383,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79712264" : [ {
+      "comment_id" : 140613138,
+      "post_id" : 79712264,
+      "body" : "Wow, how did I miss that? Thanks for your help!  The only thing, it&#39;s probably not necessary to check if <code>in.readableBytes() &lt; 1</code> , since if decode is called, it&#39;s because there is at least one byte to be read.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 290076,
+        "reputation" : 276,
+        "user_id" : 591417,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/f67a9106f4930a85aeb8fcb309c1108b?s=256&d=identicon&r=PG",
+        "display_name" : "Alex",
+        "link" : "https://stackoverflow.com/users/591417/alex"
+      },
+      "creation_date" : 1753300190,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

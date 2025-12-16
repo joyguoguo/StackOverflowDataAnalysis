@@ -1,0 +1,114 @@
+{
+  "question" : {
+    "question_id" : 79612103,
+    "title" : "How handle one and more data by Kotlin.Result Chain Call and then handle result",
+    "body" : "<p>I has a usage by Kotlin.Result chain call.</p>\n<pre><code>fun getA():A{\n    ...\n}\nfun getB(a:A):B{\n    ...\n}\nfun getC（b:B):C{\n    ...\n}\n</code></pre>\n<p>there function may throw any Exception at all.\nI want do this:</p>\n<pre><code>try {\n    val a = try {\n        getA()\n    }catch (e:Exception){\n        throw RuntimeException(&quot;getA is Error&quot;)\n    }\n    val b = try {\n        getB(a)\n    }catch (e:Exception){\n        throw RuntimeException(&quot;getB is Error&quot;)\n    }\n    val c = try {\n        getC(b)\n    }catch (e:Exception){\n        throw RuntimeException(&quot;getC is Error&quot;)\n    }.\n    print(&quot;c is $c&quot;)\n}catch (e:Exception){\n    print(&quot;error: ${e.message}&quot;)\n}\n</code></pre>\n<p>I want Chain call like this:</p>\n<pre><code>doSomeThing(&quot;getA is Error&quot;) {\n    getA()\n}.doSomeThing(&quot;getB is Error&quot;) {\n    getB(it)\n}.doSomeThing(&quot;getC is Error&quot;) {\n    getC(it)\n}.onSuccess {\n    print(&quot;c is $it&quot;)\n}.onFailure {\n    print(&quot;error: ${it.message}&quot;)\n}\n</code></pre>\n<p>This inspiration comes from Kotlin.Result:</p>\n<pre><code>runCatching { \n    getA()\n}.onSuccess { \n    print(&quot;c is $it&quot;)\n}.onFailure { \n    print(&quot;error: ${it.message}&quot;)\n}\n</code></pre>\n<p>Notmal Step : <code>step1 -&gt; step2 -&gt; step 3 -&gt; success</code></p>\n<p>when throw exception: <code>stepX throw exception -&gt; recover exception -&gt; failure.</code></p>\n<p>hard point is result.recover will recover my exception and wrong exception.</p>\n<p>My question is How can use Result or Other do this.\nIs this form of code worth using or will this code writing pattern have a negative impact</p>\n<hr />\n<p>2025-5-10 Edit,logic from @Sweeper,I chage something.</p>\n<pre><code>inline fun &lt;R&gt; runCatchingRecover(message: String, block: () -&gt; R): Result&lt;R&gt; =\n    runCatching(block).recover { throw RuntimeException(message, it) }\n\ninline fun &lt;T, R&gt; T.runCatchingRecover(message: String, block: T.() -&gt; R): Result&lt;R&gt; =\n    runCatching(block).recover { throw RuntimeException(message, it) }\n\n\ninline fun &lt;T, R&gt; Result&lt;R&gt;.mapCatchingRecover(message: String, block: R.() -&gt; T): Result&lt;T&gt; {\n    return mapCatching {\n        runCatchingRecover(message) { it.block() }.getOrThrow()\n    }\n}\n</code></pre>\n",
+    "tags" : [ "java", "kotlin", "logic" ],
+    "owner" : {
+      "account_id" : 26688524,
+      "reputation" : 156,
+      "user_id" : 20297447,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/ALm5wu36uoi9buYY9lDASxPYywCVRglwSSsPaeguybao=k-s256",
+      "display_name" : "卡尔斯路西法",
+      "link" : "https://stackoverflow.com/users/20297447/%e5%8d%a1%e5%b0%94%e6%96%af%e8%b7%af%e8%a5%bf%e6%b3%95"
+    },
+    "is_answered" : true,
+    "view_count" : 63,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1746846761,
+    "creation_date" : 1746697234,
+    "link" : "https://stackoverflow.com/questions/79612103/how-handle-one-and-more-data-by-kotlin-result-chain-call-and-then-handle-result",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79612132,
+    "question_id" : 79612103,
+    "body" : "<p>It seems like you want a &quot;<code>map</code> and then rethrow an <code>RuntimeException</code> with a custom message&quot; operation. You can write such an extension function:</p>\n<pre><code>inline fun &lt;T&gt; Result&lt;T&gt;.mapException(block: (Throwable) -&gt; Throwable) =\n    exceptionOrNull()?.let {\n        Result.failure(block(it))\n    } ?: this\n\ninline fun &lt;T&gt; runCatchingCustomMessage(message: String, block: () -&gt; T) =\n    runCatching(block).mapException { RuntimeException(message) }\n\ninline fun &lt;T, V&gt; Result&lt;T&gt;.mapCatchingCustomMessage(message: String, block: (T) -&gt; V) =\n    mapCatching {\n        runCatchingCustomMessage(message) { block(it) }.getOrThrow()\n    }\n</code></pre>\n<p>The <code>getOrThrow</code> + <code>mapCatching</code> combination essentially acts as a &quot;flat map&quot; or &quot;bind&quot;, but it also changes the exception stack trace. If that is undesirable, you can write a proper <code>flatMap</code> like this:</p>\n<pre><code>// from: https://stackoverflow.com/a/79450797/5133585\ninline fun &lt;T, R&gt; Result&lt;T&gt;.flatMap(f: (T) -&gt; Result&lt;R&gt;): Result&lt;R&gt; = when {\n    isSuccess -&gt; (getOrNull() as T).let(f)\n    isFailure -&gt; this as Result&lt;R&gt;\n    else -&gt; {\n        throw IllegalStateException(&quot;Unknown state&quot;)\n    }\n}\n</code></pre>\n<p>Usage:</p>\n<pre><code>runCatchingCustomMessage(&quot;get A is error&quot;) { getA() }\n    .mapCatchingCustomMessage(&quot;get B is error&quot;) { getB(it) }\n    .mapCatchingCustomMessage(&quot;get C is error&quot;) { getC(it) }\n    .onSuccess { println(&quot;c is $it&quot;) }\n    .onFailure { println(&quot;error: ${it.message}&quot;) }\n</code></pre>\n<p>Unlike the <code>catch</code>es in your first code snippet, this changes all <code>Throwable</code>s into the custom <code>RuntimeException</code>. If you only want to handle <code>Exception</code>s, you will also need to write your own versions of <code>runCatching</code> and <code>mapCatching</code>, e.g.</p>\n<pre><code>inline fun &lt;R&gt; runCatchingOnlyExceptions(block: () -&gt; R): Result&lt;R&gt; {\n    return try {\n        Result.success(block())\n    } catch (e: Exception) {\n        Result.failure(e)\n    }\n}\n</code></pre>\n",
+    "score" : 2,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 6651855,
+      "reputation" : 292280,
+      "user_id" : 5133585,
+      "user_type" : "registered",
+      "accept_rate" : 96,
+      "profile_image" : "https://i.sstatic.net/dfqcw.png?s=256",
+      "display_name" : "Sweeper",
+      "link" : "https://stackoverflow.com/users/5133585/sweeper"
+    },
+    "creation_date" : 1746698687,
+    "last_activity_date" : 1746773307,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79612132" : [ {
+      "comment_id" : 140412722,
+      "post_id" : 79612132,
+      "body" : "it is not changes the exception stack trace now.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 26688524,
+        "reputation" : 156,
+        "user_id" : 20297447,
+        "user_type" : "registered",
+        "profile_image" : "https://lh3.googleusercontent.com/a/ALm5wu36uoi9buYY9lDASxPYywCVRglwSSsPaeguybao=k-s256",
+        "display_name" : "卡尔斯路西法",
+        "link" : "https://stackoverflow.com/users/20297447/%e5%8d%a1%e5%b0%94%e6%96%af%e8%b7%af%e8%a5%bf%e6%b3%95"
+      },
+      "creation_date" : 1746837047,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140412715,
+      "post_id" : 79612132,
+      "body" : "thank you your answer,I get it.I imitated the result style and modified your code write to my question,thank you again.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 26688524,
+        "reputation" : 156,
+        "user_id" : 20297447,
+        "user_type" : "registered",
+        "profile_image" : "https://lh3.googleusercontent.com/a/ALm5wu36uoi9buYY9lDASxPYywCVRglwSSsPaeguybao=k-s256",
+        "display_name" : "卡尔斯路西法",
+        "link" : "https://stackoverflow.com/users/20297447/%e5%8d%a1%e5%b0%94%e6%96%af%e8%b7%af%e8%a5%bf%e6%b3%95"
+      },
+      "creation_date" : 1746836669,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140409994,
+      "post_id" : 79612132,
+      "body" : "@卡尔斯路西法 Sorry I missed that. Edited now.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 6651855,
+        "reputation" : 292280,
+        "user_id" : 5133585,
+        "user_type" : "registered",
+        "accept_rate" : 96,
+        "profile_image" : "https://i.sstatic.net/dfqcw.png?s=256",
+        "display_name" : "Sweeper",
+        "link" : "https://stackoverflow.com/users/5133585/sweeper"
+      },
+      "creation_date" : 1746773334,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140409480,
+      "post_id" : 79612132,
+      "body" : "your problem is message always not get A is error,because it will call next mapException when lastResult is failure.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 26688524,
+        "reputation" : 156,
+        "user_id" : 20297447,
+        "user_type" : "registered",
+        "profile_image" : "https://lh3.googleusercontent.com/a/ALm5wu36uoi9buYY9lDASxPYywCVRglwSSsPaeguybao=k-s256",
+        "display_name" : "卡尔斯路西法",
+        "link" : "https://stackoverflow.com/users/20297447/%e5%8d%a1%e5%b0%94%e6%96%af%e8%b7%af%e8%a5%bf%e6%b3%95"
+      },
+      "creation_date" : 1746749422,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

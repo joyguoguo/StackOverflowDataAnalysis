@@ -1,0 +1,132 @@
+{
+  "question" : {
+    "question_id" : 79716866,
+    "title" : "S3AsyncClient (AWS SDK v2, Java) uploads 0 bytes despite non-empty content",
+    "body" : "<p>S3AsyncUploadService.java</p>\n<pre class=\"lang-java prettyprint-override\"><code>package com.util.s3;\n\nimport org.springframework.stereotype.Component;\nimport reactor.core.publisher.Mono;\nimport software.amazon.awssdk.core.async.AsyncRequestBody;\nimport software.amazon.awssdk.services.s3.S3AsyncClient;\nimport software.amazon.awssdk.services.s3.model.PutObjectRequest;\n\n@Component\npublic class S3AsyncUploadService {\n\n    private final S3AsyncClient s3AsyncClient;\n\n    public S3AsyncUploadService(S3AsyncClient s3AsyncClient) {\n        this.s3AsyncClient = s3AsyncClient;\n    }\n\n    public Mono&lt;Void&gt; uploadFile(String bucketName, String fileName, byte[] fileContent) {\n        PutObjectRequest putObjectRequest = PutObjectRequest.builder()\n                .bucket(bucketName)\n                .key(fileName)\n                .build();\n\n        return Mono.fromFuture(\n                s3AsyncClient.putObject(\n                        putObjectRequest,\n                        AsyncRequestBody.fromBytes(fileContent)\n                )\n        ).then();\n    }\n}\n\n</code></pre>\n<p>S3UploadService.java</p>\n<pre class=\"lang-java prettyprint-override\"><code>package com.util.s3;\n\nimport org.springframework.stereotype.Component;\nimport software.amazon.awssdk.core.sync.RequestBody;\nimport software.amazon.awssdk.services.s3.S3Client;\nimport software.amazon.awssdk.services.s3.model.PutObjectRequest;\n\n@Component\npublic class S3UploadService {\n\n    private final S3Client s3Client;\n\n    public S3UploadService(S3Client s3Client) {\n        this.s3Client = s3Client;\n    }\n\n    public void uploadFile(String bucketName, String fileName, byte[] fileContent) {\n        PutObjectRequest putObjectRequest = PutObjectRequest.builder()\n                .bucket(bucketName)\n                .key(fileName)\n                .build();\n\n        s3Client.putObject(putObjectRequest, RequestBody.fromBytes(fileContent));\n    }\n}\n\n</code></pre>\n<p>S3Resource.java</p>\n<pre class=\"lang-java prettyprint-override\"><code>package com.util.resource;\n\nimport com.util.s3.S3AsyncUploadService;\nimport com.util.s3.S3UploadService;\nimport org.springframework.beans.factory.annotation.Value;\nimport org.springframework.http.ResponseEntity;\nimport org.springframework.web.bind.annotation.*;\nimport reactor.core.publisher.Mono;\nimport software.amazon.awssdk.services.s3.S3Client;\nimport software.amazon.awssdk.services.s3.model.CreateBucketRequest;\nimport software.amazon.awssdk.services.s3.model.ListObjectsV2Request;\nimport software.amazon.awssdk.services.s3.model.ListObjectsV2Response;\nimport software.amazon.awssdk.services.s3.model.S3Object;\n\nimport java.nio.charset.StandardCharsets;\nimport java.util.Map;\nimport java.util.stream.Collectors;\n\n@RestController\n@RequestMapping(&quot;/s3&quot;)\npublic class S3Resource {\n\n    private final S3UploadService s3UploadService;\n    private final S3AsyncUploadService s3AsyncUploadService;\n    private final S3Client s3Client;\n\n    @Value(&quot;${aws.s3.bucket}&quot;)\n    private String bucketName;\n\n    public S3Resource(S3UploadService s3UploadService, S3AsyncUploadService s3AsyncUploadService, S3Client s3Client) {\n        this.s3UploadService = s3UploadService;\n        this.s3AsyncUploadService = s3AsyncUploadService;\n        this.s3Client = s3Client;\n    }\n\n    @GetMapping(&quot;/upload-string&quot;)\n    public Mono&lt;ResponseEntity&lt;Map&lt;String, Long&gt;&gt;&gt; uploadString(@RequestParam(&quot;content&quot;) String content) {\n        s3Client.createBucket(CreateBucketRequest.builder().bucket(bucketName).build());\n        String syncKey = &quot;sync-uploaded.txt&quot;;\n        String asyncKey = &quot;async-uploaded.txt&quot;;\n        byte[] bytes = content.getBytes(StandardCharsets.UTF_8);\n\n        // 1. Synchronous upload\n        s3UploadService.uploadFile(bucketName, syncKey, bytes);\n\n        // 2. Asynchronous upload\n        return s3AsyncUploadService.uploadFile(bucketName, asyncKey, bytes)\n                .then(Mono.fromCallable(() -&gt; {\n                    ListObjectsV2Request listReq = ListObjectsV2Request.builder()\n                            .bucket(bucketName)\n                            .build();\n                    ListObjectsV2Response listRes = s3Client.listObjectsV2(listReq);\n                    Map&lt;String, Long&gt; keysWithSize = listRes.contents().stream()\n                            .collect(Collectors.toMap(S3Object::key, S3Object::size));\n                    return ResponseEntity.ok(keysWithSize);\n                }));\n    }\n}\n\n</code></pre>\n<p><strong>Problem:</strong></p>\n<p>I'm using Java 21 with Spring Boot WebFlux and AWS SDK v2. I have two services to upload files to S3:</p>\n<ol>\n<li>S3UploadService uses the synchronous S3Client — works as expected.</li>\n<li>S3AsyncUploadService uses the asynchronous S3AsyncClient — creates the S3 object (key), but the file has 0 bytes, even though the content is not empty.</li>\n</ol>\n<p><strong>Code Overview:</strong></p>\n<ul>\n<li><p>S3UploadService — synchronous, uses RequestBody.fromBytes(...).</p>\n</li>\n<li><p>S3AsyncUploadService — asynchronous, uses AsyncRequestBody.fromBytes(...).</p>\n</li>\n<li><p>An endpoint /s3/upload-string uploads a simple string to both services:</p>\n<ul>\n<li>Creates a bucket.</li>\n<li>Uploads one file using the sync service and another using the async service.</li>\n<li>Lists the objects and returns the object sizes.</li>\n<li>The sync-uploaded file has the expected size. The async-uploaded file has size 0.</li>\n</ul>\n</li>\n</ul>\n<p><strong>Observed Behavior:</strong></p>\n<ul>\n<li><p>sync-uploaded.txt contains the expected content.</p>\n</li>\n<li><p>async-uploaded.txt is present in the bucket, but has 0 bytes.</p>\n</li>\n</ul>\n<p><strong>Expected:</strong></p>\n<ul>\n<li>Both uploads should store the same content (the same byte[] is used).</li>\n</ul>\n<p><strong>What I’ve Tried:</strong></p>\n<ul>\n<li><p>Confirmed the input byte array is not empty.</p>\n</li>\n<li><p>Ensured <code>.then()</code> is chained after the <code>Mono.fromFuture(...)</code>.</p>\n</li>\n<li><p>Verified the bucket and object keys are correct.</p>\n</li>\n</ul>\n<p><strong>Question:</strong>\nWhat might be causing the S3AsyncClient to upload a 0-byte file, even though the content is present?</p>\n",
+    "tags" : [ "java", "amazon-s3", "spring-webflux", "project-reactor", "aws-java-sdk-2.x" ],
+    "owner" : {
+      "account_id" : 14739944,
+      "reputation" : 3,
+      "user_id" : 12117040,
+      "user_type" : "registered",
+      "profile_image" : "https://lh5.googleusercontent.com/-iQoewuXoTD4/AAAAAAAAAAI/AAAAAAAAAAA/ACHi3re7cFH1cMP35H8AQYaQMmkkbaPyeQ/s256-rj/photo.jpg",
+      "display_name" : "Siddarth Reddy",
+      "link" : "https://stackoverflow.com/users/12117040/siddarth-reddy"
+    },
+    "is_answered" : true,
+    "view_count" : 191,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1753816373,
+    "creation_date" : 1753674051,
+    "link" : "https://stackoverflow.com/questions/79716866/s3asyncclient-aws-sdk-v2-java-uploads-0-bytes-despite-non-empty-content",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79718515,
+    "question_id" : 79716866,
+    "body" : "<p>Try this, it's a little simpler.</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Component\npublic class S3AsyncUploadService {\n\n    private final S3AsyncClient s3AsyncClient;\n\n    public S3AsyncUploadService(S3AsyncClient s3AsyncClient) {\n        this.s3AsyncClient = s3AsyncClient;\n    }\n\n    public Mono&lt;PutObjectResponse&gt; uploadFile(String bucketName, String fileName, byte[] fileContent) {\n\n        final PutObjectRequest request = PutObjectRequest.builder()\n                .bucket(bucketName)\n                .key(fileName)\n                .build();\n\n        return Mono.fromFuture(s3AsyncClient.putObject(request, AsyncRequestBody.fromBytes(fileContent)))\n                .doOnError(e -&gt; System.err.println(&quot;Error uploading file: &quot; + e.getMessage()))\n                .doOnSuccess(response -&gt; System.out.println(&quot;Upload completed&quot;));\n    }\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>@GetMapping(value = &quot;/test&quot;)\npublic Mono&lt;String&gt; uploadString(@RequestParam(&quot;content&quot;) String content) {\n    String bucketName = &quot;test-async-rubn&quot;;\n    String keyName = &quot;test/reactive-test.txt&quot;;\n\n    return s3AsyncUploadService.uploadFile(bucketName, keyName, content.getBytes(StandardCharsets.UTF_8))\n            .thenReturn(&quot;Content uploaded successfully&quot;);\n}\n</code></pre>\n<p>I have removed <code>ListObjectsV2Request</code> because you are also merging it with the synchronous client, and I don't see the point.</p>\n<p><a href=\"https://i.sstatic.net/cJedn3gY.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/cJedn3gY.png\" alt=\"enter image description here\" /></a></p>\n<p><a href=\"https://i.sstatic.net/jtIAxXVF.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/jtIAxXVF.png\" alt=\"enter image description here\" /></a></p>\n<p><a href=\"https://i.sstatic.net/DaB5Msq4.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/DaB5Msq4.png\" alt=\"enter image description here\" /></a></p>\n<p>I have also added the other way to list the files and size of each one, as you were doing above.</p>\n<pre class=\"lang-java prettyprint-override\"><code>public Mono&lt;Map&lt;String, Long&gt;&gt; uploadFile(String bucketName, String fileName, byte[] fileContent) {\n\n        final PutObjectRequest request = PutObjectRequest.builder()\n                .bucket(bucketName)\n                .key(fileName)\n                .build();\n\n       \n        return Mono.fromFuture(s3AsyncClient.putObject(request, AsyncRequestBody.fromBytes(fileContent)))\n                .doOnError(e -&gt; System.err.println(&quot;Error uploading file: &quot; + e.getMessage()))\n                .doOnSuccess(response -&gt; System.out.println(&quot;Upload completed&quot;))\n                .then(getFromFuture(bucketName));\n\n}\n\nprivate Mono&lt;Map&lt;String, Long&gt;&gt; getFromFuture(String bucketName) {\n        return Mono.fromFuture(() -&gt; {\n\n            ListObjectsV2Request listReq = ListObjectsV2Request.builder()\n                    .bucket(bucketName)\n                    .build();\n\n            return s3AsyncClient.listObjectsV2(listReq)\n                    .thenApply((e) -&gt; {\n                        return e.contents().stream()\n                                .collect(Collectors.toMap(S3Object::key, S3Object::size));\n                    });\n        });\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>@GetMapping(value = &quot;/test&quot;)\npublic Mono&lt;Map&lt;String, Long&gt;&gt; uploadString(@RequestParam(&quot;content&quot;) String content) {\n    String bucketName = &quot;test-async-rubn&quot;;\n    String keyName = &quot;test/reactive-test.txt&quot;;\n\n    return s3AsyncUploadService.uploadFile(bucketName, keyName, content.getBytes(StandardCharsets.UTF_8));\n}\n</code></pre>\n<p><a href=\"https://i.sstatic.net/4InhdXLj.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/4InhdXLj.png\" alt=\"enter image description here\" /></a></p>\n<p><a href=\"https://i.sstatic.net/jtdX42JF.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/jtdX42JF.png\" alt=\"enter image description here\" /></a></p>\n",
+    "score" : 0,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 9808985,
+      "reputation" : 194,
+      "user_id" : 7267818,
+      "user_type" : "registered",
+      "accept_rate" : 57,
+      "profile_image" : "https://i.sstatic.net/xDbzS.jpg?s=256",
+      "display_name" : "0x52",
+      "link" : "https://stackoverflow.com/users/7267818/0x52"
+    },
+    "creation_date" : 1753788576,
+    "last_activity_date" : 1753816373,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140624837,
+    "post_id" : 79716866,
+    "body" : "@0x52 I&#39;ve tried that... still seeing the same issue. Source code for reference: <a href=\"https://github.com/reap-sow/aws-sdk-s3-test\" rel=\"nofollow noreferrer\">github.com/reap-sow/aws-sdk-s3-test</a>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 14739944,
+      "reputation" : 3,
+      "user_id" : 12117040,
+      "user_type" : "registered",
+      "profile_image" : "https://lh5.googleusercontent.com/-iQoewuXoTD4/AAAAAAAAAAI/AAAAAAAAAAA/ACHi3re7cFH1cMP35H8AQYaQMmkkbaPyeQ/s256-rj/photo.jpg",
+      "display_name" : "Siddarth Reddy",
+      "link" : "https://stackoverflow.com/users/12117040/siddarth-reddy"
+    },
+    "creation_date" : 1753728899,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140623582,
+    "post_id" : 79716866,
+    "body" : "Try using public Mono&lt;S3AsyncClient&gt; instead of <code>public Mono&lt;Void&gt;</code> , and use flatMap() instead of then() in the endpoint.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 9808985,
+      "reputation" : 194,
+      "user_id" : 7267818,
+      "user_type" : "registered",
+      "accept_rate" : 57,
+      "profile_image" : "https://i.sstatic.net/xDbzS.jpg?s=256",
+      "display_name" : "0x52",
+      "link" : "https://stackoverflow.com/users/7267818/0x52"
+    },
+    "creation_date" : 1753701413,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140623553,
+    "post_id" : 79716866,
+    "body" : "Can you debug here? <code>ListObjectsV2Response listRes = s3Client.listObjectsV2(listReq);</code>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 9808985,
+      "reputation" : 194,
+      "user_id" : 7267818,
+      "user_type" : "registered",
+      "accept_rate" : 57,
+      "profile_image" : "https://i.sstatic.net/xDbzS.jpg?s=256",
+      "display_name" : "0x52",
+      "link" : "https://stackoverflow.com/users/7267818/0x52"
+    },
+    "creation_date" : 1753700802,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79718515" : [ {
+      "comment_id" : 140630742,
+      "post_id" : 79718515,
+      "body" : "@SiddarthReddy On my website, you can contact me, and I can lend you my bucket. In any case, I think that the synchronous client, together with your reactive service, was the problem in the mix I had.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 9808985,
+        "reputation" : 194,
+        "user_id" : 7267818,
+        "user_type" : "registered",
+        "accept_rate" : 57,
+        "profile_image" : "https://i.sstatic.net/xDbzS.jpg?s=256",
+        "display_name" : "0x52",
+        "link" : "https://stackoverflow.com/users/7267818/0x52"
+      },
+      "creation_date" : 1753899007,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140630728,
+      "post_id" : 79718515,
+      "body" : "Thanks! I think the underlying issue was the S3 Mock I was using. Unfortunately, I couldn&#39;t find any other lightweight local S3 Mock framework.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 14739944,
+        "reputation" : 3,
+        "user_id" : 12117040,
+        "user_type" : "registered",
+        "profile_image" : "https://lh5.googleusercontent.com/-iQoewuXoTD4/AAAAAAAAAAI/AAAAAAAAAAA/ACHi3re7cFH1cMP35H8AQYaQMmkkbaPyeQ/s256-rj/photo.jpg",
+        "display_name" : "Siddarth Reddy",
+        "link" : "https://stackoverflow.com/users/12117040/siddarth-reddy"
+      },
+      "creation_date" : 1753898587,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

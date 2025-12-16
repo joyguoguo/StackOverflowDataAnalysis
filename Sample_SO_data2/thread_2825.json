@@ -1,0 +1,60 @@
+{
+  "question" : {
+    "question_id" : 79595126,
+    "title" : "Information Retrieval Systems: Optimizing a merging algorithm for partial indices",
+    "body" : "<p>I am currently working on an information retrieval system for an academic course project. In this phase I am required to index a large collection of documents (107000 .nxml files) which, if you don't use partial indexing techniques, requires a lot of memory. Right now I am successfully indexing the documents into the different partial posting and vocabulary files. Also, I am successfully merging the partial indices (posting and vocabulary files) into a single posting and vocabulary file.</p>\n<p>Testing the whole procedure with a small collection of documents (54 .nxml files), it seems to be working as it should. The problem is the time required to merge all of the different partial indices when testing for the large collection. It's taking so long and I don't think it should.</p>\n<p>Is there a way to speed things up while merging? Only way I see is using threads to concurrently handle the merging process. The only thing is, I am not familiar with using threads.</p>\n<p>I am providing the code of the merging algorithm below along with some useful information about the structure of the different files.</p>\n<p>The partial files are saved into a directory as such:</p>\n<ul>\n<li>posting-0.txt,         vocabulary-0.txt</li>\n<li>posting-1.txt,         vocabulary-1.txt</li>\n<li>...</li>\n<li>posting-(n-1).txt,     vocabulary-(n-1).txt</li>\n</ul>\n<p>meaning that we can associate the partial posting to the partial vocabulary through the number in the name of the file.</p>\n<p>I am also keeping these files into a queue in memory in order to access them later for merging.</p>\n<p>Some notes about the structure of the partial files:</p>\n<ul>\n<li>Vocabulary File Structure: term, doc_freq (df), pointer_to_posting_file</li>\n<li>Posting File Structure: doc_id, term_freq (tf), position(s)_of_term_in_doc, pointer_to_doc_file</li>\n<li>Document File Structure: doc_id, path, vector_length</li>\n<li>All files above are kept in ascending order by the term, first term then doc_id and doc_id respectively. This order should be also be kept for the final merged files.</li>\n</ul>\n<pre><code>public static void copyPostingBlock(RandomAccessFile inputRaf, long pointer, RandomAccessFile outputRaf, int df) throws IOException {\n\n    inputRaf.seek(pointer);\n    for (int i = 0; i &lt; df; i++){\n\n        String postingLine = inputRaf.readLine();\n        outputRaf.writeBytes(postingLine + &quot;\\n&quot;);\n\n    }\n\n}\n\n\n\npublic static void mergePartialFiles() throws IOException {\n\n    int length = (int) (partialVocabularyFiles.size() / 2);\n    System.out.println(&quot;length: &quot; + length);\n\n    File collectionIndex = new File(System.getProperty(&quot;user.dir&quot;) + &quot;\\\\src\\\\resources\\\\CollectionIndex&quot;);\n\n    for(int i = 0; i &lt; length; i++){  // for each pair of partial files\n\n        File vocab1 = partialVocabularyFiles.remove();\n        File vocab2 = partialVocabularyFiles.remove();\n        File posting1 = partialPostingFiles.remove();\n        File posting2 = partialPostingFiles.remove();\n\n        BufferedReader reader1 = new BufferedReader(new FileReader(vocab1));\n        BufferedReader reader2 = new BufferedReader(new FileReader(vocab2));\n        RandomAccessFile raf1 = new RandomAccessFile(posting1, &quot;r&quot;);\n        RandomAccessFile raf2 = new RandomAccessFile(posting2, &quot;r&quot;);\n\n        File mergedVocab = new File(collectionIndex, &quot;merged-vocabulary-&quot; + mergesNum + &quot;.txt&quot;);\n        File mergedPosting = new File(collectionIndex, &quot;merged-posting-&quot; + mergesNum++ + &quot;.txt&quot;);\n        RandomAccessFile rafMergedVocab = new RandomAccessFile(mergedVocab, &quot;rw&quot;);\n        RandomAccessFile rafMergedPosting = new RandomAccessFile(mergedPosting, &quot;rw&quot;);\n\n        String currentLine1 = reader1.readLine();\n        String currentLine2 = reader2.readLine();\n\n        while(currentLine1 != null &amp;&amp; currentLine2 != null){   // O(N)\n\n            String[] tokens1 = currentLine1.split(&quot;, &quot;);\n            String[] tokens2 = currentLine2.split(&quot;, &quot;);\n\n            String word1 = tokens1[0];\n            String word2 = tokens2[0];\n            int df1 = Integer.parseInt(tokens1[1]);\n            int df2 = Integer.parseInt(tokens2[1]);\n            long pointer1 = Long.parseLong(tokens1[2]);\n            long pointer2 = Long.parseLong(tokens2[2]);\n\n            long mergedPointer = rafMergedPosting.getFilePointer();\n\n            if(word1.compareTo(word2) &lt; 0){     // if w_i &lt; w_j\n\n                copyPostingBlock(raf1, pointer1, rafMergedPosting, df1);\n                rafMergedVocab.writeBytes(word1 + &quot;, &quot; + df1 + &quot;, &quot; + mergedPointer + &quot;\\n&quot;);\n                currentLine1 = reader1.readLine();\n\n            }else if(word1.compareTo(word2) &gt; 0) {    // if w_j &lt; w_i\n\n                copyPostingBlock(raf2, pointer2, rafMergedPosting, df2);\n                rafMergedVocab.writeBytes(word2 + &quot;, &quot; + df2 + &quot;, &quot; + mergedPointer + &quot;\\n&quot;);\n                currentLine2 = reader2.readLine();\n\n            }else{      // if w_i == w_j\n\n                // TODO: keep the word in memory until another word is discovered\n                copyPostingBlock(raf1, pointer1, rafMergedPosting, df1);\n                copyPostingBlock(raf2, pointer2, rafMergedPosting, df2);\n                int newDf = df1 + df2;\n                rafMergedVocab.writeBytes(word1 + &quot;, &quot; + newDf + &quot;, &quot; + mergedPointer + &quot;\\n&quot;);\n                currentLine1 = reader1.readLine();\n                currentLine2 = reader2.readLine();\n\n            }\n\n        }\n\n        // handle leftover lines\n        while(currentLine1 != null){\n\n            String[] tokens1 = currentLine1.split(&quot;, &quot;);\n            String word1 = tokens1[0];\n            int df1 = Integer.parseInt(tokens1[1]);\n            long pointer1 = rafMergedPosting.getFilePointer();\n\n            long mergedPointer = rafMergedPosting.getFilePointer();\n            copyPostingBlock(raf1, pointer1, rafMergedPosting, df1);\n            rafMergedVocab.writeBytes(word1 + &quot;, &quot; + df1 + &quot;, &quot; + mergedPointer + &quot;\\n&quot;);\n            currentLine1 = reader1.readLine();\n\n        }\n\n        while(currentLine2 != null){\n\n            String[] tokens2 = currentLine2.split(&quot;, &quot;);\n            String word2 = tokens2[0];\n            int df2 = Integer.parseInt(tokens2[1]);\n            long pointer2 = rafMergedPosting.getFilePointer();\n\n            long pointer1 = rafMergedPosting.getFilePointer();\n            copyPostingBlock(raf2, pointer2, rafMergedPosting, df2);\n            rafMergedVocab.writeBytes(word2 + &quot;, &quot; + df2 + &quot;, &quot; + pointer2 + &quot;\\n&quot;);\n            currentLine2 = reader2.readLine();\n\n        }\n\n        // after writing the new merged files, close and delete the partial files used for merging\n        // add the new merged file to the queue\n\n        reader1.close();\n        reader2.close();\n        raf1.close();\n        raf2.close();\n        rafMergedVocab.close();\n        rafMergedPosting.close();\n\n        vocab1.delete();\n        vocab2.delete();\n        posting1.delete();\n        posting2.delete();\n\n        partialVocabularyFiles.add(mergedVocab);\n        partialPostingFiles.add(mergedPosting);\n\n    }\n\n    if(partialPostingFiles.size() != 1)\n        mergePartialFiles();\n\n}\n</code></pre>\n",
+    "tags" : [ "java", "optimization", "merge", "information-retrieval", "partial-index" ],
+    "owner" : {
+      "account_id" : 19661636,
+      "reputation" : 53,
+      "user_id" : 14392947,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a-/AOh14GgJyg2UQNWGrnRxhuXUm-BKr4dvnpUUYKW6LSNInA=k-s256",
+      "display_name" : "Jukeland",
+      "link" : "https://stackoverflow.com/users/14392947/jukeland"
+    },
+    "is_answered" : false,
+    "view_count" : 79,
+    "answer_count" : 0,
+    "score" : 1,
+    "last_activity_date" : 1745801867,
+    "creation_date" : 1745763854,
+    "link" : "https://stackoverflow.com/questions/79595126/information-retrieval-systems-optimizing-a-merging-algorithm-for-partial-indice",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140373932,
+    "post_id" : 79595126,
+    "body" : "@g00se yeah that is what I meant",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 19661636,
+      "reputation" : 53,
+      "user_id" : 14392947,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a-/AOh14GgJyg2UQNWGrnRxhuXUm-BKr4dvnpUUYKW6LSNInA=k-s256",
+      "display_name" : "Jukeland",
+      "link" : "https://stackoverflow.com/users/14392947/jukeland"
+    },
+    "creation_date" : 1745766318,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140373905,
+    "post_id" : 79595126,
+    "body" : "Do we take it that by <i>for academic purposes</i> you mean &quot;as an academic exercise&quot; rather than &quot;for use in an academic setting&quot;?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 22124137,
+      "reputation" : 4244,
+      "user_id" : 16376827,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/1ImPw.png?s=256",
+      "display_name" : "g00se",
+      "link" : "https://stackoverflow.com/users/16376827/g00se"
+    },
+    "creation_date" : 1745765526,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

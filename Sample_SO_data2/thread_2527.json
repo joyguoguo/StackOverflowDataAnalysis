@@ -1,0 +1,153 @@
+{
+  "question" : {
+    "question_id" : 79617263,
+    "title" : "What happens first at startup of a Spring boot application - loading of the application.properties file or creations of beans annotated with @Bean?",
+    "body" : "<p>I've this class:</p>\n<pre><code>@Slf4j\n@Configuration\npublic class TxnIdGeneratorProperties {\n\n    @Bean\n    public TimeBasedTxnIdGenerator seqGenerator() {\n        if (log.isInfoEnabled())\n            log.info(&quot;{} Loading CustomProperties :: getTxnIdGeneratorAccounts....&quot;, BOOT_CONFIG);\n\n        TimeBasedTxnIdGenerator sequencer = new TimeBasedTxnIdGenerator();\n        sequencer.calculateLimit();\n        return sequencer;\n    }\n\n}\n</code></pre>\n<p>Here I'm creating an object of <code>TimeBasedTxnIdGenerator</code>, calling the <code>calculateLimit()</code> method, and returning the same object as the bean that must be created during startup. This is the <code>TimeBasedTxnIdGenerator</code> class:</p>\n<pre><code>@Service\npublic class TimeBasedTxnIdGenerator extends AbstractSequencer implements TransactionIdGenerator {\n    \n    @Value(&quot;${qr.code.app.url}&quot;)\n    private String qrCodeAppUrl;\n    \n    private static final int NODE_ID_BITS = 10;\n    private static final long maxNodeId = (1L &lt;&lt; NODE_ID_BITS) - 1;\n\n    public TimeBasedTxnIdGenerator() {\n        super();\n    }\n    \n    @Override\n    public synchronized String doExecute() {\n        return getSequenceId();\n    }\n    \n    private static long createNodeId() {\n        long nodeId;\n        try {\n            StringBuilder sb = new StringBuilder();\n            Enumeration&lt;NetworkInterface&gt; networkInterfaces = NetworkInterface.getNetworkInterfaces();\n            while (networkInterfaces.hasMoreElements()) {\n                NetworkInterface networkInterface = networkInterfaces.nextElement();\n                byte[] mac = networkInterface.getHardwareAddress();\n                if (mac != null) {\n                    for(byte macPort: mac) {\n                        sb.append(String.format(&quot;%02X&quot;, macPort));\n                    }\n                }\n            }\n            nodeId = sb.toString().hashCode();\n        } catch (Exception ex) {\n            nodeId = (new SecureRandom().nextInt());\n        }\n        nodeId = nodeId &amp; maxNodeId;\n        return nodeId;\n    }\n\n    @Override\n    public void calculateLimit() {\n        \n        System.out.println(&quot;MFS App param : &quot; + qrCodeAppUrl);\n        \n        long nodeId = createNodeId();\n        setSequencerLimit(nodeId);\n    }   \n}\n</code></pre>\n<p>The problem is when I try to read this <code>qr.code.app.url</code> configuration value from the <code>application.properties</code> file, when I print the value at the startup, it is getting printed as <code>null</code>. But when I change the data type of <code>qrCodeAppUrl</code> from <code>String</code> to <code>int</code>, I'm getting this startup error:</p>\n<pre><code>Caused by: org.springframework.beans.TypeMismatchException: Failed to convert value of type 'java.lang.String' to required type 'int'; For input string: &quot;digipay://pay?&quot;\n</code></pre>\n<p>So, the application knows the value of that configuration before calling the <code>calculateLimit()</code> method, but inside the method, its value is printed as <code>null</code>. Why is that?</p>\n",
+    "tags" : [ "java", "spring", "spring-boot", "dependency-injection", "spring-bean" ],
+    "owner" : {
+      "account_id" : 9735171,
+      "reputation" : 2413,
+      "user_id" : 7218656,
+      "user_type" : "registered",
+      "accept_rate" : 75,
+      "profile_image" : "https://i.sstatic.net/u87X2.jpg?s=256",
+      "display_name" : "Arun Sudhakaran",
+      "link" : "https://stackoverflow.com/users/7218656/arun-sudhakaran"
+    },
+    "is_answered" : true,
+    "view_count" : 148,
+    "answer_count" : 2,
+    "score" : 0,
+    "last_activity_date" : 1747145326,
+    "creation_date" : 1747029898,
+    "link" : "https://stackoverflow.com/questions/79617263/what-happens-first-at-startup-of-a-spring-boot-application-loading-of-the-appl",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79617275,
+    "question_id" : 79617263,
+    "body" : "<p>You're creating the class instance with <code>new</code>, the <code>@Value</code> annotation on the field is not going to get evaluated. EDIT: as pointed out by @SotiriosDelimanolis in the comment, the annotation <em>is</em> going to get evaluated, but only after the object is returned from the method.</p>\n<p>You can create Beans either with the <code>@Service</code> annotation or in the <code>@Configuration</code> as a <code>@Bean</code>. To inject the value that way, you can do</p>\n<pre><code>public class TimeBasedTxnIdGenerator extends AbstractSequencer implements TransactionIdGenerator {\n    private final String qrUrl;\n\n    public TimeBasedTxnIdGenerator(String url) {\n        qrUrl = url;\n    }\n    // ...\n}\n\n@Configuration\npublic class Config {\n    @Bean\n    public TimeBasedTxnIdGenerator seqGenerator(@Value(&quot;${qr.code.app.url}&quot;) String qrCodeAppUrl) {\n        if (log.isInfoEnabled())\n            log.info(&quot;{} Loading CustomProperties :: getTxnIdGeneratorAccounts....&quot;, BOOT_CONFIG);\n\n        TimeBasedTxnIdGenerator sequencer = new TimeBasedTxnIdGenerator(qrCodeAppUrl);\n        sequencer.calculateLimit();\n        return sequencer;\n    }\n}\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 3380632,
+      "reputation" : 15109,
+      "user_id" : 2837741,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://i.sstatic.net/AEHnE.png?s=256",
+      "display_name" : "daniu",
+      "link" : "https://stackoverflow.com/users/2837741/daniu"
+    },
+    "creation_date" : 1747030580,
+    "last_activity_date" : 1747116710,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79617300,
+    "question_id" : 79617263,
+    "body" : "<p>Although @daniu's solution is the right approach for injecting values when using @Bean-annotated methods, <strong>the reason why <code>qrCodeAppUrl</code> is still <code>null</code> is because the BeanPostProcessor for the <code>@Value</code> annotation has not been called yet</strong>, not because the bean was created with the <code>new</code> operator.</p>\n<p>According to the documentation of <a href=\"https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/beans/factory/annotation/Value.html\" rel=\"nofollow noreferrer\"><code>@Value</code></a>, the annotation is processed by a BeanPostProcessor:</p>\n<blockquote>\n<p>Note that actual processing of the @Value annotation is performed by a BeanPostProcessor [...]</p>\n</blockquote>\n<p>Therefore, the value returned by the <code>@Value</code>'s expression is injected only after the Spring container instances the bean. According to the section <a href=\"https://docs.spring.io/spring-framework/reference/core/beans/factory-extension.html#beans-factory-extension-bpp\" rel=\"nofollow noreferrer\">Container Extension Points</a> of the Spring docs:</p>\n<blockquote>\n<p>BeanPostProcessor instances operate on bean (or object) instances. That is, the Spring IoC container instantiates a bean instance and then BeanPostProcessor instances do their work.</p>\n</blockquote>\n<p>A bean defined with a @Bean-annotated method is considered instanced by the Spring container only when the method terminates.</p>\n<p>In your case, since you're invoking <code>calculateLimit()</code> inside of the <code>@Bean</code> method (i.e. during the bean creation), the BeanPostProcessor has not been called yet, and therefore the property has not been injected at this point. This is why <code>qrCodeAppUrl</code> is still <code>null</code> when you're printing its value.</p>\n<p>Instead, if you try to call <code>calculateLimit()</code> outside of the <code>@Bean</code> method (i.e. once the bean has been fully created and post-processed), you'd see that the value has been actually injected.</p>\n<p>To fix your issue, you could pass a <code>String</code> argument to the @Bean method, move the <code>@Value</code> annotation from <code>TimeBasedTxnIdGenerator</code>'s member to the @Bean method's argument, and update <code>TimeBasedTxnIdGenerator</code> to offer a constructor that initializes <code>qrCodeAppUrl</code>. Like so, you would rely on constructor-based dependency injection, making your class more loosely coupled, modular, and testable.</p>\n<pre><code>@Slf4j\n@Configuration\npublic class TxnIdGeneratorProperties {\n\n    @Bean\n    public TimeBasedTxnIdGenerator seqGenerator(@Value(&quot;${qr.code.app.url}&quot;) String qrCodeAppUrl) {\n        if (log.isInfoEnabled())\n            log.info(&quot;{} Loading CustomProperties :: getTxnIdGeneratorAccounts....&quot;, BOOT_CONFIG);\n\n        // Use to constructor DI to inject the property\n        TimeBasedTxnIdGenerator sequencer = new TimeBasedTxnIdGenerator(qrCodeAppUrl);\n        sequencer.calculateLimit();\n        return sequencer;\n    }\n}\n</code></pre>\n<hr />\n<p>Since the (previous) general confusion under this question, I've also included a small example to showcase that injection property happens even when a bean is created with the <code>new</code> operator in a @Bean-annotated method. The snippet recreates the same scenario in the question post, where two different beans of the same type are instanced from a @Bean-annotated method and via the <code>@Service</code> annotation.</p>\n<h5>application.properties</h5>\n<pre><code>name=test\n</code></pre>\n<h5>Code</h5>\n<pre><code>@Data\n@NoArgsConstructor\n@Service\npublic class AnotherBean {\n\n    private String id;\n    @Value(&quot;${name}&quot;)\n    private String name;\n\n    public AnotherBean(String id) {\n        this.id = id;\n    }\n}\n\n@Configuration\n@PropertySource(&quot;classpath:application.properties&quot;)\n@ComponentScan(&quot;com.example.bean&quot;)\npublic class AppConfig {\n\n    @Bean\n    public AnotherBean x() {\n        AnotherBean anotherBean = new AnotherBean(&quot;1&quot;);\n        System.out.println(&quot;The property name has not been injected yet: &quot; + anotherBean);\n        return anotherBean;\n    }\n}\n\npublic class Main {\n    public static void main(String[] args) {\n        AnnotationConfigApplicationContext applicationContext = new AnnotationConfigApplicationContext(AppConfig.class);\n        applicationContext.registerShutdownHook();\n\n        // Every bean of type AnotherBean has already been injected with @Value\n        applicationContext.getBeansOfType(AnotherBean.class)\n            .forEach((k, v) -&gt; System.out.println(k + &quot; &quot; + v));\n    }\n}\n</code></pre>\n<h5>Output</h5>\n<pre><code>The property name has not been injected yet: AnotherBean(id=1, name=null)\nanotherBean AnotherBean(id=null, name=test)\nx AnotherBean(id=1, name=test)\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 5569841,
+      "reputation" : 8674,
+      "user_id" : 4415625,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/0ea1713807527aa1cf52e40579e35ec4?s=256&d=identicon&r=PG",
+      "display_name" : "dani-vta",
+      "link" : "https://stackoverflow.com/users/4415625/dani-vta"
+    },
+    "creation_date" : 1747031368,
+    "last_activity_date" : 1747145326,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79617275" : [ {
+      "comment_id" : 140421528,
+      "post_id" : 79617275,
+      "body" : "That&#39;s right. In general, I agree that constructor injection is better or feeding in the value to the @Bean method and calling the setter explicitly (instead of relying on annotations in the bean class at all).",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 195331,
+        "reputation" : 281049,
+        "user_id" : 438154,
+        "user_type" : "registered",
+        "accept_rate" : 98,
+        "profile_image" : "https://www.gravatar.com/avatar/4ec21df1e55febf8deb2e3b24b9cb39b?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Sotirios Delimanolis",
+        "link" : "https://stackoverflow.com/users/438154/sotirios-delimanolis"
+      },
+      "creation_date" : 1747141997,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140420203,
+      "post_id" : 79617275,
+      "body" : "@SotiriosDelimanolis I did not even know that, thank you. So returning a newly created instance from a bean method will trigger field injecetion after?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 3380632,
+        "reputation" : 15109,
+        "user_id" : 2837741,
+        "user_type" : "registered",
+        "accept_rate" : 100,
+        "profile_image" : "https://i.sstatic.net/AEHnE.png?s=256",
+        "display_name" : "daniu",
+        "link" : "https://stackoverflow.com/users/2837741/daniu"
+      },
+      "creation_date" : 1747116655,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140418154,
+      "post_id" : 79617275,
+      "body" : "You might want to qualify your first sentence with additional context. It&#39;s not the <code>new</code> that&#39;s a problem. Objects returned by <code>@Bean</code> factory methods are still processed to populate their <code>@Value</code> annotated members, but that happens <i>after</i> they are returned. This code attempts to access the field before that.",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 195331,
+        "reputation" : 281049,
+        "user_id" : 438154,
+        "user_type" : "registered",
+        "accept_rate" : 98,
+        "profile_image" : "https://www.gravatar.com/avatar/4ec21df1e55febf8deb2e3b24b9cb39b?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Sotirios Delimanolis",
+        "link" : "https://stackoverflow.com/users/438154/sotirios-delimanolis"
+      },
+      "creation_date" : 1747058135,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140416822,
+      "post_id" : 79617275,
+      "body" : "@ArunSudhakaran Because the value was evaluated when the bean annotated with <code>@Service</code> was created. What you were accessing was the one you created in your bean method with <code>new</code>.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 3380632,
+        "reputation" : 15109,
+        "user_id" : 2837741,
+        "user_type" : "registered",
+        "accept_rate" : 100,
+        "profile_image" : "https://i.sstatic.net/AEHnE.png?s=256",
+        "display_name" : "daniu",
+        "link" : "https://stackoverflow.com/users/2837741/daniu"
+      },
+      "creation_date" : 1747033185,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140416764,
+      "post_id" : 79617275,
+      "body" : "hi @daniu, if the <code>@Value</code> annotation on the field is not going to get evaluated why would there be an error on start up when the data type was changed? Also, in that error that value was also printed.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 9735171,
+        "reputation" : 2413,
+        "user_id" : 7218656,
+        "user_type" : "registered",
+        "accept_rate" : 75,
+        "profile_image" : "https://i.sstatic.net/u87X2.jpg?s=256",
+        "display_name" : "Arun Sudhakaran",
+        "link" : "https://stackoverflow.com/users/7218656/arun-sudhakaran"
+      },
+      "creation_date" : 1747031664,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

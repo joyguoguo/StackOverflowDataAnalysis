@@ -1,0 +1,198 @@
+{
+  "question" : {
+    "question_id" : 79838482,
+    "title" : "Testcontainer: H2 is still used in test, Domain &quot;TEXT&quot; not found;",
+    "body" : "<p>I have a very simple example: the entity uses <code>TEXT</code> column and the test fails because of it, despite using PostgreSQL testcontainer:</p>\n<p><strong>application-test.properties</strong></p>\n<pre><code>spring.datasource.url=jdbc:postgresql://localhost:5432/testdb   \nspring.datasource.username=postgres\nspring.datasource.password=postgres\nspring.jpa.hibernate.ddl-auto=create-drop\nspring.jpa.database-platform=org.hibernate.dialect.PostgreSQLDialect\nspring.jpa.show-sql=true\nspring.jpa.properties.hibernate.jdbc.batch_size=0\n</code></pre>\n<p><strong>Dog.java</strong>:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Entity\n@Getter\n@Setter\npublic class Dog {\n    @Id\n    @SequenceGenerator(name = &quot;dog_sequence&quot;,\n            sequenceName = &quot;dog_sequence&quot;,\n            allocationSize = 1)\n    @GeneratedValue(strategy = GenerationType.SEQUENCE,\n            generator = &quot;dog_sequence&quot;)\n    private Long id;\n\n    @Column\n    private String name;\n    @Column(columnDefinition = &quot;TEXT&quot;)\n    private String description;\n\n}\n</code></pre>\n<p><strong>DogRepository.java</strong>:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public interface DogRepository extends JpaRepository&lt;Dog, Long&gt; {}\n</code></pre>\n<p><strong>DogTest.java</strong>:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Testcontainers\n@DataJpaTest\n@ActiveProfiles(&quot;test&quot;)\npublic class DogTest {\n    @Container\n    static PostgreSQLContainer&lt;?&gt; postgres = new PostgreSQLContainer&lt;&gt;(&quot;postgres:15.4&quot;)\n            .withDatabaseName(&quot;testdb&quot;)\n            .withUsername(&quot;postgres&quot;)\n            .withPassword(&quot;postgres&quot;);\n\n    @DynamicPropertySource\n    static void overrideProperties(DynamicPropertyRegistry registry) {\n        registry.add(&quot;spring.datasource.url&quot;, postgres::getJdbcUrl);\n        registry.add(&quot;spring.datasource.username&quot;, postgres::getUsername);\n        registry.add(&quot;spring.datasource.password&quot;, postgres::getPassword);\n        registry.add(&quot;spring.datasource.driver-class-name&quot;, postgres::getDriverClassName);\n        registry.add(&quot;spring.jpa.hibernate.ddl-auto&quot;, () -&gt; &quot;create-drop&quot;);\n        registry.add(&quot;spring.jpa.database-platform&quot;, () -&gt; &quot;org.hibernate.dialect.PostgreSQLDialect&quot;);\n    }\n\n\n    @Autowired\n    private DogRepository repository;\n\n    @Autowired\n    private TestEntityManager entityManager;\n\n\n    @Before\n    public void setUp() {\n        for (int i = 0; i &lt; 10; i++) {\n            Dog dog = new Dog();\n            entityManager.persist(dog);\n        }\n\n        entityManager.flush();\n    }\n\n\n    @Test\n    public void testFindDogs() {\n        List&lt;Dog&gt; dogs = repository.findAll();\n        Assertions.assertEquals(1, dogs.size());\n\n    }\n}\n</code></pre>\n<p>When I run the test I get the error:</p>\n<pre><code>Hibernate: \n    create table &quot;dog&quot; (\n        &quot;id&quot; bigint not null,\n        &quot;description&quot; &quot;TEXT&quot;,\n        &quot;name&quot; varchar(255),\n        primary key (&quot;id&quot;)\n    )\n2025-12-04T20:27:04.096-05:00  WARN 560907 --- [           main] o.h.t.s.i.ExceptionHandlerLoggedImpl     : GenerationTarget encountered exception accepting command : Error executing DDL &quot;\n    create table &quot;dog&quot; (\n        &quot;id&quot; bigint not null,\n        &quot;description&quot; &quot;TEXT&quot;,\n        &quot;name&quot; varchar(255),\n        primary key (&quot;id&quot;)\n    )&quot; via JDBC [Domain &quot;TEXT&quot; not found;]\n\norg.hibernate.tool.schema.spi.CommandAcceptanceException: Error executing DDL &quot;\n    create table &quot;dog&quot; (\n        &quot;id&quot; bigint not null,\n        &quot;description&quot; &quot;TEXT&quot;,\n        &quot;name&quot; varchar(255),\n        primary key (&quot;id&quot;)\n    )&quot; via JDBC [Domain &quot;TEXT&quot; not found;]\n</code></pre>\n<p>From what I understand, <code>TEXT</code> is not used by <code>H2</code>, however works with <code>PostgreSQL</code>. It should work with PostgreSQL testcontainer, yet it doesn't, so it seems like the test is still using <code>H2</code>, and I don't see why.</p>\n<p>How do I make the test run without removing <code>TEXT</code> column type?</p>\n",
+    "tags" : [ "java", "postgresql", "spring-boot", "hibernate", "testcontainers" ],
+    "owner" : {
+      "account_id" : 6099767,
+      "reputation" : 5261,
+      "user_id" : 4759176,
+      "user_type" : "registered",
+      "accept_rate" : 74,
+      "profile_image" : "https://i.sstatic.net/0U1e5.jpg?s=256",
+      "display_name" : "parsecer",
+      "link" : "https://stackoverflow.com/users/4759176/parsecer"
+    },
+    "is_answered" : true,
+    "view_count" : 69,
+    "answer_count" : 2,
+    "score" : 2,
+    "last_activity_date" : 1764920667,
+    "creation_date" : 1764898227,
+    "link" : "https://stackoverflow.com/questions/79838482/testcontainer-h2-is-still-used-in-test-domain-text-not-found",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79838624,
+    "question_id" : 79838482,
+    "body" : "<p>Try adding this property <code>spring.test.database.replace=none</code>to see if this works.</p>\n<p><strong>FYI:</strong> This property actually turns off the default auto configuration of the H2 datasource bean and will use your own custom Postgres datasource bean.</p>\n<p>Update your DogTest to the one given below:</p>\n<pre><code>@Testcontainers\n@DataJpaTest\n@ActiveProfiles(&quot;test&quot;)\n@TestPropertySource(properties = { &quot;spring.test.database.replace=none&quot; })\npublic class DogTest {\n.....\n}\n</code></pre>\n<p>Refer to this official TestContainers blog post, <a href=\"https://testcontainers.com/guides/replace-h2-with-real-database-for-testing/\" rel=\"nofollow noreferrer\">&quot;Replacing H2 With a Real Database for Testing</a>.&quot;</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 11377012,
+      "reputation" : 17227,
+      "user_id" : 8340997,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/fQmuF6ta.png?s=256",
+      "display_name" : "Anish B.",
+      "link" : "https://stackoverflow.com/users/8340997/anish-b"
+    },
+    "creation_date" : 1764919491,
+    "last_activity_date" : 1764920667,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79838633,
+    "question_id" : 79838482,
+    "body" : "<p>You have to write <code>text</code> in lower case. If you write <code>TEXT</code>, the system seems to try to help you by preserving upper case with the aid of double quotes (which prevent case folding in SQL), but there is no data type <code>&quot;TEXT&quot;</code>.</p>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 8633322,
+      "reputation" : 257201,
+      "user_id" : 6464308,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/12PVX.jpg?s=256",
+      "display_name" : "Laurenz Albe",
+      "link" : "https://stackoverflow.com/users/6464308/laurenz-albe"
+    },
+    "creation_date" : 1764920461,
+    "last_activity_date" : 1764920461,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140889332,
+    "post_id" : 79838482,
+    "body" : "I changed Spring Boot to version 3.2.3 and then re-run the tests. Using your original versions of DogRepository.java and Dog.java, the tests were successful.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 26698569,
+      "reputation" : 4090,
+      "user_id" : 20306007,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/98bbc403493aee3681b71dae7abef66e?s=256&d=identicon&r=PG",
+      "display_name" : "life888888",
+      "link" : "https://stackoverflow.com/users/20306007/life888888"
+    },
+    "creation_date" : 1764950824,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140889331,
+    "post_id" : 79838482,
+    "body" : "console output: <code>2025-12-06T00:02:27.996+08:00  INFO 18213 --- [demo-jpa] [           main] o.h.e.t.j.p.i.JtaPlatformInitiator       : HHH000489: No JTA platform available (set &#39;hibernate.transaction.jta.platform&#39; to enable JTA platform integration) Hibernate:      drop table if exists dog cascade Hibernate:      drop sequence if exists dog_sequence Hibernate:      create sequence dog_sequence start with 1 increment by 1 Hibernate:      create table dog (         id bigint not null,         description TEXT,         name varchar(255),         primary key (id)     )</code>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 26698569,
+      "reputation" : 4090,
+      "user_id" : 20306007,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/98bbc403493aee3681b71dae7abef66e?s=256&d=identicon&r=PG",
+      "display_name" : "life888888",
+      "link" : "https://stackoverflow.com/users/20306007/life888888"
+    },
+    "creation_date" : 1764950819,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140889249,
+    "post_id" : 79838482,
+    "body" : "@life888888 my <code>pom.xml</code> had <code>spring-boot-starter-parent</code> as <code>3.2.3</code> version, <code>junit-jupiter</code> as <code>5.10.0</code>. I guess that Spring Boot version still required lowercase <code>text</code>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 6099767,
+      "reputation" : 5261,
+      "user_id" : 4759176,
+      "user_type" : "registered",
+      "accept_rate" : 74,
+      "profile_image" : "https://i.sstatic.net/0U1e5.jpg?s=256",
+      "display_name" : "parsecer",
+      "link" : "https://stackoverflow.com/users/4759176/parsecer"
+    },
+    "creation_date" : 1764948673,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140889165,
+    "post_id" : 79838482,
+    "body" : "With Spring Boot 3.5.6 and JDK 17, the questioner&#39;s code (Dog.java, DogRepository.java) executes successfully without modification.  However, Spring Boot 3.5 uses JUnit 5 by default, so the <code>@Before public void setUp()</code> in DogTest.java needs to be changed to <code>@BeforeEach public void setUp()</code>; and the import should be changed to <code>import org.junit.jupiter.api.BeforeEach;</code>.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 26698569,
+      "reputation" : 4090,
+      "user_id" : 20306007,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/98bbc403493aee3681b71dae7abef66e?s=256&d=identicon&r=PG",
+      "display_name" : "life888888",
+      "link" : "https://stackoverflow.com/users/20306007/life888888"
+    },
+    "creation_date" : 1764946204,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79838624" : [ {
+      "comment_id" : 140889144,
+      "post_id" : 79838624,
+      "body" : "The other answer helped! Turns out it&#39;s the <code>TEXT</code> being uppercase that&#39;s the issue",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 6099767,
+        "reputation" : 5261,
+        "user_id" : 4759176,
+        "user_type" : "registered",
+        "accept_rate" : 74,
+        "profile_image" : "https://i.sstatic.net/0U1e5.jpg?s=256",
+        "display_name" : "parsecer",
+        "link" : "https://stackoverflow.com/users/4759176/parsecer"
+      },
+      "creation_date" : 1764945774,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140889052,
+      "post_id" : 79838624,
+      "body" : "@parsecer I will update you soon if I get something. I need to set up a whole codebase for this and test. It will take some time.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 11377012,
+        "reputation" : 17227,
+        "user_id" : 8340997,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/fQmuF6ta.png?s=256",
+        "display_name" : "Anish B.",
+        "link" : "https://stackoverflow.com/users/8340997/anish-b"
+      },
+      "creation_date" : 1764943081,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140889015,
+      "post_id" : 79838624,
+      "body" : "@parsecer Understand the blog very well. I&#39;m sure something you have missed. It&#39;s difficult to assume from the issue that you raised. Slowly go step by step. You will get to know where the problem is. But that property is needed if you want to try with a real database.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 11377012,
+        "reputation" : 17227,
+        "user_id" : 8340997,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/fQmuF6ta.png?s=256",
+        "display_name" : "Anish B.",
+        "link" : "https://stackoverflow.com/users/8340997/anish-b"
+      },
+      "creation_date" : 1764942095,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140888892,
+      "post_id" : 79838624,
+      "body" : "Unfortunately I&#39;m getting the same error. I&#39;ve tried to run both by right clicking the <code>DogTest</code> -&gt; <code>Run</code> and by doing <code>mvn test -Dtest=DogTest</code>, with same result.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 6099767,
+        "reputation" : 5261,
+        "user_id" : 4759176,
+        "user_type" : "registered",
+        "accept_rate" : 74,
+        "profile_image" : "https://i.sstatic.net/0U1e5.jpg?s=256",
+        "display_name" : "parsecer",
+        "link" : "https://stackoverflow.com/users/4759176/parsecer"
+      },
+      "creation_date" : 1764938049,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

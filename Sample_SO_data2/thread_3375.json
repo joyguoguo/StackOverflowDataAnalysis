@@ -1,0 +1,96 @@
+{
+  "question" : {
+    "question_id" : 79555036,
+    "title" : "Early(?) Triggering of Flink&#39;s Event Time Windows and Non-Deterministic Results",
+    "body" : "<p>I'm reading a small sample of data stored in a Kafka but instead of applying watermarks directly to the source I do some processing on the data then extract the event timestamps.\nI then apply event time window of 5 seconds. Most times the results are fine but sometimes the window seems to get triggered (early?) and does not contain some events even though their timestamps should fall inside the window duration. I am only testing for 1-window.  See below for example and trying to understand why some events though their timestamps lie inside the window bounds do not get included in the window?</p>\n<pre><code>//seconds\nint windowSize = 5\nint windowSlide = 5\nint windowOffset = 0\nint envParallelism = 5\n\n\n//read data from kafkasource\nDataStream&lt;String&gt; eventstream =\n                    env.fromSource(source, WatermarkStrategy.noWatermarks(), &quot;Kafka Source&quot;).setParallelism(1);\n\n// some preprocessing, produce inValue tuples\neventstream = eventstream.flatMap(new JsonFlatMap()); \n\nWatermarkStrategy watermarkStrategy = WatermarkStrategy.\n                    forBoundedOutOfOrderness(Duration.ofSeconds(maxOutOfOrderness));\n\nWatermarkStrategy watermarkStrategyWithTimestampAssigner = watermarkStrategy\n                    .withTimestampAssigner(\n                    new SerializableTimestampAssigner&lt;Event&gt;() {\n                        @Override\n                        public long extractTimestamp(Event event, long recordTimestamp) {\n                            return event.time;\n                        }\n                    });\neventStream = eventStream.assignTimestampsAndWatermarks(watermarkStrategyWithTimestampAssigner).setParallelism(1);\n\neventStream.print();\n　　　　　　　\n//--for every &quot;eventName&quot;(key), add &quot;inValue&quot; to &quot;inValueList&quot; and &quot;outValue&quot; to &quot;outValueList&quot;　\nDataStream&lt;Model&gt; output = eventStream\n                    .keyBy(new EventKeySelector(&quot;eventName&quot;)\n                    .window(SlidingEventTimeWindows.of(\n                            Time.seconds(windowSize), Time.seconds(windowSlide),\n                            Time.seconds(windowOffset)))\n                    .process(new GraphProcessWindowFunction());\noutput.print();\n</code></pre>\n<p>This is the data stored in kafka, only four keys(eventName):</p>\n<pre><code>{&quot;eventName&quot;:1,&quot;outValue&quot;:2,&quot;time&quot;:1743663199798} \n{&quot;eventName&quot;:2,&quot;outValue&quot;:1,&quot;time&quot;:1743663199908}\n{&quot;eventName&quot;:2,&quot;outValue&quot;:6,&quot;time&quot;:1743663199911}\n{&quot;eventName&quot;:3,&quot;outValue&quot;:6,&quot;time&quot;:1743663199914} \n{&quot;eventName&quot;:6,&quot;outValue&quot;:1,&quot;time&quot;:1743663199918}\n{&quot;eventName&quot;:6,&quot;outValue&quot;:3,&quot;time&quot;:1743663199920} \n{&quot;eventName&quot;:2,&quot;outValue&quot;:6,&quot;time&quot;:1743663207928}\n{&quot;eventName&quot;:3,&quot;outValue&quot;:6,&quot;time&quot;:1743663207933}\n</code></pre>\n<p>The last two events are produced after a 8000ms so are rightfully not included in the window. After processing the “inValue” tuples are produced.</p>\n<p>[RUN 1]The correct results:\n<a href=\"https://i.sstatic.net/MJzdkUpB.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/MJzdkUpB.png\" alt=\"enter image description here\" /></a></p>\n<p>[RUN 2]Example of unexpected results I sometimes get. Some events are not assigned to the window despite their timestamp falling inside window bounds.\n<a href=\"https://i.sstatic.net/yHTg1f0w.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/yHTg1f0w.png\" alt=\"enter image description here\" /></a></p>\n<p>[RUN 3] Another example of unexpected results.\n<a href=\"https://i.sstatic.net/wpn7wxY8.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/wpn7wxY8.png\" alt=\"enter image description here\" /></a></p>\n<p><strong>Things I have tried so far:</strong></p>\n<p>When I set <code>.allowedLateness()</code> &gt; 3sec, the &quot;not assigned&quot; events are re-triggering the window but I do not want to deal with the output of the window the second time. How do I avoid this?</p>\n<p>In my understanding the problem should be fixed after I have set the <code>maxOutOfOrderness</code> in <code>forBoundedOutOfOrderness</code> to be 5 seconds, but it seems to have no effect and I still get wrong results.</p>\n<p>I have also tried decreasing <code>env.getConfig().setAutoWatermarkInterval(1);</code> but that did not help either.</p>\n<p>I also printed out the currentwatermark() for each window and its always 1743663202933 for all windows regarless of the scenario. I have never gotten a different value despite changing the watermark interval.</p>\n<p>I have not tried assigning a watermark strategy directly at the kafkasource but would it make a difference?</p>\n<p>Flink v1.16.0. Java 11</p>\n",
+    "tags" : [ "java", "apache-kafka", "apache-flink", "flink-streaming", "data-stream" ],
+    "owner" : {
+      "account_id" : 11057209,
+      "reputation" : 39,
+      "user_id" : 11791225,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/bf9f6646ef108f84595e349307dc4da8?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "K.M",
+      "link" : "https://stackoverflow.com/users/11791225/k-m"
+    },
+    "is_answered" : true,
+    "view_count" : 77,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1744107639,
+    "creation_date" : 1743761583,
+    "link" : "https://stackoverflow.com/questions/79555036/early-triggering-of-flinks-event-time-windows-and-non-deterministic-results",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79561763,
+    "question_id" : 79555036,
+    "body" : "<p>Setting <code>maxOutOfOrderness</code> to 5 seconds isn't large enough to account for the degree of out-of-orderness that your data can have. So depending on how the race conditions play out, some of your events can be late.</p>\n<p>Setting the watermark strategy at the Kafka source is recommended, and will probably make a difference, depending on how your data is stored in kafka (the number of partitions and partitioning strategy).</p>\n<p>If your events are stored in order in kafka, within each partition, then you can use `</p>\n<pre><code>WatermarkStrategy.forMonotonousTimestamps()\n</code></pre>\n<p><strong>on the kafka source</strong>, and everything should work fine.</p>\n<p>If you want to continue applying watermarking after the source, then you'll need to set <code>maxOutOfOrderness</code> to about 8 seconds, since the event at 1743663207933 can be processed before the event at 1743663199798 (events with difference keys will race against each other, and there's no ordering guarantee).</p>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 2274094,
+      "reputation" : 44297,
+      "user_id" : 2000823,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/BHxCqzuW.jpg?s=256",
+      "display_name" : "David Anderson",
+      "link" : "https://stackoverflow.com/users/2000823/david-anderson"
+    },
+    "creation_date" : 1744107639,
+    "last_activity_date" : 1744107639,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79561763" : [ {
+      "comment_id" : 140338949,
+      "post_id" : 79561763,
+      "body" : "The <code>extractTimestamp(Event event, long recordTimestamp)</code> method is passed both the event, and the Kafka record timestamp. You can return event.time, and ignore the Kafka record timestamp.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2274094,
+        "reputation" : 44297,
+        "user_id" : 2000823,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/BHxCqzuW.jpg?s=256",
+        "display_name" : "David Anderson",
+        "link" : "https://stackoverflow.com/users/2000823/david-anderson"
+      },
+      "creation_date" : 1744762213,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140338945,
+      "post_id" : 79561763,
+      "body" : "It will use the Kafka timestamps by default, but the watermark strategy you pass into the Kafka source can use <code>withTimestampAssigner</code> to define a custom timestamp extractor.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2274094,
+        "reputation" : 44297,
+        "user_id" : 2000823,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/BHxCqzuW.jpg?s=256",
+        "display_name" : "David Anderson",
+        "link" : "https://stackoverflow.com/users/2000823/david-anderson"
+      },
+      "creation_date" : 1744762112,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140331424,
+      "post_id" : 79561763,
+      "body" : "setting the watermark strategy on the kafka source significantly improved the results. The only limitation is that it uses the timestamps supplied by kafka. I don&#39;t think there is anyway to extract the event timestamps provided in the event tuples while reading the kafka source, correct?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 11057209,
+        "reputation" : 39,
+        "user_id" : 11791225,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/bf9f6646ef108f84595e349307dc4da8?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "K.M",
+        "link" : "https://stackoverflow.com/users/11791225/k-m"
+      },
+      "creation_date" : 1744608456,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

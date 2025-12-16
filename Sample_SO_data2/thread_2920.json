@@ -1,0 +1,167 @@
+{
+  "question" : {
+    "question_id" : 79588267,
+    "title" : "How to convert a image In Spring boot resource folder to Encoded character and then decode it",
+    "body" : "<p>I am using the following code in a Spring Boot application to load an image from the resources folder, encode it to a Base64 string, and later decode it back into an image file.</p>\n<pre><code>    public String encodeImageAsBase64(String imagePath) {\n    try {\n        logger.debug(&quot;Loading image from path: {}&quot;, imagePath);\n        Resource resource = resourceLoader.getResource(&quot;classpath:&quot; + imagePath);\n\n        if (!resource.exists()) {\n            logger.error(&quot;Image not found at: {}&quot;, imagePath);\n            return &quot;&quot;;\n        }\n\n        try (InputStream inputStream = resource.getInputStream()) {\n            byte[] imageBytes = inputStream.readAllBytes();\n            if (imageBytes.length == 0) {\n                logger.error(&quot;Empty image data for: {}&quot;, imagePath);\n                return &quot;&quot;;\n            }\n            String base64String = Base64.getEncoder().encodeToString(imageBytes);\n            logger.info(&quot;base64String value {}&quot;, base64String);\n            logger.info(&quot;Base64 encoding success, length: {}&quot;, base64String.length());\n            return base64String;\n        }\n    } catch (Exception e) {\n        logger.error(&quot;Failed to encode image: {}&quot;, imagePath, e);\n        return &quot;&quot;;\n    }\n}\n</code></pre>\n<p>When decoding the image using the code, the output image appears to be corrupted. However, when I use the same Base64 string in an online tool, it works fine. What could be the mistake I'm making?  i am using java.util.Base64; springboot 3.* and java17</p>\n<pre><code>    public void decodeBase64ToImage(String base64, String outputFilePath) {\n    try {\n        byte[] imageBytes = Base64.getDecoder().decode(base64);\n        try (FileOutputStream fos = new FileOutputStream(outputFilePath)) {\n            fos.write(imageBytes);\n            fos.flush();\n        }\n        logger.info(&quot;Decoded image to: {}&quot;, outputFilePath);\n        } catch (Exception e) {\n        logger.error(&quot;Failed to decode image using : {}&quot;, outputFilePath, e);\n\n    }\n}\n</code></pre>\n",
+    "tags" : [ "java", "spring", "spring-boot", "java-11", "java-17" ],
+    "owner" : {
+      "account_id" : 1108377,
+      "reputation" : 699,
+      "user_id" : 1099290,
+      "user_type" : "registered",
+      "accept_rate" : 80,
+      "profile_image" : "https://www.gravatar.com/avatar/328da186c2bf7de03cdc14fedd806ea6?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "gibyalex",
+      "link" : "https://stackoverflow.com/users/1099290/gibyalex"
+    },
+    "is_answered" : true,
+    "view_count" : 111,
+    "answer_count" : 2,
+    "score" : 0,
+    "last_activity_date" : 1745494622,
+    "creation_date" : 1745400773,
+    "link" : "https://stackoverflow.com/questions/79588267/how-to-convert-a-image-in-spring-boot-resource-folder-to-encoded-character-and-t",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79590487,
+    "question_id" : 79588267,
+    "body" : "<p>The issue was with way i am taking the building while doing the build using gradlew it was corrupting the file using the task processResources    <em>processResources { filter ReplaceTokens, tokens: [ BUILD_VERSION : project.version, BUILD_TIMESTAMP : project.ext.timestamp ] }</em></p>\n<p>This block causes issues when processing binary files like images, because it tries to treat all resource files as text, and applies token replacement corrupting binary files (e.g., .png, .jpg, etc.). once I corrected it now my code base is working</p>\n<p>Fix done by updating the task</p>\n<pre><code>processResources {\n    filesMatching('**/*.properties', '**/*.yml') {\n        filter ReplaceTokens, tokens: [\n            BUILD_VERSION   : project.version,\n            BUILD_TIMESTAMP : project.ext.timestamp\n        ]\n    }\n}\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 1108377,
+      "reputation" : 699,
+      "user_id" : 1099290,
+      "user_type" : "registered",
+      "accept_rate" : 80,
+      "profile_image" : "https://www.gravatar.com/avatar/328da186c2bf7de03cdc14fedd806ea6?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "gibyalex",
+      "link" : "https://stackoverflow.com/users/1099290/gibyalex"
+    },
+    "creation_date" : 1745494622,
+    "last_activity_date" : 1745494622,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79588736,
+    "question_id" : 79588267,
+    "body" : "<p>There can be multiple reason for corrupted image like below</p>\n<ol>\n<li><p>Prefixes/Suffixes for Data URI.</p>\n</li>\n<li><p>Incorrect outputFilePath.</p>\n</li>\n<li><p>Character Encoding Issues.</p>\n</li>\n<li><p>Missing or Incorrect Image Format etc.</p>\n</li>\n</ol>\n<p>I am posting this answer with all checks to solve above problems. Try this and let me know.</p>\n<p>ImageDecoder Class:</p>\n<pre><code>import java.io.File;\nimport java.io.FileOutputStream;\nimport java.util.Base64;\nimport org.slf4j.Logger;\nimport org.slf4j.LoggerFactory;\n\npublic class ImageDecoder {\n\n    private static final Logger logger = LoggerFactory.getLogger(ImageDecoder.class);\n\n    public void decodeBase64ToImage(String base64, String outputFilePath) {\n        if (base64 == null || base64.isEmpty()) {\n            logger.error(&quot;Base64 string is null or empty.&quot;);\n            return;\n        }\n\n        // 1. Remove Data URI Prefix (if present)\n        if (base64.startsWith(&quot;data:image&quot;)) {\n            int commaIndex = base64.indexOf(&quot;,&quot;);\n            if (commaIndex != -1) {\n                base64 = base64.substring(commaIndex + 1);\n            } else {\n                logger.warn(&quot;Data URI prefix found, but no comma.  Using the entire string.&quot;);\n            }\n        }\n\n        // 2. Remove Whitespace\n        base64 = base64.replaceAll(&quot;\\\\s+&quot;, &quot;&quot;);\n\n        try {\n            // 3. Decode the Base64 string\n            byte[] imageBytes = Base64.getDecoder().decode(base64);\n\n            // 4. Create Directories (if necessary)\n            File outputFile = new File(outputFilePath);\n            File parentDir = outputFile.getParentFile();\n            if (parentDir != null &amp;&amp; !parentDir.exists()) {\n                if (!parentDir.mkdirs()) {\n                    logger.error(&quot;Failed to create directory: {}&quot;, parentDir.getAbsolutePath());\n                    return; // Or throw an exception\n                }\n            }\n\n            // 5. Write the image data to the file\n            try (FileOutputStream fos = new FileOutputStream(outputFile)) {\n                fos.write(imageBytes);\n                fos.flush();\n            }\n\n            logger.info(&quot;Decoded image to: {}&quot;, outputFilePath);\n\n        } catch (IllegalArgumentException e) {\n            logger.error(&quot;Invalid Base64 string: {}&quot;, e.getMessage()); // Log the specific error\n        }\n        catch (Exception e) {\n            logger.error(&quot;Failed to decode image to: {}&quot;, outputFilePath, e);\n        }\n    }}\n    \n    \n</code></pre>\n<p>Main Method to Test decoding.</p>\n<pre><code>\n    \n    \n\n    public static void main(String[] args) {\n        // Example Usage (Replace with your actual Base64 string and output path)\n        String base64String = &quot;iVBORw0KGgoAAAANSUhEUgAAAAUAAAAFCAYAAACNbyblAAAAHElEQVQI12P4//8/w+r8jUAYjYJDAgAAAABJRU5ErkJggg==&quot;; // A very small PNG\n        String outputFilePath = &quot;output.png&quot;;\n\n        ImageDecoder decoder = new ImageDecoder();\n        decoder.decodeBase64ToImage(base64String, outputFilePath);\n    }\n\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 10927511,
+      "reputation" : 3218,
+      "user_id" : 8031784,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/ikcJL.png?s=256",
+      "display_name" : "Aniruddh Parihar",
+      "link" : "https://stackoverflow.com/users/8031784/aniruddh-parihar"
+    },
+    "creation_date" : 1745415357,
+    "last_activity_date" : 1745415357,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140365108,
+    "post_id" : 79588267,
+    "body" : "I found it was a mistake while doing the build using gradlew it was corrupting the file using the task processResources processResources { filter ReplaceTokens, tokens: [ BUILD_VERSION : project.version, BUILD_TIMESTAMP : project.ext.timestamp ] } This block causes issues when processing binary files like images, because it tries to treat all resource files as text, and applies token replacement corrupting binary files (e.g., .png, .jpg, etc.). once I corrected it now my code base is working",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1108377,
+      "reputation" : 699,
+      "user_id" : 1099290,
+      "user_type" : "registered",
+      "accept_rate" : 80,
+      "profile_image" : "https://www.gravatar.com/avatar/328da186c2bf7de03cdc14fedd806ea6?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "gibyalex",
+      "link" : "https://stackoverflow.com/users/1099290/gibyalex"
+    },
+    "creation_date" : 1745494418,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140361591,
+    "post_id" : 79588267,
+    "body" : "There can be multiple reason for corrupted image like 1) Prefixes/Suffixes. 2) Incorrect outputFilePath. 3) Character Encoding Issues. 4) Missing or Incorrect Image Format etc.  I am Posting one Answer which have all checks there. Try to solve by that.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10927511,
+      "reputation" : 3218,
+      "user_id" : 8031784,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/ikcJL.png?s=256",
+      "display_name" : "Aniruddh Parihar",
+      "link" : "https://stackoverflow.com/users/8031784/aniruddh-parihar"
+    },
+    "creation_date" : 1745415020,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140361061,
+    "post_id" : 79588267,
+    "body" : "<i>When decoding the image using the code, the output image appears to be corrupted.</i> That&#39;s vague. What did you do?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 22124137,
+      "reputation" : 4244,
+      "user_id" : 16376827,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/1ImPw.png?s=256",
+      "display_name" : "g00se",
+      "link" : "https://stackoverflow.com/users/16376827/g00se"
+    },
+    "creation_date" : 1745405680,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140360893,
+    "post_id" : 79588267,
+    "body" : "I cannot reproduce. How is your image corrupted? Is it truncated? Does it have the wrong byte values? What happens if you compare the first few lines of a hexdump of both images?",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 39208,
+      "reputation" : 269427,
+      "user_id" : 112968,
+      "user_type" : "registered",
+      "accept_rate" : 68,
+      "profile_image" : "https://i.sstatic.net/zHTaT.png?s=256",
+      "display_name" : "knittl",
+      "link" : "https://stackoverflow.com/users/112968/knittl"
+    },
+    "creation_date" : 1745401811,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79588736" : [ {
+      "comment_id" : 140365158,
+      "post_id" : 79588736,
+      "body" : "Sounds good...Happy Coding :)",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 10927511,
+        "reputation" : 3218,
+        "user_id" : 8031784,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/ikcJL.png?s=256",
+        "display_name" : "Aniruddh Parihar",
+        "link" : "https://stackoverflow.com/users/8031784/aniruddh-parihar"
+      },
+      "creation_date" : 1745495083,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140365106,
+      "post_id" : 79588736,
+      "body" : "I found it was a mistake while doing the build using gradlew it was corrupting the file using the task processResources   processResources {     filter ReplaceTokens, tokens: [         BUILD_VERSION   : project.version,         BUILD_TIMESTAMP : project.ext.timestamp     ] }  This block causes issues when processing binary files like images, because it tries to treat all resource files as text, and applies token replacement  corrupting binary files (e.g., .png, .jpg, etc.).  once I corrected it  now my code base is working",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 1108377,
+        "reputation" : 699,
+        "user_id" : 1099290,
+        "user_type" : "registered",
+        "accept_rate" : 80,
+        "profile_image" : "https://www.gravatar.com/avatar/328da186c2bf7de03cdc14fedd806ea6?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "gibyalex",
+        "link" : "https://stackoverflow.com/users/1099290/gibyalex"
+      },
+      "creation_date" : 1745494404,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

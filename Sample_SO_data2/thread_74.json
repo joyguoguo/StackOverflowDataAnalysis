@@ -1,0 +1,64 @@
+{
+  "question" : {
+    "question_id" : 79841353,
+    "title" : "Process does not terminating in Spring Environment and Spring boot application is not responding",
+    "body" : "<p>I have created an endpoint which gets audio and images bytes as request parts</p>\n<pre><code>@PostMapping(value = &quot;/videos&quot;,consumes = MediaType.MULTIPART_FORM_DATA_VALUE,produces = &quot;video/mp4&quot;)\npublic ResponseEntity&lt;?&gt; getVideo(\n    @RequestPart MultipartFile audio,\n    @RequestPart MultipartFile image\n) throws IOException {\n    return ResponseEntity.status(HttpStatus.OK)\n            .contentType(MediaType.valueOf(&quot;video/mp4&quot;))\n            .header(HttpHeaders.CONTENT_DISPOSITION,\n                    &quot;attachment; filename=\\&quot;news.mp4\\&quot;&quot;)\n            .body(newsService.generateVideo(audio.getBytes(),image.getBytes()));\n\n}\n</code></pre>\n<p>There is a processVideo method call inside generateVideo method. In processVideo, ı have created Processbuilder object and pass a command that will run FFMPEG CLI application. But the postman doesnt even response. It just says sending request.</p>\n<pre><code>public static byte[] processVideo(byte[] audioByte, byte[] imageByte) {\n    try {\n        File tempImage = File.createTempFile(&quot;news_image&quot;, &quot;.png&quot;);\n        File tempAudio = File.createTempFile(&quot;news_audio&quot;, &quot;.mp3&quot;);\n        File tempVideo = File.createTempFile(&quot;news_video&quot;, &quot;.mp4&quot;);\n\n        Files.write(tempImage.toPath(), imageByte);\n        Files.write(tempAudio.toPath(), audioByte);\n\n        ProcessBuilder pb = new ProcessBuilder(\n                &quot;ffmpeg&quot;,\n                &quot;-y&quot;,\n                &quot;-loop&quot;, &quot;1&quot;,\n                &quot;-i&quot;, tempImage.getAbsolutePath(),\n                &quot;-i&quot;, tempAudio.getAbsolutePath(),\n                &quot;-c:v&quot;, &quot;libx264&quot;,\n                &quot;-tune&quot;, &quot;stillimage&quot;,\n                &quot;-c:a&quot;, &quot;aac&quot;,\n                &quot;-b:a&quot;, &quot;192k&quot;,\n                &quot;-pix_fmt&quot;, &quot;yuv420p&quot;,\n                &quot;-shortest&quot;,\n                tempVideo.getAbsolutePath()\n        );\n\n        pb.redirectErrorStream(true); // stderr + stdout getting together\n        Process process = pb.start();\n\n        try (BufferedReader reader = new BufferedReader(\n                new InputStreamReader(process.getInputStream()))) {\n\n            String line;\n            while ((line = reader.readLine()) != null) {\n                System.out.println(&quot;[FFMPEG] &quot; + line);\n            }\n        }\n\n        int exitCode = process.waitFor();\n        System.out.println(&quot;FFmpeg finished with code: &quot; + exitCode);\n\n        byte[] videoBytes = Files.readAllBytes(tempVideo.toPath());\n\n        tempImage.delete();\n        tempAudio.delete();\n        tempVideo.delete();\n\n        return videoBytes;\n\n    } catch (Exception ex) {\n        ex.printStackTrace();\n        throw new RuntimeException(&quot;Video creation failed&quot;, ex);\n    }\n}\n</code></pre>\n<p>What do I do wrong ?</p>\n",
+    "tags" : [ "java", "spring-boot", "ffmpeg", "process", "processbuilder" ],
+    "owner" : {
+      "account_id" : 36339639,
+      "reputation" : 1,
+      "user_id" : 27687389,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/43cf1b01b751ec1dbab35b3e1ec86cc6?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "H&#252;seyin &#199;ataloğlu",
+      "link" : "https://stackoverflow.com/users/27687389/h%c3%bcseyin-%c3%87atalo%c4%9flu"
+    },
+    "is_answered" : false,
+    "view_count" : 52,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1765234631,
+    "creation_date" : 1765228783,
+    "link" : "https://stackoverflow.com/questions/79841353/process-does-not-terminating-in-spring-environment-and-spring-boot-application-i",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79841414,
+    "question_id" : 79841353,
+    "body" : "<p>Most likely nothing is “wrong” with Spring itself – your request thread is just blocked forever in <code>process.waitFor()</code> because the <code>ffmpeg</code> process never completes (or never even starts correctly).</p>\n<p>A few concrete things to fix/check:</p>\n<pre><code>ProcessBuilder pb = new ProcessBuilder(\n    &quot;/usr/bin/ffmpeg&quot;,        // 1. use absolute path\n    &quot;-y&quot;,\n    &quot;-loop&quot;, &quot;1&quot;,\n    &quot;-i&quot;, tempImage.getAbsolutePath(),\n    &quot;-i&quot;, tempAudio.getAbsolutePath(),\n    &quot;-c:v&quot;, &quot;libx264&quot;,\n    &quot;-tune&quot;, &quot;stillimage&quot;,\n    &quot;-c:a&quot;, &quot;aac&quot;,\n    &quot;-b:a&quot;, &quot;192k&quot;,\n    &quot;-pix_fmt&quot;, &quot;yuv420p&quot;,\n    &quot;-shortest&quot;,\n    tempVideo.getAbsolutePath()\n);\n\npb.redirectErrorStream(true);\nProcess process = pb.start();\n\n// 2. OPTIONAL: timeout so your HTTP thread doesn’t hang forever\nif (!process.waitFor(60, TimeUnit.SECONDS)) {\n    process.destroyForcibly();\n    throw new IllegalStateException(&quot;ffmpeg timed out&quot;);\n}\n</code></pre>\n<p>And:</p>\n<ol>\n<li><p><strong>Run the exact command manually in a terminal</strong> (with real temp paths) and see if it ever finishes or prints an error.</p>\n</li>\n<li><p><strong>Log the full <code>ffmpeg</code> output</strong> (you already read it, but print it somewhere you can see in Spring logs) – often it will show “command not found”, “invalid input format”, etc.</p>\n</li>\n<li><p>Don’t do heavy video generation on the request thread in production – offload to an async job/queue and return a link or status instead.</p>\n</li>\n</ol>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 1807468,
+      "reputation" : 335,
+      "user_id" : 1644280,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f18fe15e4ebd5283482de3fc4a939058?s=256&d=identicon&r=PG",
+      "display_name" : "Lavi Kumar",
+      "link" : "https://stackoverflow.com/users/1644280/lavi-kumar"
+    },
+    "creation_date" : 1765234631,
+    "last_activity_date" : 1765234631,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79841414" : [ {
+      "comment_id" : 140893388,
+      "post_id" : 79841414,
+      "body" : "I actually solved the problem with this statement : process.getOutputStream().close(). Probable child process which executes ffmpeg open stdin and Os pipes this with Java process stdout. Ffmpeg waits for input to terminate and process doesnot termianted. I dont know if this is true explanation or solution.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 36339639,
+        "reputation" : 1,
+        "user_id" : 27687389,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/43cf1b01b751ec1dbab35b3e1ec86cc6?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "H&#252;seyin &#199;ataloğlu",
+        "link" : "https://stackoverflow.com/users/27687389/h%c3%bcseyin-%c3%87atalo%c4%9flu"
+      },
+      "creation_date" : 1765237404,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

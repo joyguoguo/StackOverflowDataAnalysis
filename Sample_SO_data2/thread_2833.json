@@ -1,0 +1,199 @@
+{
+  "question" : {
+    "question_id" : 79594730,
+    "title" : "How can I prevent an object from being modified after it’s created in Java?",
+    "body" : "<p>I’m trying to make sure an object can’t be modified after it’s created in Java. For example, in the class below, I can change the values of model and year using setters. But I want to prevent that and make the object immutable.</p>\n<pre><code>public class Car {\nprivate String model;\nprivate int year;\n\npublic Car(String model, int year) {\n    this.model = model;\n    this.year = year;\n}\n\npublic void setModel(String model) {\n    this.model = model;  // Allows modification of the model\n}\n\npublic void setYear(int year) {\n    this.year = year;  // Allows modification of the year\n}\n\npublic void display() {\n    System.out.println(&quot;Model: &quot; + model + &quot;, Year: &quot; + year);\n}\n\npublic static void main(String[] args) {\n    Car car = new Car(&quot;Toyota&quot;, 2020);\n    car.display();\n    \n    car.setModel(&quot;Honda&quot;);  // Modifying the model\n    car.setYear(2021);      // Modifying the year\n    car.display();\n}\n</code></pre>\n<p>}</p>\n",
+    "tags" : [ "java", "class", "object", "immutability" ],
+    "owner" : {
+      "account_id" : 41635184,
+      "reputation" : 41,
+      "user_id" : 30381431,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/56be5b6158909834275e06e4c613987d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Hind27",
+      "link" : "https://stackoverflow.com/users/30381431/hind27"
+    },
+    "is_answered" : true,
+    "view_count" : 200,
+    "answer_count" : 2,
+    "score" : 4,
+    "last_activity_date" : 1747527434,
+    "creation_date" : 1745734416,
+    "link" : "https://stackoverflow.com/questions/79594730/how-can-i-prevent-an-object-from-being-modified-after-it-s-created-in-java",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79594752,
+    "question_id" : 79594730,
+    "body" : "<p>I know of three ways for you to produce <a href=\"https://en.m.wikipedia.org/wiki/Immutable_object\" rel=\"nofollow noreferrer\">immutable objects</a> in Java.</p>\n<h2>No setters</h2>\n<p>If your class offers only getters to access private fields, with no setters, the resulting objects are rendered immutable. Pass all values in the constructor.</p>\n<p>Doing this makes <em>shallowly-immutable</em> objects. By “shallow” we mean the member fields cannot be assigned a different object reference. But the objects referenced from a member field may itself be mutable. Your class cannot constrain such “deep” mutability.</p>\n<p>You could also mark your member fields as <code>final</code>. This would ensure your internal code in that class/subclass does not inadvertently mutate a field that you intended to remain immutable.</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class Car \n{\n    final private String model;\n    final private Year year;\n\n    public Car( final String model, final Year year) \n    {\n        this.model = model;\n        this.year = year;\n    }\n\n    public String getModel() { return this.model ; }\n    public Year getYear() { return this.year ; }\n}\n</code></pre>\n<p>(In real work, I would define an enum for all possible “Model” domain values. The type of our <code>model</code> field would be that enum rather than <code>String</code>. But that’s beside the point here.)</p>\n<p>If the object referenced in your member fields might be mutable, you may want your getter methods to return a copy. Unnecessary here as both <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/String.html\" rel=\"nofollow noreferrer\"><code>String</code></a> and <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/time/Year.html\" rel=\"nofollow noreferrer\"><code>Year</code></a> are immutable types.</p>\n<h2>Records</h2>\n<p>By definition, a <a href=\"https://openjdk.org/jeps/395\" rel=\"nofollow noreferrer\">record</a> is shallowly immutable. You can set values, or nulls, only by passing to the constructor.</p>\n<pre><code>record Car ( String model , Year year ) {}\n</code></pre>\n<p>Every member field in a record is implicitly <code>final</code>.</p>\n<p>Records can optionally have methods. But those methods cannot alter the member fields after construction.</p>\n<p>Choose <code>record</code> where the main purpose of your class is to transparently communicate data. For more complicated purposes, choose a conventional class.</p>\n<h2>Builder</h2>\n<p>Passing a bunch of values to a constructor all at once may be awkward or inconvenient. The <a href=\"https://en.m.wikipedia.org/wiki/Builder_pattern\" rel=\"nofollow noreferrer\">Builder pattern</a> provides a more flexible approach.</p>\n<p>A builder is an object of an adjacent class that temporarily holds inputs intended for the construction of another class. The builder method for each field can be called repeatedly to change an already-held value. So the calling programmer will make a series of calls to the builder, optionally in <a href=\"https://en.m.wikipedia.org/wiki/Fluent_interface\" rel=\"nofollow noreferrer\">fluent syntax</a>. These calls may set, clear, or change any of the inputs.</p>\n<p>Once the calling programmer is happy with the configuration, they call a <code>validate</code> method to verify the configuration is in a valid state, meeting all business rules. (Tip: <a href=\"https://jakarta.ee/specifications/bean-validation/\" rel=\"nofollow noreferrer\"><em>Jakarta Validation</em></a>, formerly known as <em>Bean Validation</em>.)</p>\n<p>Then the programmer calls <code>build</code> to produce an instance of the desired shallowly-immutable class. The instance returned by the <code>build</code> method will be of either kind discussed above: a conventional class without setters, or a <code>record</code>.</p>\n<pre class=\"lang-java prettyprint-override\"><code>import java.time.Year;\n\npublic class Car {\n    private final String model;\n    private final Year year;\n\n    // Private constructor to enforce use of builder\n    private Car( final Builder builder ) {\n        this.model = builder.model;\n        this.year = builder.year;\n    }\n\n    // Getters\n    public String getModel() { return model; }\n    public Year getYear() { return year; }\n\n    // Builder class\n    public static class Builder {\n        private String model;\n        private Year year;\n\n        public Builder model( final String model ) {\n            this.model = model;\n            return this;\n        }\n\n        public Builder year( final Year year ) {\n            this.year = year;\n            return this;\n        }\n\n        public Car build() {\n            return new Car(this);\n        }\n    }\n}\n</code></pre>\n<p>Usage:</p>\n<pre class=\"lang-java prettyprint-override\"><code>Car car = \n     new Car.Builder()\n        .model( &quot;Toyota Camry&quot; )\n        .year( Year.of( 2023 ) )\n        .build();\n</code></pre>\n<hr />\n<p>Caveat: This Answer is true for “normal” Java programming. But be aware that, by dipping into Java’s facility for <a href=\"https://en.m.wikipedia.org/wiki/Reflective_programming\" rel=\"nofollow noreferrer\">reflection</a> and <a href=\"https://en.m.wikipedia.org/wiki/Type_introspection\" rel=\"nofollow noreferrer\">introspection</a>, otherwise immutable objects can be mutated. You can think of reflection in Java as a “back-door” trick.</p>\n<hr />\n<p>A bonus feature appears if your objects are immutable: <a href=\"https://en.wikipedia.org/wiki/Thread_safety\" rel=\"nofollow noreferrer\">thread-safety</a> in field access. To ensure that your object’s fields never get re-assigned, mark the member fields of a conventional class as <code>final</code>. For a <code>record</code>, the fields are already implicitly <code>final</code>. After construction, you can reliably access <code>final</code> fields across threads. Of course the objects referenced by those fields may not themselves be thread-safe, so be careful there. If the contents are deeply-immutable, then your object’s contents are fully thread-safe. (The behavior of their methods may not be thread-safe, so be careful there too. Concurrency is hard!)</p>\n",
+    "score" : 11,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 322981,
+      "reputation" : 347089,
+      "user_id" : 642706,
+      "user_type" : "registered",
+      "accept_rate" : 58,
+      "profile_image" : "https://i.sstatic.net/ZWEI3.jpg?s=256",
+      "display_name" : "Basil Bourque",
+      "link" : "https://stackoverflow.com/users/642706/basil-bourque"
+    },
+    "creation_date" : 1745735965,
+    "last_activity_date" : 1747527434,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79594736,
+    "question_id" : 79594730,
+    "body" : "<p>I think you have to make the method as private so from outside you will not be able to access the method. Therefore you cannot update.</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 14044871,
+      "reputation" : 89,
+      "user_id" : 10145405,
+      "user_type" : "registered",
+      "profile_image" : "https://lh5.googleusercontent.com/-BEnIV2t4JR4/AAAAAAAAAAI/AAAAAAAAAAo/5DbZucDzWB8/s256-rj/photo.jpg",
+      "display_name" : "Owali Ullah Shawon",
+      "link" : "https://stackoverflow.com/users/10145405/owali-ullah-shawon"
+    },
+    "creation_date" : 1745734759,
+    "last_activity_date" : 1745734759,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140373439,
+    "post_id" : 79594730,
+    "body" : "Why the close vote, please? While this is a beginner’s question, which is welcome here, I find it perfectly clear. The good answer testifies to the same.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 7612423,
+      "reputation" : 87409,
+      "user_id" : 5772882,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Anonymous",
+      "link" : "https://stackoverflow.com/users/5772882/anonymous"
+    },
+    "creation_date" : 1745749559,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140373438,
+    "post_id" : 79594730,
+    "body" : "Curious: I would have expected this question to have been asked and answered before. But while I do find some similar ones (<a href=\"https://stackoverflow.com/questions/55428172/how-to-prevent-changing-the-value-of-array-or-object\">example here</a>), I failed to find an exact match. Maybe someone else can.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7612423,
+      "reputation" : 87409,
+      "user_id" : 5772882,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Anonymous",
+      "link" : "https://stackoverflow.com/users/5772882/anonymous"
+    },
+    "creation_date" : 1745749450,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140373118,
+    "post_id" : 79594730,
+    "body" : "So just remove the setters then? I don&#39;t understand what the problem is. Make the fields <code>final</code> while you&#39;re at it, too.",
+    "score" : 10,
+    "owner" : {
+      "account_id" : 6651855,
+      "reputation" : 292280,
+      "user_id" : 5133585,
+      "user_type" : "registered",
+      "accept_rate" : 96,
+      "profile_image" : "https://i.sstatic.net/dfqcw.png?s=256",
+      "display_name" : "Sweeper",
+      "link" : "https://stackoverflow.com/users/5133585/sweeper"
+    },
+    "creation_date" : 1745734995,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79594752" : [ {
+      "comment_id" : 140373201,
+      "post_id" : 79594752,
+      "body" : "What a coincidence!\uD83D\uDE02",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 38890247,
+        "reputation" : 156,
+        "user_id" : 29003408,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/LhjH9Wyd.jpg?s=256",
+        "display_name" : "Andrei Greblă",
+        "link" : "https://stackoverflow.com/users/29003408/andrei-grebl%c4%83"
+      },
+      "creation_date" : 1745739076,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140373198,
+      "post_id" : 79594752,
+      "body" : "@GreblaAndrei I coincidentally posted an edit mentioning “making a copy” at the same moment you posted. Great minds think alike!",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 322981,
+        "reputation" : 347089,
+        "user_id" : 642706,
+        "user_type" : "registered",
+        "accept_rate" : 58,
+        "profile_image" : "https://i.sstatic.net/ZWEI3.jpg?s=256",
+        "display_name" : "Basil Bourque",
+        "link" : "https://stackoverflow.com/users/642706/basil-bourque"
+      },
+      "creation_date" : 1745738978,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140373195,
+      "post_id" : 79594752,
+      "body" : "He could also return a copy of the object in the getter method. This is because if he doesn’t want to set the object as final, there is a risk for it to be able to get modified from the exterior environbment. Therefore, returning a new copy of that object instead of: this.x will be the best practice. Overall I really like your well formatted answer!",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 38890247,
+        "reputation" : 156,
+        "user_id" : 29003408,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/LhjH9Wyd.jpg?s=256",
+        "display_name" : "Andrei Greblă",
+        "link" : "https://stackoverflow.com/users/29003408/andrei-grebl%c4%83"
+      },
+      "creation_date" : 1745738783,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79594736" : [ {
+      "comment_id" : 140375193,
+      "post_id" : 79594736,
+      "body" : "true, then no setter is the best option may be",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 14044871,
+        "reputation" : 89,
+        "user_id" : 10145405,
+        "user_type" : "registered",
+        "profile_image" : "https://lh5.googleusercontent.com/-BEnIV2t4JR4/AAAAAAAAAAI/AAAAAAAAAAo/5DbZucDzWB8/s256-rj/photo.jpg",
+        "display_name" : "Owali Ullah Shawon",
+        "link" : "https://stackoverflow.com/users/10145405/owali-ullah-shawon"
+      },
+      "creation_date" : 1745818236,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140373318,
+      "post_id" : 79594736,
+      "body" : "Yea ... but it is still going to change if some other method in the <code>Car</code> class calls the setter.  If the OP is going to declare a <code>private</code> setter that they are not going to call, what is the point of declaring it at all?",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 47283,
+        "reputation" : 723470,
+        "user_id" : 139985,
+        "user_type" : "registered",
+        "accept_rate" : 69,
+        "profile_image" : "https://www.gravatar.com/avatar/147c5a9cc1feec049c50da791ac7d144?s=256&d=identicon&r=PG",
+        "display_name" : "Stephen C",
+        "link" : "https://stackoverflow.com/users/139985/stephen-c"
+      },
+      "creation_date" : 1745744288,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

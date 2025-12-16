@@ -1,0 +1,531 @@
+{
+  "question" : {
+    "question_id" : 79761103,
+    "title" : "Different locking behavior betweeen running query from code with @Transactional and running on SQL Server",
+    "body" : "<p>I have created the following test scenario:</p>\n<pre><code>CREATE TABLE master.mytest.control_table (\n    id int IDENTITY(1,1) NOT NULL,\n    uuid varchar(36) COLLATE SQL_Latin1_General_CP1_CI_AS NOT NULL,\n    status int NOT NULL,\n    CONSTRAINT PK__control___3213E83F4F29C19D PRIMARY KEY (id)\n);\n CREATE NONCLUSTERED INDEX IControlTable_Uuid ON master.mytest.control_table (  uuid ASC  )  \n     WITH (  PAD_INDEX = OFF ,FILLFACTOR = 100  ,SORT_IN_TEMPDB = OFF , IGNORE_DUP_KEY = OFF , STATISTICS_NORECOMPUTE = OFF , ONLINE = OFF , ALLOW_ROW_LOCKS = ON , ALLOW_PAGE_LOCKS = ON  )\n     ON [PRIMARY ] ;\n</code></pre>\n<p>The table contains 3 columns: id (PK, auto generated), uuid (varchar(36)) and status (int). I created a non-clustered index on UUID.</p>\n<p>Then I inserted 4 million rows with this loop:</p>\n<pre><code>DECLARE @i INT = 1;\nWHILE @i &lt;= 4000000\nBEGIN\n    INSERT INTO mytest.control_table (uuid, status)\n    VALUES (NEWID(), (ABS(CHECKSUM(NEWID())) % 5) + 1);\n    SET @i = @i + 1;\nEND\n</code></pre>\n<p>My table contains 4M entries with random UUIDs. Then I did the following tests, I ran a SELECT query with table hints UPDLOCK, HOLDLOCK, and queried the locks generated in the dm_tran_locks table. The searched UUID does not exist in the table.</p>\n<p>For viewing the locks, I used the following query:</p>\n<pre><code>SELECT resource_type, request_session_id, resource_associated_entity_id, request_mode, request_type, request_status, COUNT(*) as 'count' FROM sys.dm_tran_locks\nGROUP BY resource_type, request_session_id, resource_associated_entity_id, request_mode, request_type, request_status\nORDER BY request_session_id;\n</code></pre>\n<p>The first test case ran the query with a delay until the commit:</p>\n<pre><code>BEGIN TRANSACTION\n\nSELECT * FROM mytest.control_table WITH(UPDLOCK, HOLDLOCK)\nWHERE uuid = 'XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX';\n\nWAITFOR DELAY '00:00:10';\n\nCOMMIT TRANSACTION;\n</code></pre>\n<p>Query plan: <a href=\"https://www.brentozar.com/pastetheplan/?id=32Occ4KVLI\" rel=\"nofollow noreferrer\">https://www.brentozar.com/pastetheplan/?id=32Occ4KVLI</a></p>\n<p>Locks table:</p>\n<p><a href=\"https://i.sstatic.net/8McobhbT.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/8McobhbT.png\" alt=\"lock table running directly on sqlserver\" /></a></p>\n<p>As we can see, we got an IX lock on OBJECT, a IU lock on PAGE, and a RangeS-U on KEY. Other queries can still run normally, except if they're also searching for the same UUID, with the same query hints.</p>\n<p>Then, I created an integration test in Spring Boot, to test my class. The class is as follows:</p>\n<pre><code>@Service\n@RequiredArgsConstructor\n@Slf4j\npublic class StatusService {\n\n    private final StatusRepository repository;\n\n    @Transactional(isolation = Isolation.READ_COMMITTED)\n    public void getUUID(StatusDomain statusDomain) {\n        log.info(&quot;Thread {} entered get method&quot;, currentThread().getName());\n\n        StatusDomain current = repository.findByUuidWithHoldLock(statusDomain.getUuid());\n        \n        log.info(&quot;Thread {} selected registry {}&quot;, currentThread().getName(), current);\n        ThreadUtils.sleep(10000); //pauses execution for 10s\n        log.info(&quot;Thread {} exited get method&quot;, currentThread().getName());\n    }\n}\n</code></pre>\n<p>The StatusDomain class just represents the table, having an id, uuid and status. Just the uuid matters for this test.\nThe StatusRepository class is an interface. I'm using JDBI for the implementation.</p>\n<pre><code>@Repository\n@UseClasspathSqlLocator\npublic interface StatusRepository {\n\n    @SqlQuery\n    @RegisterBeanMapper(StatusDomain.class)\n    StatusDomain findByUuidWithHoldLock(@Bind(&quot;uuid&quot;) String uuid);\n\n}\n</code></pre>\n<p>The JDBI configuration is:</p>\n<pre><code>@Configuration\npublic class JdbiConfiguration {\n\n    @Bean\n    public JdbiPlugin sqlObjectPlugin() {\n        return new SqlObjectPlugin();\n    }\n\n    @Bean\n    public Jdbi jdbi(DataSource dataSource, List&lt;JdbiPlugin&gt; jdbiPlugins) {\n        TransactionAwareDataSourceProxy dataSourceProxy = new TransactionAwareDataSourceProxy(dataSource);\n        Jdbi jdbi = Jdbi.create(dataSourceProxy);\n\n        jdbiPlugins.forEach(jdbi::installPlugin);\n\n        return jdbi;\n    }\n\n    @Bean\n    public StatusRepository statusRepository(Jdbi jdbi) {\n        return jdbi.onDemand(StatusRepository.class);\n    }\n}\n</code></pre>\n<p>The findByUuidWithHoldLock query is defined as:</p>\n<pre><code>SELECT * FROM mytest.control_table WITH(UPDLOCK, HOLDLOCK)\nWHERE uuid = :uuid\n</code></pre>\n<p>The goal is just to query the locks table after the SELECT and before exiting the method, before committing the transaction.</p>\n<p>This could be done in a lot of ways, but I decided to create a integration test:</p>\n<pre><code>@ActiveProfiles(profiles = {&quot;local&quot;})\n@SpringBootTest(properties = &quot;spring.main.allow-bean-definition-overriding=true&quot;)\nclass StatusServiceTest {\n\n    @Autowired\n    public ApplicationContext applicationContext;\n\n    @Autowired\n    public StatusService service;\n\n    @MockitoSpyBean\n    public StatusRepository repository;\n    \n    private final StatusDomain status4 = new StatusDomain(55L, &quot;XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX&quot;, 4);\n\n    @BeforeEach\n    void setUp() {\n        repository.deleteByUuid(status4.getUuid());\n    }\n\n    @Test\n    void testGet() {\n        assertDoesNotThrow(() -&gt; {\n            Thread t1 = new Thread(() -&gt; service.getUUID(status4), &quot;THREAD1&quot;);\n            t1.start();\n            t1.join();\n        });\n\n        Mockito.verify(repository, times(1)).findByUuidWithHoldLock(anyString());\n    }\n}\n</code></pre>\n<p>The @BeforeEach deletes the queried UUID to ensure it doesn't exist in the table before each test. The repository is annotated with MockitoSpyBean so I can make the assertion on the amount of times it was invoked.</p>\n<p>Querying the locks table while running the test, I found this:</p>\n<p>Query plan: <a href=\"https://www.brentozar.com/pastetheplan/?id=pcPxA0CpeO\" rel=\"nofollow noreferrer\">https://www.brentozar.com/pastetheplan/?id=pcPxA0CpeO</a></p>\n<p>Locks table:</p>\n<p><a href=\"https://i.sstatic.net/Ff0koTVo.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/Ff0koTVo.png\" alt=\"enter image description here\" /></a></p>\n<p>The generated locks are different then when executing directly the same query in SQL Server. Now I got a IX on OBJECT, lots of U locks on PAGE, and no RangeS-U lock on KEY like before.</p>\n<p>What's even weirder, is that this result was different when I first started querying the locks while executing the code. My first tests revealed an X lock on the table. So, I created another table, called status_control2, with the same DDL script, and created the index, just renaming it to IControlTable_Uuid2, and did the test again. The executed query is the same, except that it now queries status_control2. A difference though, is the number of entries inserted through the WHILE loop. In status_control2 I put only 100K entries, while status_control has 4 million.</p>\n<p>Query plan: <a href=\"https://www.brentozar.com/pastetheplan/?id=Vm101k5WDz\" rel=\"nofollow noreferrer\">https://www.brentozar.com/pastetheplan/?id=Vm101k5WDz</a></p>\n<p>Locks table:</p>\n<p><a href=\"https://i.sstatic.net/zO2aVIx5.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/zO2aVIx5.png\" alt=\"enter image description here\" /></a></p>\n<p>As we can see, the whole table got an exclusive (X) lock.</p>\n<p>This has been bugging me for a while now. I can't understand why the different behavior. I mean, the different behavior between the locks in status_control and status_control2, and specially the different behavior between running the query directly in SQL Server and running through Java application with JDBI.</p>\n<hr />\n<p>I substitute the <code>SELECT *</code> for <code>SELECT id, uuid, status</code>. The results didn't change at all.</p>\n<hr />\n<p>I created an Extended Events session to capture the &quot;query_post_execution_showplan&quot; event. Taking a look at the plans, they kinda make sense to me.</p>\n<p>The first one, which generated the expected locks, only contains the index seek + clustered index lookup. The second one, which generated a lot of PAGE U locks, contains entries of &quot;parallelism&quot; and &quot;clustered index scan&quot;. The last one, which blocks the whole table with an X lock, contains only the clustered index scan.</p>\n<p>The question remaining is why the difference... the query was supposed to be the same in all 3 scenarios. There's a warning on the 2 and 3 query plans which says:</p>\n<pre><code>Type conversion in expression\n(CONVERT_IMPLICIT(nvarchar(36),[master].[mytest].[control_table2].[uuid],0)=[@P0])\nmay affect &quot;Seek Plan&quot; in query plan choice.\n</code></pre>\n<p>But I'm not really sure about how to interpret it. At least, I guess this has something to do with JDBI replacing the &quot;:uuid&quot; variable with the provided String.</p>\n<p>SQL Server version:<br />\nMicrosoft SQL Server 2022 (RTM-CU20-GDR) (KB5063814) 16.0.4210.1 (X64)<br />\nDeveloper Edition (64-bit) on Linux (Ubuntu 22.04.5 LTS)</p>\n",
+    "tags" : [ "java", "sql-server", "spring-boot", "locking", "jdbi3" ],
+    "owner" : {
+      "account_id" : 43875485,
+      "reputation" : 13,
+      "user_id" : 31460919,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2038d5a677b3471586dd8c75b3f6e4e2?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Gabriel Souza",
+      "link" : "https://stackoverflow.com/users/31460919/gabriel-souza"
+    },
+    "is_answered" : true,
+    "view_count" : 192,
+    "answer_count" : 2,
+    "score" : 1,
+    "last_activity_date" : 1758047543,
+    "creation_date" : 1757523085,
+    "link" : "https://stackoverflow.com/questions/79761103/different-locking-behavior-betweeen-running-query-from-code-with-transactional",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79765057,
+    "question_id" : 79761103,
+    "body" : "<p>Once you look at the plans, it's quite clear what's going on.</p>\n<p>The raw SQL statement is being executed with a literal <code>varchar</code> value, so the compiler decides to go for an Index Seek/Key Lookup pair (avoiding the Key lookup is another issue). So you get a straight-forward RangeS-U lock on the key.</p>\n<p>Whereas the Java versions are passing through parameters (as they should), but the parameters as you correctly noted are <code>nvarchar</code>. So the compiler must (by precedence rules) implicitly convert the <em>column</em> to <code>nvarchar</code>, and therefore the index cannot be used. So you end up with a giant scan of the Clustered Index. In the 4-million-row case, it's gone for a parallel scan to speed it up.</p>\n<p>For whatever reason, in some cases this will end up with just page locks, and sometimes it will get a single object lock (ignore the IX and IU locks, they are a kind of &quot;in-advance&quot; lock and don't usually affect things). Why this happened is not clear, you'd need to watch XEvents to see the actual locking. But it's either locked it all from the start because it thought there were too many pages, or it escalated in the middle once it hit 5000 locks.</p>\n<hr />\n<p>The solution is obviously to ensure the parameter gets passed in as <code>varchar</code> not <code>nvarchar</code>. You should also add <code>INCLUDE (status)</code> to your index, so you can avoid the Key Lookup, especially given you have the extra locking of <code>SERIALIZABLE</code> here.</p>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 20264817,
+      "reputation" : 78793,
+      "user_id" : 14868997,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/40cbeeb90667c9a8c1830f615a9b2899?s=256&d=identicon&r=PG",
+      "display_name" : "Charlieface",
+      "link" : "https://stackoverflow.com/users/14868997/charlieface"
+    },
+    "creation_date" : 1757934701,
+    "last_activity_date" : 1757934701,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79765683,
+    "question_id" : 79761103,
+    "body" : "<p>Analysing the query plans, we conclude the following:</p>\n<p>The first one, which generated the expected locks, only contains the index seek + clustered index lookup.</p>\n<p>The second one, which generated a lot of PAGE U locks, contains entries of &quot;parallelism&quot; and &quot;clustered index scan&quot;.</p>\n<p>The third one, which blocks the whole table with an X lock, contains only the clustered index scan.</p>\n<p>The query was supposed to be the same in all 3 scenarios, but the generated plans are different. There's a warning on the 2 and 3 query plans which says:</p>\n<pre><code>Type conversion in expression\n(CONVERT_IMPLICIT(nvarchar(36),[master].[mytest].[control_table2].[uuid],0)=[@P0])\nmay affect &quot;Seek Plan&quot; in query plan choice.\n</code></pre>\n<p>Searching more about this warning, I found out that the MSSQL driver has a default configuration which maps Java String to NVARCHAR (Unicode), and that's a type mismatch, because the column is VARCHAR, as seen in the provided DDL for the table creation. That's the source of the problem.</p>\n<p>To avoid changing the column to NVARCHAR and also not have to explicitly bind the parameter as VARCHAR, the best option is to pass a flag in the connection url:</p>\n<p>sendStringParametersAsUnicode=false.</p>\n<p>After doing this, scenarios 2 and 3 start to generate query plans identical to the first one. The connection string became as follows:</p>\n<p>jdbc:sqlserver://;serverName=localhost;databaseName=master;sendStringParametersAsUnicode=false</p>\n<p>It took a while to understand this behavior, because I didn't know how to get the actual query plans since the query is executed via application code.</p>\n<p>For that, I created an Extended Events session to capture the &quot;query_post_execution_showplan&quot; event.</p>\n<pre><code>CREATE EVENT SESSION [CapturePlans]\nON SERVER\nADD EVENT sqlserver.query_post_execution_showplan\n(\n    ACTION (\n        sqlserver.sql_text,    \n        sqlserver.database_id,\n        sqlserver.session_id,\n        sqlserver.client_app_name  \n    )\n    WHERE (sqlserver.database_id = 1) \n)\nADD TARGET package0.ring_buffer;\n</code></pre>\n<p>After that, I used the following to START/STOP the event:</p>\n<pre><code>ALTER EVENT SESSION [CapturePlans] ON SERVER STATE = START;\nALTER EVENT SESSION [CapturePlans] ON SERVER STATE = STOP;\nDROP EVENT SESSION [CapturePlans] ON SERVER;\n</code></pre>\n<p>After starting the event and executing the test, I queried the event with:</p>\n<pre><code>SELECT t.target_data FROM sys.dm_xe_sessions s\nINNER JOIN sys.dm_xe_session_targets t ON (t.event_session_address = s.address)\nWHERE s.name = 'CapturePlans';\n</code></pre>\n<p>This column target_data contains a XML. I pasted the XML on a XML formatter, and searched for the tag &quot;ShowPlanXML&quot;. Grabbed the whole ShowPlanXML tag and pasted it on <a href=\"https://www.brentozar.com/pastetheplan/\" rel=\"nofollow noreferrer\">paste the plan</a> to visualize and share the plans.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 43875485,
+      "reputation" : 13,
+      "user_id" : 31460919,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2038d5a677b3471586dd8c75b3f6e4e2?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Gabriel Souza",
+      "link" : "https://stackoverflow.com/users/31460919/gabriel-souza"
+    },
+    "creation_date" : 1757980607,
+    "last_activity_date" : 1758047543,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140737532,
+    "post_id" : 79761103,
+    "body" : "@Charlieface yes, but I didn&#39;t know how to get the query plans for the queries executed via code. I had to read a lot about SQL Server sessions to get these. It&#39;s not straight forward as looking at the execution plan of a query ran directly in SQL Server. Also, before that, I haven&#39;t seen that the behavior was changing between the application code and direct execution, I also took some time to note this difference. Anyway, thank you again for helping in this matter!",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 43875485,
+      "reputation" : 13,
+      "user_id" : 31460919,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2038d5a677b3471586dd8c75b3f6e4e2?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Gabriel Souza",
+      "link" : "https://stackoverflow.com/users/31460919/gabriel-souza"
+    },
+    "creation_date" : 1757954080,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140736622,
+    "post_id" : 79761103,
+    "body" : "Please move the last paragraph into an answer below, the answer doesn&#39;t belong in the question. You are free to answer your own question.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 20264817,
+      "reputation" : 78793,
+      "user_id" : 14868997,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/40cbeeb90667c9a8c1830f615a9b2899?s=256&d=identicon&r=PG",
+      "display_name" : "Charlieface",
+      "link" : "https://stackoverflow.com/users/14868997/charlieface"
+    },
+    "creation_date" : 1757933060,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140735792,
+    "post_id" : 79761103,
+    "body" : "I got the problem. Just found that the MSSQL driver has a default configuration which maps Java String to NVARCHAR (unicode), and that&#39;s a type mismatch, because the column is VARCHAR. That&#39;s the main source of the problem. So I could change the column to NVARCHAR (which I won&#39;t do), or explicitly bind the param as VARCHAR instead of NVARCHAR. Which is also not ideal. Turns out, there&#39;s a flag you can pass in the connection url: sendStringParametersAsUnicode=false. I did this, tested, and guess what? It worked. Now my scenario 2 and 3 gave same results as scenario 1.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 43875485,
+      "reputation" : 13,
+      "user_id" : 31460919,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2038d5a677b3471586dd8c75b3f6e4e2?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Gabriel Souza",
+      "link" : "https://stackoverflow.com/users/31460919/gabriel-souza"
+    },
+    "creation_date" : 1757903931,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140735746,
+    "post_id" : 79761103,
+    "body" : "@Charlieface I added the plans. Please take a look at the Edit notes I left at the end of the question.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 43875485,
+      "reputation" : 13,
+      "user_id" : 31460919,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2038d5a677b3471586dd8c75b3f6e4e2?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Gabriel Souza",
+      "link" : "https://stackoverflow.com/users/31460919/gabriel-souza"
+    },
+    "creation_date" : 1757901174,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140735734,
+    "post_id" : 79761103,
+    "body" : "@Charlieface I used XEvents. But since this was my first time using this, I had some trouble. I&#39;ll update the question, putting the actual execution plans. I&#39;m glad that the execution plans I got are actually different from each other, so maybe we will finally understand whats happening!",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 43875485,
+      "reputation" : 13,
+      "user_id" : 31460919,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2038d5a677b3471586dd8c75b3f6e4e2?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Gabriel Souza",
+      "link" : "https://stackoverflow.com/users/31460919/gabriel-souza"
+    },
+    "creation_date" : 1757899849,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140735286,
+    "post_id" : 79761103,
+    "body" : "I&#39;m also thinking about trying to start a extended session event, and try to capture the lock escalation event. Starting the transaction from JDBI goes through a lot of third party code, like the Hikari pool, the JDBI to JDBC query execution, the spring internals of Transaction handling, the JdbcTransactionManager interacting with Data source, the classes from the SqlServer driver. Transaction handling from code goes a long way until reaching the database, it&#39;s way different than executing the transaction directly on SQL server. I think something in that way is causing the differences.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 43875485,
+      "reputation" : 13,
+      "user_id" : 31460919,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2038d5a677b3471586dd8c75b3f6e4e2?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Gabriel Souza",
+      "link" : "https://stackoverflow.com/users/31460919/gabriel-souza"
+    },
+    "creation_date" : 1757871200,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140735231,
+    "post_id" : 79761103,
+    "body" : "Also, I&#39;m gonna try changing the query to SELECT id, uuid, status, instead of using *. Just to see if that changes something.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 43875485,
+      "reputation" : 13,
+      "user_id" : 31460919,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2038d5a677b3471586dd8c75b3f6e4e2?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Gabriel Souza",
+      "link" : "https://stackoverflow.com/users/31460919/gabriel-souza"
+    },
+    "creation_date" : 1757868898,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140735159,
+    "post_id" : 79761103,
+    "body" : "Maybe if I changed the query a little to have the &quot;SET STATISTICS XML ON&quot;, I might be able to log it? I&#39;ll try to do it. If I succeed, i&#39;ll post the query plans also from the code execution. Never did this before",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 43875485,
+      "reputation" : 13,
+      "user_id" : 31460919,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2038d5a677b3471586dd8c75b3f6e4e2?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Gabriel Souza",
+      "link" : "https://stackoverflow.com/users/31460919/gabriel-souza"
+    },
+    "creation_date" : 1757865583,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140735157,
+    "post_id" : 79761103,
+    "body" : "Guys, have you seen the first test case? I&#39;m using SELECT *. The status is being selected as well, and the locks generated are clearly different. Also, between the tests in code selecting status_control and status_control2, the locks also changed, the columns selected are the same. Clearly there&#39;s something else that the database takes in consideration to generate the locks. About the query plans, I can put the query plan for the first test case. But since the other 2 prints are from queries executed from code, I really don&#39;t know how I could see these query plans.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 43875485,
+      "reputation" : 13,
+      "user_id" : 31460919,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2038d5a677b3471586dd8c75b3f6e4e2?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Gabriel Souza",
+      "link" : "https://stackoverflow.com/users/31460919/gabriel-souza"
+    },
+    "creation_date" : 1757865412,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140735008,
+    "post_id" : 79761103,
+    "body" : "I am nowhere suggesting you should not want to select the status. My comment (and the others here) are just explaining that selecting the status has implications which explain the behaviour you are seeing, and we&#39;re telling you why that is happening.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 9655605,
+      "reputation" : 4509,
+      "user_id" : 7165279,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/h47ah.png?s=256",
+      "display_name" : "allmhuran",
+      "link" : "https://stackoverflow.com/users/7165279/allmhuran"
+    },
+    "creation_date" : 1757858922,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140734321,
+    "post_id" : 79761103,
+    "body" : "Have you considered just using a <code>INCLUDE</code> on the index to add the <code>status</code> column, therefore avoiding the key lookup? Either way we need the Actual query plans, which I asked you for on the other question on <a href=\"https://dba.stackexchange.com\">Database Administrators</a> and you shared by then deleted.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 20264817,
+      "reputation" : 78793,
+      "user_id" : 14868997,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/40cbeeb90667c9a8c1830f615a9b2899?s=256&d=identicon&r=PG",
+      "display_name" : "Charlieface",
+      "link" : "https://stackoverflow.com/users/14868997/charlieface"
+    },
+    "creation_date" : 1757807459,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140734052,
+    "post_id" : 79761103,
+    "body" : "I updated the question. The edit was huge, actually. The main focus now is the difference between running the SELECT via java code and directly on SQL Server. It took me a while to see that this was the main reason I was questioning the generated locks. The generated locks when running the queries direclty on SQL Server makes sense. When running via java, not so much.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 43875485,
+      "reputation" : 13,
+      "user_id" : 31460919,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2038d5a677b3471586dd8c75b3f6e4e2?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Gabriel Souza",
+      "link" : "https://stackoverflow.com/users/31460919/gabriel-souza"
+    },
+    "creation_date" : 1757791497,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140731819,
+    "post_id" : 79761103,
+    "body" : "As I said above, I redid the tests and got different results, I just didn&#39;t have the time to update the question yet. Thank you all for the support until now, I&#39;ll try to update question today. Before that, there&#39;s no point in keep the discussion. If stack overflow provided a way to &quot;pause/freeze&quot; the question, I would do it.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 43875485,
+      "reputation" : 13,
+      "user_id" : 31460919,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2038d5a677b3471586dd8c75b3f6e4e2?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Gabriel Souza",
+      "link" : "https://stackoverflow.com/users/31460919/gabriel-souza"
+    },
+    "creation_date" : 1757686270,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140731815,
+    "post_id" : 79761103,
+    "body" : "@allmhuran right, I got you. But again, I really am interested in the behaviour using &quot;SELECT *&quot;, I really want to select the status. This column is important for my problem. If the behavior would be different with &quot;SELECT id, uuid&quot;, ok, I trust you. But really, the question is that I&#39;m trying to understand the behavior with &quot;SELECT id, uuid, status&quot;. That&#39;s the scenario I want to study.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 43875485,
+      "reputation" : 13,
+      "user_id" : 31460919,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2038d5a677b3471586dd8c75b3f6e4e2?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Gabriel Souza",
+      "link" : "https://stackoverflow.com/users/31460919/gabriel-souza"
+    },
+    "creation_date" : 1757686141,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140730584,
+    "post_id" : 79761103,
+    "body" : "That&#39;s not &quot;what should happen&quot;. What &quot;should&quot; happen is what is in fact happening. Ignore the where clause, the columns in the select are what matter here. You&#39;re asking for data that only exists in pages of the clustered index, and you&#39;re telling the engine to use locks. Therefore the engine is going to lock the clustered index at some level, be that row, page, or the whole table. The choice of what level is locked depends on how many rows the engine guesses it is going to find matching your predicate, based on the selectivity of the index and statistics.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 9655605,
+      "reputation" : 4509,
+      "user_id" : 7165279,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/h47ah.png?s=256",
+      "display_name" : "allmhuran",
+      "link" : "https://stackoverflow.com/users/7165279/allmhuran"
+    },
+    "creation_date" : 1757639036,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140730562,
+    "post_id" : 79761103,
+    "body" : "Sorry, when you said <code>A single UUID could be the only one inserted</code> I thought you meant that a given UUID could only be in the table once.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 24165,
+      "reputation" : 282140,
+      "user_id" : 61305,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/eVyZv.jpg?s=256",
+      "display_name" : "Aaron Bertrand",
+      "link" : "https://stackoverflow.com/users/61305/aaron-bertrand"
+    },
+    "creation_date" : 1757637446,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140730512,
+    "post_id" : 79761103,
+    "body" : "@AaronBertrand You said &quot;If you can only have a single instance of any given UUID, why not make it official and declare it unique?&quot;. I never said anywhere that I can have only a single instance of any given UUID. The UNIQUE constraint was not used because it isn&#39;t. This is part of the problem. Even with the index being non-unique, the index is still ordered, SQL Server can still know where the searched uuid would fall between the ranges of the index. Considering I have the uuid &quot;AAA&quot; and &quot;CCC&quot;, then the place where &quot;BBB&quot; would be is known, independent of the index being unique or not.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 43875485,
+      "reputation" : 13,
+      "user_id" : 31460919,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2038d5a677b3471586dd8c75b3f6e4e2?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Gabriel Souza",
+      "link" : "https://stackoverflow.com/users/31460919/gabriel-souza"
+    },
+    "creation_date" : 1757634023,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140730507,
+    "post_id" : 79761103,
+    "body" : "@allmhuran yeah, but what should happen is that: first the index seek happen in the non-clustered index, and after that, the key is found for the exact spot in the clustered-index where the data is located. The lookup in the clustered-index would happen independent of the column I query.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 43875485,
+      "reputation" : 13,
+      "user_id" : 31460919,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2038d5a677b3471586dd8c75b3f6e4e2?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Gabriel Souza",
+      "link" : "https://stackoverflow.com/users/31460919/gabriel-souza"
+    },
+    "creation_date" : 1757633844,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140730506,
+    "post_id" : 79761103,
+    "body" : "I redid the tests again in the same database, and I got different results from the first time. I&#39;m gonna have to update the question with the new results. I&#39;m also gonna create a new table and do everything from scratch, to see if I can see the same results as the ones I posted in the question. For now, I need some time to update the question and make some corrections.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 43875485,
+      "reputation" : 13,
+      "user_id" : 31460919,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2038d5a677b3471586dd8c75b3f6e4e2?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Gabriel Souza",
+      "link" : "https://stackoverflow.com/users/31460919/gabriel-souza"
+    },
+    "creation_date" : 1757633639,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140729370,
+    "post_id" : 79761103,
+    "body" : "When thinking about tables and indexes, think of the table as <i>being</i> the clustered index. All of the data for all of the columns and all of the rows is stored on the leaf level pages of the clustered index. Your non clustered index &quot;points to&quot; the clustered index by carrying the clustering key. So when you filter on UUID and ask for status, the SQL engine ultimately has to read the status from the clustered index. And, again, the clustered index <i>is</i> the table. Locks on the clustered index are locks on the table.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 9655605,
+      "reputation" : 4509,
+      "user_id" : 7165279,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/h47ah.png?s=256",
+      "display_name" : "allmhuran",
+      "link" : "https://stackoverflow.com/users/7165279/allmhuran"
+    },
+    "creation_date" : 1757600058,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140729083,
+    "post_id" : 79761103,
+    "body" : "That is a big difference, since <code>id, uuid</code> are part of the index that would be useful for the predicate. When you add <code>status</code> - a column not covered by the index - this requires a different strategy (e.g. key lookup). Yes, it&#39;s only one extra column, but that&#39;s not really the point. If you can only have a single instance of any given UUID, why not make it official and declare it unique? This helps other people out (so we don&#39;t have to guess or ask about statistics histograms etc.) and it also helps out the optimizer because it then <i>knows</i> it can only match one or zero rows.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 24165,
+      "reputation" : 282140,
+      "user_id" : 61305,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/eVyZv.jpg?s=256",
+      "display_name" : "Aaron Bertrand",
+      "link" : "https://stackoverflow.com/users/61305/aaron-bertrand"
+    },
+    "creation_date" : 1757594509,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140729055,
+    "post_id" : 79761103,
+    "body" : "@siggemannen, yes, that&#39;s true. A single UUID could be the only one inserted in all rows, SQL Server can&#39;t know. But this doesn&#39;t explain the difference between the 3 scenarios. With that argument, why doesn&#39;t all the 3 scenarios get the X lock on OBJECT? Why does the 3 scenarios behaves differently?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 43875485,
+      "reputation" : 13,
+      "user_id" : 31460919,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2038d5a677b3471586dd8c75b3f6e4e2?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Gabriel Souza",
+      "link" : "https://stackoverflow.com/users/31460919/gabriel-souza"
+    },
+    "creation_date" : 1757593450,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140729047,
+    "post_id" : 79761103,
+    "body" : "@AaronBertrand I added the actual plans for &quot;SELECT *&quot; case. I have only 3 columns in the example, so &quot;SELECT *&quot; and &quot;SELECT id, uuid&quot; would only differ in the &quot;status&quot; column. I&#39;ll do the test for the 3 queries with &quot;SELECT id, uuid&quot; and post the results soon.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 43875485,
+      "reputation" : 13,
+      "user_id" : 31460919,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2038d5a677b3471586dd8c75b3f6e4e2?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Gabriel Souza",
+      "link" : "https://stackoverflow.com/users/31460919/gabriel-souza"
+    },
+    "creation_date" : 1757593336,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140728980,
+    "post_id" : 79761103,
+    "body" : "In a degenerate example, a single UUID might return all rows in your table, since index isn&#39;t unique. So, why wouldn&#39;t it want to lock the whole thing",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 17972905,
+      "reputation" : 10131,
+      "user_id" : 13061224,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/GyOMS.jpg?s=256",
+      "display_name" : "siggemannen",
+      "link" : "https://stackoverflow.com/users/13061224/siggemannen"
+    },
+    "creation_date" : 1757591655,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140728033,
+    "post_id" : 79761103,
+    "body" : "Because the index only contains the UUID column and the key. What does the actual (not estimated) <code>SELECT *</code> plan look like? It can&#39;t <i>only</i> access the index on the UUID, it needs to access another index to get the rest of the columns after locating the rows. What does the actual plan and locking look like when you change <code>SELECT *</code> to <code>SELECT id, uuid</code>? Also note that because the UUID index is not unique, SQL Server can&#39;t expect that it will get exactly one row back. Depending on the size of the table the optimizer strategy will be driven by how many rows it has to estimate it will get back.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 24165,
+      "reputation" : 282140,
+      "user_id" : 61305,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/eVyZv.jpg?s=256",
+      "display_name" : "Aaron Bertrand",
+      "link" : "https://stackoverflow.com/users/61305/aaron-bertrand"
+    },
+    "creation_date" : 1757550967,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140727945,
+    "post_id" : 79761103,
+    "body" : "That&#39;s true! But is this relevant? The predicate of the query is just the UUID.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 43875485,
+      "reputation" : 13,
+      "user_id" : 31460919,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2038d5a677b3471586dd8c75b3f6e4e2?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Gabriel Souza",
+      "link" : "https://stackoverflow.com/users/31460919/gabriel-souza"
+    },
+    "creation_date" : 1757546621,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79765057" : [ {
+      "comment_id" : 140737534,
+      "post_id" : 79765057,
+      "body" : "Thanks for the answer again! I&#39;ll post a answer myself too, just to emphasize how the connection URL should be, but this is definitely the accepted answer.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 43875485,
+        "reputation" : 13,
+        "user_id" : 31460919,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/2038d5a677b3471586dd8c75b3f6e4e2?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Gabriel Souza",
+        "link" : "https://stackoverflow.com/users/31460919/gabriel-souza"
+      },
+      "creation_date" : 1757954181,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79765683" : [ {
+      "comment_id" : 140740460,
+      "post_id" : 79765683,
+      "body" : "@Community Answer updated.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 43875485,
+        "reputation" : 13,
+        "user_id" : 31460919,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/2038d5a677b3471586dd8c75b3f6e4e2?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Gabriel Souza",
+        "link" : "https://stackoverflow.com/users/31460919/gabriel-souza"
+      },
+      "creation_date" : 1758048969,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140738286,
+      "post_id" : 79765683,
+      "body" : "As it’s currently written, your answer is unclear. Please <a href=\"https://stackoverflow.com/posts/79765683/edit\">edit</a> to add additional details that will help others understand how this addresses the question asked. You can find more information on how to write good answers <a href=\"/help/how-to-answer\">in the help center</a>.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : -1,
+        "reputation" : 1,
+        "user_id" : -1,
+        "user_type" : "moderator",
+        "profile_image" : "https://www.gravatar.com/avatar/a007be5a61f6aa8f3e85ae2fc18dd66e?s=256&d=identicon&r=PG",
+        "display_name" : "Community",
+        "link" : "https://stackoverflow.com/users/-1/community"
+      },
+      "creation_date" : 1757981182,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

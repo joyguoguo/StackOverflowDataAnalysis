@@ -1,0 +1,81 @@
+{
+  "question" : {
+    "question_id" : 79567843,
+    "title" : "Jetty mTLS failed connection logging",
+    "body" : "<p>I am using Java 17 Spring Boot configured to use Jetty running as an <strong>mTLS</strong> microservice.</p>\n<p>I would like to <strong>log</strong> failed connections (due to misaligned keys or client keys not recognised in the CA -- all of which happens during the SSL handshaking).</p>\n<p>I would like this to use a custom error/log handler and <strong>not</strong> the standard Error Logging..</p>\n<p>Does anyone have some code that does this?</p>\n<p>Thanks in advance :)</p>\n",
+    "tags" : [ "java", "spring-boot", "jetty", "mtls" ],
+    "owner" : {
+      "account_id" : 1936854,
+      "reputation" : 159,
+      "user_id" : 1744110,
+      "user_type" : "registered",
+      "accept_rate" : 75,
+      "profile_image" : "https://www.gravatar.com/avatar/23a7713ea13fc5696ed60a8a7b6b9162?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Colin Schofield",
+      "link" : "https://stackoverflow.com/users/1744110/colin-schofield"
+    },
+    "is_answered" : true,
+    "view_count" : 78,
+    "answer_count" : 1,
+    "score" : -3,
+    "last_activity_date" : 1744529580,
+    "creation_date" : 1744335648,
+    "link" : "https://stackoverflow.com/questions/79567843/jetty-mtls-failed-connection-logging",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79571303,
+    "question_id" : 79567843,
+    "body" : "<p>Thanks for your help and apologies for the rather vague question, but here is the <strong>solution</strong>.</p>\n<p>The problem was that mTLS connection issues are outside of the usual Spring event handling and hence they won't show up when there is a  failed connection.</p>\n<p>Below is a working example, showing the addition of a Jetty specific Event Listener:</p>\n<pre><code>@Slf4j\n@Configuration\npublic class MTLSConfig {\n    @Bean\n    public WebServerFactoryCustomizer&lt;JettyServletWebServerFactory&gt; masslSecurityConfigurer(\n            @Value(&quot;${app.mtls.enable}&quot;) Boolean enableMTLS,\n            @Value(&quot;${app.mtls.port-number}&quot;) Integer portNumber,\n            KeyManager[] mtlsKeyManager,  // This is loaded from an in-memory KeyStore as a @Bean\n            TrustManager[] mtlsTrustManager\n    ) {\n        return factory -&gt; factory.addServerCustomizers(server -&gt; {\n            try {\n                if (!enableMTLS) {\n                    log.warn(&quot;⚠️ This server will NOT be secured by mTLS ⚠️&quot;);\n                    HttpConfiguration httpConfig = new HttpConfiguration();\n                    ServerConnector httpConnector = new ServerConnector(server, new HttpConnectionFactory(httpConfig));\n                    httpConnector.setPort(portNumber);\n                    server.addConnector(httpConnector);\n                    log.debug(&quot;Done -- plain, unsecured access is provided via Port: {}&quot;, portNumber);\n                    return;\n                }\n\n                log.debug(&quot;About to build an mTLS secured service for all requests..&quot;);\n                SSLContext sslContext = SSLContext.getInstance(&quot;TLS&quot;);\n                sslContext.init(mtlsKeyManager, matlsTrustManager, new SecureRandom());\n\n                HttpConfiguration https = new HttpConfiguration();\n                https.addCustomizer(new SecureRequestCustomizer());\n\n                SslContextFactory.Server sslContextFactory = new SslContextFactory.Server();\n                sslContextFactory.setSslContext(sslContext);\n                sslContextFactory.setNeedClientAuth(true); // Turn on mTLS\n                sslContextFactory.setSniRequired(false);\n\n                SslConnectionFactory sslConnectionFactory = new SslConnectionFactory(sslContextFactory, &quot;http/1.1&quot;);\n                sslConnectionFactory.setEventListeners(Set.of(new LoggingSslHandshakeListener()));\n\n                ServerConnector sslConnector = new ServerConnector(\n                        server,\n                        sslConnectionFactory,\n                        new HttpConnectionFactory(https)\n                );\n                sslConnector.setPort(portNumber);\n                server.setConnectors(new Connector[]{sslConnector});\n                log.debug(&quot;Done -- mTLS secured access via Port: {}.&quot;, portNumber);\n            } catch (Exception e) {\n                throw new IllegalStateException(\n                        &quot;Failed to configure mTLS&quot;, e);\n            }\n        });\n    }\n</code></pre>\n<p>This is then the event listener code:</p>\n<pre><code>public class LoggingSslHandshakeListener implements SslHandshakeListener {\n    @Override\n    public void handshakeSucceeded(Event event) {\n        // Successful connection! (don't actually need this)\n    }\n\n    @Override\n    public void handshakeFailed(Event event, Throwable failure) {\n        // Unsuccessful connection.. (TODO -- add in custom logging)\n    }\n}\n</code></pre>\n<p>So when it fails you can report this to DevOps, using the Throwable, i.e.:</p>\n<p><code>javax.net.ssl.SSLHandshakeException</code>: 'Received fatal alert: unknown_ca'</p>\n",
+    "score" : 0,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 1936854,
+      "reputation" : 159,
+      "user_id" : 1744110,
+      "user_type" : "registered",
+      "accept_rate" : 75,
+      "profile_image" : "https://www.gravatar.com/avatar/23a7713ea13fc5696ed60a8a7b6b9162?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Colin Schofield",
+      "link" : "https://stackoverflow.com/users/1744110/colin-schofield"
+    },
+    "creation_date" : 1744529580,
+    "last_activity_date" : 1744529580,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140326490,
+    "post_id" : 79567843,
+    "body" : "Yeah setting <code>javax.net.debug=ssl:handshake</code> will give the full Java-level SSL debug logging, but it’s <b>super verbose</b> and not ideal for structured or production-grade logging..   What I really would like is to hook into the error events (mTLS or SSL handshaking) in a very much &#39;custom&#39; logging. This would allow me to pick and choose what kinds of errors should be raised to the devops team.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1936854,
+      "reputation" : 159,
+      "user_id" : 1744110,
+      "user_type" : "registered",
+      "accept_rate" : 75,
+      "profile_image" : "https://www.gravatar.com/avatar/23a7713ea13fc5696ed60a8a7b6b9162?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Colin Schofield",
+      "link" : "https://stackoverflow.com/users/1744110/colin-schofield"
+    },
+    "creation_date" : 1744411879,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140325820,
+    "post_id" : 79567843,
+    "body" : "This question is similar to: <a href=\"https://stackoverflow.com/questions/71563289/how-can-i-get-debug-messages-from-javas-ssl-handshake\">How can I get debug messages from Java&#39;s SSL handshake?</a>. If you believe it’s different, please <a href=\"https://stackoverflow.com/posts/79567843/edit\">edit</a> the question, make it clear how it’s different and/or how the answers on that question are not helpful for your problem.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 372682,
+      "reputation" : 26512,
+      "user_id" : 721855,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/vZiox.png?s=256",
+      "display_name" : "aled",
+      "link" : "https://stackoverflow.com/users/721855/aled"
+    },
+    "creation_date" : 1744395941,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

@@ -1,0 +1,185 @@
+{
+  "question" : {
+    "question_id" : 79603453,
+    "title" : "Return-type contravariance in Java",
+    "body" : "<p>I have a generic map type where the keys have type <code>K</code> and the values have type <code>V</code>. I would like to provide a method <code>Optional&lt;? super V&gt; get(K key)</code>, however it doesn't seem to work as expected.</p>\n<p>The following code show the problem:</p>\n<pre class=\"lang-java prettyprint-override\"><code>import java.util.Map;\nimport java.util.Optional;\n\npublic record MyMap&lt;K, V&gt;(Map&lt;K, V&gt; inner) {\n  public Optional&lt;V&gt; getInvariant(K key) {\n    return Optional.ofNullable(inner.get(key));\n  }\n\n  public Optional&lt;? super V&gt; getContravariant(K key) {\n    return getInvariant(key).map(p -&gt; p);\n  }\n\n  // Invalid syntax:\n  /*\n  public &lt;R super K&gt; Optional&lt;R&gt; getContravariant2(K key) {\n    return get(key).map(p -&gt; p);\n  }\n   */\n}\n\nrecord MapUser(MyMap&lt;String, String&gt; map) {\n  public Optional&lt;Object&gt; getFoo() {\n    return map.getInvariant(&quot;foo&quot;).map(p -&gt; p);\n  }\n\n  public Optional&lt;Object&gt; getFoo2() {\n    return map.getContravariant(&quot;foo&quot;).map(p -&gt; p);\n  }\n\n  // Doesn't compile\n  /*\n  public Optional&lt;Object&gt; getFoo3() {\n    return map.getContravariant(&quot;foo&quot;);\n  }\n  */\n}\n</code></pre>\n<p>Uncommenting <code>getFoo3</code> results in the following error:</p>\n<pre><code>MyMap.java:32: error: incompatible types: Optional&lt;CAP#1&gt; cannot be converted to Optional&lt;Object&gt;\n    return map.getContravariant(&quot;foo&quot;);\n                               ^\n  where CAP#1 is a fresh type-variable:\n    CAP#1 extends Object super: String from capture of ? super String\n1 error\n</code></pre>\n<p>Of course I can just make the users of <code>MyMap</code> use <code>getContravariant(...).map(p -&gt; p)</code>, but I would like to avoid having the users of the map having to do this widening <code>Optional::map</code> call.</p>\n<p>Is it possible to achieve this?</p>\n<p>If not, why not?</p>\n",
+    "tags" : [ "java", "generics", "contravariance" ],
+    "owner" : {
+      "account_id" : 321640,
+      "reputation" : 30391,
+      "user_id" : 640584,
+      "user_type" : "registered",
+      "accept_rate" : 88,
+      "profile_image" : "https://www.gravatar.com/avatar/22c2a81ffc7aeed2599f9aaa8d95a69d?s=256&d=identicon&r=PG",
+      "display_name" : "Tyilo",
+      "link" : "https://stackoverflow.com/users/640584/tyilo"
+    },
+    "is_answered" : true,
+    "view_count" : 157,
+    "answer_count" : 2,
+    "score" : 5,
+    "last_activity_date" : 1747655008,
+    "creation_date" : 1746191518,
+    "link" : "https://stackoverflow.com/questions/79603453/return-type-contravariance-in-java",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79603484,
+    "question_id" : 79603453,
+    "body" : "<p><code>Optional&lt;? super V&gt;</code> should be read as &quot;an <code>Optional</code> that <em>consumes</em> <code>V</code>s&quot;. (See <a href=\"https://stackoverflow.com/a/19739576/5133585\">PECS</a>.) Given that you would most likely want to use <code>Optional&lt;T&gt;</code> as a <em>producer</em> of <code>T</code>s (e.g. extract the <code>T</code> that it is wrapping), <code>Optional&lt;? super V&gt;</code> is a rather useless type.</p>\n<p><code>Optional&lt;? super Integer&gt;</code> could be a <code>Optional&lt;Integer&gt;</code>, or <code>Optional&lt;Number&gt;</code>, or <code>Optional&lt;Object&gt;</code>. It is the method implementation that decides which it is. The caller doesn't know what the type parameter actually is, so we cannot assign it to an <code>Optional&lt;Object&gt;</code> variable. After all <code>Optional&lt;Object&gt;</code> is invariant, so only <code>Optional&lt;Object&gt;</code>s can be assigned to it.</p>\n<p>What the caller <em>can</em> decide, are generic type parameters. But there are no supertype constraints in Java. <em><strong>If</strong></em> they existed, you could have written</p>\n<pre><code>// this does not compile because &quot;super&quot; is not a type parameter constraint\npublic &lt;R super V&gt; Optional&lt;R&gt; getContravariant(K key)\n</code></pre>\n<p>What you <em>should</em> do is to change the use site (or your &quot;expectations&quot;). Instead of expecting an <code>Optional&lt;Object&gt;</code> <em>exactly</em>. It should expect an <code>Optional&lt;? extends Object&gt;</code>, or simply <code>Optional&lt;?&gt;</code>.</p>\n<pre><code>public Optional&lt;? extends Object&gt; getFoo3() {\n    return map.getInvariant(&quot;foo&quot;);\n}\n</code></pre>\n<p>This (&quot;changing the expectations&quot;) is a common pattern across the JDK. Methods in the JDK usually don't expect invariant types unless they need to. For example, <code>Collection.addAll</code> expects a <code>Collection&lt;? extends E&gt;</code> instead of an invariant <code>Collection&lt;E&gt;</code>. <code>Stream.map</code> expects a <code>Function&lt;? super T, ? extends R&gt;</code> instead of <code>Function&lt;T, R&gt;</code>, etc.</p>\n<p>By the way, being able to convert from <code>Optional&lt;V&gt;</code> to <code>Optional&lt;Object&gt;</code> is <em>covariance</em>, not <em>contravariance</em>. Contravariance would be converting a <code>Consumer&lt;Object&gt;</code> to a <code>Consumer&lt;String&gt;</code>.</p>\n",
+    "score" : 11,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 6651855,
+      "reputation" : 292280,
+      "user_id" : 5133585,
+      "user_type" : "registered",
+      "accept_rate" : 96,
+      "profile_image" : "https://i.sstatic.net/dfqcw.png?s=256",
+      "display_name" : "Sweeper",
+      "link" : "https://stackoverflow.com/users/5133585/sweeper"
+    },
+    "creation_date" : 1746192711,
+    "last_activity_date" : 1747655008,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79603848,
+    "question_id" : 79603453,
+    "body" : "<p>As indicated in the comments and the other answer there doesn’t seem to any good reason for wanting a <code>public &lt;R super K&gt; Optional&lt;R&gt; getContravariant2(K key)</code> method. If you insist, you may rely on an unchecked cast:</p>\n<pre><code>public &lt;R&gt; Optional&lt;R&gt; getContravariant2(K key) {\n    return getInvariant(key).map(p -&gt; (R) p);\n}\n</code></pre>\n<p>This will only allow you to get an <code>Optional&lt;?&gt;</code>, though, so it doesn’t get you far.</p>\n<p>Or you may require the caller to specify the requested element type explicitly:</p>\n<pre><code>public &lt;R&gt; Optional&lt;R&gt; getContravariant2(Class&lt;R&gt; resultClass, K key) {\n    return getInvariant(key).map(resultClass::cast);\n}\n</code></pre>\n<p>The latter allows for example:</p>\n<pre><code>    Optional&lt;CharSequence&gt; opt = new MyMap&lt;&gt;(Map.of(&quot;a&quot;, &quot;b&quot;))\n            .getContravariant2(CharSequence.class, &quot;a&quot;);\n    System.out.println(opt);\n</code></pre>\n<p>Output:</p>\n<pre class=\"lang-none prettyprint-override\"><code>Optional[b]\n</code></pre>\n<p>Your compile-time check that the element type is indeed a super type of the value type (or key type) is lost, though. So you will get a <code>ClassCastException</code> from specifying a type that is not a supertype of the the runtime type of the object returned.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 41728891,
+      "reputation" : 1,
+      "user_id" : 30423760,
+      "user_type" : "unregistered",
+      "profile_image" : "https://www.gravatar.com/avatar/c40c0a195a41f3d94f96ee1d5b15a409?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Irene Perera",
+      "link" : "https://stackoverflow.com/users/30423760/irene-perera"
+    },
+    "creation_date" : 1746206586,
+    "last_activity_date" : 1746207175,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140390914,
+    "post_id" : 79603453,
+    "body" : "I can’t make a lot of sense out of what you want. In the case of <code>MyMap&lt;String, String&gt;</code> and <code>public &lt;R super K&gt; Optional&lt;R&gt; getContravariant2(K key)</code> you can get an <code>Optional&lt;String&gt;</code> or <code>Optional&lt;Object&gt;</code> or an <code>Optional&lt;CharSequence&gt;</code> out of the method (theoretically). In case of <code>MyMap&lt;Integer, LocalDate&gt;</code> you can’t get anything but <code>Optional&lt;Object&gt;</code>. Did I miss something? Did you mean <code>&lt;R super V&gt; Optional&lt;R&gt; getContravariant2(K key)</code>?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7612423,
+      "reputation" : 87409,
+      "user_id" : 5772882,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Anonymous",
+      "link" : "https://stackoverflow.com/users/5772882/anonymous"
+    },
+    "creation_date" : 1746205413,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140390475,
+    "post_id" : 79603453,
+    "body" : "Why would the calling code want a contravariant <code>Optional</code>? That doesn&#39;t make any sense: <code>Optional</code> is used to return a value, and returning a value is an inherently covariant operation: To make use of a returned value, calling code needs to know what it extends, not what it is a super type of.",
+    "score" : 3,
+    "owner" : {
+      "account_id" : 61566,
+      "reputation" : 70922,
+      "user_id" : 183406,
+      "user_type" : "registered",
+      "accept_rate" : 74,
+      "profile_image" : "https://www.gravatar.com/avatar/ca03242df77ec2d8f70f2cea0d6209be?s=256&d=identicon&r=PG",
+      "display_name" : "meriton",
+      "link" : "https://stackoverflow.com/users/183406/meriton"
+    },
+    "creation_date" : 1746197122,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140390205,
+    "post_id" : 79603453,
+    "body" : "@luk2302 No as that is covariant in <code>V</code> instead of contravariant.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 321640,
+      "reputation" : 30391,
+      "user_id" : 640584,
+      "user_type" : "registered",
+      "accept_rate" : 88,
+      "profile_image" : "https://www.gravatar.com/avatar/22c2a81ffc7aeed2599f9aaa8d95a69d?s=256&d=identicon&r=PG",
+      "display_name" : "Tyilo",
+      "link" : "https://stackoverflow.com/users/640584/tyilo"
+    },
+    "creation_date" : 1746192261,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140390187,
+    "post_id" : 79603453,
+    "body" : "Does <code>public &lt;R extends V&gt; Optional&lt;R&gt; getContravariant(K key)</code> work?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2843847,
+      "reputation" : 57516,
+      "user_id" : 2442804,
+      "user_type" : "registered",
+      "accept_rate" : 80,
+      "profile_image" : "https://i.sstatic.net/51a3aQOH.jpg?s=256",
+      "display_name" : "luk2302",
+      "link" : "https://stackoverflow.com/users/2442804/luk2302"
+    },
+    "creation_date" : 1746192066,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79603484" : [ {
+      "comment_id" : 140439012,
+      "post_id" : 79603484,
+      "body" : "@Holger You&#39;re right. I somehow missed that when scanning through the list of methods it declares.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 6651855,
+        "reputation" : 292280,
+        "user_id" : 5133585,
+        "user_type" : "registered",
+        "accept_rate" : 96,
+        "profile_image" : "https://i.sstatic.net/dfqcw.png?s=256",
+        "display_name" : "Sweeper",
+        "link" : "https://stackoverflow.com/users/5133585/sweeper"
+      },
+      "creation_date" : 1747655043,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140438979,
+      "post_id" : 79603484,
+      "body" : "Actually, <code>Optional</code> <i>has</i> methods consuming <code>T</code> and it’s an example of a failure to provide variance, i.e. you can’t write <code>Optional&lt;Integer&gt; o = someMethod(); Number cs = o.orElse(1.23);</code> But, as you said, there’s no way to change <code>someMethod()</code> to allow the caller to pick the intended type. The best you can do, is <code>Optional&lt;Number&gt; o = someMethod().map(Function.identity());</code>…",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 3211603,
+        "reputation" : 301001,
+        "user_id" : 2711488,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+        "display_name" : "Holger",
+        "link" : "https://stackoverflow.com/users/2711488/holger"
+      },
+      "creation_date" : 1747654328,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79603848" : [ {
+      "comment_id" : 140438995,
+      "post_id" : 79603848,
+      "body" : "It’s not correct that the first example “<i>will only allow you to get an <code>Optional&lt;?&gt;</code></i>” The first example allows the caller to get anything, including <code>Optional&lt;Thread&gt;</code> or <code>Optional&lt;FileChannel&gt;</code>, in other words, without any restriction, as <code>R</code> has no restriction. The impossibility to hold this promise is hinted by the compiler by issuing an <i>unchecked</i> warning at the <code>.map(p -&gt; (R) p)</code>",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 3211603,
+        "reputation" : 301001,
+        "user_id" : 2711488,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+        "display_name" : "Holger",
+        "link" : "https://stackoverflow.com/users/2711488/holger"
+      },
+      "creation_date" : 1747654725,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

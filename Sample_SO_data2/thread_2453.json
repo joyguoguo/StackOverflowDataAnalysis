@@ -1,0 +1,46 @@
+{
+  "question" : {
+    "question_id" : 79621695,
+    "title" : "Spring Data JPA retrieving a nested collection of the same entity grouped by",
+    "body" : "<p>I have an interesting issue to solve where by I'm trying to retrieve a group of elements grouped by multiple columns in the same table. This is the first time attempting such a thing. In the code base I use Spring Data JPA</p>\n<p>Example data structure:</p>\n<div class=\"s-table-container\"><table class=\"s-table\">\n<thead>\n<tr>\n<th>Id</th>\n<th>name</th>\n<th>artist</th>\n<th>pickup</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>1</td>\n<td>Les Paul</td>\n<td>Eric Clapton</td>\n<td>humbucker</td>\n</tr>\n<tr>\n<td>2</td>\n<td>Stratocaster</td>\n<td>Eric Clapton</td>\n<td>single coil</td>\n</tr>\n<tr>\n<td>3</td>\n<td>Telecaster</td>\n<td>Eric Clapton</td>\n<td>single coil</td>\n</tr>\n<tr>\n<td>4</td>\n<td>Gretsch</td>\n<td>Paul McCartney</td>\n<td>single coil</td>\n</tr>\n</tbody>\n</table></div>\n<p>So, what I would like is a way to get the artist grouping the guitar, they used, and pickup. This includes pagination and filtering.</p>\n<p>I've attempted the following:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Entity\npublic class Guitar {\n\n   @Id\n   private Long id;       \n\n   @Column\n   private String name;\n\n   @Column\n   private String pickup;\n}\n\n@Subselect(&quot;SELECT DISTINCT artist, name, pickup FROM rocker&quot;)\npublic class ArtistGuitar {\n   @Id\n   private String artist;\n   \n   private String pickup;\n\n   @JoinColumns({\n      @JoinColumn(name = &quot;artist&quot;),\n      @JoinColumn(name= &quot;pickup&quot;)\n   })\n   @OneToMany\n   private List&lt;Guitar&gt; guitars;\n\n}\n</code></pre>\n<p>I receive a</p>\n<blockquote>\n<p>A Foreign key refering...has the wrong number of columns</p>\n</blockquote>\n<p>I'm aiming for the following:</p>\n<pre class=\"lang-json prettyprint-override\"><code>[\n    {\n         &quot;artist&quot;: &quot;Eric Clapton&quot;,\n         &quot;pickup&quot;: &quot;humbucker&quot;,\n         &quot;guitars&quot;: [\n            {&quot;id&quot;: 1, &quot;name&quot;: &quot;Les Paul&quot;},\n         ]\n         \n    },\n    {\n         &quot;artist&quot;: &quot;Eric Clapton&quot;,\n         &quot;pickup&quot;: &quot;single coil&quot;,\n         &quot;guitars&quot;: [\n            {&quot;id&quot;: 2, &quot;name&quot;: &quot;Stratocaster&quot;},\n            {&quot;id&quot;: 3, &quot;name&quot;: &quot;Telecaster&quot;},\n         ]\n  \n    },\n    {\n         &quot;artist&quot;: &quot;Paul McCartney&quot;,\n         &quot;pickup&quot;: &quot;single coil&quot;,\n         &quot;guitars&quot;: [\n            {&quot;id&quot;: 4, &quot;name&quot;: &quot;Gretsch&quot;}\n         ]\n  \n    },\n]\n</code></pre>\n",
+    "tags" : [ "java", "spring", "spring-data-jpa" ],
+    "owner" : {
+      "account_id" : 4312639,
+      "reputation" : 109,
+      "user_id" : 3523340,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/c082f0809cc3a58399deb64472b0e637?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "user3523340",
+      "link" : "https://stackoverflow.com/users/3523340/user3523340"
+    },
+    "is_answered" : false,
+    "view_count" : 69,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1747309107,
+    "creation_date" : 1747232747,
+    "link" : "https://stackoverflow.com/questions/79621695/spring-data-jpa-retrieving-a-nested-collection-of-the-same-entity-grouped-by",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79621899,
+    "question_id" : 79621695,
+    "body" : "<p>Putting everything into a single table isn't what relational databases like. You first have to <a href=\"https://en.wikipedia.org/wiki/Database_normalization\" rel=\"nofollow noreferrer\">normalize your data model</a>.</p>\n<p>I see at least two tables here: one for the artists and one for his guitars. This leads to the following entities:</p>\n<pre><code>@Entity\npublic class Artist\n{\n    @Id\n    private Long id;\n    \n    private String name;\n    \n    @OneToMany(cascade = CascadeType.ALL, mappedBy = &quot;artist&quot;)\n    private Set&lt;Guitar&gt; guitars;\n\n    ... getters and setters.\n}\n\n@Entity\npublic class Guitar\n{\n    @Id\n    private Long id;\n    \n    private String name;\n    \n    @Enumerated(EnumType.STRING)\n    private Pickup pickup;\n    \n    @ManyToOne\n    @JoinColumn(name = &quot;ARTIST_ID&quot;)\n    private Artist artist;\n    \n    ... getters and setters.\n}\n\n// Pickup is just an enum here.\npublic enum Pickup\n{\n    HUMBUCKER,\n    SINGLE_COIL\n}\n</code></pre>\n<p>Then your subselect looks like this:</p>\n<pre><code>@Entity\n@Subselect(&quot;&quot;&quot;\n        SELECT DISTINCT a.id AS ARTIST_ID,\n                        a.name AS ARTIST_NAME,\n                        g.pickup AS GUITAR_PICKUP\n        FROM Artist a\n        LEFT JOIN Guitar g ON ARTIST_ID = a.ID\n        &quot;&quot;&quot;)\npublic class GuitarsByArtistAndPickup\n{\n    @Id\n    private CompositeId id;\n    \n    private String artistName;\n    \n    @OneToMany\n    @JoinColumn(name = &quot;ARTIST_ID&quot;)\n    @JoinColumn(name = &quot;PICKUP&quot;)\n    private Set&lt;Guitar&gt; guitars;\n\n    ... getters.\n}\n</code></pre>\n<p>Note that the id is made up of the artist's id and the pickup type:</p>\n<pre><code>@Embeddable\npublic class CompositeId implements Serializable\n{\n    private static final long serialVersionUID = 1L;\n\n    private Long artistId;\n    \n    @Enumerated(EnumType.STRING)\n    private Pickup guitarPickup;\n\n    ... getters.\n}\n</code></pre>\n<p>In this example the guitar table owns the artist's foreign key. So you may need to insert the same guitar used by different artists repeatedly. A better approach preventing this would be a <code>@ManyToMany</code> relation with a join table.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 29176687,
+      "reputation" : 438,
+      "user_id" : 22351796,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/1ae534f680eb879398ed8846b6e85b69?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Karsten",
+      "link" : "https://stackoverflow.com/users/22351796/karsten"
+    },
+    "creation_date" : 1747239705,
+    "last_activity_date" : 1747241554,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : { }
+}

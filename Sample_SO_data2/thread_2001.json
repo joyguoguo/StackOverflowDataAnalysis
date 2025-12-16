@@ -1,0 +1,111 @@
+{
+  "question" : {
+    "question_id" : 79659753,
+    "title" : "Math operations in stream foreach and updating the existing value object",
+    "body" : "<pre class=\"lang-java prettyprint-override\"><code>BigDecimal rate = BigDecimal.ZERO;\nBigDecimal fixedCost = BigDecimal.ZERO;\nint SCALE = 16;\nfees. stream.forEach(fee -&gt; {\n    switch (fee.FeeRateCode) {\n        case POINT -&gt; rate =rate.add(fee.rateValue().divide(BigDecimal.valueOf(10000), SCALE, RoundingMode.HALF_EVEN))\n        case SHARE -&gt; rate =rate.add(fee.rateValue().divide(priceValue, SCALE, RoundingMode.HALF_EVEN))\n        case LOCAL -&gt; fixedCost = fixedCost.add(fee.rateValue().divide(exchangeAmount, SCALE, RoundingMode.HALF_EVEN))\n    }\n}\nCostModel.builder().fixedCost(fixedCost).rateValue(rate).build();\n</code></pre>\n<p>Getting error for declaring rate and <code>fixedCost</code> as final/effectively final. Is there any way I can fix this without declaring a local/class level variable, like in the streams <code>foreach</code>, I get model existing rate and <code>fixedCost</code> and update it based on the case?</p>\n<p>Ex: (something like below)</p>\n<pre class=\"lang-java prettyprint-override\"><code>CostModel costModel = CostModel.builder().build();\ncase POINT\n    -&gt; costModel.rateValue(rate\n        -&gt; rate.add(fee.rateValue().divide(\n            BigDecimal.valueOf(10000), SCALE, RoundingMode.HALF_EVEN)))\n</code></pre>\n",
+    "tags" : [ "java", "lambda", "java-stream", "java-17" ],
+    "owner" : {
+      "account_id" : 6323939,
+      "reputation" : 649,
+      "user_id" : 4910936,
+      "user_type" : "registered",
+      "accept_rate" : 84,
+      "profile_image" : "https://www.gravatar.com/avatar/c6c15814d89a05a82ee16367c41e2de7?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Pat",
+      "link" : "https://stackoverflow.com/users/4910936/pat"
+    },
+    "is_answered" : true,
+    "view_count" : 140,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1749540604,
+    "creation_date" : 1749526579,
+    "link" : "https://stackoverflow.com/questions/79659753/math-operations-in-stream-foreach-and-updating-the-existing-value-object",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79659979,
+    "question_id" : 79659753,
+    "body" : "<p>According to the <a href=\"https://docs.oracle.com/javase/tutorial/java/javaOO/lambdaexpressions.html#accessing-local-variables\" rel=\"nofollow noreferrer\">docs of the Java Tutorial</a></p>\n<blockquote>\n<p>a lambda expression can only access local variables and parameters of the enclosing block that are final or effectively final.</p>\n</blockquote>\n<p>This means that the expression supplied to the stream operation <code>forEach()</code> can only access variables or parameters declared as final or whose value is not changed within the expression (effectively final).</p>\n<p>In your case, if you really want to use streams to tackle this problem, you could define a custom <a href=\"https://docs.oracle.com/javase/8/docs/api/java/util/function/Consumer.html\" rel=\"nofollow noreferrer\"><code>Consumer&lt;Fee&gt;</code></a> to handle the consumption and addition of each <code>Fee</code>.</p>\n<pre><code>public class FeeConsumer implements Consumer&lt;Fee&gt; {\n\n    private final int scale;\n    private final BigDecimal priceValue;\n    private final BigDecimal exchangeAmount;\n\n    @Getter\n    private BigDecimal rate = BigDecimal.ZERO;\n    @Getter\n    private BigDecimal fixedCost = BigDecimal.ZERO;\n\n    public FeeConsumer(int scale, BigDecimal priceValue, BigDecimal exchangeAmount) {\n        this.scale = scale;\n        this.priceValue = priceValue;\n        this.exchangeAmount = exchangeAmount;\n    }\n\n    @Override\n    public void accept(Fee fee) {\n        switch (fee.getFeeRateCode()) {\n            case POINT:\n                rate = rate.add(fee.rateValue().divide(BigDecimal.valueOf(10000), scale, RoundingMode.HALF_EVEN));\n                break;\n            case SHARE:\n                rate = rate.add(fee.rateValue().divide(priceValue, scale, RoundingMode.HALF_EVEN));\n                break;\n            case LOCAL:\n                fixedCost = fixedCost.add(fee.rateValue().divide(exchangeAmount, scale, RoundingMode.HALF_EVEN));\n        }\n    }\n\n    public void combine(FeeConsumer other) {\n        this.rate = this.rate.add(other.rate);\n        this.fixedCost = this.fixedCost.add(other.fixedCost);\n    }\n}\n</code></pre>\n<p>With this implementation, the stream within the method in charge of creating a <code>CostModel</code> could look like this:</p>\n<pre><code>public CostModel createCostModel(List&lt;Fee&gt; fees, int scale, BigDecimal priceValue, BigDecimal exchangeAmount) {\n    FeeConsumer feeConsumer = fees.stream()\n        .collect(\n            () -&gt; new FeeConsumer(scale, priceValue, exchangeAmount),                           \n            FeeConsumer::accept, \n            FeeConsumer::combine\n         );\n\n         return CostModel.builder()\n                 .rateValue(feeConsumer.getRate())\n                 .fixedCost(feeConsumer.getFixedCost())\n                 .build();\n    }\n</code></pre>\n<p>Alternatively, if you cannot be bothered to create a whole new class to consume <code>Fee</code> objects, you could employ a <a href=\"https://docs.oracle.com/javase/8/docs/api/java/util/stream/Collector.html\" rel=\"nofollow noreferrer\">Collector</a>, specifically the <a href=\"https://docs.oracle.com/javase/8/docs/api/java/util/stream/Collectors.html#toMap-java.util.function.Function-java.util.function.Function-java.util.function.BinaryOperator-\" rel=\"nofollow noreferrer\">Collectors.toMap(keyMapper, valueMapper, mergeFunction)</a>, to accumulate fees by their rate code. However, keep in mind that this solution is not as flexible nor as scalable as the first one.</p>\n<pre><code>public CostModel createCostModel(List&lt;Fee&gt; fees, int scale, BigDecimal priceValue, BigDecimal exchangeAmount) {\n    Map&lt;FeeRateCode, BigDecimal&gt; mapTempValues = fees.stream()\n        .collect(Collectors.toMap(\n            Fee::getFeeRateCode,\n            fee -&gt; {\n                if (fee.getFeeRateCode() == FeeRateCode.POINT) {\n                    return fee.rateValue().divide(BigDecimal.valueOf(10000), scale, RoundingMode.HALF_EVEN);\n                }\n                if (fee.getFeeRateCode() == FeeRateCode.SHARE) {\n                    return fee.rateValue().divide(priceValue, scale, RoundingMode.HALF_EVEN);    \n                }\n                return fee.rateValue().divide(exchangeAmount, scale, RoundingMode.HALF_EVEN);\n            },\n            BigDecimal::add)\n        );\n\n    // The rateValue is given by the sum of the values mapped by FeeRateCode.POINT and FeeRateCode.SHARE\n    return CostModel.builder()\n                .rateValue(mapTempValues.getOrDefault(FeeRateCode.POINT, BigDecimal.ZERO).add(mapTempValues.getOrDefault(FeeRateCode.SHARE, BigDecimal.ZERO)))\n                .fixedCost(mapTempValues.getOrDefault(FeeRateCode.LOCAL, BigDecimal.ZERO))\n                .build();\n    }\n</code></pre>\n<p>For more info on how to collect or reduce values from streams, I recommend this <a href=\"https://docs.oracle.com/javase/tutorial/collections/streams/reduction.html\" rel=\"nofollow noreferrer\">article</a> from the Java Tutorials.</p>\n<h2>Demo</h2>\n<p>Here is also a demo at <a href=\"https://onecompiler.com/java/43mbfv39e\" rel=\"nofollow noreferrer\">OneCompiler</a> with both solutions.</p>\n",
+    "score" : 2,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 5569841,
+      "reputation" : 8674,
+      "user_id" : 4415625,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/0ea1713807527aa1cf52e40579e35ec4?s=256&d=identicon&r=PG",
+      "display_name" : "dani-vta",
+      "link" : "https://stackoverflow.com/users/4415625/dani-vta"
+    },
+    "creation_date" : 1749539839,
+    "last_activity_date" : 1749540604,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140502263,
+    "post_id" : 79659753,
+    "body" : "Related: <a href=\"https://stackoverflow.com/questions/34865383/variable-used-in-lambda-expression-should-be-final-or-effectively-final\">Variable used in lambda expression should be final or effectively final</a>",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 7612423,
+      "reputation" : 87409,
+      "user_id" : 5772882,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Anonymous",
+      "link" : "https://stackoverflow.com/users/5772882/anonymous"
+    },
+    "creation_date" : 1749557350,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140501856,
+    "post_id" : 79659753,
+    "body" : "Or just perform two straight-forward reduction operations, one for <code>rate</code> and one for <code>fixedCosts</code>. By the way, the “decimal” in <code>BigDecimal</code> is there for a reason. Instead of dividing by <code>10000</code> you can simply <a href=\"https://docs.oracle.com/en/java/javase/23/docs/api/java.base/java/math/BigDecimal.html#movePointLeft(int)\" rel=\"nofollow noreferrer\">move the decimal point by four positions</a> which is cheap and without loss of precision.",
+    "score" : 4,
+    "owner" : {
+      "account_id" : 3211603,
+      "reputation" : 301001,
+      "user_id" : 2711488,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+      "display_name" : "Holger",
+      "link" : "https://stackoverflow.com/users/2711488/holger"
+    },
+    "creation_date" : 1749549150,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140501134,
+    "post_id" : 79659753,
+    "body" : "That said, it will likely be more straightforward to implement this via a standard for-each loop. Don&#39;t force the use of streams if it makes the implementation more difficult without benefits.",
+    "score" : 8,
+    "owner" : {
+      "account_id" : 8532578,
+      "reputation" : 49904,
+      "user_id" : 6395627,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Slaw",
+      "link" : "https://stackoverflow.com/users/6395627/slaw"
+    },
+    "creation_date" : 1749531164,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140501126,
+    "post_id" : 79659753,
+    "body" : "You could create a custom <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/util/stream/Collector.html\" rel=\"nofollow noreferrer\"><code>Collector</code></a>. Or maybe you can get <code>Stream::reduce</code> to work. If on Java 24 then perhaps <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/util/stream/Gatherers.html#fold(java.util.function.Supplier,java.util.function.BiFunction)\" rel=\"nofollow noreferrer\"><code>Gatherers::fold</code></a> would work for you. Regardless, you&#39;ll need an intermediate object encapsulating the <code>rate</code> and <code>fixedCost</code> for accumulation.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 8532578,
+      "reputation" : 49904,
+      "user_id" : 6395627,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Slaw",
+      "link" : "https://stackoverflow.com/users/6395627/slaw"
+    },
+    "creation_date" : 1749531035,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

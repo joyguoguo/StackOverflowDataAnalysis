@@ -1,0 +1,190 @@
+{
+  "question" : {
+    "question_id" : 79634216,
+    "title" : "@EntityGraph makes eager attributes lazy",
+    "body" : "<p>I want to be able to eagerly fetch associated &quot;to-many&quot; entities. So I included a separate &quot;eager&quot; query method annotated with <code>@EntityGraph</code>.</p>\n<pre class=\"lang-java prettyprint-override\"><code>@RepositoryDefinition(domainClass = User.class, idClass = Long.class)\npublic interface UserRepository {\n\n    Optional&lt;User&gt; findById(Long id);\n\n    @EntityGraph(attributePaths = {&quot;emailData&quot;}, type = EntityGraph.EntityGraphType.LOAD) // this is important\n    Optional&lt;User&gt; findEagerlyById(Long id);\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>// I removed some irrelevant fields\n\nimport jakarta.persistence.CascadeType;\nimport jakarta.persistence.Column;\nimport jakarta.persistence.Entity;\nimport jakarta.persistence.GeneratedValue;\nimport jakarta.persistence.GenerationType;\nimport jakarta.persistence.Id;\nimport jakarta.persistence.OneToMany;\nimport jakarta.persistence.OneToOne;\nimport jakarta.persistence.Table;\nimport lombok.Getter;\nimport lombok.Setter;\n\nimport java.time.LocalDate;\nimport java.util.List;\n\n@Entity\n@Getter\n@Setter\n@Table(name = &quot;\\&quot;user\\&quot;&quot;)\npublic class User {\n    @Id\n    @GeneratedValue(strategy = GenerationType.IDENTITY)\n    private Long id;\n    private String name;\n    @OneToOne(mappedBy = &quot;user&quot;)\n    private Account account;\n    @OneToMany(mappedBy = &quot;user&quot;, cascade = CascadeType.ALL, orphanRemoval = true)\n    private List&lt;EmailData&gt; emailData;\n}\n</code></pre>\n<p>The problem is it somehow broke a join of <code>User</code>'s to-one relation, <code>Account</code>.</p>\n<pre class=\"lang-java prettyprint-override\"><code>import jakarta.persistence.Entity;\nimport jakarta.persistence.GeneratedValue;\nimport jakarta.persistence.GenerationType;\nimport jakarta.persistence.Id;\nimport jakarta.persistence.JoinColumn;\nimport jakarta.persistence.OneToOne;\nimport lombok.Getter;\nimport lombok.Setter;\n\nimport java.math.BigDecimal;\n\n@Entity\n@Getter\n@Setter\npublic class Account {\n    @Id\n    @GeneratedValue(strategy = GenerationType.IDENTITY)\n    private Long id;\n    @OneToOne\n    @JoinColumn(name = &quot;user_id&quot;)\n    private User user;\n    private BigDecimal balance;\n}\n</code></pre>\n<p>What it was (with a regular <code>findById(String)</code>):</p>\n<pre><code>Hibernate: select u1_0.id,a1_0.id,a1_0.balance,u1_0.date_of_birth,u1_0.name,u1_0.password from &quot;user&quot; u1_0 left join account a1_0 on u1_0.id=a1_0.user_id where u1_0.id=?\nHibernate: select ed1_0.user_id,ed1_0.id,ed1_0.email from email_data ed1_0 where ed1_0.user_id=?\n</code></pre>\n<p>What it's become (<code>findEagerlyById(String)</code>):</p>\n<pre><code>Hibernate: select u1_0.id,u1_0.date_of_birth,ed1_0.user_id,ed1_0.id,ed1_0.email,u1_0.name,u1_0.password from &quot;user&quot; u1_0 left join email_data ed1_0 on u1_0.id=ed1_0.user_id where u1_0.id=?\nHibernate: select a1_0.id,a1_0.balance,u1_0.id,u1_0.date_of_birth,u1_0.name,u1_0.password from account a1_0 left join &quot;user&quot; u1_0 on u1_0.id=a1_0.user_id where a1_0.user_id=?\n</code></pre>\n<p>It's weird since I specified <code>type=EntityGraph.EntityGraphType.LOAD</code>. According to the documentation:</p>\n<pre class=\"lang-java prettyprint-override\"><code>        /**\n         * When the jakarta.persistence.loadgraph property is used to specify an entity graph, attributes that are specified\n         * by attribute nodes of the entity graph are treated as FetchType.EAGER and attributes that are not specified are\n         * treated according to their specified or default FetchType.\n         *\n         * @see &lt;a href=&quot;https://jakarta.ee/specifications/persistence/3.1/jakarta-persistence-spec-3.1#load-graph-semantics&quot;&gt;Jakarta\n         *      Persistence Specification: Load Graph Semantics&lt;/a&gt;\n         */\n        LOAD(&quot;jakarta.persistence.loadgraph&quot;),\n</code></pre>\n<p>Notice it said <em>&quot;according to their specified <strong>or default</strong> FetchType&quot;</em>. As you are probably well aware, <code>@OneToOne</code>'s default fetch type is <code>FetchType.EAGER</code>.</p>\n<pre class=\"lang-java prettyprint-override\"><code>// jakarta.persistence.OneToOne\n    FetchType fetch() default FetchType.EAGER;\n\n</code></pre>\n<p>So the question is, why did it break, and how do I fix it?</p>\n",
+    "tags" : [ "java", "hibernate", "spring-data" ],
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2683,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "is_answered" : false,
+    "view_count" : 92,
+    "answer_count" : 1,
+    "score" : 2,
+    "last_activity_date" : 1752608593,
+    "creation_date" : 1747933036,
+    "link" : "https://stackoverflow.com/questions/79634216/entitygraph-makes-eager-attributes-lazy",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79702584,
+    "question_id" : 79634216,
+    "body" : "<p>Even though you used <code>@EntityGraph</code> to eagerly load <code>emailData</code>, Hibernate still triggered a second query to fetch the <code>Account</code> because it wasn’t included in the entity graph. This happens because <code>Account</code> is related to <code>Users</code>, but was not explicitly mentioned in the graph, so Hibernate made a separate query to load it.</p>\n<p>To fix your issue just add <code>account</code> to the <code>@EntityGraph</code> annotation so that it eagerly loads both associations within a single query:</p>\n<pre><code>@EntityGraph(attributePaths = {&quot;emailData&quot;, &quot;account&quot;}, type = EntityGraph.EntityGraphType.LOAD) // this is important\nOptional&lt;User&gt; findEagerlyById(Long id);\n</code></pre>\n<p>Then you should see something close to this:</p>\n<pre><code>Hibernate: select u1_0.id,u1_0.name,u1_0.password,u1_0.date_of_birth,a1_0.id,a1_0.balance,ed1_0.id,ed1_0.email,ed1_0.user_id from &quot;user&quot; u1_0 left join account a1_0 on u1_0.id=a1_0.user_id left join email_data ed1_0 on u1_0.id=ed1_0.user_id where u1_0.id=?\n</code></pre>\n<hr />\n<p>I found that the <code>EntityGraph.EntityGraphType.LOAD</code> just adds to the default fetch plan, it doesn’t override it so to avoid extra queries, you must list every needed association.<br></p>\n<p><a href=\"https://docs.spring.io/spring-data/jpa/docs/current/api/org/springframework/data/jpa/repository/EntityGraph.EntityGraphType.html#LOAD\" rel=\"nofollow noreferrer\">From docs</a> ...<br>\n<i>When the jakarta.persistence.loadgraph property is used to specify an entity graph, attributes that are specified by attribute nodes of the entity graph are treated as FetchType.EAGER and attributes that are not specified are treated according to their specified or default FetchType.</i></p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 43033239,
+      "reputation" : 1,
+      "user_id" : 31040901,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/8e044976e87d893fd8b97e8314b69b53?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "spring app",
+      "link" : "https://stackoverflow.com/users/31040901/spring-app"
+    },
+    "creation_date" : 1752608593,
+    "last_activity_date" : 1752608593,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140451745,
+    "post_id" : 79634216,
+    "body" : "I assume it is a eager inconsistency <a href=\"https://vladmihalcea.com/eager-fetching-is-a-code-smell/#:~:text=EAGER%20fetching%20inconsistencies\" rel=\"nofollow noreferrer\">vladmihalcea.com/eager-fetching-is-a-code-smell/&hellip;</a>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 22988088,
+      "reputation" : 446,
+      "user_id" : 17113997,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/VtfWg.jpg?s=256",
+      "display_name" : "DimitrijeCiric",
+      "link" : "https://stackoverflow.com/users/17113997/dimitrijeciric"
+    },
+    "creation_date" : 1747985498,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140451703,
+    "post_id" : 79634216,
+    "body" : "@DimitrijeCiric anyway, why did the join go away?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2683,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "creation_date" : 1747984556,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140450846,
+    "post_id" : 79634216,
+    "body" : "Yes it is, eager does not mean it has to be fetched from a single query. It means that part of object will be in memory right after the object construction. You should read about fetch type and fetch mode.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 22988088,
+      "reputation" : 446,
+      "user_id" : 17113997,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/VtfWg.jpg?s=256",
+      "display_name" : "DimitrijeCiric",
+      "link" : "https://stackoverflow.com/users/17113997/dimitrijeciric"
+    },
+    "creation_date" : 1747947113,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140450816,
+    "post_id" : 79634216,
+    "body" : "@DimitrijeCiric that is not what I consider eager",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2683,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "creation_date" : 1747946227,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140450728,
+    "post_id" : 79634216,
+    "body" : "I think this may help, <a href=\"https://vladmihalcea.com/eager-fetching-is-a-code-smell/\" rel=\"nofollow noreferrer\">vladmihalcea.com/eager-fetching-is-a-code-smell</a>. Account attribute is still fetched eagerly but in a separate query",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 22988088,
+      "reputation" : 446,
+      "user_id" : 17113997,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/VtfWg.jpg?s=256",
+      "display_name" : "DimitrijeCiric",
+      "link" : "https://stackoverflow.com/users/17113997/dimitrijeciric"
+    },
+    "creation_date" : 1747943792,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140450716,
+    "post_id" : 79634216,
+    "body" : "@DimitrijeCiric I included a log in the question. There&#39;s a query for user+emails and a second query for account",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2683,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "creation_date" : 1747943378,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140450702,
+    "post_id" : 79634216,
+    "body" : "That is what it seems should be a case, but it isn&#39;t. Can you confirm, are there 2 selects or 3 as I described?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 22988088,
+      "reputation" : 446,
+      "user_id" : 17113997,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/VtfWg.jpg?s=256",
+      "display_name" : "DimitrijeCiric",
+      "link" : "https://stackoverflow.com/users/17113997/dimitrijeciric"
+    },
+    "creation_date" : 1747943171,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140450693,
+    "post_id" : 79634216,
+    "body" : "@DimitrijeCiric the three should be one joined query",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2683,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "creation_date" : 1747943049,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140450683,
+    "post_id" : 79634216,
+    "body" : "findEagerlyById should log 3 lines: select for User, select for Account and select for EmailData. Is that a your case?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 22988088,
+      "reputation" : 446,
+      "user_id" : 17113997,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/VtfWg.jpg?s=256",
+      "display_name" : "DimitrijeCiric",
+      "link" : "https://stackoverflow.com/users/17113997/dimitrijeciric"
+    },
+    "creation_date" : 1747942954,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

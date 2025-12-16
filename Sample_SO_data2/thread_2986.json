@@ -1,0 +1,177 @@
+{
+  "question" : {
+    "question_id" : 79583339,
+    "title" : "Thread handling when showing list of images in JavaFX and pause",
+    "body" : "<p>I have a JavaFX application. One UI element on the stage is an ImageView. I want to show a sequence of exercises, each 60 seconds, to the user. Each exercise has among other attributes, an image, which shall be shown in the imageView, and a link to a wav file, with explanation text, which shall be played once the image is shown. I want the application to remain responsive, while the image is shownin case the user presses a stop button. When reducing the real complexity, between the different exercises, and during the display time of a each exercise, there are breaks (method pause). Each break shows a new dedicted stage, which counts down the break time. During a break time the current image display shall disappear and re-appear after the break finalized.</p>\n<p>The respective runImageExercise method is called on the Java Application Thread: <code>11:58:48 [DEBUG] [JavaFX Application Thread] d.l.c.MainCtrl.runImageExercise, 1226: entering  runImageExercise: Calf left</code></p>\n<p>My problem is the Thread handling combination between showing the exercise and the pause.\nIf I put a Thread.sleep(1000) into the runImageExercise method directly, the exercise image is never shown and the explanation is played only if pause is called. This is this version:</p>\n<pre><code>protected void runImageExercise(Exercise exercise) {\n\n        debugLogger.debug(&quot;V1) entering  runImageExercise: &quot; + exercise.getName());\n\n        imageView.setVisible(true);\n        exerciseLabel.setText(exercise.getName());\n        Image image = exercise.getPreviewImage();\n        imageView.setImage(image);\n        \n        Task&lt;Void&gt; exerciseSoundTask = getExerciseSoundTask(exercise);      // Play explanation wav file\n        Thread exerciseSoundThread = new Thread(exerciseSoundTask);\n        exerciseSoundThread.start();\n\n\n        currentImageDisplayTime = 0;\n        while (currentImageDisplayTime &lt; 60) {                              // show the image for 60 secs\n            currentImageDisplayTime++;\n            \n            if(currentImageDisplayTime % 30 == 0) {                        // pause every 30 secs\n                imageView.setVisible(false);\n                pause(PauseType.EXERCISE_PAUSE, exercise.getBreakBetweenSetsInSecs(), &quot;Break&quot;, exercise, false);\n                imageView.setVisible(true);\n            }\n            \n            try {\n                Thread.sleep(1000);\n            } catch (InterruptedException interrupted) {\n                break;\n            }\n        }\n\n        imageView.setVisible(false);\n\n        pause(PauseType.EXERCISE_PAUSE, exercise.getBreakBetweenSetsInSecs(), &quot;Exercise done&quot;, exercise, false);\n}\n</code></pre>\n<p>None of my attempts with Thread.join or lock and notify to synchronize the two threads worked.\nSo, if I put the Thread.sleep(1000) into a dedicated Thread, the image is shown and the explanation played, but the pause call throws <code>java.lang.IllegalStateException: Not on FX application thread;</code> Therefore I moved the pause into a Platform.runLater() block. Now the pause opens with a little delay, but the currentImageDisplayTime loop is not interrupted and continue to count down. This is this version:</p>\n<pre><code>protected void runImageExercise(Exercise exercise, List&lt;Exercise&gt; exercises, boolean switchSide) {\n        \n        debugLogger.debug(&quot;V2) entering  runImageExercise: &quot; + exercise.getName());\n\n        imageView.setVisible(true);\n        exerciseLabel.setText(exercise.getName());\n        setLabel.setText(&quot;1&quot;);\n        Image image = exercise.getPreviewImage();\n        imageView.setImage(image);\n\n\n        Task&lt;Void&gt; exerciseSoundTask = getExerciseSoundTask(exercise, switchSide);\n        Task&lt;Void&gt; imageDisplayTask = getImageDisplayTask(exercise, exercises, switchSide);\n        repLabel.textProperty().bind(imageDisplayTask.messageProperty());\n\n        Thread imageDisplayThread = new Thread(imageDisplayTask);\n        Thread exerciseSoundThread = new Thread(exerciseSoundTask);\n\n        imageDisplayThread.start();\n        exerciseSoundThread.start();\n\n        debugLogger.debug(&quot;leaving  runImageExercise: &quot;);\n    }\n</code></pre>\n<p>Here is the Task definition:</p>\n<pre><code>protected Task&lt;Void&gt; getImageDisplayTask(Exercise exercise, List&lt;Exercise&gt; exercises, boolean switchSide) {\n        Task&lt;Void&gt; imageWaitTask = new Task&lt;Void&gt;() {\n            @Override\n            protected Void call() throws Exception {\n\n                debugLogger.debug(&quot;entering imageWaitTask: &quot; + exercise.getName());\n\n                currentImageDisplayTime = 0;\n                while (currentImageDisplayTime &lt; 60) {                              // show the image for 30 secs\n                    currentImageDisplayTime++;\n                    debugLogger.debug(&quot;------------------ imageWaitTask time:&quot; + currentImageDisplayTime);\n                    \n                    if(currentImageDisplayTime % 30 == 0) {\n                        Platform.runLater(() -&gt; {\n                            imageView.setVisible(false);\n                            pause(PauseType.EXERCISE_PAUSE, exercise.getBreakBetweenSetsInSecs(), &quot;Break&quot;, exercise, false);\n                            imageView.setVisible(true);\n                        });\n                    }\n                    \n                    try {\n                        Thread.sleep(1000);\n                    } catch (InterruptedException interrupted) {\n                        break;\n                    }\n                }\n\n                debugLogger.debug(&quot;leaving imageWaitTask&quot;);\n                return null;\n            }\n        };\n\n        imageWaitTask.setOnSucceeded(e -&gt; {\n            debugLogger.debug(&quot;imageWaitTask succeded&quot;);\n        \n            imageView.setVisible(false);\n            pause(PauseType.EXERCISE_PAUSE, exercise.getBreakBetweenSetsInSecs(), &quot;Exercise done&quot;, exercise, false);\n        });\n\n        return imageWaitTask;\n    }\n</code></pre>\n<p>And you maybe want to have some insight into the pause method:</p>\n<pre><code>protected void pause(PauseType pauseType, int seconds, String message, Exercise exercise, boolean switchSide) {\n\n        URL url = getClass().getResource(&quot;/sifuSays/ui/PauseScene.fxml&quot;);\n        try {\n            debugLogger.debug(&quot;entering pause:&quot; + seconds + &quot; sec&quot;);\n\n            FXMLLoader fxmlLoader = new FXMLLoader(url);\n            Parent parent = fxmlLoader.load();\n            Stage stage = new Stage(StageStyle.UNDECORATED);\n            stage.initOwner(mediaPane.getScene().getWindow());\n\n            pauseCtrl = fxmlLoader.&lt;PauseCtrl&gt;getController();\n\n            debugLogger.debug(&quot;pauseType: &quot; + pauseType.toString());\n            switch (pauseType) {\n                case SESSION_START:                                                             // Beginning of session\n                    pauseCtrl.configure(stage, seconds);\n\n                    debugLogger.debug(&quot;SESSION_START: getReady&quot;);\n                    pauseCtrl.getReady();\n                    break;\n                case EXERCISE_PAUSE:                                                            // Change between exercises\n                    debugLogger.debug(&quot;EXERCISE_PAUSE: configure&quot;);\n                    pauseCtrl.configure(stage, seconds, message, exercise, switchSide);\n\n                    debugLogger.debug(&quot;EXERCISE_PAUSE: exercisePause&quot;);\n                    pauseCtrl.exercisePause();\n                    break;\n                case SESSION_END:                                                               // End of session\n                    debugLogger.debug(&quot;SESSION_END: configure&quot;);\n                    pauseCtrl.configure(stage, seconds);\n\n                    debugLogger.debug(&quot;SESSION_END: done&quot;);\n                    pauseCtrl.done();\n                    break;\n                case SETS_PAUSE:\n                    debugLogger.debug(&quot;SETS_PAUSE: configure&quot;);\n                    pauseCtrl.configure(stage, seconds, message, exercise, switchSide);\n\n                    debugLogger.debug(&quot;SETS_PAUSE: setsPause&quot;);\n                    pauseCtrl.setsPause();\n                    break;\n                default:\n                    debugLogger.debug(&quot;Uncovered case option&quot;);\n                    return;         // This should not happen\n            }\n\n            Scene scene = new Scene(parent);\n\n            if(seconds &gt; 0) {\n                stage.setScene(scene);\n                debugLogger.debug(&quot;Calling showAndWait&quot;);\n                stage.showAndWait();\n            }\n\n            pauseCtrl = null;\n\n            debugLogger.debug(&quot;Pause ended. Continue&quot;);\n\n        } catch (Exception e) {\n            e.printStackTrace();\n        }\n    }\n</code></pre>\n<p>I am aware that one way to fix the issue would be, to add the pause duration to the image display duration in the loop counter. But since in the real algorithm the display time of the exercise plus, if there are none to multiple breaks at all and how long they will last, is much more complex, plus I would like to understand the intended design, and to learn how to setup the method(s) to get the described synchronized bahaviour of the application without violating the restrictions of JavaFX regarding threads and UI updates? Thank you in advance.</p>\n",
+    "tags" : [ "java", "multithreading", "javafx", "concurrency", "responsive" ],
+    "owner" : {
+      "account_id" : 4459325,
+      "reputation" : 1819,
+      "user_id" : 3628679,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/e9630c47c1411d5cea74ae7ee083dbf4?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Alex",
+      "link" : "https://stackoverflow.com/users/3628679/alex"
+    },
+    "is_answered" : true,
+    "view_count" : 116,
+    "answer_count" : 1,
+    "score" : 2,
+    "last_activity_date" : 1745215332,
+    "creation_date" : 1745150665,
+    "link" : "https://stackoverflow.com/questions/79583339/thread-handling-when-showing-list-of-images-in-javafx-and-pause",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79584093,
+    "question_id" : 79583339,
+    "body" : "<p>I don't fully understand your scenario, but if I'm not mistaken then fundamentally you want to alternate between views while keeping the UI responsive. You should use the <a href=\"https://openjfx.io/javadoc/24/javafx.graphics/javafx/animation/package-summary.html\" rel=\"nofollow noreferrer\"><code>javafx.animation</code></a> API for this. It allows you to run asynchronous, possibly repeating operations on the <em>JavaFX Application Thread</em> and execute actions when such an operation finishes. For example:</p>\n<pre class=\"lang-java prettyprint-override\"><code>package com.example;\n\nimport javafx.animation.PauseTransition;\nimport javafx.application.Application;\nimport javafx.beans.binding.Bindings;\nimport javafx.beans.property.IntegerProperty;\nimport javafx.beans.property.SimpleIntegerProperty;\nimport javafx.scene.Scene;\nimport javafx.scene.control.Button;\nimport javafx.scene.control.Label;\nimport javafx.scene.control.ToolBar;\nimport javafx.scene.layout.BorderPane;\nimport javafx.scene.layout.HBox;\nimport javafx.scene.layout.Priority;\nimport javafx.scene.layout.Region;\nimport javafx.scene.layout.StackPane;\nimport javafx.stage.Stage;\nimport javafx.util.Duration;\n\npublic class Main extends Application {\n\n  private final IntegerProperty counter = new SimpleIntegerProperty();\n  private PauseTransition countdown;\n  private Label countdownLabel;\n\n  private Label exerciseLabel;\n  private Label breakLabel;\n\n  @Override\n  public void start(Stage primaryStage) {\n    exerciseLabel = new Label();\n    exerciseLabel.textProperty().bind(counter.asString(&quot;Exercise #%d&quot;));\n    exerciseLabel.setVisible(false);\n\n    breakLabel = new Label();\n    breakLabel.textProperty().bind(counter.asString(&quot;Break #%d&quot;));\n    breakLabel.setVisible(false);\n\n    var container = new StackPane(exerciseLabel, breakLabel);\n\n    var root = new BorderPane();\n    root.setTop(createToolBar());\n    root.setCenter(container);\n\n    primaryStage.setScene(new Scene(root, 600, 400));\n    primaryStage.show();\n\n    nextExercise();\n  }\n\n  private ToolBar createToolBar() {\n    countdownLabel = new Label();\n\n    var stopButton = new Button(&quot;Stop&quot;);\n    stopButton.setOnAction(e -&gt; {\n      e.consume();\n      stopButton.setDisable(true);\n      stopCountdown();\n    });\n\n    var filler = new Region();\n    // rely on fact horizontal ToolBar uses HBox (implementation detail)\n    HBox.setHgrow(filler, Priority.ALWAYS);\n\n    return new ToolBar(countdownLabel, filler, stopButton);\n  }\n\n  private void nextExercise() {\n    counter.set(counter.get() + 1);\n    updateCountdown(&quot;Exercise #&quot; + counter.get(), Duration.seconds(10), this::takeBreak);\n\n    // Update UI for exercise. This is where you'd change the title, image, audio file,\n    // and explanatory text.\n    exerciseLabel.setVisible(true);\n    breakLabel.setVisible(false);\n  }\n\n  private void takeBreak() {\n    updateCountdown(&quot;Break #&quot; + counter.get(), Duration.seconds(3), this::nextExercise);\n\n    // Update UI for break. This is where you'd show the stage.\n    exerciseLabel.setVisible(false);\n    breakLabel.setVisible(true);\n  }\n\n  private void updateCountdown(String name, Duration duration, Runnable onFinished) {\n    stopCountdown();\n\n    countdown = new PauseTransition(duration);\n    // unused variables ('_') require JDK 22+\n    countdown.setOnFinished(_ -&gt; onFinished.run());\n\n    countdownLabel\n        .textProperty()\n        .bind(Bindings.createStringBinding(\n            () -&gt; {\n              var currentTime = countdown.getCurrentTime();\n              var timeRemaining = duration.subtract(currentTime);\n              return &quot;%s ending in %02.3f seconds...&quot;.formatted(name, timeRemaining.toSeconds());\n            },\n            countdown.currentTimeProperty()));\n\n    countdown.playFromStart();\n  }\n\n  private void stopCountdown() {\n    if (countdown != null) {\n      countdown.stop();\n      countdown = null;\n    }\n    \n    // Update UI to indicate &quot;stopped&quot;.\n    countdownLabel.textProperty().unbind();\n    countdownLabel.setText(&quot;Stopped&quot;);\n    exerciseLabel.setVisible(false);\n    breakLabel.setVisible(false);\n  }\n}\n</code></pre>\n<p>See the answers to <a href=\"https://stackoverflow.com/q/9966136/6395627\">JavaFX periodic background task</a> for more details. That Q&amp;A may be focused on <em>periodic</em> actions, but many of the answers can be adapted for run-once <em>delayed</em> actions. Also see <a href=\"https://stackoverflow.com/a/25171938/230513\">this answer</a> for another Q&amp;A and <a href=\"https://dev.java/learn/javafx-animations/\" rel=\"nofollow noreferrer\">this JavaFX animation tutorial</a> linked by <a href=\"https://stackoverflow.com/users/642706/basil-bourque\">Basil Bourque</a> (in <a href=\"https://stackoverflow.com/questions/79583339/thread-handling-when-showing-list-of-images-in-javafx-and-pause#comment140352558_79583339\">their comment</a>).</p>\n<hr />\n<p>As an aside, it's not clear how you're playing your WAV file, but I recommend using the <a href=\"https://openjfx.io/javadoc/24/javafx.media/module-summary.html\" rel=\"nofollow noreferrer\"><code>javafx.media</code></a> API if you're not already. More specifically, you should use a <a href=\"https://openjfx.io/javadoc/24/javafx.media/javafx/scene/media/MediaPlayer.html\" rel=\"nofollow noreferrer\"><code>MediaPlayer</code></a> or, if your media is relatively short, an <a href=\"https://openjfx.io/javadoc/24/javafx.media/javafx/scene/media/AudioClip.html\" rel=\"nofollow noreferrer\"><code>AudioClip</code></a>.</p>\n<p>You may also want to avoid storing an <code>Image</code> in your <code>Exercise</code> class. The latter class seems like a model, which indicates to me there may be many instances existing in memory at once. If your images are large then you can quickly run out of memory. Consider associating a URI, or something you can resolve a URI from, with your exercise and then only loading images as needed (possibly keeping a limited in-memory cache). Note <code>Image</code> has <a href=\"https://openjfx.io/javadoc/24/javafx.graphics/javafx/scene/image/Image.html#%3Cinit%3E(java.lang.String,boolean)\" rel=\"nofollow noreferrer\">built-in functionality</a> for loading images in the background if you need that.</p>\n",
+    "score" : 4,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 8532578,
+      "reputation" : 49904,
+      "user_id" : 6395627,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Slaw",
+      "link" : "https://stackoverflow.com/users/6395627/slaw"
+    },
+    "creation_date" : 1745215017,
+    "last_activity_date" : 1745215332,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140359967,
+    "post_id" : 79583339,
+    "body" : "Another alternative is a <a href=\"https://carlfx.wordpress.com/2012/04/09/javafx-2-gametutorial-part-2/\" rel=\"nofollow noreferrer\">game loop</a>.  The linked resource is old (and outdated), but the concept is still fairly simply explained there and there are other tutorials on game loops in JavaFX and game loops in general if you need them (for example, <a href=\"https://github.com/svanimpe/fx-game-loops\" rel=\"nofollow noreferrer\">this one is more modern and accurate, but also more subtle</a>), an <a href=\"https://gist.github.com/jewelsea/910dae32ef6d1bd4257850031aefcba2#file-breakoutgame-java-L81\" rel=\"nofollow noreferrer\">example in a game</a>.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1180113,
+      "reputation" : 160487,
+      "user_id" : 1155209,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/5192e7cbcf2f72a847d6fb0d1552f049?s=256&d=identicon&r=PG",
+      "display_name" : "jewelsea",
+      "link" : "https://stackoverflow.com/users/1155209/jewelsea"
+    },
+    "creation_date" : 1745379910,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140354022,
+    "post_id" : 79583339,
+    "body" : "@VGR: The code that I posted is simplified. In the code that I am working on, the exercise objects have many more attributes that are used, For instance, the 60 and 30 seconds are not fixed, but depend on the exercise and the while loop is enbedded into two for loops, where the number of iterations also depend on the exercise, plus a bunch of if-then-else. The code I posted is reduced to isolate and explain the issue.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 4459325,
+      "reputation" : 1819,
+      "user_id" : 3628679,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/e9630c47c1411d5cea74ae7ee083dbf4?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Alex",
+      "link" : "https://stackoverflow.com/users/3628679/alex"
+    },
+    "creation_date" : 1745229911,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140353459,
+    "post_id" : 79583339,
+    "body" : "This may also be helpful: <a href=\"https://stackoverflow.com/a/60685975/6395627\">stackoverflow.com/a/60685975/6395627</a>",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 8532578,
+      "reputation" : 49904,
+      "user_id" : 6395627,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Slaw",
+      "link" : "https://stackoverflow.com/users/6395627/slaw"
+    },
+    "creation_date" : 1745206690,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140353311,
+    "post_id" : 79583339,
+    "body" : "Both <code>PauseTransition</code> and <code>Timeline</code> are illustrated <a href=\"https://stackoverflow.com/a/25171938/230513\">here</a>.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 81822,
+      "reputation" : 206045,
+      "user_id" : 230513,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/632732029bf05854c17d0dea6c82dcb4?s=256&d=identicon&r=PG",
+      "display_name" : "trashgod",
+      "link" : "https://stackoverflow.com/users/230513/trashgod"
+    },
+    "creation_date" : 1745196976,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140352558,
+    "post_id" : 79583339,
+    "body" : "<a href=\"https://dev.java/learn/javafx-animations/\" rel=\"nofollow noreferrer\"><i>Introduction to JavaFX animations</i></a> by Connor Schweigh&#246;fer. Updated May 31, 2024.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 322981,
+      "reputation" : 347089,
+      "user_id" : 642706,
+      "user_type" : "registered",
+      "accept_rate" : 58,
+      "profile_image" : "https://i.sstatic.net/ZWEI3.jpg?s=256",
+      "display_name" : "Basil Bourque",
+      "link" : "https://stackoverflow.com/users/642706/basil-bourque"
+    },
+    "creation_date" : 1745165812,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140352274,
+    "post_id" : 79583339,
+    "body" : "“But since in the real algorithm the display time of the exercise plus, if there are none to multiple breaks at all and how long they will last, is much more complex” —I don’t understand this statement.  Are you saying the pause time can change in the middle of the pause?  Or do you just want to be able to interrupt the pause?",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 2053598,
+      "reputation" : 44991,
+      "user_id" : 1831987,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/38b1c37530189ec4471a43a618e33f67?s=256&d=identicon&r=PG",
+      "display_name" : "VGR",
+      "link" : "https://stackoverflow.com/users/1831987/vgr"
+    },
+    "creation_date" : 1745154766,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140352224,
+    "post_id" : 79583339,
+    "body" : "I suggest <a href=\"https://www.google.com/search?q=javafx+animation\" rel=\"nofollow noreferrer\">searching</a> for <i>javafx animation</i>.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2485939,
+      "reputation" : 20969,
+      "user_id" : 2164365,
+      "user_type" : "registered",
+      "accept_rate" : 40,
+      "profile_image" : "https://i.sstatic.net/RKSgV.png?s=256",
+      "display_name" : "Abra",
+      "link" : "https://stackoverflow.com/users/2164365/abra"
+    },
+    "creation_date" : 1745152528,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140352219,
+    "post_id" : 79583339,
+    "body" : "Use the JavaFX animation classes for this. Pause transition might be best.",
+    "score" : 7,
+    "owner" : {
+      "account_id" : 16559,
+      "reputation" : 2173,
+      "user_id" : 36223,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/bh9Vd.png?s=256",
+      "display_name" : "DaveB",
+      "link" : "https://stackoverflow.com/users/36223/daveb"
+    },
+    "creation_date" : 1745152165,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

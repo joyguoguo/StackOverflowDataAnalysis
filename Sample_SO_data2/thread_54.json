@@ -1,0 +1,196 @@
+{
+  "question" : {
+    "question_id" : 79842710,
+    "title" : "fix blocking issue when trying to parse HTTP request in java",
+    "body" : "<p>I'm trying to parse HTTP requests for fun and I'm currently stuck because the method I'm using blocks until input is received.</p>\n<pre><code>byte[] buffer = new byte[1024];\nwhile (!request.isDone()) {\n  int n = input.read(buffer);\n\n  if (n == -1) {\n    break;\n  }\n  request.parseRequest(buffer, n);\n}\nreturn request;\n</code></pre>\n<p>I'm trying to read into a buffer and parsing the request until it's done. I have a small class which creates a <code>ServerSocket</code> where I send in a simple <code>curl</code> request such as <code>curl -v http://localhost:5000/hello</code>. When my buffer is of a much smaller size like 8 bytes, the request is read in chunks and parsed correctly. But when my buffer is much bigger and can read the entire request in one go, only the request line gets parsed. Then, the loop above gets returned to and blocks on the third line where it needs to read. But <code>curl</code> keeps the connection alive and my program is just waiting for input that's never sent. Is there a viable solution to my problem as is other than looking for a non-blocking socket in java?</p>\n",
+    "tags" : [ "java", "http", "sockets", "server", "blocking" ],
+    "owner" : {
+      "account_id" : 37785993,
+      "reputation" : 53,
+      "user_id" : 28427218,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/ec0c9e1227b3af86e87ab87cf277c3c5?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "ygmelo",
+      "link" : "https://stackoverflow.com/users/28427218/ygmelo"
+    },
+    "is_answered" : true,
+    "view_count" : 87,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1765580761,
+    "creation_date" : 1765355856,
+    "link" : "https://stackoverflow.com/questions/79842710/fix-blocking-issue-when-trying-to-parse-http-request-in-java",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79842733,
+    "question_id" : 79842710,
+    "body" : "<p>The issue you're encountering is a classic HTTP parsing problem... When your buffer is large enough to read the entire request in one go, <code>input.read(buffer)</code> successfully reads all the data, but then the loop continues and calls <code>read()</code> again. Since the client (curl) has sent everything and is waiting for a response, your server blocks waiting for more data that will never come.</p>\n<p>One of clean solution is to ensure your <code>request</code> object properly tracks:</p>\n<ul>\n<li><p>Whether headers are complete (found <code>\\r\\n\\r\\n</code>)</p>\n</li>\n<li><p>Whether a body is expected (check <code>Content-Length</code> or <code>Transfer-Encoding</code> headers)</p>\n</li>\n<li><p>How many body bytes have been received vs. expected</p>\n</li>\n</ul>\n<p>Then simply don't call <code>read()</code> again once <code>isDone()</code> returns true:</p>\n<pre class=\"lang-java prettyprint-override\"><code>byte[] buffer = new byte[1024];\nint offset = 0;\n\nwhile(!request.isDone()) {\n    int n = input.read(buffer, offset, buffer.length - offset);\n    if(n == -1) break;\n    \n    // parseRequest now returns how many bytes it consumed\n    int consumed = request.parseRequest(buffer, offset + n);\n    \n    if(request.isDone()) {\n        // Preserve unconsumed bytes for next request\n        int remaining = (offset + n) - consumed;\n        if(remaining &gt; 0) {\n            System.arraycopy(buffer, consumed, buffer, 0, remaining);\n        }\n        offset = remaining;\n        break;\n    }\n    \n    offset = 0;\n}\n</code></pre>\n<p>For a GET request like your curl example, there's no request body, so once you've parsed the headers (ending with <code>\\r\\n\\r\\n</code>), your <code>isDone()</code> should return <code>true</code> and you should exit the loop immediately.</p>\n<p><strong>The key insight:</strong> You need to detect completion from the HTTP protocol itself, not from the socket closing or blocking.</p>\n<p><em>Thanks to @Remy Lebeau for pointing out the importance of handling pipelined requests and preserving unconsumed bytes.</em></p>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 31386333,
+      "reputation" : 34,
+      "user_id" : 24205886,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/7cefb73a41a36efe2fbb44409515a1e2?s=256&d=identicon&r=PG",
+      "display_name" : "Alberto Barrago",
+      "link" : "https://stackoverflow.com/users/24205886/alberto-barrago"
+    },
+    "creation_date" : 1765357600,
+    "last_activity_date" : 1765580761,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140897354,
+    "post_id" : 79842710,
+    "body" : "@user207421 i hadn&#39;t even considered those, i just wanted to get the absolute barebones/mvp working. i can definitely work on those after ive completed the barebone, thanks :)",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 37785993,
+      "reputation" : 53,
+      "user_id" : 28427218,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/ec0c9e1227b3af86e87ab87cf277c3c5?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "ygmelo",
+      "link" : "https://stackoverflow.com/users/28427218/ygmelo"
+    },
+    "creation_date" : 1765421762,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140897347,
+    "post_id" : 79842710,
+    "body" : "Do you handle <code>content-encoding: gzip</code>? and the others? Streaming transfer mode? There&#39;s an immense amount of stuff to implement for HTTP.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 71739,
+      "reputation" : 311888,
+      "user_id" : 207421,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/5cfe5f7d64f44be04f147295f5c7b88e?s=256&d=identicon&r=PG",
+      "display_name" : "user207421",
+      "link" : "https://stackoverflow.com/users/207421/user207421"
+    },
+    "creation_date" : 1765421019,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140897339,
+    "post_id" : 79842710,
+    "body" : "@user207421 my code thus far pasts all my tests for requests sent in one read and requests sent in smaller chunks like 8 bytes or even 256. i also created a custom ChunkInputStream that takes an inputstream and sends it in as little as a byte per read. all my tests pass thus far, I should be fine in that case correct?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 37785993,
+      "reputation" : 53,
+      "user_id" : 28427218,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/ec0c9e1227b3af86e87ab87cf277c3c5?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "ygmelo",
+      "link" : "https://stackoverflow.com/users/28427218/ygmelo"
+    },
+    "creation_date" : 1765420649,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140897289,
+    "post_id" : 79842710,
+    "body" : "Good luck with chunked transfer mode. You won&#39;t get there from here,",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 71739,
+      "reputation" : 311888,
+      "user_id" : 207421,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/5cfe5f7d64f44be04f147295f5c7b88e?s=256&d=identicon&r=PG",
+      "display_name" : "user207421",
+      "link" : "https://stackoverflow.com/users/207421/user207421"
+    },
+    "creation_date" : 1765416340,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140897041,
+    "post_id" : 79842710,
+    "body" : "@JannikS. thank you, this and the answer gave me the idea. I realized my while loop wasn&#39;t exactly right and also that the request should rely on itself since it tracks the state and the buffer. i originally had it so that it returned once the requestline was parsed and the state was updated, then it would read the next chunk of data (i assumed requests wouldnt come in one read and tested with a buffer of only 8 bytes) and parse the next section and so on. i realized that the buffer should be checked if the state is updated to see if the next section should be parsed",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 37785993,
+      "reputation" : 53,
+      "user_id" : 28427218,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/ec0c9e1227b3af86e87ab87cf277c3c5?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "ygmelo",
+      "link" : "https://stackoverflow.com/users/28427218/ygmelo"
+    },
+    "creation_date" : 1765400458,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140895789,
+    "post_id" : 79842710,
+    "body" : "No, the method you are using blocks until input <i>or end of stream</i> is received. HTTP requests are not terminated by end of stream. They are terminated by a length provided in the <code>Content-length</code> header. If they were terminated by end of stream, the client would have to  close or shutdown the socket before reading the response, which in the case of closing doesn&#39;t make sense. The HTTP protocol does not work like this. You need a good knowledge of RFC 2616 and successors to parse HTTP, and this isn&#39;t it.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 71739,
+      "reputation" : 311888,
+      "user_id" : 207421,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/5cfe5f7d64f44be04f147295f5c7b88e?s=256&d=identicon&r=PG",
+      "display_name" : "user207421",
+      "link" : "https://stackoverflow.com/users/207421/user207421"
+    },
+    "creation_date" : 1765358245,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140895762,
+    "post_id" : 79842710,
+    "body" : "Try calling <a href=\"https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/net/Socket.html#setSoTimeout(int)\" rel=\"nofollow noreferrer\">Socket.setSoTimeout(int)</a>. That being said, if your code cannot handle reciving the request in one go, its broken (becuase, in practice, you can never gurantee in what size the packets arrive) and we would need to see the code to determine how.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 30223964,
+      "reputation" : 262,
+      "user_id" : 23162960,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2451acfac254a6fc75757ecf89d75f9a?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Jannik S.",
+      "link" : "https://stackoverflow.com/users/23162960/jannik-s"
+    },
+    "creation_date" : 1765357355,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79842733" : [ {
+      "comment_id" : 140900465,
+      "post_id" : 79842733,
+      "body" : "@RemyLebeau You&#39;re absolutely right, my approach would lose bytes from pipelined requests. Your suggestion to track consumed bytes and preserve leftovers is the correct way to handle this. I&#39;ll refactor parseRequest() to return the number of bytes consumed so I don&#39;t throw away data from subsequent requests. Thanks for the feedback!",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 31386333,
+        "reputation" : 34,
+        "user_id" : 24205886,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/7cefb73a41a36efe2fbb44409515a1e2?s=256&d=identicon&r=PG",
+        "display_name" : "Alberto Barrago",
+        "link" : "https://stackoverflow.com/users/24205886/alberto-barrago"
+      },
+      "creation_date" : 1765580577,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140898679,
+      "post_id" : 79842733,
+      "body" : "What you have shown is better than what the OP had, but it still has room for improvement, as it doesn&#39;t account for KeepAlive handling or HTTP pipelining. It expects a single request and then stops, but if there are multiple requests on a connection then the <code>read()</code> might have already received bytes for the <i>next</i> request, which you would then throw away since the <i>current</i> <code>request</code> would ignore them.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 25589,
+        "reputation" : 609643,
+        "user_id" : 65863,
+        "user_type" : "registered",
+        "accept_rate" : 75,
+        "profile_image" : "https://www.gravatar.com/avatar/f00013ceab8fb1928885c5c172fbfd4a?s=256&d=identicon&r=PG",
+        "display_name" : "Remy Lebeau",
+        "link" : "https://stackoverflow.com/users/65863/remy-lebeau"
+      },
+      "creation_date" : 1765485412,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

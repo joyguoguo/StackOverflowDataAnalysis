@@ -1,0 +1,97 @@
+{
+  "question" : {
+    "question_id" : 79573085,
+    "title" : "How do I create a shared 128-bit AES-GCM key using ECDH?",
+    "body" : "<p>Given a supplied public key, plus my own private key, how do I generate &quot;a shared 128-bit AES-GCM key... using ECDH&quot;, using something suitable for the JVM and/or Android?</p>\n<hr />\n<p>The Tesla Fleet API uses signing for commands that affect the vehicle. Part of that involves <a href=\"https://github.com/teslamotors/vehicle-command/blob/main/pkg/protocol/protocol.md#key-agreement\" rel=\"nofollow noreferrer\">a &quot;key agreement&quot;</a>, described as:</p>\n<blockquote>\n<p>The client and the vehicle derive a shared 128-bit AES-GCM key K using ECDH:</p>\n<pre><code>S = (Sx, Sy) = ECDH(c, V) = ECDH(v, C)\nK = SHA1(BIG_ENDIAN(Sx, 32))[:16]\n</code></pre>\n</blockquote>\n<p>I am using <a href=\"https://github.com/boltfortesla/tesla-fleet-sdk-kotlin\" rel=\"nofollow noreferrer\">this Kotlin library</a> for accessing the Fleet API. That library specifically does not implement the above algorithm. Instead, consumers of their library need to supply it themselves, in the form of <a href=\"https://github.com/boltfortesla/tesla-fleet-sdk-kotlin/tree/main?tab=readme-ov-file#sharedsecretfetcher\" rel=\"nofollow noreferrer\">a <code>SharedSecretFetcher</code> implementation</a>:</p>\n<blockquote>\n<p><code>SharedSecretFetcher</code>... takes in the Vehicle's public key, which the SDK will provide, and requres that you use that to return the hex-encoded SHA1 digest of the ECDH shared secret.</p>\n</blockquote>\n<p>...and shows the following pseudocode:</p>\n<blockquote>\n<pre><code>val sharedSecretFetcher = { vehiclePublicKey -&gt;\n  /** A pseudocode example:\n  val ecdh = createECDH(curveName = &quot;p256&quot;)\n  ecdh.setPrivateKey(YOUR_CLIENT_PRIVATE_KEY)\n  val sharedSecret = ecdh.computeSecretAsHex(vehiclePublicKey)\n  sharedSecret.sha1Hash().toHex()\n   */\n}\n</code></pre>\n</blockquote>\n<p>Notably, the implementation of <code>createECDH()</code> and <code>computeSecretAsHex()</code> are left as an exercise for the reader. There is no sample code, and I have not identified a consumer of this library.</p>\n<p>Tesla shows using OpenSSL at the command line for this:</p>\n<blockquote>\n<pre><code>export K=$(openssl pkeyutl -derive -inkey client.key -peerkey vehicle.pem \\\n    | openssl dgst -sha1 -binary \\\n    | head -c 16 \\\n    | xxd -p)\necho $K\n1b2fce19967b79db696f909cff89ea9a\n</code></pre>\n</blockquote>\n<p>I also see <a href=\"https://github.com/eiannone/tesla-cmd-api/blob/main/src/Signer.js#L44-L58\" rel=\"nofollow noreferrer\">this JavaScript</a> and <a href=\"https://github.com/Teslemetry/python-tesla-fleet-api/blob/v1.0.17/tesla_fleet_api/tesla/vehicle/commands.py#L243-L250\" rel=\"nofollow noreferrer\">this Python</a>, which seem to implement this algorithm.</p>\n<p>I am just at a loss as to how to use <code>javax.crypto</code>, BouncyCastle/SpongyCastle (if the latter is still a thing...), or anything else Java/Kotlin-friendly to accomplish the same.</p>\n",
+    "tags" : [ "java", "cryptography", "ecdh" ],
+    "owner" : {
+      "account_id" : 39846,
+      "reputation" : 1011235,
+      "user_id" : 115145,
+      "user_type" : "registered",
+      "accept_rate" : 84,
+      "profile_image" : "https://i.sstatic.net/wDnd8.png?s=256",
+      "display_name" : "CommonsWare",
+      "link" : "https://stackoverflow.com/users/115145/commonsware"
+    },
+    "is_answered" : true,
+    "view_count" : 166,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1744911608,
+    "creation_date" : 1744631691,
+    "link" : "https://stackoverflow.com/questions/79573085/how-do-i-create-a-shared-128-bit-aes-gcm-key-using-ecdh",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79579802,
+    "question_id" : 79573085,
+    "body" : "<p>What I wound up with (minus one redaction), is:</p>\n<pre class=\"lang-kotlin prettyprint-override\"><code>    private val sharedSecretFetcher = { vehiclePublicKey: ByteArray -&gt;\n        computeSecretAsHex(\n            pubKey = loadPublicKey(vehiclePublicKey),\n            privKey = loadPrivateKey(Pem(/* REDACTION */).byteArray())\n        )\n    }\n\n    @Throws(Exception::class)\n    private fun computeSecretAsHex(privKey: PrivateKey, pubKey: PublicKey): ByteArray {\n        val keyAgreement = KeyAgreement.getInstance(&quot;ECDH&quot;)\n        keyAgreement.init(privKey)\n        keyAgreement.doPhase(pubKey, true)\n        val sharedSecret = keyAgreement.generateSecret()\n        val hash = MessageDigest.getInstance(&quot;SHA-1&quot;).digest(sharedSecret)\n        return hash.copyOfRange(0, 16)\n    }\n\n    private fun loadPublicKey(publicKeyBytes: ByteArray): ECPublicKey {\n        val keyFactory = KeyFactory.getInstance(&quot;EC&quot;)\n        val keySpec = X509EncodedKeySpec(publicKeyBytes)\n        return keyFactory.generatePublic(keySpec) as ECPublicKey\n    }\n\n    private fun loadPrivateKey(privateKeyBytes: ByteArray): ECPrivateKey {\n        val keyFactory = KeyFactory.getInstance(&quot;EC&quot;)\n        val keySpec = PKCS8EncodedKeySpec(privateKeyBytes)\n        return keyFactory.generatePrivate(keySpec) as ECPrivateKey\n    }\n</code></pre>\n<p>The <code>/* REDACTION */</code> would be replaced with the text of your private key, obtained from somewhere.</p>\n<p>As it turns out, the specific Tesla that I am interacting with is older and might not actually be using this logic. So, YMMV.</p>\n",
+    "score" : 0,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 39846,
+      "reputation" : 1011235,
+      "user_id" : 115145,
+      "user_type" : "registered",
+      "accept_rate" : 84,
+      "profile_image" : "https://i.sstatic.net/wDnd8.png?s=256",
+      "display_name" : "CommonsWare",
+      "link" : "https://stackoverflow.com/users/115145/commonsware"
+    },
+    "creation_date" : 1744911608,
+    "last_activity_date" : 1744911608,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140332994,
+    "post_id" : 79573085,
+    "body" : "The OpenSSL statement points to PEM or DER encoded keys.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 12359353,
+      "reputation" : 50593,
+      "user_id" : 9014097,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Y9EVM.jpg?s=256",
+      "display_name" : "Topaco",
+      "link" : "https://stackoverflow.com/users/9014097/topaco"
+    },
+    "creation_date" : 1744637337,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140332821,
+    "post_id" : 79573085,
+    "body" : "@Topaco &quot;for which you provide no information&quot; -- AFAICT, Tesla did not document that. &quot;e.g. here&quot; -- thanks for that link! Your answer seems to be in line with what I need.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 39846,
+      "reputation" : 1011235,
+      "user_id" : 115145,
+      "user_type" : "registered",
+      "accept_rate" : 84,
+      "profile_image" : "https://i.sstatic.net/wDnd8.png?s=256",
+      "display_name" : "CommonsWare",
+      "link" : "https://stackoverflow.com/users/115145/commonsware"
+    },
+    "creation_date" : 1744634330,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140332779,
+    "post_id" : 79573085,
+    "body" : "There are many examples on the web and on SO, e.g. <a href=\"https://stackoverflow.com/a/66428589/9014097\">here</a>, which you only need to adapt to your requirements. The details of the implementation also depend on the format and encoding of the EC keys, for which you provide no information.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 12359353,
+      "reputation" : 50593,
+      "user_id" : 9014097,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Y9EVM.jpg?s=256",
+      "display_name" : "Topaco",
+      "link" : "https://stackoverflow.com/users/9014097/topaco"
+    },
+    "creation_date" : 1744633513,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

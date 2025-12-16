@@ -1,0 +1,46 @@
+{
+  "question" : {
+    "question_id" : 79551075,
+    "title" : "grpc-spring-boot-starter method for Authentication",
+    "body" : "<p>I'm using <code>implementation(&quot;net.devh:grpc-spring-boot-starter:3.1.0.RELEASE&quot;)</code> library to do Grpc work in my java application.</p>\n<p>I followed the <a href=\"https://yidongnan.github.io/grpc-spring-boot-starter/en/server/security.html#authentication-and-authorization\" rel=\"nofollow noreferrer\">documentation</a> to implement Authentication, implementing <code>GrpcAuthenticationReader</code> and <code>AuthenticationProvider</code></p>\n<pre><code>    @Bean\n    public JwtGrpcAuthenticationReader  jwtAuthenticationReader() {\n        log.info(&quot;Initializing jwtAuthenticationReader...&quot;);\n        return new JwtGrpcAuthenticationReader();\n    }\n\n    \n    @Bean\n    public JwtGrpcAuthenticationProvider jwtAuthenticationProvider() {\n        log.info(&quot;Initializing jwtAuthenticationProvider...&quot;);\n        return new JwtGrpcAuthenticationProvider(secretManagerService);\n    }\n\n    @Bean\n    AuthenticationManager authenticationManager() {\n        final List&lt;AuthenticationProvider&gt; providers = new ArrayList&lt;&gt;();\n        providers.add(jwtAuthenticationProvider());\n        return new ProviderManager(providers);\n    }\n\n    @Bean\n    GrpcAuthenticationReader authenticationReader() {\n        final List&lt;GrpcAuthenticationReader&gt; readers = new ArrayList&lt;&gt;();\n        readers.add(jwtAuthenticationReader());\n        return new CompositeGrpcAuthenticationReader(readers);\n    }\n</code></pre>\n<p>Now the problem is that every request is under authentication. How can I leave one out to get a token to then call other services?</p>\n<p>I sow that I can implement also</p>\n<pre><code>public class JwtAuthInterceptor implements ServerInterceptor {\n    private static final Metadata.Key&lt;String&gt; AUTHORIZATION_KEY = \n        Metadata.Key.of(&quot;Authorization&quot;, Metadata.ASCII_STRING_MARSHALLER);\n\n    @Override\n    public &lt;ReqT, RespT&gt; ServerCall.Listener&lt;ReqT&gt; interceptCall(\n            ServerCall&lt;ReqT, RespT&gt; call, Metadata headers, ServerCallHandler&lt;ReqT, RespT&gt; next) {\n\n        String token = headers.get(AUTHORIZATION_KEY);\n        if (token == null || !token.startsWith(&quot;Bearer &quot;)) {\n            call.close(Status.UNAUTHENTICATED.withDescription(&quot;Missing or invalid token&quot;), new Metadata());\n            return new ServerCall.Listener&lt;&gt;() {};\n        }\n\n        try {\n            String jwt = token.substring(7);\n            JwtUtil.validateToken(jwt); // Validate token\n            return next.startCall(call, headers);\n        } catch (JWTVerificationException e) {\n            call.close(Status.UNAUTHENTICATED.withDescription(&quot;Invalid token&quot;), new Metadata());\n            return new ServerCall.Listener&lt;&gt;() {};\n        }\n    }\n} \n</code></pre>\n<p>So maybe there I can skip some service/method.</p>\n<p>Does anyone knows how to proceed? I don't see any method in the Provider or Reader useful</p>\n<p>For the moment I exposed a rest service to get the token is this good?</p>\n",
+    "tags" : [ "java", "spring", "spring-boot", "grpc-java", "spring-grpc" ],
+    "owner" : {
+      "account_id" : 5279068,
+      "reputation" : 1103,
+      "user_id" : 4215032,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/89f165cd1807676191742cbdb0bafc3b?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Pp88",
+      "link" : "https://stackoverflow.com/users/4215032/pp88"
+    },
+    "is_answered" : false,
+    "view_count" : 87,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1743619432,
+    "creation_date" : 1743610718,
+    "link" : "https://stackoverflow.com/questions/79551075/grpc-spring-boot-starter-method-for-authentication",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79551341,
+    "question_id" : 79551075,
+    "body" : "<p>The solution was under my nose. In the doc it's stated that if the <code>Reader</code> returns null the auth is skipped.</p>\n<p>And in the <code>ServerCall&lt;?, ?&gt; call</code> you can get the full/bareMethodName</p>\n<pre><code>public class JwtGrpcAuthenticationReader implements GrpcAuthenticationReader {\n\n    private static final Metadata.Key&lt;String&gt; AUTHORIZATION_KEY =\n            Metadata.Key.of(&quot;Authorization&quot;, Metadata.ASCII_STRING_MARSHALLER);\n    @Override\n    public @Nullable Authentication readAuthentication(ServerCall&lt;?, ?&gt; call, Metadata headers) throws AuthenticationException {\n        if (call.getMethodDescriptor().getFullMethodName().equals(&quot;com.exmple.pi.protobuf.compliancerules.services.ProductComplianceRuleService/DeleteComplianceRule&quot;)) {\n            return null;\n        }\n        var token = headers.get(AUTHORIZATION_KEY);\n        if (token == null || !token.startsWith(&quot;Bearer &quot;)) {\n            throw new AuthenticationCredentialsNotFoundException(&quot;Missing token&quot;);\n        }\n        var jwtAuth = new JwtAuthentication(null);\n        jwtAuth.setToken(token.substring(7));\n        return jwtAuth;\n    }\n}\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 5279068,
+      "reputation" : 1103,
+      "user_id" : 4215032,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/89f165cd1807676191742cbdb0bafc3b?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Pp88",
+      "link" : "https://stackoverflow.com/users/4215032/pp88"
+    },
+    "creation_date" : 1743619432,
+    "last_activity_date" : 1743619432,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : { }
+}

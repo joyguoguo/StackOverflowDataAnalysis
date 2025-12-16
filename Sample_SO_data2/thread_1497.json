@@ -1,0 +1,131 @@
+{
+  "question" : {
+    "question_id" : 79703544,
+    "title" : "Mock iText 7.1.1 in application unit tests to avoid usage of commercial license",
+    "body" : "<p>We are using iText 7.1.1 Commercial version for actual PDF generation in the application as follows,</p>\n<ol>\n<li><p>Activate License on app startup, in some kind of initialization bean:</p>\n<pre><code>LicenseKeyVolumeConfigurer.useLocalReporting(iTextLicenseLocalVolumeReportPath);\nLicenseKey.loadLicenseFile(iTextLicenseKeyPath);\n</code></pre>\n</li>\n<li><p>In the Java app's Service class,</p>\n<pre><code>// Returns byte[]\npublic byte[] createPdf(PdfData pdfData) throws Exception {\n   ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();\n   PdfWriter writer = new PdfWriter(byteArrayOutputStream);\n   PdfDocument pdfDocument = new PdfDocument(writer);\n   Document document = new Document(pdfDocument, PageSize.LETTER, false);     \n   //...\n   // Add PDF sections, e.g.:\n   Paragraph paragraphIntro = new Paragraph(String.format(INTRO_PARAGRAPH, StringUtils.defaultIfBlank(pdfData.getSomeStr(), &quot;&quot;)));\n   paragraphIntro.setFont(timesNormalFont);\n   paragraphIntro.setFontSize(BODY_FONT_SIZE);\n   paragraphIntro.setMarginTop(INTRO_PARAGRAPH_MARGIN_TOP);\n   document.add(paragraphIntro);\n   // etc.      \n   // ...\n   document.close();\n   pdfDocument.close();  \n   byte[] result = byteArrayOutputStream.toByteArray();\n   byteArrayOutputStream.close();\n   return result;\n}\n</code></pre>\n</li>\n</ol>\n<p>Now I need to add a unit test that provides coverage for the custom <code>createPdf</code> service method. But to avoid usage of the commercial license, I need to mock iText. I would need to mock everything related to <code>PdfWriter</code>, <code>PdfDocument</code>, <code>Document</code>, and all the other iText objects like <code>Paragraph</code> and <code>Div</code> in this method. The unit test should go through the custom service code and test that while mocking all the iText objects. Is this possible without a lot of effort?</p>\n",
+    "tags" : [ "java", "unit-testing", "itext7" ],
+    "owner" : {
+      "account_id" : 987434,
+      "reputation" : 12664,
+      "user_id" : 1005607,
+      "user_type" : "registered",
+      "accept_rate" : 64,
+      "profile_image" : "https://www.gravatar.com/avatar/784311347e657bc34c93a6b7cb7d3faf?s=256&d=identicon&r=PG",
+      "display_name" : "gene b.",
+      "link" : "https://stackoverflow.com/users/1005607/gene-b"
+    },
+    "is_answered" : false,
+    "view_count" : 110,
+    "answer_count" : 1,
+    "score" : -3,
+    "last_activity_date" : 1752777387,
+    "creation_date" : 1752674818,
+    "link" : "https://stackoverflow.com/questions/79703544/mock-itext-7-1-1-in-application-unit-tests-to-avoid-usage-of-commercial-license",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79705258,
+    "question_id" : 79703544,
+    "body" : "<p>It looks like the <code>PdfDocument</code> class is the one that processes license information:</p>\n<blockquote>\n<p>The volume counting system used by <em><strong>iText</strong></em> is based on distinct instances of the <em><strong>PdfDocument class.</strong></em> The &quot;volume&quot; is typically counted based on the creation or manipulation of distinct <code>PdfDocument</code> instances.</p>\n</blockquote>\n<p>So it's sufficient to isolate <code>PdfDocument</code> and move all the layout logic into a testable class that uses the layout-based <code>Document</code> class only. The layout <code>Document</code> class can be mocked with Mockito.</p>\n<pre><code>        ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();\n        PdfWriter writer = new PdfWriter(byteArrayOutputStream);\n        PdfDocument pdfDocument = new PdfDocument(writer);\n        Document document = new Document(pdfDocument, PageSize.LETTER, false);\n        doLayout(document, pdfData); // This actual layout-only method can be tested\n</code></pre>\n<p>then, as an example:</p>\n<pre><code>import static org.mockito.Mockito.mock;\n</code></pre>\n<pre><code>        Document mockDocument = mock(Document.class);\n        assertDoesNotThrow(() -&gt; { // Here we're testing that there's no exception\n            doLayout(mockDocument, pdfData);\n        });\n</code></pre>\n<p>Only the first few PdfDocument/ByteArrayOutputStream lines won't be covered, but most of the custom service class will be.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 987434,
+      "reputation" : 12664,
+      "user_id" : 1005607,
+      "user_type" : "registered",
+      "accept_rate" : 64,
+      "profile_image" : "https://www.gravatar.com/avatar/784311347e657bc34c93a6b7cb7d3faf?s=256&d=identicon&r=PG",
+      "display_name" : "gene b.",
+      "link" : "https://stackoverflow.com/users/1005607/gene-b"
+    },
+    "creation_date" : 1752776237,
+    "last_activity_date" : 1752777387,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140598156,
+    "post_id" : 79703544,
+    "body" : "Are you sure your company bought a license for production but did not also consider the development and testing phases?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1916831,
+      "reputation" : 97023,
+      "user_id" : 1729265,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/VMMeP.jpg?s=256",
+      "display_name" : "mkl",
+      "link" : "https://stackoverflow.com/users/1729265/mkl"
+    },
+    "creation_date" : 1752781793,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140597320,
+    "post_id" : 79703544,
+    "body" : "@geneb. if you are not distributing the tests, nor are you exposing them to your customers, it is my understanding that you would be fine with meeting AGPL requirements",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 1707578,
+      "reputation" : 988,
+      "user_id" : 1566339,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/5cdc60c65804a26cd3db62d62132fd7f?s=256&d=identicon&r=PG",
+      "display_name" : "Andr&#233; Lemos",
+      "link" : "https://stackoverflow.com/users/1566339/andr%c3%a9-lemos"
+    },
+    "creation_date" : 1752763596,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140595181,
+    "post_id" : 79703544,
+    "body" : "There are requirements for code coverage and if they aren&#39;t met (i.e. below 95%) we need to provide it.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 987434,
+      "reputation" : 12664,
+      "user_id" : 1005607,
+      "user_type" : "registered",
+      "accept_rate" : 64,
+      "profile_image" : "https://www.gravatar.com/avatar/784311347e657bc34c93a6b7cb7d3faf?s=256&d=identicon&r=PG",
+      "display_name" : "gene b.",
+      "link" : "https://stackoverflow.com/users/1005607/gene-b"
+    },
+    "creation_date" : 1752699562,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140594853,
+    "post_id" : 79703544,
+    "body" : "What would you be testing if you did that? You&#39;d basically be testing if your implementation does what it does and would be extremely sensitive (brittle) to any change to your implementation, which sounds like wasted test effort to me. You may want to consider whether this is not better to subject to a manual or automated end-to-end test on your test environment, or - if really needed - your production environment.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 213468,
+      "reputation" : 110280,
+      "user_id" : 466862,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/d873f397779db38cd510d9ee5416fd43?s=256&d=identicon&r=PG",
+      "display_name" : "Mark Rotteveel",
+      "link" : "https://stackoverflow.com/users/466862/mark-rotteveel"
+    },
+    "creation_date" : 1752691240,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79705258" : [ {
+      "comment_id" : 140598187,
+      "post_id" : 79705258,
+      "body" : "Mocking can only help so far. If you want to seriously test and not merely fulfill some metrics, you need the actual <code>PdfDocument</code>. You should use it with a license file. If your company bought a production license, they should also have considered the development and test phases. And if they haven&#39;t, try using iText under AGPL conditions. For internal testing this should be ok.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1916831,
+        "reputation" : 97023,
+        "user_id" : 1729265,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/VMMeP.jpg?s=256",
+        "display_name" : "mkl",
+        "link" : "https://stackoverflow.com/users/1729265/mkl"
+      },
+      "creation_date" : 1752782640,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

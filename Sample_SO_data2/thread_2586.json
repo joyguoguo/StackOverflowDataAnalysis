@@ -1,0 +1,190 @@
+{
+  "question" : {
+    "question_id" : 79612801,
+    "title" : "ResourceBundleControlProvider not invoked when running program in an unnamed module under JUnit",
+    "body" : "<p>When running a test program in an unnamed module under JUnit the <code>ResourceBundleControlProvider.getControl()</code> method is not invoked.</p>\n<p>I have this implementation of <code>ResourceBundleControlProvider</code>:</p>\n<pre class=\"lang-java prettyprint-override\"><code>    import java.util.ResourceBundle;\n    import java.util.spi.ResourceBundleControlProvider;\n    \n    /**\n     * A ResourceBundleControlProvider implementation\n     */\n    public class MyControlProvider implements ResourceBundleControlProvider {\n        public ResourceBundle.Control getControl(String baseName) {   \n            System.out.println(&quot;In getControl, baseName: &quot; + baseName);\n            return null;\n        }   \n    }\n\n</code></pre>\n<p>I have the following in <code>META-INF/services/java.util.spi.ResourceBundleControlProvider</code>:</p>\n<p><code>MyControlProvider</code>:</p>\n<p>This test program is intended to demonstrate that <code>MyControlProvider.getControl(String)</code> is invoked:</p>\n<pre class=\"lang-java prettyprint-override\"><code>    import java.util.MissingResourceException;\n    import java.util.ResourceBundle;\n    import java.util.ServiceLoader;\n    import java.util.spi.ResourceBundleControlProvider;\n    import org.junit.jupiter.api.Test;\n    \n    class TestProvider\n    {\n        /** \n         * Attempt to load a missing resource bundle - should throw\n         * MissingResourceException and write a message to stdout.\n         */  \n        @Test\n        public void testProvider() {   \n            try {   \n                ResourceBundle.getBundle(&quot;foo&quot;);\n            }   \n            catch(MissingResourceException e) {   \n                System.out.println(&quot;Caught: &quot; + e.getMessage());\n            }   \n            ServiceLoader&lt;ResourceBundleControlProvider&gt; loader =\n                ServiceLoader.loadInstalled(ResourceBundleControlProvider.class);\n            for (ResourceBundleControlProvider provider : loader) {   \n                System.out.println(&quot;Found installed provider instance of: &quot; + provider.getClass().getName());\n            }   \n            ServiceLoader&lt;ResourceBundleControlProvider&gt; loader2 = ServiceLoader.load(ResourceBundleControlProvider.class);\n            for (ResourceBundleControlProvider provider : loader2) {   \n                System.out.println(&quot;Found provider instance of: &quot; + provider.getClass().getName());\n            }   \n            Module mod = this.getClass().getModule();\n            if (mod.isNamed()) {\n                System.out.println(&quot;Module: &quot; + mod.getName());\n            }\n            else {\n                System.out.println(&quot;Unnamed Module: &quot; + mod.toString());\n            }\n        }\n    \n        public static void main(String[] args) {\n            TestProvider tp = new TestProvider();\n            tp.testProvider();\n        }\n    }\n</code></pre>\n<p>When I run the test program directly, I see that the getControl() method is invoked:</p>\n<pre class=\"lang-none prettyprint-override\"><code>java -cp . TestProvider  \nIn getControl, baseName: foo  \nCaught: Can't find bundle for base name foo, locale en_US  \nFound provider instance of: MyControlProvider  \nUnnamed Module: unnamed module @5caf905d\n</code></pre>\n<p>When I run the test under JUnit it is not:</p>\n<pre class=\"lang-none prettyprint-override\"><code>java -jar ../junit/junit-platform-console-standalone-1.13.0-M2.jar execute -cp . --scan-classpath\n\n\uD83D\uDC9A Thanks for using JUnit! Support its development at https://junit.org/sponsoring\n\nCaught: Can't find bundle for base name foo, locale en_US  \nFound provider instance of: MyControlProvider  \nUnnamed Module: unnamed module @565f390  \n╷  \n├─ JUnit Platform Suite ✔  \n├─ JUnit Jupiter ✔  \n│  └─ TestProvider ✔  \n│     └─ testProvider() ✔  \n└─ JUnit Vintage ✔\n\nTest run finished after 188 ms\n</code></pre>\n<p>The JDK docs for <code>ResourceBundleControlProvider</code> state that &quot;All <code>ResourceBundleControlProviders</code> are ignored in named modules.&quot;. The JUnit test run appears to be running from an unnamed module, so it seems that in this case it should not be ignored.</p>\n<p>I am running this version of JUnit, JDK and MacOS:</p>\n<p>JUnit Platform Console Launcher 1.13.0-M2</p>\n<p>JVM: 21.0.6 (Eclipse Adoptium OpenJDK 64-Bit Server VM 21.0.6+7-LTS)</p>\n<p>OS: Mac OS X 15.4.1 aarch64</p>\n",
+    "tags" : [ "java", "junit", "resourcebundle" ],
+    "owner" : {
+      "account_id" : 36706740,
+      "reputation" : 23,
+      "user_id" : 30236589,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/5a7eeb798654523d3bd3092d97dca81c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Clyde Gerber",
+      "link" : "https://stackoverflow.com/users/30236589/clyde-gerber"
+    },
+    "is_answered" : true,
+    "view_count" : 79,
+    "answer_count" : 1,
+    "score" : 2,
+    "last_activity_date" : 1747240254,
+    "creation_date" : 1746721145,
+    "link" : "https://stackoverflow.com/questions/79612801/resourcebundlecontrolprovider-not-invoked-when-running-program-in-an-unnamed-mod",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79617105,
+    "question_id" : 79612801,
+    "body" : "<p>The problem has to do with how JUnit 5 is loading your code. When you execute this command:</p>\n<pre class=\"lang-none prettyprint-override\"><code>java -jar ../junit/junit-platform-console-standalone-1.13.0-M2.jar execute -cp . --scan-classpath\n</code></pre>\n<p>Then JUnit 5 has to use its own <code>ClassLoader</code> to load the classes and other resources you specified\nvia <code>-cp</code>. Note that <code>-cp</code> is an argument to the JUnit console launcher, not to Java itself. It's\nan option used to specify <em>additional</em> class-path entries:</p>\n<blockquote>\n<pre class=\"lang-none prettyprint-override\"><code>-cp, --classpath, --class-path=PATH\n                       Provide additional classpath entries -- for example, for adding\n                         engines and their dependencies. This option can be repeated.\n</code></pre>\n</blockquote>\n<p>The entries on this path will not be visible to the <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/ClassLoader.html#getSystemClassLoader()\" rel=\"nofollow noreferrer\">system class loader</a>. They will only be\nvisible to JUnit's own class loader.</p>\n<p>This is a problem because <code>ResourceBundle</code> apparently hard-codes the use of the\nsystem class loader to find providers of <code>ResourceBundleControlProvider</code>. I'm not sure if this is\ndocumented somewhere, but you can see this in the <a href=\"https://github.com/openjdk/jdk/blob/9a0e6f338f34fb5da16d5f9eb710cdddd4302945/src/java.base/share/classes/java/util/ResourceBundle.java#L1498\" rel=\"nofollow noreferrer\">source code</a> (link for Java 24):</p>\n<blockquote>\n<pre class=\"lang-java prettyprint-override\"><code>private static class ResourceBundleControlProviderHolder {\n\n    private static final List&lt;ResourceBundleControlProvider&gt; CONTROL_PROVIDERS =\n            ServiceLoader.load(ResourceBundleControlProvider.class,\n                            ClassLoader.getSystemClassLoader()).stream()\n                    .map(ServiceLoader.Provider::get)\n                    .toList();\n\n    private static Control getControl(String baseName) {\n        return CONTROL_PROVIDERS.isEmpty() ?\n            Control.INSTANCE :\n            CONTROL_PROVIDERS.stream()\n                .flatMap(provider -&gt; Stream.ofNullable(provider.getControl(baseName)))\n                .findFirst()\n                .orElse(Control.INSTANCE);\n    }\n}\n</code></pre>\n</blockquote>\n<p>Your <code>ResourceBundleControlProvider</code> implementation and service configuration file are part of your\ntest code. That code is being loaded by JUnit's class loader, not the system class loader. Thus, your\nprovider is not found at runtime.</p>\n<p>The solution is to make sure your code, or at least your <code>ResourceBundleControlProvider</code>\nimplementation (and service configuration file), is loaded by the system class loader. One way to\ndo this is with the following command:</p>\n<pre class=\"lang-none prettyprint-override\"><code>java -cp &lt;path&gt; org.junit.platform.console.ConsoleLauncher --scan-classpath\n</code></pre>\n<p>Note the different location of the <code>-cp</code> option. Now it's a JVM option instead of an argument of\nthe JUnit console launcher application. In other words, the entries of <code>&lt;path&gt;</code>—which includes\nyour code and the JUnit launcher—will be loaded by the system class loader.</p>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 8532578,
+      "reputation" : 49904,
+      "user_id" : 6395627,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Slaw",
+      "link" : "https://stackoverflow.com/users/6395627/slaw"
+    },
+    "creation_date" : 1747016426,
+    "last_activity_date" : 1747240254,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140414716,
+    "post_id" : 79612801,
+    "body" : "I believe my issue is visibility of META-INF/services/java.util.spi.ResourceBundleControlProvide&zwnj;&#8203;r. I have been running JUnit via the command &quot;java --jar &lt;junit jar file&gt; execute ...&quot;. When I add the jar file to the class path and execute org.junit.platform.console.ConsoleLauncher directly I get the behavior I expect.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 36706740,
+      "reputation" : 23,
+      "user_id" : 30236589,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/5a7eeb798654523d3bd3092d97dca81c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Clyde Gerber",
+      "link" : "https://stackoverflow.com/users/30236589/clyde-gerber"
+    },
+    "creation_date" : 1746933912,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140414581,
+    "post_id" : 79612801,
+    "body" : "java.net.FactoryClassLoader is returned from <code>URLClassLoader.newInstance()</code>.  I still am not able to recreate the problem by loading MyControlProvider with FactoryURLClassLoader, even when I create a FactoryURLClassLoader with no parent loader. With the class loader hierarchy I see in JUnit, I don&#39;t believe that class loader visibility is the issue. The load request for MyControlProvider should be delegated up to the highest parent loader that can satisfy it and it should be visible to any child loaders.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 36706740,
+      "reputation" : 23,
+      "user_id" : 30236589,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/5a7eeb798654523d3bd3092d97dca81c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Clyde Gerber",
+      "link" : "https://stackoverflow.com/users/30236589/clyde-gerber"
+    },
+    "creation_date" : 1746923285,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140414352,
+    "post_id" : 79612801,
+    "body" : "The class loader being used by JUnit to load the test program is java.net.FactoryURLClassLoader. The parent loader of that loader is the systems class loader and the parent loader of the systems class loader is the platform class loader. I have tried to replicate the problem without JUnit by instantiating a URLClassLoader and loading MyControlProvider with it prior to calling ResourceBundle.getBundle(), but cannot get it to fail. FactoryURLClassLoader is private to the java.net package and I do not know how to instantiate it to test how it behaves without JUnit.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 36706740,
+      "reputation" : 23,
+      "user_id" : 30236589,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/5a7eeb798654523d3bd3092d97dca81c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Clyde Gerber",
+      "link" : "https://stackoverflow.com/users/30236589/clyde-gerber"
+    },
+    "creation_date" : 1746912253,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140412177,
+    "post_id" : 79612801,
+    "body" : "You&#39;d likely want to pass <code>TestProvider.class.getClassLoader()</code> if that would solve the problem, not <code>ClassLoader.getSystemClassLoader()</code>. But as you noted, the class loader used to load the control providers is hard-coded anyway.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 8532578,
+      "reputation" : 49904,
+      "user_id" : 6395627,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Slaw",
+      "link" : "https://stackoverflow.com/users/6395627/slaw"
+    },
+    "creation_date" : 1746817728,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140410858,
+    "post_id" : 79612801,
+    "body" : "@Slaw - The class loader passed into <code>getBundle()</code> is not used to retrieve the provider though, so the test doesn&#39;t disprove your suggestion.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 36706740,
+      "reputation" : 23,
+      "user_id" : 30236589,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/5a7eeb798654523d3bd3092d97dca81c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Clyde Gerber",
+      "link" : "https://stackoverflow.com/users/30236589/clyde-gerber"
+    },
+    "creation_date" : 1746793081,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140410835,
+    "post_id" : 79612801,
+    "body" : "Thanks for the suggestion @Slaw. To test it, I changed the call to <code>getBundle()</code> to pass the system class loader: <code>ResourceBundle.getBundle(&quot;foo&quot;, Locale.getDefault(),  ClassLoader.getSystemClassLoader());</code> The results are the same.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 36706740,
+      "reputation" : 23,
+      "user_id" : 30236589,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/5a7eeb798654523d3bd3092d97dca81c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Clyde Gerber",
+      "link" : "https://stackoverflow.com/users/30236589/clyde-gerber"
+    },
+    "creation_date" : 1746792626,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140409698,
+    "post_id" : 79612801,
+    "body" : "It may be a <code>ClassLoader</code> issue. <a href=\"https://github.com/openjdk/jdk/blob/9a0e6f338f34fb5da16d5f9eb710cdddd4302945/src/java.base/share/classes/java/util/ResourceBundle.java#L1500\" rel=\"nofollow noreferrer\">It looks like</a> <code>ResourceBundleControlProvider</code> implementations are loaded from the <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/ClassLoader.html#getSystemClassLoader()\" rel=\"nofollow noreferrer\">system class loader</a> (not sure if this is documented somewhere). If JUnit is loading your test classes using its own class loader then your control provider won&#39;t be visible.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 8532578,
+      "reputation" : 49904,
+      "user_id" : 6395627,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Slaw",
+      "link" : "https://stackoverflow.com/users/6395627/slaw"
+    },
+    "creation_date" : 1746761563,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140408642,
+    "post_id" : 79612801,
+    "body" : "Yes, I don&#39;t see the &quot;In getControl, baseName: foo&quot; message under JUnit. What platform are you running on?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 36706740,
+      "reputation" : 23,
+      "user_id" : 30236589,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/5a7eeb798654523d3bd3092d97dca81c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Clyde Gerber",
+      "link" : "https://stackoverflow.com/users/30236589/clyde-gerber"
+    },
+    "creation_date" : 1746727127,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140408532,
+    "post_id" : 79612801,
+    "body" : "Are you sure? AFAICT both output the same.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2514436,
+      "reputation" : 923,
+      "user_id" : 2186184,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/fdd4717d834bd9f6efbe8987e304049c?s=256&d=identicon&r=PG",
+      "display_name" : "Jonathan",
+      "link" : "https://stackoverflow.com/users/2186184/jonathan"
+    },
+    "creation_date" : 1746724346,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

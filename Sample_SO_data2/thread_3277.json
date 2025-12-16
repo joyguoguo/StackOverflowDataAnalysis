@@ -1,0 +1,142 @@
+{
+  "question" : {
+    "question_id" : 79562512,
+    "title" : "Hibernate Criteria 6 projection on nested object weird behaviour",
+    "body" : "<p>I want to do a projection on an entity's object attribute with Hibernate Criteria 6.</p>\n<p>Here are my models :</p>\n<pre><code>    @Entity\n    public class MyAuthor {\n        private String id;\n        private String name;\n        private int nbBooks;\n        private Date birthDate;\n        @Embedded\n        private MyAddress address;\n    }\n</code></pre>\n<pre><code>    @Embeddable\n    public class MyAddress {\n        private String street;\n        private MyCity city;\n    }\n</code></pre>\n<pre><code>    @Entity\n    public class MyCity {\n       String id;\n       String name;\n    }\n</code></pre>\n<p>Here is my unit test :</p>\n<pre><code>    // We populate data with CITY_1 &amp; CITY_2, ADDR_1 on CITY_1, ADDR_2 on CITY_1 and ADDR_3 on CITY_2 with @Before\n\n    CriteriaBuilder criteriaBuilder = sessionFactory.getCurrentSession().getCriteriaBuilder();\n    CriteriaQuery&lt;MyCity&gt; query = criteriaBuilder.createQuery(MyCity.class);\n    Root&lt;MyAuthor&gt; root = query.from(MyAuthor.class);\n    Join&lt;MyAuthor, MyAddress&gt; from = root.join(&quot;address&quot;, JoinType.LEFT);\n    \n    // produce this request : select c1_0.id,c1_0.name from MyAuthor ma1_0 left join MyCity c1_0 on c1_0.id=ma1_0.city_id where c1_0.name is not null\n    query.select(from.get(&quot;city&quot;))\n        .where(criteriaBuilder.isNotNull(from.get(&quot;city&quot;).get(&quot;name&quot;)));\n        \n    // produce the same request : select c1_0.id,c1_0.name from MyAuthor ma1_0 left join MyCity c1_0 on c1_0.id=ma1_0.city_id where c1_0.name is not null\n    // query.multiselect(from.get(&quot;city&quot;).get(&quot;id&quot;), from.get(&quot;city&quot;).get(&quot;name&quot;))\n    // .where(criteriaBuilder.isNotNull(from.get(&quot;city&quot;).get(&quot;name&quot;)));\n\n\n    // with the query.select(), there are 2 results, with the multiselect there are 3.\n    List&lt;MyCity&gt; cities = sessionFactory.getCurrentSession().createQuery(query).getResultList();\n    \n    assertEquals(3, cities.size());\n</code></pre>\n<p>I do not understand how the generated SQL is the same BUT the length of result is different.</p>\n<p>Any ideas ?\nMany thanks.</p>\n",
+    "tags" : [ "java", "spring", "hibernate", "jpa", "hibernate-criteria" ],
+    "owner" : {
+      "account_id" : 13046942,
+      "reputation" : 341,
+      "user_id" : 9428536,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/58eeaa2de4aa5a51d61b8bcaca2bed6e?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "R&#233;mi C.",
+      "link" : "https://stackoverflow.com/users/9428536/r%c3%a9mi-c"
+    },
+    "is_answered" : true,
+    "view_count" : 81,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1744184506,
+    "creation_date" : 1744127058,
+    "link" : "https://stackoverflow.com/questions/79562512/hibernate-criteria-6-projection-on-nested-object-weird-behaviour",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79563731,
+    "question_id" : 79562512,
+    "body" : "<p>While the query that is being generated is the same, the actual processing of the result is different.</p>\n<pre class=\"lang-sql prettyprint-override\"><code>select c1_0.id,c1_0.name \nfrom MyAuthor ma1_0 \nleft join MyCity c1_0 on c1_0.id=ma1_0.city_id \nwhere c1_0.name is not null\n</code></pre>\n<p>If you would execute this query directly with your DB tooling or a DB tool like DBWeaver you probably would get 3 rows of data. (As you stated you had 9 authors from which 3 had a city).</p>\n<p>Of these 3 rows of data, 2 will be the same. As the authors probably live in the same city.</p>\n<p>Now when utilizing <a href=\"https://jakarta.ee/specifications/persistence/3.2/apidocs/jakarta.persistence/jakarta/persistence/criteria/criteriaquery#select(jakarta.persistence.criteria.Selection)\" rel=\"nofollow noreferrer\"><code>select</code></a> what you get returned is a list of unique <code>MyCity</code> entities. Which in this case are 2 actual values. When processing the result HIbernate will map the results to a <code>MyCity</code> but before doing that it will check if it already has a <code>MyCity</code> with that exact <code>id</code> in his cache.</p>\n<p>When utilizing <a href=\"https://jakarta.ee/specifications/persistence/3.2/apidocs/jakarta.persistence/jakarta/persistence/criteria/criteriaquery#multiselect(jakarta.persistence.criteria.Selection...)\" rel=\"nofollow noreferrer\"><code>multiselect</code></a> it will return the rows from the result as is, as a list of tuples. Basically a glorified <code>Object[]</code> and thus it will contain all 3 rows even the duplicated data.</p>\n<p>From the Javadoc of <code>multiselect</code> (emphasize is mine)</p>\n<blockquote>\n<p>If the type of the criteria query is <code>CriteriaQuery&lt;X&gt;</code> for some user-defined class <code>X</code> (i.e., a criteria query object created by passing a <code>X</code> class argument to the <code>createQuery</code> method), the arguments to the <code>multiselect</code> method will be passed to the <code>X</code> constructor and <strong>an instance of type <code>X</code> will be returned for each row.</strong></p>\n</blockquote>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126826,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1744184506,
+    "last_activity_date" : 1744184506,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140314928,
+    "post_id" : 79562512,
+    "body" : "I added a constructor in MyCity with a MyCity arg and <code>multiselect(from.get(&quot;city&quot;))</code> returns my full object",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 13046942,
+      "reputation" : 341,
+      "user_id" : 9428536,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/58eeaa2de4aa5a51d61b8bcaca2bed6e?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "R&#233;mi C.",
+      "link" : "https://stackoverflow.com/users/9428536/r%c3%a9mi-c"
+    },
+    "creation_date" : 1744184897,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140314888,
+    "post_id" : 79562512,
+    "body" : "I do wonder what would happen if you used <code>multiselect(from.get(&quot;city&quot;))</code> instead of individual fields.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126826,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1744184162,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140314714,
+    "post_id" : 79562512,
+    "body" : "Thanks ! I thought it was something similar but I wasn&#39;t sure You can post it as an answer so that I can accept it if you want",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 13046942,
+      "reputation" : 341,
+      "user_id" : 9428536,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/58eeaa2de4aa5a51d61b8bcaca2bed6e?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "R&#233;mi C.",
+      "link" : "https://stackoverflow.com/users/9428536/r%c3%a9mi-c"
+    },
+    "creation_date" : 1744181453,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140314686,
+    "post_id" : 79562512,
+    "body" : "Well 3 authors with addresses that is what you ask for. The difference is that with <code>select</code> you will get all unique cities from the result this is handled internally as it concerns entities not SQL results. Define getting all the data, you will get all the data but with select you will get the unique entities, while with multiselect you get a tuple of all rows. So if there are actually 2 cities, you get a duplicated one.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126826,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1744181105,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140314676,
+    "post_id" : 79562512,
+    "body" : "Thanks for the info. I have 9 authors in my test data, with only 3 of those having an address. I did not understand the <code>select</code> behaviour as the shown generated SQL does not have a distinct ... I guess I will keep using <code>multiselect</code> to be sure to always get all data. Thanks !",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 13046942,
+      "reputation" : 341,
+      "user_id" : 9428536,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/58eeaa2de4aa5a51d61b8bcaca2bed6e?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "R&#233;mi C.",
+      "link" : "https://stackoverflow.com/users/9428536/r%c3%a9mi-c"
+    },
+    "creation_date" : 1744180864,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140314649,
+    "post_id" : 79562512,
+    "body" : "<code>select</code> will select the indivual <code>MyCity</code> elements and will return the unique ones. The <code>multiselect</code> just returns a list of tuples, one for each row (actually one for each author so I suspect you have 3 authors) and can thus include duplicates. So while the query is the same, the way the result is processed is different.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126826,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1744180445,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

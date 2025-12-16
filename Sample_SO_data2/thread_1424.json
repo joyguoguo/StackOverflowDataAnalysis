@@ -1,0 +1,145 @@
+{
+  "question" : {
+    "question_id" : 79712559,
+    "title" : "How to write polymorphic function extending abstract class which implements an interface generic function?",
+    "body" : "<p>I'm trying to implement Observable pattern with an abstract class (so that my subclasses don't provide a common implementation). I want polymorphic functions for different Observer types.</p>\n<p>I have an interface <code>IObservable</code>:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public interface IObservable { /* also used version IObservable&lt;O&gt; */\n  &lt;O&gt; void registerObserver(O o);\n  &lt;O&gt; void removeObserver(O o);\n}\n</code></pre>\n<p>I wrote abstract class <code>ObservableBase</code>:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public abstract class ObservableBase implements IObservable {\n  protected abstract &lt;O&gt; Set&lt;O&gt; getCollection(O o);\n\n  @Override\n  public &lt;O&gt; void registerObserver(O o) {\n    getCollection(o).add(o);\n  }\n\n  @Override\n  public &lt;O&gt; void removeObserver(O o) {\n    getCollection(o).remove(o);\n  }\n}\n</code></pre>\n<p>And I want my concrete class to implement <code>IObservable</code> for different types of Observers:</p>\n<pre class=\"lang-java prettyprint-override\"><code>// This is what it'd look like if I just implemented it by hand for generic interface \npublic ConcreteClass implements IObservable&lt;Observer1&gt;, IObservable&lt;Observer2&gt; {\n  @Override\n  public void registerObserver(Observer1 o) {}\n\n  @Override\n  public void registerObserver(Observer2 o) {}\n\n  @Override\n  public void removeObserver(Observer1 o) {}\n\n  @Override\n  public void removeObserver(Observer2 o) {}\n}\n</code></pre>\n<p>My idea is to put register/remove functionality in the base abstract class and provide only collection for this operations. But I cant wrap my hand around this. If I declare in the <code>ConcreteClass</code> specific type for <code>getCollection</code>, compiler complains &quot;<em>Method does not override method from its superclass</em>&quot;.</p>\n<p>Something like:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public ConcreteClass extends ObservableBase {\n  protected Set&lt;Observer1&gt; getCollection(Observer1 o) {/*...*/}\n\n  protected Set&lt;Observer2&gt; getCollection(Observer2 o) {/*...*/}\n}\n</code></pre>\n<p>Is it possible?</p>\n",
+    "tags" : [ "java", "generics", "observer-pattern" ],
+    "owner" : {
+      "account_id" : 9167111,
+      "reputation" : 142,
+      "user_id" : 6816222,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/c9ac09e8537330b570cb7bac803ed2c8?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "valeroso",
+      "link" : "https://stackoverflow.com/users/6816222/valeroso"
+    },
+    "is_answered" : true,
+    "view_count" : 104,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1753309327,
+    "creation_date" : 1753304310,
+    "link" : "https://stackoverflow.com/questions/79712559/how-to-write-polymorphic-function-extending-abstract-class-which-implements-an-i",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79712613,
+    "question_id" : 79712559,
+    "body" : "<p>First, I will recreate what I believe to be the intended class hierarchy with the correct syntax. This is to eliminate any confusion as I attempt to answer your question.</p>\n<ul>\n<li><a href=\"https://pastes.dev/e4871lMIL3\" rel=\"nofollow noreferrer\">Observable</a>, the interface</li>\n<li><a href=\"https://pastes.dev/st65Tya65V\" rel=\"nofollow noreferrer\">AbstractObservable</a>, the abstract class</li>\n<li><a href=\"https://pastes.dev/JL6KMuYiw1\" rel=\"nofollow noreferrer\">FooObservable</a>, a concrete class which extends <code>AbstractObservable&lt;Foo&gt;</code></li>\n</ul>\n<hr />\n<blockquote>\n<p>Is it possible?</p>\n</blockquote>\n<p>No, you cannot have some class which implements both <code>Observable&lt;Observer1&gt;</code> and <code>Observable&lt;Observer2&gt;</code>. See <a href=\"https://stackoverflow.com/questions/22138475/how-to-implement-the-same-interface-multiple-times-but-with-different-generics\">this other stack overflow question</a>. Ultimately, those generic methods would have the same signature and clash, as the signature in this case is defined by the type bounds.</p>\n<p>You can, however, achieve something similar with a different <code>AbstractObservable</code> implementation:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public abstract class AbstractObservable&lt;O&gt; implements Observable&lt;O&gt; {\n\n    private final Set&lt;Class&lt;?&gt;&gt; allowedTypes;\n    private final Set&lt;O&gt; observers;\n\n    @SafeVarargs\n    protected AbstractObservable(Class&lt;? extends O&gt;... allowedTypes) {\n        this.allowedTypes = Set.of(allowedTypes);\n        this.observers = new HashSet&lt;&gt;();\n    }\n\n    //\n\n    @Override\n    public void registerObserver(O observer) {\n        this.checkType(observer);\n        this.observers.add(observer);\n    }\n\n    @Override\n    public void unregisterObserver(O observer) {\n        this.checkType(observer);\n        this.observers.remove(observer);\n    }\n\n    private void checkType(Object o) {\n        for (Class&lt;?&gt; allowed : this.allowedTypes) {\n            if (allowed.isInstance(o)) return;\n        }\n        throw new IllegalArgumentException(\n                &quot;Observer of type &quot; + o.getClass().getName() +\n                        &quot; is not permitted&quot;);\n    }\n\n}\n</code></pre>\n<p>Now you can declare observables with more complex type constraints:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class GenericObservable extends AbstractObservable&lt;Object&gt; {\n\n    public GenericObservable() {\n        super(Object.class);\n    }\n    \n}\n\npublic class FooAndBarObservable\n        extends AbstractObservable&lt;Object&gt;\n//                                 ^\n// Instead of Object, this can be another common supertype of Foo and Bar\n{\n\n    public FooAndBarObservable() {\n        super(Foo.class, Bar.class);\n    }\n\n}\n</code></pre>\n<hr />\n<p>Personally, I do not see the motivation. I see 2 reasonable solutions to this issue:</p>\n<ul>\n<li><p>The type constraint on the <code>registerObserver</code>/<code>removeObserver</code> methods is weakened, perhaps these methods can simply accept some <code>Observer</code> type that is wide enough to include the desired objects.</p>\n</li>\n<li><p>The type strength is maintained, however each <code>Observable</code> impl can truly only hold 1 common supertype of observer. If an <code>Observable&lt;Observer&gt;</code> can be constructed in any way, it becomes identical to the previous solution. With this system you can have selective <code>Observable</code>s, but this condition is always inheritance-based. To only allow N specific <code>Observer</code> types, you would need to isolate a common supertype which is only extended/implemented by those N <code>Observer</code> types.</p>\n</li>\n</ul>\n",
+    "score" : 3,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 14914414,
+      "reputation" : 1185,
+      "user_id" : 10808904,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Ts8fIsJj.png?s=256",
+      "display_name" : "Xavier Pedraza",
+      "link" : "https://stackoverflow.com/users/10808904/xavier-pedraza"
+    },
+    "creation_date" : 1753308934,
+    "last_activity_date" : 1753309327,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140614107,
+    "post_id" : 79712559,
+    "body" : "@GeorgiiLvov, I hoped to do this with overloading: <code>getCollection(Observer1 o);</code> <code>getCollection(Observer2 o);</code>. Or maybe to have one method ``getCollection(Class&lt;T&gt; o)`and then inside the function return proper set for provided type.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 9167111,
+      "reputation" : 142,
+      "user_id" : 6816222,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/c9ac09e8537330b570cb7bac803ed2c8?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "valeroso",
+      "link" : "https://stackoverflow.com/users/6816222/valeroso"
+    },
+    "creation_date" : 1753341502,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140613403,
+    "post_id" : 79712559,
+    "body" : "The usage of generics here is seemingly confused. For instance, in the methods defined by <code>IObservable</code>, the type parameters are method scoped. So, since there are no constraints on those parameters, each method may as well accept Object no matter what the type parameter on <code>IObservable</code> is. This breaks the inheritance model you seem to be aiming for.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 14914414,
+      "reputation" : 1185,
+      "user_id" : 10808904,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Ts8fIsJj.png?s=256",
+      "display_name" : "Xavier Pedraza",
+      "link" : "https://stackoverflow.com/users/10808904/xavier-pedraza"
+    },
+    "creation_date" : 1753307290,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140613345,
+    "post_id" : 79712559,
+    "body" : "But how do you plan to override <code>getCollection</code> in <code>ConcreteClass</code> twice? You can have multiple <code>ConcreteClass</code> implementations that override <code>getCollection</code> for different observers. Does that suit you?",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 18586978,
+      "reputation" : 3850,
+      "user_id" : 15000097,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/yFl4M.jpg?s=256",
+      "display_name" : "Georgii Lvov",
+      "link" : "https://stackoverflow.com/users/15000097/georgii-lvov"
+    },
+    "creation_date" : 1753306130,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79712613" : [ {
+      "comment_id" : 140615226,
+      "post_id" : 79712613,
+      "body" : "Do not place parts of the answer on an external site. Include them in your answer. There is no recognizable reason for not including those few lines of code here.",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 3211603,
+        "reputation" : 301001,
+        "user_id" : 2711488,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+        "display_name" : "Holger",
+        "link" : "https://stackoverflow.com/users/2711488/holger"
+      },
+      "creation_date" : 1753364966,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140614123,
+      "post_id" : 79712613,
+      "body" : "Why do you say that it makes no sense? For me it makes sense to have one common class which implements common functionality to spare me from writing all this &quot;same&quot; methods in a concrete class (or even in multiple concrete classes which implement Observable). I thought it&#39;s achievable because Java has overloading (so I can have multiple methods with the same name but different arguments) and common functionality is &quot;generic&quot; (in common sense, not developers - only collection is different).",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 9167111,
+        "reputation" : 142,
+        "user_id" : 6816222,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/c9ac09e8537330b570cb7bac803ed2c8?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "valeroso",
+        "link" : "https://stackoverflow.com/users/6816222/valeroso"
+      },
+      "creation_date" : 1753341874,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140613514,
+      "post_id" : 79712613,
+      "body" : "&quot;Is it possible? NO&quot;  and it makes no sense as well.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 209503,
+        "reputation" : 23867,
+        "user_id" : 460557,
+        "user_type" : "registered",
+        "accept_rate" : 100,
+        "profile_image" : "https://www.gravatar.com/avatar/b4565f97815833390c9c880e9e8522e4?s=256&d=identicon&r=PG",
+        "display_name" : "Jorge Campos",
+        "link" : "https://stackoverflow.com/users/460557/jorge-campos"
+      },
+      "creation_date" : 1753311549,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

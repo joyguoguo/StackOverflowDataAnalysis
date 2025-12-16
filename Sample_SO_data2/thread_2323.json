@@ -1,0 +1,96 @@
+{
+  "question" : {
+    "question_id" : 79632553,
+    "title" : "Making Mapstruct transfer ids in bidirectional relationships",
+    "body" : "<p>Imagine I want to use a Mapstruct mapper to map this:</p>\n<pre class=\"lang-java prettyprint-override\"><code>import lombok.Getter;\nimport lombok.Setter;\n\nimport java.util.List;\n\n@Getter\n@Setter\npublic class UserRequestDto {\n\n    private Long id;\n    private String name;\n    private List&lt;String&gt; emailData;\n}\n</code></pre>\n<p>to this:</p>\n<pre class=\"lang-java prettyprint-override\"><code>import jakarta.persistence.Column;\nimport jakarta.persistence.Entity;\nimport jakarta.persistence.GeneratedValue;\nimport jakarta.persistence.GenerationType;\nimport jakarta.persistence.Id;\nimport jakarta.persistence.OneToMany;\nimport jakarta.persistence.Table;\nimport lombok.Getter;\nimport lombok.Setter;\n\nimport java.util.List;\n\n@Entity\n@Getter\n@Setter\n@Table(name = &quot;\\&quot;user\\&quot;&quot;)\npublic class User {\n    @Id\n    @GeneratedValue(strategy = GenerationType.IDENTITY)\n    private Long id;\n    private String name;\n    @OneToMany\n    private List&lt;EmailData&gt; emailData;\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>import jakarta.persistence.Entity;\nimport jakarta.persistence.GeneratedValue;\nimport jakarta.persistence.GenerationType;\nimport jakarta.persistence.Id;\nimport jakarta.persistence.JoinColumn;\nimport jakarta.persistence.ManyToOne;\nimport jakarta.persistence.Table;\nimport lombok.Getter;\nimport lombok.Setter;\n\n@Entity\n@Getter\n@Setter\n@Table(name = &quot;email_data&quot;)\npublic class EmailData {\n    @Id\n    @GeneratedValue(strategy = GenerationType.IDENTITY)\n    private Long id;\n    @ManyToOne\n    @JoinColumn(name = &quot;user_id&quot;)\n    private User user;\n    private String email;\n}\n</code></pre>\n<p>How do I make it set the user to <code>EmailData</code> instances? Is there a better way than to just &quot;after-map&quot; the return value manually yourself?\nWhile it works, a major disadvantage of that approach is you would need to create a ton of boilerplate <code>@AfterMapping</code>s if your entity has lots of fields like <code>emailData</code>:</p>\n<pre class=\"lang-java prettyprint-override\"><code>import com.example.pixel_user_api.data.dto.request.UserRequestDto;\nimport com.example.pixel_user_api.data.dto.response.UserResponseDto;\nimport com.example.pixel_user_api.data.entity.User;\nimport org.mapstruct.Mapper;\n\n@Mapper(uses = EmailMapper.class)\npublic interface UserMapper {\n    User toUser(UserRequestDto userRequestDto);\n\n    @AfterMapping\n    default void linkDataToUser(@MappingTarget User user) {\n        // imagine a long list of such methods\n        if (user.getEmailData() != null) user.getEmailData().forEach(emailDatum -&gt; emailDatum.setUser(user));\n        // if (user.getPhoneData() != null) user.getPhoneData().forEach(phoneDatum -&gt; phoneDatum.setUser(user));\n    }\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>import com.example.pixel_user_api.data.entity.EmailData;\nimport org.mapstruct.Mapper;\nimport org.mapstruct.Mapping;\n\n@Mapper\npublic interface EmailMapper {\n    @Mapping(source = &quot;.&quot;, target = &quot;email&quot;)\n    EmailData toEmailData(String email);\n}\n</code></pre>\n<p>A test that has to pass:</p>\n<pre class=\"lang-java prettyprint-override\"><code>import com.example.pixel_user_api.data.dto.request.UserRequestDto;\nimport com.example.pixel_user_api.data.entity.EmailData;\nimport com.example.pixel_user_api.data.entity.User;\nimport org.junit.jupiter.api.Test;\nimport org.mapstruct.factory.Mappers;\n\nimport java.util.List;\n\nimport static org.assertj.core.api.Assertions.assertThat;\n\nclass UserMapperTest {\n    @Test\n    void testMapper() {\n        UserRequestDto userDto = new UserRequestDto();\n        userDto.setId(123L);\n        userDto.setName(&quot;Steve123&quot;);\n        String email = &quot;steve@gmail.com&quot;;\n        userDto.setEmailData(List.of(email));\n\n        UserMapper mapper = Mappers.getMapper(UserMapper.class);\n        User user = mapper.toUser(userDto);\n\n        assertThat(user.getId()).isEqualTo(userDto.getId());\n        assertThat(user.getName()).isEqualTo(userDto.getName());\n\n        List&lt;EmailData&gt; emailData = user.getEmailData();\n        assertThat(emailData).hasSize(1);\n        EmailData emailDatum = emailData.get(0);\n        assertThat(emailDatum.getEmail()).isEqualTo(email);\n        User emailDatumUser = emailDatum.getUser();\n        assertThat(emailDatumUser).isNotNull();\n        assertThat(emailDatumUser).isEqualTo(user);\n    }\n}\n</code></pre>\n<p>Here's a <a href=\"https://stackoverflow.com/questions/59895166/mapstruct-bidirectional-mapping\">somewhat similar question</a> that primarily focuses on <code>StackOverflowError</code>s.</p>\n",
+    "tags" : [ "java", "mapstruct" ],
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2683,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "is_answered" : false,
+    "view_count" : 58,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1747857324,
+    "creation_date" : 1747851334,
+    "link" : "https://stackoverflow.com/questions/79632553/making-mapstruct-transfer-ids-in-bidirectional-relationships",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79632650,
+    "question_id" : 79632553,
+    "body" : "<p>I don't know if this is the best way, but it does the trick.</p>\n<pre><code>public EmailMapper {\n\n    public List&lt;EmailData&gt; toData(UserRequestDto userRequestDto){\n        List&lt;EmailData&gt; list = new ArrayList();\n        \n        for(String emailData : userRequestDto.getEmailData()){\n            list.add(toEmailData(emailData, userRequestDto.getId());\n        }\n        \n        return list\n    }\n    \n    public EmailData toEmailData(String emailData, Long id){\n        return new EmailData(emailData, id);\n    }\n}\n</code></pre>\n<pre><code>@Mapper\npublic interface UserMapper {\n\n    @Mapping(target = &quot;emailData&quot;,  expression = &quot;java(your.package.EmailMapper.toData(userRequestDto))&quot;)\n\nUser toUser(UserRequestDto userRequestDto);\n}\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 12992146,
+      "reputation" : 1159,
+      "user_id" : 9391041,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/d493ee0609c48a7852988a9320689ada?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "cvdr",
+      "link" : "https://stackoverflow.com/users/9391041/cvdr"
+    },
+    "creation_date" : 1747856320,
+    "last_activity_date" : 1747856320,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79632650" : [ {
+      "comment_id" : 140447311,
+      "post_id" : 79632650,
+      "body" : "Have you seen my commentary regarding <code>@AfterMapping</code>? What do you think?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10187542,
+        "reputation" : 2683,
+        "user_id" : 20692967,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+        "display_name" : "Sergey Zolotarev",
+        "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+      },
+      "creation_date" : 1747858935,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140447249,
+      "post_id" : 79632650,
+      "body" : "so i think you will need to use @AfterMapping <a href=\"https://mapstruct.org/documentation/stable/reference/html/#customizing-mappings-with-before-and-after\" rel=\"nofollow noreferrer\">mapstruct.org/documentation/stable/reference/html/&hellip;</a>",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 12992146,
+        "reputation" : 1159,
+        "user_id" : 9391041,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/d493ee0609c48a7852988a9320689ada?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "cvdr",
+        "link" : "https://stackoverflow.com/users/9391041/cvdr"
+      },
+      "creation_date" : 1747857772,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140447213,
+      "post_id" : 79632650,
+      "body" : "<code>EmailData</code> has a reference to <code>User</code>, not just its id. It won&#39;t pass the test",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10187542,
+        "reputation" : 2683,
+        "user_id" : 20692967,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+        "display_name" : "Sergey Zolotarev",
+        "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+      },
+      "creation_date" : 1747856932,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

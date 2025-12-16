@@ -1,0 +1,46 @@
+{
+  "question" : {
+    "question_id" : 79746510,
+    "title" : "SemGrep java rule for shadowing field name with the variable",
+    "body" : "<p>We have SemGrep which we are allowed using as a static code analysis tool. I'm trying to write a Java rule which verifies if the variable name has exactly the same name as the field name within the same class.</p>\n<p>I've tried different approaches but I failed every time. Now I wonder if it's possible at all.</p>\n<p>Example Java code that should generate findings (I know it does not cover all cases but I would like to start with something simple and then increase the complexity):</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class ShadowingExample {\n    // This is a class field.\n    private String name = &quot;Class Field&quot;;\n\n    public void example() {\n        String name = &quot;Local Variable&quot;; // The local variable 'name' shadows the field.\n        \n        System.out.println(&quot;The class field is: &quot; + this.name);\n        System.out.println(&quot;The local variable is: &quot; + name);\n    }\n\n    public void anotherExample() {\n        System.out.println(&quot;Do something else first&quot;)\n        String name = &quot;Local Variable&quot;; // The local variable 'name' also shadows the field.\n        \n        System.out.println(&quot;The class field is: &quot; + this.name);\n        System.out.println(&quot;The local variable is: &quot; + name);\n    }\n}\n</code></pre>\n<p>First approach that I thought it might work (I include <code>patterns</code> block only because the rest does not matter here):</p>\n<pre class=\"lang-yaml prettyprint-override\"><code>patterns:\n      - pattern: |\n          class $CLASS_NAME {\n          ...\n            $FIELD_TYPE $SHADOW_NAME;\n          ...\n          $RETURN_TYPE $METHOD_NAME(...) {\n          ...\n            $VARL_TYPE $SHADOW_NAME =...;\n          ...\n          }\n          }\n</code></pre>\n<p>I thought it might work because it uses the same <code>SHADOW_NAME</code> as the field name and as the variable name. However it shows 0 matches for the above Java code.</p>\n<p>The second approach I've used was similar:</p>\n<pre class=\"lang-yaml prettyprint-override\"><code>patterns:\n      - pattern-inside: |\n          class $CLASS_NAME {\n            $FIELD_TYPE $SHADOW_NAME;\n            ...\n          }\n      - pattern: |\n          $RET $M(...) {\n            ... \n            $VAR_TYPE $SHADOW_NAME = ...;\n            ...\n          }\n</code></pre>\n<p>This approach show findings for both patterns in separation but the <code>patterns</code> block which joins them with <code>and</code> by default does not generate any findings.</p>\n<p>I've also tried using <code>metavariable-comparison</code> but it failed as well</p>\n<pre class=\"lang-yaml prettyprint-override\"><code>patterns:\n      - pattern: |\n          class $CLASS_NAME {\n            ...\n            $FIELD_TYPE $FIELD_NAME = ... ;\n            ...\n          }\n      - pattern: |\n          $RETURN_TYPE $METHOD_NAME(...) {\n            ...\n            $VAR_TYPE $VAR_NAME = ...;\n            ...\n          }\n      - metavariable-comparison:\n          comparison: $VAR_NAME == $FIELD_NAME\n</code></pre>\n<p>I expected this comparison to verify the names of these two metavariables. Two first patterns generate matches but when it comes to the comparison it generates 0 findings</p>\n",
+    "tags" : [ "java", "static-analysis", "semgrep" ],
+    "owner" : {
+      "account_id" : 3617391,
+      "reputation" : 71,
+      "user_id" : 3016925,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/12a77ea30d489c28d7435bf301acff04?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Eleid",
+      "link" : "https://stackoverflow.com/users/3016925/eleid"
+    },
+    "is_answered" : true,
+    "view_count" : 77,
+    "answer_count" : 1,
+    "score" : -2,
+    "last_activity_date" : 1756226970,
+    "creation_date" : 1756191600,
+    "link" : "https://stackoverflow.com/questions/79746510/semgrep-java-rule-for-shadowing-field-name-with-the-variable",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79747108,
+    "question_id" : 79746510,
+    "body" : "<p>To check if two metavariables are bound to symbols with the same name,\nuse the <code>str</code> function within a <code>metavariable-comparison</code> and check for\nequality:</p>\n<pre><code>- metavariable-comparison:\n    comparison: str($FIELDNAME) == str($VARNAME)\n</code></pre>\n<p>Here is a complete rule that matches the example in your question:</p>\n<pre><code>rules:\n  - id: var_shadows_field_rule\n    languages:\n      - java\n    severity: ERROR\n    message: Field &quot;$FIELDNAME&quot; shadowed by variable &quot;$VARNAME&quot;.\n    patterns:\n      - pattern: |\n          class $NAME {\n            ...\n            $FIELDTYPE $FIELDNAME = ...;\n            ...\n            $RETTYPE $METHOD(...)\n            {\n              ...\n              $VARTYPE $VARNAME = ...;\n              ...\n            }\n          }\n      - metavariable-comparison:\n          comparison: str($FIELDNAME) == str($VARNAME)\n</code></pre>\n<p>This rule can be tested directly on the\n<a href=\"https://semgrep.dev/playground/new\" rel=\"nofollow noreferrer\">Semgrep playground</a> (click on\n&quot;advanced&quot; to be able to enter the rule as YAML).</p>\n<p>Caveat: The rule above requires that both the field and the variable\nhave an initializer, which is not ideal.  As far as I can tell, you\nwill have to write four different patterns to cover all four cases of\nfield and variable being initialized or not.</p>\n<p>The reason you need the <code>str</code> function in <code>metavariable-comparison</code> is\nthat, without that, Semgrep tries to get the value of the field or\nvariable, as if it was a constant, and then compares the values, not\nthe variable names.</p>\n<p>Uncertainty: Based on the examples in the\n<a href=\"https://semgrep.dev/docs/writing-rules/rule-syntax#metavariable-comparison\" rel=\"nofollow noreferrer\"><code>metavariable-comparison</code> documentation</a>,\nI would have thought that a <code>metavariable</code> key is needed inside\n<code>metavariable-comparison</code>, but it evidently is not; and if it were, I\ndon't know how one would specify multiple metavariables--here we are\ncomparing two.</p>\n<p>Conjecture: I think the reason repeating the same metavariable does not\nwork here is that a single metavariable can only be bound to syntax of\nthe same &quot;kind&quot;, and Semgrep therefore rejects binding one to both a\nfield and a variable since it sees them as different kinds.</p>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 3144597,
+      "reputation" : 13817,
+      "user_id" : 2659307,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/a42a1b05b87841cc49fac09914af4605?s=256&d=identicon&r=PG",
+      "display_name" : "Scott McPeak",
+      "link" : "https://stackoverflow.com/users/2659307/scott-mcpeak"
+    },
+    "creation_date" : 1756226970,
+    "last_activity_date" : 1756226970,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : { }
+}

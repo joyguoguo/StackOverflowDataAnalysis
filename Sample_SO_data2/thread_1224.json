@@ -1,0 +1,214 @@
+{
+  "question" : {
+    "question_id" : 79734079,
+    "title" : "Programatically split traffic to Cloud Run revision using Java client library",
+    "body" : "<p>I'm trying to programatically split traffic between two revisions, prod-A (serving 100% traffic initially) and custom-B. I'm using the java client library for Cloud run <code>com.google.cloud:google-cloud-run:0.70.0</code>.</p>\n<p>The relevant code snippet:</p>\n<pre class=\"lang-java prettyprint-override\"><code>Service service = serviceClient.getService(...)\n\nList&lt;TrafficTarget&gt; updatedTrafficTargets = ...\n   I fetch existing traffic targets from Cloud run using\n   service.getTrafficList(), and extract\n   the target that matches the one that I want to modify, then add\n   the percentage of traffic I want to split\n   ...\n\nService serviceWithTrafficUpdate = Service.newBuilder()\n    .setName(service.getName())\n    .addAllTraffic(updatedTrafficTargets)\n    .build()\n\nUpdateServiceRequest updateRequest = UpdateServiceRequest.newBuilder()\n    .setService(serviceWithTrafficUpdate)\n    .setUpdateMask(FieldMask.newBuilder().addPaths(&quot;traffic&quot;).build())\n    .build()\n\nservicesClient.updateServiceAsync(updateRequest).get();\n</code></pre>\n<p>The update service request content, when logged, looks like this:</p>\n<pre><code>service {\n  name: &quot;projects/my-project/locations/us-central1/services/my-service&quot;\n  traffic {\n    type: TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION\n    revision: &quot;my-target-revision-dfjs&quot;\n    percent: 100\n    tag: &quot;custom-B&quot;\n  }\n}\n</code></pre>\n<p>However, the API responds with an error:</p>\n<pre><code>java.util.concurrent.ExecutionException: com.google.api.gax.rpc.AlreadyExistsException: io.grpc.StatusRuntimeException: ALREADY_EXISTS: Revision named 'my-target-revision-dfjs' with different configuration already exists.\n</code></pre>\n<p>I've also tried including both the source revision from which I'm splitting and the target revision to which I'm splitting (with 99 percent traffic remaining on the source, and 1 percent on the target)</p>\n<pre><code>service {\n  name: &quot;projects/my-project/locations/us-central1/services/my-service&quot;\n  traffic {\n    type: TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION\n    revision: &quot;my-target-revision-dfjs&quot;\n    percent: 1\n    tag: &quot;custom-B&quot;\n  }\n  traffic {\n    type: TRAFFIC_TARGET_ALLOCATION_TYPE_REVISION\n    revision: &quot;my-source-revision-wkjl&quot;\n    percent: 99\n    tag: &quot;prod-A&quot;\n  }\n}\nupdate_mask {\n  paths: &quot;traffic&quot;\n}\n\n</code></pre>\n<p>Which is a bit confusing, because obviously I need the revision to exist already, if I'm to split traffic to it; which leads me to believe that I'm likely misusing the client library in some way.</p>\n<p>For clarity, the cloud run service, where I'm splitting the traffic, contains other revisions that are tagged, but have no traffic assigned to them (they do appear in the service yaml under the traffic section on GCP though).</p>\n<p>Any help would be appreciated.</p>\n<p><em>n.b.: for sanity, I tried splitting the traffic manually with <code>gcloud</code> to the same revisions,</em></p>\n<pre><code> gcloud run services update-traffic my-service --region=us-central1 --project=my-project --to-revisions=my-target-revision-dfjs=1,my-source-revision-wkjl=99\n</code></pre>\n<p><em>and it works as expected, just to confirm there's nothing wrong with my cloud run setup</em></p>\n",
+    "tags" : [ "java", "google-cloud-run" ],
+    "owner" : {
+      "account_id" : 14650680,
+      "reputation" : 641,
+      "user_id" : 10580773,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/1663828a1ee705ab669347bfd6190602?s=256&d=identicon&r=PG",
+      "display_name" : "jure",
+      "link" : "https://stackoverflow.com/users/10580773/jure"
+    },
+    "is_answered" : false,
+    "view_count" : 144,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1755181633,
+    "creation_date" : 1755075173,
+    "link" : "https://stackoverflow.com/questions/79734079/programatically-split-traffic-to-cloud-run-revision-using-java-client-library",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79735339,
+    "question_id" : 79734079,
+    "body" : "<p>The <code>service.toBuilder()</code> could lead to issues if the rest of the service configuration is not copied correctly, causing unintended changes to other fields of the service, so I’d suggest converting the fetched service to a builder (<code>service.toBuilder()</code>). To prepare traffic allocation, add <code>clearTraffic()</code> to clear existing configuration.</p>\n<pre><code>Service serviceWithTrafficUpdate = service.toBuilder()\n    .clearTraffic()  // Clear existing traffic settings\n    .addAllTraffic(trafficTargets)  // Add the new traffic configuration\n    .build();\n</code></pre>\n<p>Also, here’s a google cloud documentation of <a href=\"https://cloud.google.com/run/docs/rollouts-rollbacks-traffic-migration#split-traffic\" rel=\"nofollow noreferrer\">Splitting traffic between multiple revisions</a>.</p>\n<p>Hope it helps!</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 34779276,
+      "reputation" : 742,
+      "user_id" : 26774323,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/QSD0GEan.jpg?s=256",
+      "display_name" : "KikoZam",
+      "link" : "https://stackoverflow.com/users/26774323/kikozam"
+    },
+    "creation_date" : 1755170929,
+    "last_activity_date" : 1755181633,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140761337,
+    "post_id" : 79734079,
+    "body" : "Ah, I should&#39;ve provided more context, sorry, it seems my frustrations got the better of me. In any case, I thought it strange that we would have different results, so I redid the test on a different cloud run service in a different project, and it split the traffic as expected. It seems the issue is in the service setup for some reason, though I am unsure yet what that may be (permissions should be the same, both are the same execution environment, etc.). Anyways, thank you for all the effort with the gist, and everything.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 14650680,
+      "reputation" : 641,
+      "user_id" : 10580773,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/1663828a1ee705ab669347bfd6190602?s=256&d=identicon&r=PG",
+      "display_name" : "jure",
+      "link" : "https://stackoverflow.com/users/10580773/jure"
+    },
+    "creation_date" : 1758876010,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140760134,
+    "post_id" : 79734079,
+    "body" : "I recreated the code from the gist and it works for me. Please let me know what &quot;doesn&#39;t work&quot; means and I&#39;ll try to address for you.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 301516,
+      "reputation" : 41692,
+      "user_id" : 609290,
+      "user_type" : "registered",
+      "accept_rate" : 62,
+      "profile_image" : "https://i.sstatic.net/WUBht.jpg?s=256",
+      "display_name" : "DazWilkin",
+      "link" : "https://stackoverflow.com/users/609290/dazwilkin"
+    },
+    "creation_date" : 1758820253,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140758765,
+    "post_id" : 79734079,
+    "body" : "Just wanted to add, since I&#39;ve found the time to work on this again, your gist doesn&#39;t work for me, interestingly enough, and I do get the same type of error &quot;Revision named &#39;x&#39; with different configuration already exists&quot;. At this point, I&#39;ve given up on this whole thing, and I&#39;ll likely just call gcloud.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 14650680,
+      "reputation" : 641,
+      "user_id" : 10580773,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/1663828a1ee705ab669347bfd6190602?s=256&d=identicon&r=PG",
+      "display_name" : "jure",
+      "link" : "https://stackoverflow.com/users/10580773/jure"
+    },
+    "creation_date" : 1758788512,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140663898,
+    "post_id" : 79734079,
+    "body" : "Here&#39;s my code: <a href=\"https://gist.github.com/DazWilkin/76add445b6c883f1a0ff2dcca81edcca\" rel=\"nofollow noreferrer\">gist.github.com/DazWilkin/76add445b6c883f1a0ff2dcca81edcca</a>",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 301516,
+      "reputation" : 41692,
+      "user_id" : 609290,
+      "user_type" : "registered",
+      "accept_rate" : 62,
+      "profile_image" : "https://i.sstatic.net/WUBht.jpg?s=256",
+      "display_name" : "DazWilkin",
+      "link" : "https://stackoverflow.com/users/609290/dazwilkin"
+    },
+    "creation_date" : 1755118781,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140663886,
+    "post_id" : 79734079,
+    "body" : "You should be able to use the Java library, I&#39;m just unfamiliar with Java. Eye-balling your code, one possible difference is that I&#39;m (a) <code>GET</code>&#39;ting the <code>Service</code>; (b) creating the desired <code>TrafficTarget</code>&#39;s; (c) update the <code>Service</code>&#39;s (from a) with <code>Traffic</code> (from b); (d) Updating the Service. Your code appears to create an empty <code>Service</code> (<code>Service.newBuilder</code>)",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 301516,
+      "reputation" : 41692,
+      "user_id" : 609290,
+      "user_type" : "registered",
+      "accept_rate" : 62,
+      "profile_image" : "https://i.sstatic.net/WUBht.jpg?s=256",
+      "display_name" : "DazWilkin",
+      "link" : "https://stackoverflow.com/users/609290/dazwilkin"
+    },
+    "creation_date" : 1755118211,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140663737,
+    "post_id" : 79734079,
+    "body" : "Logging what <code>gcloud</code> does underneath was my first idea as well, but I saw that they call the knative API, so I dismissed it as helpful, perhaps too early.  Good to know about the Go library, I&#39;ll give it a try, because I&#39;m not necessarily limited to Java.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 14650680,
+      "reputation" : 641,
+      "user_id" : 10580773,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/1663828a1ee705ab669347bfd6190602?s=256&d=identicon&r=PG",
+      "display_name" : "jure",
+      "link" : "https://stackoverflow.com/users/10580773/jure"
+    },
+    "creation_date" : 1755113052,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140663236,
+    "post_id" : 79734079,
+    "body" : "I&#39;m not a Java developer but your approach works for me using Google&#39;s Golang library. First get the Service, create a new Traffic with all revisions, using &quot;traffic&quot; as the fieldmask and then UpdateService. This works for me.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 301516,
+      "reputation" : 41692,
+      "user_id" : 609290,
+      "user_type" : "registered",
+      "accept_rate" : 62,
+      "profile_image" : "https://i.sstatic.net/WUBht.jpg?s=256",
+      "display_name" : "DazWilkin",
+      "link" : "https://stackoverflow.com/users/609290/dazwilkin"
+    },
+    "creation_date" : 1755099787,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140663159,
+    "post_id" : 79734079,
+    "body" : "<code>gcloud run services update-traffic</code> uses the v1 (<code>service.knative.dev&#47;v1</code>) API rather than v2 which is what, I assume, your code is using.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 301516,
+      "reputation" : 41692,
+      "user_id" : 609290,
+      "user_type" : "registered",
+      "accept_rate" : 62,
+      "profile_image" : "https://i.sstatic.net/WUBht.jpg?s=256",
+      "display_name" : "DazWilkin",
+      "link" : "https://stackoverflow.com/users/609290/dazwilkin"
+    },
+    "creation_date" : 1755098323,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140663028,
+    "post_id" : 79734079,
+    "body" : "I don&#39;t know the answer but a useful debugging trick is to append <code>--log-http</code> to (any) <code>gcloud</code> command to see the underlying REST APIs call that are being made by the tool. This may help you infer the correct mechanism; why <code>gcloud</code> succeeds but your code does not",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 301516,
+      "reputation" : 41692,
+      "user_id" : 609290,
+      "user_type" : "registered",
+      "accept_rate" : 62,
+      "profile_image" : "https://i.sstatic.net/WUBht.jpg?s=256",
+      "display_name" : "DazWilkin",
+      "link" : "https://stackoverflow.com/users/609290/dazwilkin"
+    },
+    "creation_date" : 1755096248,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79735339" : [ {
+      "comment_id" : 140758767,
+      "post_id" : 79735339,
+      "body" : "Fair point, I&#39;ve tried it both with a new service and with reusing an existing service, as you&#39;re suggesting, however the result is the same. At this point I&#39;ve given up, and I&#39;ll likely just use gcloud directly, unfortunately.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 14650680,
+        "reputation" : 641,
+        "user_id" : 10580773,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/1663828a1ee705ab669347bfd6190602?s=256&d=identicon&r=PG",
+        "display_name" : "jure",
+        "link" : "https://stackoverflow.com/users/10580773/jure"
+      },
+      "creation_date" : 1758788570,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

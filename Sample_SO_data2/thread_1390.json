@@ -1,0 +1,46 @@
+{
+  "question" : {
+    "question_id" : 79715348,
+    "title" : "Constructing a Parameterized Jackson JavaType at runtime from a type reference",
+    "body" : "<p>I'm writing a JMS messaging library where I want to have an abstract listener listen for a typed event (or subtype of that event).</p>\n<pre class=\"lang-java prettyprint-override\"><code>public abstract class AbstractTypedEventHandler&lt;E extends TypedEvent&lt;T&gt;, T&gt; implements EventHandler&lt;E&gt; {\n\n    @Getter\n    private final ObjectMapper handlerMapper;\n\n    @Getter\n    private final TypeReference&lt;E&gt; type;\n\n    protected AbstractTypedEventHandler(TypeReference&lt;E&gt; eventType) {\n        this(JsonMapper.builder().configure(MapperFeature.ALLOW_FINAL_FIELDS_AS_MUTATORS, false).build(),\n                eventType);\n    }\n\n    protected AbstractTypedEventHandler(ObjectMapper handlerMapper, TypeReference&lt;E&gt; eventType) {\n        this.handlerMapper = handlerMapper;\n        this.type = eventType;\n    }\n\n    @Override\n    public boolean parseMessage(JsonNode text, Tracer tracer) throws IOException {\n        E event = handlerMapper.treeToValue(text, getType());\n        \n        handleEvent(event)\n    }\n\n    public abstract boolean handleEvent(E event);\n\n}\n</code></pre>\n<p>For convenience sake I've written another abstract handler to handle the basic use case of using the basic typed event:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public abstract class TypedEventHandler&lt;T&gt; extends AbstractTypedEventHandler&lt;TypedEvent&lt;T&gt;, T&gt; {\n\n    protected TypedEventHandler() {\n        super(new TypeReference&lt;&gt;() {});\n    }\n\n    protected TypedEventHandler(ObjectMapper mapper) {\n        super(mapper, new TypeReference&lt;&gt;() {});\n    }\n}\n</code></pre>\n<p>The problem with this is it seems that at runtime when the user inherits the handler: <code>public class PojoEventHandler extends TypedEventHandler&lt;Pojo&gt;</code> due to generics being thrown away at runtime it correctly deduces that I have a type reference of <code>TypedEvent</code> but doesn't seem to correctly understand the inner class, instead serializing it to <code>LinkedHashMap</code></p>\n<pre class=\"lang-java prettyprint-override\"><code>public class PojoEventHandler extends TypedEventHandler&lt;Pojo&gt; {\n\n    @Override\n    public boolean handleEvent(TypedEvent&lt;Pojo&gt; event) {\n            var pojo = event.getResource(); // throws\n        }\n    }\n}\n</code></pre>\n<p>Here's the specific error:</p>\n<pre><code>java.lang.ClassCastException: class java.util.LinkedHashMap cannot be cast to class a.b.c.service.Pojo (java.util.LinkedHashMap is in module java.base of loader 'bootstrap'; a.b.c.service.Pojo is in unnamed module of loader 'app')\n    at a.b.c.service.eventhandlers.PojoEventHandler.handleEvent(PojoEventHandler.java:38)\n    at a.b.c.service.eventhandlers.PojoEventHandler.handleEvent(PojoEventHandler.java:24)\n    at a.b.c.framework.common.EventHandler.executeHandler(EventHandler.java:57)\n    at a.b.c.framework.eventhandlers.AbstractTypedEventHandler.parseMessage(AbstractTypedEventHandler.java:83)\n    at a.b.c.framework.common.jms.JmsMessageHandler.onMessage(JmsMessageHandler.java:79)\n...\n</code></pre>\n<p>If you inspect the runtime through a debugger, you can see that Jackson actually correctly deserializes the outer type as <code>TypedEvent</code> but provides a generic <code>LinkedHashMap</code> for the inner type.</p>\n<p>If I was to ask the user to pass <code>Class&lt;T&gt; class</code> in the constructor of the handler, is there a way to use the Jackson TypeFactory to to add the inner class information as a praramirized reference at runtime? <code>TypeFactory.createParameterizedType(...)</code> doesn't seem to accept TypeReference for any of it's overloads, only static <code>Class&lt;T&gt;</code> for the outer type. Is there some other workaround that would allow me to add the inner type information assuming I design the library to ask the user for the <code>Class&lt;T&gt;</code>?</p>\n",
+    "tags" : [ "java", "jackson", "jackson-databind" ],
+    "owner" : {
+      "account_id" : 2969956,
+      "reputation" : 520,
+      "user_id" : 2522234,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/24d9e4424216dc56c4cde02f7d0b5c32?s=256&d=identicon&r=PG",
+      "display_name" : "RMSD",
+      "link" : "https://stackoverflow.com/users/2522234/rmsd"
+    },
+    "is_answered" : true,
+    "view_count" : 113,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1753620743,
+    "creation_date" : 1753492683,
+    "link" : "https://stackoverflow.com/questions/79715348/constructing-a-parameterized-jackson-javatype-at-runtime-from-a-type-reference",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79716414,
+    "question_id" : 79715348,
+    "body" : "<p>When you call <code>new TypeReference&lt;&gt;() {}</code>, the inferred type is <code>TypeReference&lt;TypedEvent&lt;T&gt;&gt;</code>. Notice that it doesn't contain <code>Pojo</code>. The <code>TypeReference</code> still doesn't have access to <code>Pojo</code>. When you create a <code>PojoEventHandler</code>, it's <code>getType().getType()</code> is <code>TypedEvent&lt;T&gt;</code>.</p>\n<p>The only way to get a <code>TypeReference&lt;TypedEvent&lt;Pojo&gt;&gt;</code> is by creating the <code>TypeReference</code> when the concrete type is <code>Pojo</code>, e.g. by making the <code>Pojo</code> class instantiate it.</p>\n<p>Add the following constructor to <code>TypedEventHandler</code> (you might as well remove the other one):</p>\n<pre class=\"lang-java prettyprint-override\"><code>    protected TypedEventHandler(TypeReference&lt;TypedEvent&lt;T&gt;&gt; eventType) {\n        super(eventType);\n    }\n</code></pre>\n<p>Then call this constructor in <code>PojoEventHandler</code>:</p>\n<pre class=\"lang-java prettyprint-override\"><code>    PojoEventHandler() {\n        super(new TypeReference&lt;&gt;() {});\n    }\n</code></pre>\n<p>Now, a <code>PojoEventHandler</code> creates the <code>TypeReference</code>, the infered type is <code>TypeReference&lt;TypedEvent&lt;Pojo&gt;&gt;</code>, and <code>getType().getType()</code> is <code>TypedEvent&lt;Pojo&gt;</code>.</p>\n<p>Unfortunately it requires more work, but that's one of the disadvantages of type erasure. The only way to get the concrete type is by having access to a super class (method return type, parameter type, some others) where the concrete type is already filled in. And in your case, that doesn't happen in the <code>TypedEventHandler</code> but only in the <code>PojoEventHandler</code>.</p>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 1211967,
+      "reputation" : 9964,
+      "user_id" : 1180351,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/pKB8y.png?s=256",
+      "display_name" : "Rob Spoor",
+      "link" : "https://stackoverflow.com/users/1180351/rob-spoor"
+    },
+    "creation_date" : 1753620743,
+    "last_activity_date" : 1753620743,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : { }
+}

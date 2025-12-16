@@ -1,0 +1,146 @@
+{
+  "question" : {
+    "question_id" : 79642446,
+    "title" : "Slow message delivery in Java application using Oracle Advanced Queue",
+    "body" : "<p>I have a Java application that connects to Oracle Advanced Queue (AQ) and listens for various event types. The Java server and the Oracle server are on different machines but within the same data center network. Despite a very low event generation rate, we frequently observe delays of around 10 seconds between enqueueing an event and receiving it in Java.</p>\n<p>To measure this, we:</p>\n<ol>\n<li>Insert a log entry with a timestamp into a table just before pushing the event onto the AQ queue.</li>\n<li>Log another timestamp in our Java MessageListener as soon as the message arrives.</li>\n</ol>\n<p>The difference between these two timestamps is about 10 seconds.</p>\n<ul>\n<li>Is it possible to enable loging in a drivers that we use in Java service? (see used dependencies below)</li>\n<li>Do we need to adjust our connection to Oracle AQ? (see connection implementation below)</li>\n<li>Is it possible that Oracle AQ holds events from time to time?</li>\n</ul>\n<p><strong>Dependencies</strong></p>\n<pre class=\"lang-xml prettyprint-override\"><code>&lt;dependencies&gt;\n  &lt;dependency&gt;\n    &lt;groupId&gt;com.oracle.database.messaging&lt;/groupId&gt;\n    &lt;artifactId&gt;aqapi-jakarta&lt;/artifactId&gt;\n    &lt;version&gt;23.3.1.0&lt;/version&gt;\n  &lt;/dependency&gt;\n  &lt;dependency&gt;\n    &lt;groupId&gt;jakarta.jms&lt;/groupId&gt;\n    &lt;artifactId&gt;jakarta.jms-api&lt;/artifactId&gt;\n    &lt;version&gt;3.1.0&lt;/version&gt;\n  &lt;/dependency&gt;\n  &lt;dependency&gt;\n    &lt;groupId&gt;jakarta.transaction&lt;/groupId&gt;\n    &lt;artifactId&gt;jakarta.transaction-api&lt;/artifactId&gt;\n    &lt;version&gt;2.0.1&lt;/version&gt;\n  &lt;/dependency&gt;\n&lt;/dependencies&gt;\n</code></pre>\n<p><strong>Connection Factory</strong></p>\n<pre class=\"lang-java prettyprint-override\"><code>@Component\npublic class QueueConn {\n  private static final Logger LOGGER = LoggerFactory.getLogger(QueueConn.class);\n\n  @Override\n  public QueueConnectionWrapper createQueueConnectionWrapper()\n      throws JMSException, SQLException {\n    Connection dbConn = getConnection();\n    try {\n      QueueConnection aqConn =\n        AQjmsQueueConnectionFactory.createQueueConnection(dbConn);\n      return new QueueConnectionWrapper(dbConn, aqConn);\n    } catch (JMSException | RuntimeException e) {\n      close(dbConn);\n      if (e instanceof JMSException) throw (JMSException) e;\n      throw new SQLException(&quot;Failed to create AQ queue connection&quot;, e);\n    }\n  }\n\n  @Override\n  public void close(Connection c) {\n    if (c != null) {\n      try {\n        c.close();\n      } catch (SQLException e) {\n        LOGGER.error(&quot;Failed to close DB connection&quot;, e);\n      }\n    }\n  }\n\n  @Override\n  public QueueSession createQueueSession(QueueConnection queueConnection)\n      throws JMSException {\n    return queueConnection.createQueueSession(\n        false, Session.CLIENT_ACKNOWLEDGE);\n  }\n\n  @Override\n  public MessageConsumer createMessageConsumer(\n      String queueName,\n      QueueSession queueSession,\n      String schemaName\n  ) throws JMSException, SQLException {\n    Queue queue = ((AQjmsSession) queueSession)\n                  .getQueue(schemaName, queueName);\n    return queueSession.createConsumer(queue);\n  }\n\n  private Connection getConnection() throws SQLException {\n    DatabaseConfig cfg = /* load config */;\n    PoolDataSource pds = PoolDataSourceFactory.getPoolDataSource();\n    pds.setConnectionFactoryClassName(&quot;oracle.jdbc.pool.OracleDataSource&quot;);\n    pds.setURL(cfg.connectionString());\n    pds.setUser(cfg.username());\n    pds.setPassword(cfg.password());\n    pds.setValidateConnectionOnBorrow(cfg.validateConnectionOnBorrow());\n    pds.setInitialPoolSize(cfg.initialPoolSize());\n    pds.setMaxPoolSize(cfg.maxPoolSize());\n    pds.setMaxIdleTime(cfg.maxIdleTime());\n    pds.setSecondsToTrustIdleConnection(cfg.secondsToTrustIdleConnection());\n    return pds.getConnection();\n  }\n}\n</code></pre>\n<p><strong>Listener Implementation</strong></p>\n<pre class=\"lang-java prettyprint-override\"><code>public class Listener implements MessageListener {\n  private static final Logger LOGGER = LoggerFactory.getLogger(Listener.class);\n\n  @Override\n  public void onMessage(Message message) {\n    // log timestamp and process message\n  }\n}\n</code></pre>\n<p>The queue in oracle was created using</p>\n<pre class=\"lang-sql prettyprint-override\"><code>begin\n   dbms_aqadm.create_queue_table (\n      Queue_table =&gt; 'my_event_jms_map_table', \n      Queue_payload_type =&gt; 'SYS.AQ$_JMS_MAP_MESSAGE');\nend;\n/\n\nbegin    \n   dbms_aqadm.create_queue(\n      Queue_name =&gt; 'my_event_jms_map_queue', \n      Queue_table =&gt; 'my_event_jms_map_table');  \nend;\n</code></pre>\n<p>We have no other special configuration around the queue.  If there are specific parameters we should check please let us know as that could be a good clue.</p>\n<p>While we do generally use a connection pool for the connection from Java to the DB, we take a connection from the pool at start-up and use that for the queue.  We are not looping or polling, we are using the Oracle Java library they provide for connecting to advanced queues and reacting to the <code>onMessage</code> handler as shown above.</p>\n",
+    "tags" : [ "java", "oracle-database", "oracle11g", "jms", "oracle-aq" ],
+    "owner" : {
+      "account_id" : 11778017,
+      "reputation" : 232,
+      "user_id" : 8618703,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/304cc3f273baeeea8d40e0d9ac9f4d48?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Teodor Mysko",
+      "link" : "https://stackoverflow.com/users/8618703/teodor-mysko"
+    },
+    "is_answered" : false,
+    "view_count" : 119,
+    "answer_count" : 0,
+    "score" : 0,
+    "last_activity_date" : 1748606565,
+    "creation_date" : 1748442774,
+    "link" : "https://stackoverflow.com/questions/79642446/slow-message-delivery-in-java-application-using-oracle-advanced-queue",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140521384,
+    "post_id" : 79642446,
+    "body" : "I wouldn&#39;t say this is a network issue because you have the evidence of the set 10 seconds. And in the code I found it matching this evidence it is either not respecting the parameter I suggested or there is some other configuration in the code that might be overriding this ones.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 209503,
+      "reputation" : 23867,
+      "user_id" : 460557,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/b4565f97815833390c9c880e9e8522e4?s=256&d=identicon&r=PG",
+      "display_name" : "Jorge Campos",
+      "link" : "https://stackoverflow.com/users/460557/jorge-campos"
+    },
+    "creation_date" : 1750182369,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140520491,
+    "post_id" : 79642446,
+    "body" : "@JorgeCampos Thank you for your reply. I was on vacation for the last two weeks, so I’ve only just now gotten back to this issue. I tested with those two parameters, but unfortunately, it didn’t help. I’ll continue digging—maybe it’s a network issue. <code>$JAVA_HOME&#47;bin&#47;java -Xms128M -Xmx2560M -Dlogging.config=&#47;services&#47;coreapi.webapp.svc&#47;log4j2.json -Doracle.jakarta.jms.ucp.clean.wait=1 -Doracle.jakarta.jms.networkTimeOutFactor=1 -jar &#47;services&#47;eventService.war --server.port=8001</code>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 11778017,
+      "reputation" : 232,
+      "user_id" : 8618703,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/304cc3f273baeeea8d40e0d9ac9f4d48?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Teodor Mysko",
+      "link" : "https://stackoverflow.com/users/8618703/teodor-mysko"
+    },
+    "creation_date" : 1750166460,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140473094,
+    "post_id" : 79642446,
+    "body" : "There is also another property on the same constant class: <code>static final String NETWORK_TIMEOUT_FACTOR_SYS_PROP = AQjmsUtil.getSystemProperty(&quot;oracle.jakarta.jms.networkTimeO&zwnj;&#8203;utFactor&quot;);</code> which down in the code it is also default to 10 so if the first one doesn&#39;t work try this one... Other than that I&#39;m out of options :D",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 209503,
+      "reputation" : 23867,
+      "user_id" : 460557,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/b4565f97815833390c9c880e9e8522e4?s=256&d=identicon&r=PG",
+      "display_name" : "Jorge Campos",
+      "link" : "https://stackoverflow.com/users/460557/jorge-campos"
+    },
+    "creation_date" : 1748619856,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140473082,
+    "post_id" : 79642446,
+    "body" : "<code>static final String DEFAULT_UCP_CLN_WAIT = &quot;10&quot;;</code> which seems client wait? So I would recommend as a test running your application with <code>-Doracle.jakarta.jms.ucp.clean.wait=1</code> and see what happens.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 209503,
+      "reputation" : 23867,
+      "user_id" : 460557,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/b4565f97815833390c9c880e9e8522e4?s=256&d=identicon&r=PG",
+      "display_name" : "Jorge Campos",
+      "link" : "https://stackoverflow.com/users/460557/jorge-campos"
+    },
+    "creation_date" : 1748619662,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140473080,
+    "post_id" : 79642446,
+    "body" : "Ok so it doesn&#39;t look like there is anything wrong with your configuration at all and this got me curious. So I downloaded the queue jar <code>aqapi-jakarta</code>, decopiled (using jdgui) it and started searching for things that would make sense for intervals, time, connection. In the AQjmsUcp.class, method <code>getPool</code> there is an entry: <code>int waitTime = Integer.parseInt(System.getProperty(&quot;oracle.jakarta.jms.ucp.&zwnj;&#8203;clean.wait&quot;, &quot;10&quot;));</code> and looked for other entries with &quot;10&quot; and voila it seems it is a behaviour of the driver itself to prevent constant pooling to DB.... in AQjmsConstants.class there is:",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 209503,
+      "reputation" : 23867,
+      "user_id" : 460557,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/b4565f97815833390c9c880e9e8522e4?s=256&d=identicon&r=PG",
+      "display_name" : "Jorge Campos",
+      "link" : "https://stackoverflow.com/users/460557/jorge-campos"
+    },
+    "creation_date" : 1748619617,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140472374,
+    "post_id" : 79642446,
+    "body" : "@JorgeCampos: I work with OP and have added info that I hope answers your question",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 72596,
+      "reputation" : 6812,
+      "user_id" : 209568,
+      "user_type" : "registered",
+      "accept_rate" : 57,
+      "profile_image" : "https://www.gravatar.com/avatar/6127bcd1a5b5823106da0a9e1fb07a57?s=256&d=identicon&r=PG",
+      "display_name" : "Adam",
+      "link" : "https://stackoverflow.com/users/209568/adam"
+    },
+    "creation_date" : 1748606628,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140466667,
+    "post_id" : 79642446,
+    "body" : "I would suggest first you checking the configurations of the queue itself to see if there is any configuration doing batching commit or pooling. Then I would look what is calling this connection and how (loop? does it have sleeps?) because you are using pooling in the configurations of it. I would start with these two. Anyhow without knowing these setups there are not much more info to go from there.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 209503,
+      "reputation" : 23867,
+      "user_id" : 460557,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/b4565f97815833390c9c880e9e8522e4?s=256&d=identicon&r=PG",
+      "display_name" : "Jorge Campos",
+      "link" : "https://stackoverflow.com/users/460557/jorge-campos"
+    },
+    "creation_date" : 1748446371,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

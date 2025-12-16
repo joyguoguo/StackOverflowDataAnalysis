@@ -1,0 +1,47 @@
+{
+  "question" : {
+    "question_id" : 79695587,
+    "title" : "Redis-backed semaphore with overflow (force acquire even when limit is reached)",
+    "body" : "<p>I am looking for a semaphore-like construct with the ability to &quot;force&quot; an acquisition, even when maximum capacity is reached, essentially overflowing the semaphore.<br />\nI am imagining an interface similar to this:</p>\n<pre><code>init(int n) // initialize with n permits \n\nboolean acquire() // try to acquire a permit, returning true if succeeded (non-blocking)\n\nvoid forceAcquire() // acquire a permit even when none are free, potentially making the number of available permits negative \n\nvoid release() // increase the amount of available permits \n</code></pre>\n<p>Additional requirements:</p>\n<ul>\n<li>All operations are atomic (like a regular semaphore)</li>\n<li><code>acquire</code> is non blocking (returns immediately even on failure</li>\n<li>The synchronization needs to work across multiple services/nodes, so should integrate with something like Redis</li>\n</ul>\n<p>I am using Spring Boot 3 with Java 17.</p>\n<p>I have looked at Redisson's <a href=\"https://redisson.pro/docs/data-and-services/locks-and-synchronizers/#semaphore\" rel=\"nofollow noreferrer\">RSemaphore</a>, which doesn't support &quot;overflow&quot;.<br />\nI think it may be possible to achieve the same result with manual tracking of overflow using <a href=\"https://redisson.pro/docs/data-and-services/counters/#atomiclong\" rel=\"nofollow noreferrer\">RAtomicLong</a>:</p>\n<pre><code>class OverflowableSemaphore {\n    RSemaphore semaphore;\n    RAtomicLong overflowCounter;\n\n    public OverflowableSemaphore(int n) {\n        this.semaphore.trySetPermits(n);\n    }\n\n    public boolean acquire() {\n        return semaphore.tryAcquire();\n    }\n\n    public void forceAcquire() {\n        boolean acquired = acquire();\n        if (acquired) {\n            return;\n        } \n        else {\n            overflowCounter.incrementAndGet();\n        }\n    }\n\n\n    public void release() {\n        while (true) {\n            long currentOverflow = overflowCounter.get();\n            if (currentOverflow &gt; 0) {\n                if (overflowCounter.compareAndSet(currentOverflow, currentOverflow - 1)) {\n                    return;\n                }\n                // else: retry due to race\n            } \n            else {\n                semaphore.release();\n                return;\n            }\n        }\n    }\n}\n</code></pre>\n<p>However, this seems quite inefficient as it potentially requires many back and forth calls to Redis.<br />\nAdditionally, I would like to avoid custom implementations if at all possible, and prefer something more well tested.</p>\n<p>Is there an existing solution to this problem?<br />\nAnd if not, how can I improve my proposed solution?</p>\n",
+    "tags" : [ "java", "redis", "semaphore", "redisson" ],
+    "owner" : {
+      "account_id" : 32352973,
+      "reputation" : 2,
+      "user_id" : 25128432,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/50f6ea219e58330a05908075c1a7098a?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Lior Katz",
+      "link" : "https://stackoverflow.com/users/25128432/lior-katz"
+    },
+    "is_answered" : true,
+    "view_count" : 118,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1752080938,
+    "creation_date" : 1752062926,
+    "link" : "https://stackoverflow.com/questions/79695587/redis-backed-semaphore-with-overflow-force-acquire-even-when-limit-is-reached",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79695975,
+    "question_id" : 79695587,
+    "body" : "<blockquote>\n<p>this seems quite inefficient as it potentially requires many back and forth calls to Redis.</p>\n</blockquote>\n<p>That's probably going to be a property of any Redis-based approach to your particular problem.  I expect that you already have it in <code>RSemaphore</code> alone, though of course you have it worse if you add more stuff on top.</p>\n<blockquote>\n<p>Is there an existing solution to this problem?</p>\n</blockquote>\n<p>It sounds like you're asking for a library recommendation.  That's off-topic here.  For the record, however, what you ask for is pretty unusual, even without making it distributed as you want to do, so I would be surprised if you could find it already built.</p>\n<blockquote>\n<p>how can I improve my proposed solution?</p>\n</blockquote>\n<p>It is awkward to implement your <code>OverflowableSemaphore</code> in terms of an ordinary (sort of) counting semaphore.  I would recommend building yours on top of more primitive objects.  In particular,</p>\n<ul>\n<li><p>It can only cause you grief to have an overflow count separate from the main count, so I would go with a single, combined counter.  Presumably that would be modeled on the Java side as an <code>RAtomicLong</code>.</p>\n</li>\n<li><p>You will need a way to avoid races in initializing semaphore instances, and to support that you will need at least one other shared item.  This could reasonably be another <code>RAtomicLong</code> used as a state indicator -- uninitialized, initializing, initialized.</p>\n</li>\n<li><p>You can and should get good mileage out of <code>RAtomicLong</code> by employing the usual techniques for lock-free atomic programming, but that's probably not enough.  And yes, that will sometimes contribute to more round trips to Redis and back.</p>\n</li>\n<li><p>Unless you want to rely exclusively on spin locking, you will need a way to block on changes to the Redis-stored value of an object.  You might want this to avoid spinning during a contested initialization of the semaphore.  You will probably want this to make threads block on non-forcing semaphore decrements when appropriate. Redisson's <a href=\"https://www.javadoc.io/static/org.redisson/redisson/3.50.0/org/redisson/api/listener/IncrByListener.html\" rel=\"nofollow noreferrer\">IncrByListener</a> should be helpful here, combined with local <code>Object.wait()</code> / <code>Object.notify()</code>.  This is likely the most difficult part to do right.</p>\n</li>\n</ul>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 2792262,
+      "reputation" : 190832,
+      "user_id" : 2402272,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+      "display_name" : "John Bollinger",
+      "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+    },
+    "creation_date" : 1752078809,
+    "last_activity_date" : 1752080938,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : { }
+}

@@ -1,0 +1,178 @@
+{
+  "question" : {
+    "question_id" : 79645482,
+    "title" : "How can I conditionally use bc-fips or bcprov-jdk18on in different runtime modes without classpath conflicts?",
+    "body" : "<p>I'm working on a Java 21 application that uses Bouncy Castle cryptographic libraries. In most runtime modes, I rely on the FIPS-compliant provider (bc-fips:2.1.0). However, in one specific mode of operation, I need to use the non-FIPS version (bcprov-jdk18on:1.80) instead.</p>\n<p>As I understand it, both libraries have the same packages and define the same classes (e.g., org.bouncycastle.jce.provider.BouncyCastleProvider), so including both on the classpath simultaneously causes conflicts.</p>\n<p><strong>Problem:</strong>\nI need a way to use only one of these libraries at runtime depending on a mode/flag/environment setting.</p>\n<p>What strategies or tools (e.g., modular classloading, separate classloaders, shading, etc.) are available to help with this?</p>\n<p><strong>What I've tried:</strong>\nIncluding both in the pom.xml leads to classloader conflicts, as expected.</p>\n<p>Dynamically registering a provider via Security.addProvider(...), but the issue arises earlier when classes are loaded.</p>\n<p>Splitting into separate apps is undesirable due to deployment constraints.</p>\n<p><strong>Desired Outcome:</strong>\nA method to conditionally use either bc-fips or bcprov-jdk18on based on runtime mode—without having both loaded at the same time in the same JVM session.</p>\n<p>Has anyone faced a similar requirement or found a viable strategy to switch providers safely and cleanly?</p>\n",
+    "tags" : [ "java", "classpath", "classloader" ],
+    "owner" : {
+      "account_id" : 18850250,
+      "reputation" : 29,
+      "user_id" : 13749557,
+      "user_type" : "registered",
+      "profile_image" : "https://lh5.googleusercontent.com/-Kse4Gp24VYg/AAAAAAAAAAI/AAAAAAAAAAA/AMZuucmYGvqIDN1hHVpD0lst7pPFXeXyWg/s256-rj/photo.jpg",
+      "display_name" : "CodeSeeker",
+      "link" : "https://stackoverflow.com/users/13749557/codeseeker"
+    },
+    "is_answered" : true,
+    "view_count" : 323,
+    "closed_date" : 1748709542,
+    "answer_count" : 1,
+    "score" : 2,
+    "last_activity_date" : 1748613996,
+    "creation_date" : 1748609132,
+    "link" : "https://stackoverflow.com/questions/79645482/how-can-i-conditionally-use-bc-fips-or-bcprov-jdk18on-in-different-runtime-modes",
+    "closed_reason" : "Needs details or clarity"
+  },
+  "answers" : [ {
+    "answer_id" : 79645597,
+    "question_id" : 79645482,
+    "body" : "<p>One solution to this problem could be to use additional class loaders. However, because class loaders delegate to their parent class loader, anything that interacts with BC needs to go through an additional class loader. You can't use it as provided dependency and use the classes in your source code directly, because those classes will then be loaded by the system class loader, not your own. You can only access the classes through reflection and/or interfaces that are not part of BC.</p>\n<p>Effectively, any code using BC should then follow a pattern like this:</p>\n<pre class=\"lang-java prettyprint-override\"><code>// bcUrl is a URL instance referring to the correct BC JAR file.\n// Add any BC-specific dependency as needed\ntry (URLClassLoader classLoader = new URLClassLoader(new URL[] { bcUrl })) {\n        Class&lt;?&gt; providerClass = classLoader.loadClass(&quot;&lt;your BC provider class&quot;&gt;);\n        Provider provider = providerClass.getConstructor().newInstance();\n        Security.addProvider(provider);\n        try {\n            // code here\n        } finally {\n            Security.removeProvider(provider.getName());\n        }\n}\n</code></pre>\n<p>Once the outer try block is closed, the BC classes are no longer available, and the other version can be safely loaded.</p>\n<p>Note that this is not thread-safe because of the use of <code>Security.addProvider</code> and <code>Security.removeProvider</code>. You probably need to add synchronization somewhere.</p>\n",
+    "score" : 3,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 1211967,
+      "reputation" : 9964,
+      "user_id" : 1180351,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/pKB8y.png?s=256",
+      "display_name" : "Rob Spoor",
+      "link" : "https://stackoverflow.com/users/1180351/rob-spoor"
+    },
+    "creation_date" : 1748613996,
+    "last_activity_date" : 1748613996,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140472700,
+    "post_id" : 79645482,
+    "body" : "@JohnBollinger I&#39;ve experienced first hand that app servers still have issues when you call <code>Security.addProvider(...)</code>. The problem is that the <code>Security</code> class is part of the JVM and therefore provided by the app server. When you register a class loaded by the app&#39;s own class loader you&#39;re leaking app classes into the app server. If you don&#39;t call <code>Security.removeProvider(...)</code> with the previously added provider you even have a class leak, and (parts of) your application will not be cleaned up if you deploy a new version.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1211967,
+      "reputation" : 9964,
+      "user_id" : 1180351,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/pKB8y.png?s=256",
+      "display_name" : "Rob Spoor",
+      "link" : "https://stackoverflow.com/users/1180351/rob-spoor"
+    },
+    "creation_date" : 1748613055,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140472629,
+    "post_id" : 79645482,
+    "body" : "Application servers deal with this sort of problem routinely.  Traditionally, they use stupid^H^H^H^H^H^H fun <code>ClassLoader</code> tricks to isolate the classes used by one application from those used by another.  This works because loaded classes are scoped to the ClassLoader that loaded them, and its descendants.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2792262,
+      "reputation" : 190832,
+      "user_id" : 2402272,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+      "display_name" : "John Bollinger",
+      "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+    },
+    "creation_date" : 1748612212,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140472616,
+    "post_id" : 79645482,
+    "body" : "Notice two things: we can only use classes, interfaces and methods that are in both <code>bcprov-jdk18on</code> and <code>bc-fips</code>, otherwise the build will fail at least one of the profiles --- This will most likely not work with tools like dependabot; it will only upgrade one of the dependencies (this is speculative, though; have not tested it).",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 5281408,
+      "reputation" : 20275,
+      "user_id" : 4216641,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/dVLIh.jpg?s=256",
+      "display_name" : "Turing85",
+      "link" : "https://stackoverflow.com/users/4216641/turing85"
+    },
+    "creation_date" : 1748611975,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140472607,
+    "post_id" : 79645482,
+    "body" : "How exactly is the application built/deployed? If an application server is used, then the <code>bcprov-jdk18on</code> depenency could be included as <code>provided</code>and be switched out on the app server. If a fat jar is fetched, then we could activate different profiles to include different dependencies (we could bind the artifact-id and version to a property and switch this property in a profile).",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 5281408,
+      "reputation" : 20275,
+      "user_id" : 4216641,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/dVLIh.jpg?s=256",
+      "display_name" : "Turing85",
+      "link" : "https://stackoverflow.com/users/4216641/turing85"
+    },
+    "creation_date" : 1748611775,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79645597" : [ {
+      "comment_id" : 140486933,
+      "post_id" : 79645597,
+      "body" : "Once the class loader is closed and all references to the class have been removed (hence the try-finally with <code>Security.removeProvider</code>), the class will be unladed. And besides - jdk18on will only be used as long as the method is running. A new invocation will load its own BC classes. The only thing you can&#39;t do is run the same code concurrently, and that&#39;s only because <code>Security.addProvider</code> only allows a single BC provider to be registered at any time.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1211967,
+        "reputation" : 9964,
+        "user_id" : 1180351,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/pKB8y.png?s=256",
+        "display_name" : "Rob Spoor",
+        "link" : "https://stackoverflow.com/users/1180351/rob-spoor"
+      },
+      "creation_date" : 1749045767,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140485596,
+      "post_id" : 79645597,
+      "body" : "Yes, I can load them, but how can I make sure that the bcmail-jdk18on will be used. Is there a way do deload the class or make sure the non-fips one is used. From what I read, there is no way you can deload a class, you can stop referencing it, stop using it&#39;s classloader and just hope the GC will collect it.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 18850250,
+        "reputation" : 29,
+        "user_id" : 13749557,
+        "user_type" : "registered",
+        "profile_image" : "https://lh5.googleusercontent.com/-Kse4Gp24VYg/AAAAAAAAAAI/AAAAAAAAAAA/AMZuucmYGvqIDN1hHVpD0lst7pPFXeXyWg/s256-rj/photo.jpg",
+        "display_name" : "CodeSeeker",
+        "link" : "https://stackoverflow.com/users/13749557/codeseeker"
+      },
+      "creation_date" : 1749020838,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140483064,
+      "post_id" : 79645597,
+      "body" : "You can include more than 1 URL, so you can include both dependencies in the same class loader. However, you can&#39;t use anything from inside a specific JAR file in code, like classes. You can only use reflection and/or common interfaces / base classes that are not fips/jdk18on specific.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1211967,
+        "reputation" : 9964,
+        "user_id" : 1180351,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/pKB8y.png?s=256",
+        "display_name" : "Rob Spoor",
+        "link" : "https://stackoverflow.com/users/1180351/rob-spoor"
+      },
+      "creation_date" : 1748949931,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140483033,
+      "post_id" : 79645597,
+      "body" : "Yes, I am doing it like that. But after that comes the next problem. Because often BC is not used alone, for example we also use the bctls-fips, so when we switch to bcprov-jdk18on we need also to replace the bctls-fips dependency with the bctls-jdk18on one, I am not sure how should I proceed in this case.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 18850250,
+        "reputation" : 29,
+        "user_id" : 13749557,
+        "user_type" : "registered",
+        "profile_image" : "https://lh5.googleusercontent.com/-Kse4Gp24VYg/AAAAAAAAAAI/AAAAAAAAAAA/AMZuucmYGvqIDN1hHVpD0lst7pPFXeXyWg/s256-rj/photo.jpg",
+        "display_name" : "CodeSeeker",
+        "link" : "https://stackoverflow.com/users/13749557/codeseeker"
+      },
+      "creation_date" : 1748949042,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

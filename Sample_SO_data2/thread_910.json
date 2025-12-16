@@ -1,0 +1,192 @@
+{
+  "question" : {
+    "question_id" : 79764475,
+    "title" : "Passing reference of this class instance in its constructor to other class instances",
+    "body" : "<p>In Java, I can write something like this:</p>\n<pre><code>public class Brother {\n   private final Parent parent;\n   \n   public Brother(Parent parent) {\n      this.parent = parent;\n   }\n\n   public void annoySister() {\n       parent.getSister().annoy();\n   }\n\n}\n\npublic class Sister {\n   private final Parent;\n   \n   public Sister(Parent parent) {\n      this.parent = parent;\n   }\n\n   public void annoy() {\n      System.out.println(&quot;I am annoyed&quot;);\n   }\n\n   public void parentsName() {\n      parent.getName();\n   }\n}\n    \npublic class Parent {\n   private final Brother brother;\n   private final Sister sister;\n   private final String name;\n\n   public Parent() {\n      this.name = &quot;Johnny&quot;;\n      this.brother = new Brother(this);\n      this.sister = new Sister(this);\n   }\n   // getters\n}\n</code></pre>\n<p>This way all the objects created in Parent's class are available to each other. For example, in the code above, the Brother can access Sister methods and vice versa in addition to methods provided by Parent class (essentially accessing its state).</p>\n<pre><code>public class Main {\n    \n    public static void main(String args) {\n       // somehow this seems to be like a container for all objects; ApplicationContext?\n       Parent parentInstance = new Parent();\n\n       parentInstance.getBrother().annoySister();\n       parentInstance.getSister().parentsName();\n    }\n}\n</code></pre>\n<p>Q. <strong>How can <code>this</code> be passed to other classes, when Parent is being created as its constructor is being executed?</strong></p>\n",
+    "tags" : [ "java", "design-patterns" ],
+    "owner" : {
+      "account_id" : 9793863,
+      "reputation" : 305,
+      "user_id" : 7257604,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/388e28dba4aef6d17bbce10a7fa9252a?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "office.aizaz",
+      "link" : "https://stackoverflow.com/users/7257604/office-aizaz"
+    },
+    "is_answered" : true,
+    "view_count" : 157,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1759248107,
+    "creation_date" : 1757873337,
+    "link" : "https://stackoverflow.com/questions/79764475/passing-reference-of-this-class-instance-in-its-constructor-to-other-class-insta",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79764584,
+    "question_id" : 79764475,
+    "body" : "<blockquote>\n<p>How can this be passed to other classes, when Parent is being created as it's constructor is being executed?</p>\n</blockquote>\n<p>The execution of <code>new X()</code>, in pseudocode:</p>\n<pre class=\"lang-java prettyprint-override\"><code>void createInstance {\n  int totalSize = SIZE_OF_TYPE_REF + SIZE_OF_IDENTITY;\n  for (Field f : type.allInstanceFieldsOfThisAndSuperTypes()) {\n    totalSize += f.sizeInBytes();\n  }\n  ptr = malloc(totalSize);\n  ptr[0-7] = type.ref;\n  ptr[8-15] = randomId();\n  invokeConstructor(makeObjectOutOf(ptr));\n}\n</code></pre>\n<p>But this takes some liberties; the spec is not nearly as specific as that.</p>\n<p>The point is - the answer to your question is rather simple: The JVM makes the object first and then treats the constructor as a method that gets to toy with it first. At the JVM level, it's incorrect to think that the <em>end result</em> of a constructor is the creation of a single instance. No, thats <em>how they start</em>. The end result of a constructor is that <em>the instance already created when it started is now in a valid state</em>.</p>\n<p>Yes, the logical conclusion you seem to sort of draw (given the somewhat incredulous tone of your question) is indeed the bizarre but correct conclusion:</p>\n<p><strong>Instances exist as of the <em>start</em> of the constructor but aren't actually semantically guaranteed in valid state until the <em>end</em>; nevertheless they exist and <code>this</code> can be passed around. Invalid state and all. It is entirely up to the programmer to take this foot gun and handle it with great care.</strong></p>\n<p>This is fairly well known. Various linting tools will outright tell you that you are 'leaking <code>this</code>', and tell you to cut it out. The JVM spec itself is starting to have an opinion, scans for leaking your <code>this</code>, and has to downshift to less efficient paths, in order to fulfill certain guarantees the Java Memory Model makes about the visibility of updates to <code>final</code> fields.</p>\n<p>We can trivially take this footgun and deal some serious damage, your example is in that sense barely cracking the top of this particular iceberg, so to speak:</p>\n<pre class=\"lang-java prettyprint-override\"><code>class Person {\n  private final String name;\n\n  Person(String name) {\n    Greeter.greet(this);\n    this.name = name;\n  }\n\n  public String getName() { return this.name; }\n}\n\nclass Greeter {\n  static void greet(Person p) {\n    System.out.println(&quot;Hello, &quot; + p.getName() + &quot;!&quot;);\n  }\n\n  public static void main(String[] args) {\n    Person p = new Person(&quot;Aizaz&quot;);\n    Greeter.greet(p);\n  }\n}\n</code></pre>\n<p>Toss that in a file, compile it, and then run <code>java Greeter</code> and out comes:</p>\n<blockquote>\n<pre><code>Hello, null!\nHello, Aizaz!\n</code></pre>\n</blockquote>\n<p>What the heck? We have a <code>final</code> field and only one instance, thus we could only possibly observe that field having one value. Except.. we see two of em. a <code>null</code> <em>and</em> a value. When compiling we got no warnings at all!</p>\n<p>That's the foot gun. It went off.</p>\n<p>Fortunately it's easy to know when this happens: Anytime that you leak 'this'. This is done either if you refer to <code>this</code> in a constructor which you should not do except for <code>this.fieldName = shadowedFieldName;</code>), or if you invoke an instance method in your constructor which you should never do. If you want your constructor to have helpers, make em <code>static</code>, which avoids this messy situation. As mentioned, various linter tools can help you out and will flag any such code with a warning, because both of these situations are things that basic rules-based code analysis can trivially find with a 100% accuracy rate (no false positives and no false negatives).</p>\n<blockquote>\n<p>Q2 Is this some kind of design pattern?</p>\n</blockquote>\n<p>Sure, well, we'd have to get into philosophy. What is a 'design pattern'?</p>\n<p>It's somewhat common. It's also a bad idea. You <em>should not</em> write your code like this, because of the footgun nature of it. It's easy enough to spot <code>this</code> leakage in a constructor. It's not at all easy to intentionally do so, put the onus on whatever you leak the <code>this</code> to not to touch the foot gun aspects of it, and then attempt to put rules into place such as with linter tools to police <em>that</em>. Generally you use the linter tool to lint the easy, 100% accurately lintable thing and deal with the fallout.</p>\n<h2>But this gets to the underlying problem</h2>\n<p>The abstract structure that you have created here is the doubly linked tree structure. You have nodes that have refs to their children, and you want the children to have refs back to their parents.</p>\n<p>Whilst this is a commonly cooked up solution to various designs, you should reconsider. For example, <code>javac</code> itself <em>does not do this</em>; its parser turns java source files into tree structures (<code>CompilationUnit</code>, which contains <code>TypeDefinition</code> objects, those contain <code>TypeMember</code> objects (which can be <code>FieldDeclaration</code>, <code>MethodDeclaration</code>, <code>ConstructorDeclaration</code>, and <code>TypeDefinition</code>s, amongst other things), those contain <code>Parameter</code> objects and a <code>Body</code> which in turns contains a bunch of <code>Statement</code> objects - hopefully it is not difficult to envision how source files are turned into complicated tree structures.</p>\n<p>In the javac source code, nodes <em>do not</em> have a ref to their parents.</p>\n<p>Whatever job requires you to 'travel' &quot;up&quot; the tree, find another way to do it. For example, invert the control structure. Alternatively, have a separate object that represents the entire tree as a whole, and it has a ref to the root node. It can be asked to travel up (so a child instance does not know its parent, but you can ask the tree as a whole 'give me the parent of child <code>child</code>) and it does know.</p>\n<p>Alternatively, have the concept of parent be a settable thing. It's not a final field, and post construction a child starts off as parent-less. This means your object goes through multiple phases of construction; after phase 1 different rules hold than after phase 2 (phase 1 is the constructor, phase 2 is the thing where the parent 'marks' itself as parent of that object). You can attempt to then document these lifecycle processes and in that way attempt to ensure (with little help from the compiler) that e.g. child objects are never leaked to beyond the package until they hit some final phase. If that's not possible you can even make 'which phase are we in' part of the public API - have the class def have a 'getState()' method that returns an enum representing where we're at, and then document that various methods cannot be called unless certain states have been reached.</p>\n<p>This is not a particularly nice design and runs afoul of various philosophical treatises on how OO 'should be', but in the end, how it 'should be' is scientifically speaking mostly drivel: IT has <em>very</em> little rigorous scientifically tested hypotheses, it's truly the weakest of all the 'sciences'. If it works, it works. If it works but the maintenance headache seems unduly ridiculous given the scope of the project and teaching new team members the ropes takes ages, and your tests are convoluted messes - that might be a sign your design is insufficient. I'd put more stock in that than abstract philosophical 'rules' such as Liskov's substitution principle or &quot;SOLID design&quot; ^1.</p>\n<p>Point is, 'how to represent doubly-linked tree structures in OO / java' is a complicated question that is beyond the scope of SO for a complete treatise; it's more the domain of 40-page papers and veers far too much into opinion to actually 'answer'; hence I have merely provided the context.</p>\n<hr />\n<p>[1] Dear reader, you may be thinking: What heresy is this?? Liskov and SOLID are fantastic; in some distant past I did not apply them properly and my code was a mess, since I learned, I apply it rigorously and my code is much easier to maintain! Ah, but therein lies the rub: <em>You</em>, dear reader, have experience. From <em>my</em> experience, attempting to apply these principles when you have no idea what they truly mean due to lack of experience - that's just a formula for truly brain-twisting lunacy. Cargo culting writ large. So please do not read this paragraph a 'Liskov and SOLID are lies'. It's more 'Liskov and SOLID are not useful tools to teach. They are useful tools only to describe and neatly file away the lessons you already learned the hard way'.</p>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 401843,
+      "reputation" : 107206,
+      "user_id" : 768644,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+      "display_name" : "rzwitserloot",
+      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+    },
+    "creation_date" : 1757884761,
+    "last_activity_date" : 1757885325,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140735423,
+    "post_id" : 79764475,
+    "body" : "Java Language Specification <a href=\"https://docs.oracle.com/javase/specs/jls/se24/html/jls-15.html#jls-15.9.4\" rel=\"nofollow noreferrer\">15.9.4. Run-Time Evaluation of Class Instance Creation Expressions</a> and <a href=\"https://docs.oracle.com/javase/specs/jls/se24/html/jls-12.html#jls-12.5\" rel=\"nofollow noreferrer\">12.5. Creation of New Class Instances</a> -- you can think of the constructor as being similar to an instance method that is called <b>after</b> the instance is created (with default instance variables)",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 31180,
+      "reputation" : 29752,
+      "user_id" : 85421,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/kKvXH.gif?s=256",
+      "display_name" : "user85421",
+      "link" : "https://stackoverflow.com/users/85421/user85421"
+    },
+    "creation_date" : 1757877181,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140735382,
+    "post_id" : 79764475,
+    "body" : "Please edit your post to focus on only one precise question. You are currently asking two questions.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 108033,
+      "reputation" : 20089,
+      "user_id" : 286934,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f16a184d26b72795ff243464d715cffe?s=256&d=identicon&r=PG",
+      "display_name" : "Progman",
+      "link" : "https://stackoverflow.com/users/286934/progman"
+    },
+    "creation_date" : 1757875769,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140735369,
+    "post_id" : 79764475,
+    "body" : "@Progman Thanks. If you post this as answer with reference to java spec or something I can read and refer to, that would be really helpful. Could you also comment if this refers to some design pattern or theory, atleast to know whether this design should be avoided or not?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 9793863,
+      "reputation" : 305,
+      "user_id" : 7257604,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/388e28dba4aef6d17bbce10a7fa9252a?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "office.aizaz",
+      "link" : "https://stackoverflow.com/users/7257604/office-aizaz"
+    },
+    "creation_date" : 1757875351,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140735363,
+    "post_id" : 79764475,
+    "body" : "@office.aizaz When <code>new Parent()</code> is executed, the <code>new</code> operator will create the object. After that, the constructor (in this case <code>Parent()</code>) is called, but the object itself already exists.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 108033,
+      "reputation" : 20089,
+      "user_id" : 286934,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f16a184d26b72795ff243464d715cffe?s=256&d=identicon&r=PG",
+      "display_name" : "Progman",
+      "link" : "https://stackoverflow.com/users/286934/progman"
+    },
+    "creation_date" : 1757875147,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140735356,
+    "post_id" : 79764475,
+    "body" : "@user85421 Thanks, I fixed the post after your comment. <code>this</code> is created by the <code>new</code> statement, then how this reference is present when <code>new Brother(this)</code> is being executed in the constructor which is not complete yet to provide <code>this</code> to the <code>new</code>statement.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 9793863,
+      "reputation" : 305,
+      "user_id" : 7257604,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/388e28dba4aef6d17bbce10a7fa9252a?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "office.aizaz",
+      "link" : "https://stackoverflow.com/users/7257604/office-aizaz"
+    },
+    "creation_date" : 1757874806,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140735338,
+    "post_id" : 79764475,
+    "body" : "&quot;<i>How can this be passed to sub-classes ...</i>&quot; - 1) please note there is no sub-class in posted code, <code>Parent</code>, <code>Brother</code> and <code>Sister</code> are only subclasses of <code>Object</code>, but neither is a subclass of the others; 2) also be aware that the constructor, despite its name, is not really constructing <code>this</code>, it is only initializing the instance - <code>this</code> is <i>created</i> by the  <code>new</code> statement before executing the constructor (basically a pointer/reference to some memory location)",
+    "score" : 3,
+    "owner" : {
+      "account_id" : 31180,
+      "reputation" : 29752,
+      "user_id" : 85421,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/kKvXH.gif?s=256",
+      "display_name" : "user85421",
+      "link" : "https://stackoverflow.com/users/85421/user85421"
+    },
+    "creation_date" : 1757873972,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140735336,
+    "post_id" : 79764475,
+    "body" : "Q1 - well - I&#39;m afraid we&#39;d have to ask a spec designer, probbably of 1.0, why. The JVM will let you  - not just to your own subclass but to pretty much anything you can call. Even if the JMM reas its ugly evil coin, all fields will have (one of) the valid values at the time, which - if you haven&#39;t written that field yet - is <code>null&#47;0&#47;0.0&#47;false</code>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 30223964,
+      "reputation" : 262,
+      "user_id" : 23162960,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2451acfac254a6fc75757ecf89d75f9a?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Jannik S.",
+      "link" : "https://stackoverflow.com/users/23162960/jannik-s"
+    },
+    "creation_date" : 1757873935,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140735327,
+    "post_id" : 79764475,
+    "body" : "Be careful leaking <code>this</code> in the constructor, see <a href=\"https://stackoverflow.com/questions/9851813/java-leaking-this-in-constructor\" title=\"java leaking this in constructor\">stackoverflow.com/questions/9851813/&hellip;</a> and all related questions.",
+    "score" : 3,
+    "owner" : {
+      "account_id" : 108033,
+      "reputation" : 20089,
+      "user_id" : 286934,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f16a184d26b72795ff243464d715cffe?s=256&d=identicon&r=PG",
+      "display_name" : "Progman",
+      "link" : "https://stackoverflow.com/users/286934/progman"
+    },
+    "creation_date" : 1757873741,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79764584" : [ {
+      "comment_id" : 140738012,
+      "post_id" : 79764584,
+      "body" : "Thank you for the detailed explanation, I really appreciate it.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 9793863,
+        "reputation" : 305,
+        "user_id" : 7257604,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/388e28dba4aef6d17bbce10a7fa9252a?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "office.aizaz",
+        "link" : "https://stackoverflow.com/users/7257604/office-aizaz"
+      },
+      "creation_date" : 1757968662,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

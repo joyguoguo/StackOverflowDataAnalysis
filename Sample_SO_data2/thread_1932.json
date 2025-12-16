@@ -1,0 +1,244 @@
+{
+  "question" : {
+    "question_id" : 79666355,
+    "title" : "How do I implement CompositeView so it displays the components correctly?",
+    "body" : "<p>I am working on a Markdown <code>EditorKit</code> (from <code>javax.swing.text</code>).<br />\nThe parser seems to work fine, but now I need to make a <code>ViewFactory</code>.</p>\n<p>The test string is parsed in such way, that we get the following structure:</p>\n<pre><code>root\n| - paragraph\n|   | - text\n| - list\n|   | - paragraph\n|   |   | - text\n|   |   | - code span\n|   |   | - text\n</code></pre>\n<p>Paragraph is converted to the <code>BoxView(elem, X_AXIS)</code>, it works great.<br />\nText is converted to my custom <code>View</code>, which is also OK.<br />\nList is converted to my custom <code>CompositeView</code>, <strong>which is the main problem</strong>, as components on it just do not show up (at all).</p>\n<p>I have the following classes:</p>\n<pre class=\"lang-java prettyprint-override\"><code>class MDListView extends MarkdownContainerView{\n    public MDListView(MDList e,ViewFactory f){\n        super(e);\n    }\n    public float getPreferredSpan(int axis){\n        //Returns a correct non-empty rectangle.\n    }\n    public Shape getChildAllocation(int index,Shape s){\n        Rectangle r=s.getBounds();\n        return new Rectangle(r.x,r.y+(int)(index*getPreferredSpan(Y_AXIS)/getViewCount()),r.width,r.height/getViewCount());\n    }\n    public void replace(int offset,int length,View[]views){\n        super.replace(offset,length,views);\n        //Some additional logic\n    }\n    protected void childAllocation(int index,Rectangle a){\n        a.setBounds(getChildAllocation(index,a).getBounds());\n    }\n}\n</code></pre>\n<p>and</p>\n<pre><code>static abstract class MarkdownContainerView extends CompositeView{\n    public MarkdownContainerView(Element e){\n        super(e);\n    }\n    public void paint(Graphics g,Shape allocation){\n        for(int i=0;i&lt;getViewCount();++i){\n            Shape a=getChildAllocation(i,allocation);\n            if(a!=null)getView(i).paint(g,a);\n        }\n    }\n    /**\n     * A stub, added for compatibility.\n     * Makes no sense for read-only documents.\n     * @see View#modelToView(int,Shape,Bias)\n     */\n    public Shape modelToView(int pos,Shape a,Bias b)throws BadLocationException{\n        return new Rectangle();\n    }\n    /**\n     * A stub, added for compatibility.\n     * Makes no sense for read-only documents.\n     * @see View#viewToModel(float, float, Shape, Bias[])\n     */\n    public int viewToModel(float x,float y,Shape a,Bias[]biasReturn){\n        return 0;\n    }\n    protected boolean isBefore(int x,int y,Rectangle alloc){\n        return (alloc.outcode(x,y)&amp;Rectangle.OUT_LEFT)!=0;\n    }\n    protected boolean isAfter(int x,int y,Rectangle alloc){\n        return (alloc.outcode(x,y)&amp;Rectangle.OUT_RIGHT)!=0;\n    }\n    protected View getViewAtPoint(int x,int y,Rectangle alloc){\n        return null;\n    }\n}\n</code></pre>\n<h3>Screenshots</h3>\n<p>What I have (empty space on the right):\n<img src=\"https://i.sstatic.net/oEGCNRA4.png\" alt=\"nothing to see at the end\" /></p>\n<p>What I need is a list with only a single paragraph in it (see the scheme above). That means that although it should be displayed just like the text before, <em>it should still be displayed</em>.\nSo, here is what I want:\n<img src=\"https://i.sstatic.net/GPrvnO7Q.png\" alt=\"a list of one item at the end\" /></p>\n<h3>A bit of debug info</h3>\n<p>MDListView <code>getView(0)</code> and <code>getView(1)</code> methods return a correct view and <strong><code>null</code></strong> respectively.</p>\n<hr />\n<p>getView(0).childAllocation is an <strong>empty</strong> rectangle.</p>\n<hr />\n<p><code>getChildAllocation</code> is <strong>never called</strong>.</p>\n<h3>Even more code</h3>\n<p>The entire implementation of ViewFactory is provided below, in case it's of any use.</p>\n<pre class=\"lang-java prettyprint-override\"><code>package com.myenvironment.swing.markdown;\n\nimport java.awt.BasicStroke;\nimport java.awt.Color;\nimport java.awt.Font;\nimport java.awt.FontMetrics;\nimport java.awt.Graphics;\nimport java.awt.Graphics2D;\nimport java.awt.Rectangle;\nimport java.awt.RenderingHints;\nimport java.awt.Shape;\n\nimport javax.swing.text.BadLocationException;\nimport javax.swing.text.BoxView;\nimport javax.swing.text.CompositeView;\nimport javax.swing.text.Element;\nimport javax.swing.text.Position.Bias;\nimport javax.swing.text.View;\nimport javax.swing.text.ViewFactory;\n\nimport com.myenvironment.swing.markdown.MarkdownDocument.CodeSpan;\nimport com.myenvironment.swing.markdown.MarkdownDocument.MDList;\nimport com.myenvironment.swing.markdown.MarkdownDocument.Text;\n\n//TODO: finish the markdown view factory\npublic class MarkdownViewFactory implements ViewFactory{\n    static abstract class MarkdownView extends View{\n        public MarkdownView(Element e){\n            super(e);\n        }\n        /**\n         * A stub, added for compatibility.\n         * Makes no sense for read-only documents.\n         * @see View#modelToView(int,Shape,Bias)\n         */\n        public Shape modelToView(int pos,Shape a,Bias b)throws BadLocationException{\n            return new Rectangle();\n        }\n        /**\n         * A stub, added for compatibility.\n         * Makes no sense for read-only documents.\n         * @see View#viewToModel(float, float, Shape, Bias[])\n         */\n        public int viewToModel(float x,float y,Shape a,Bias[]biasReturn){\n            return 0;\n        }\n    }\n    static abstract class MarkdownContainerView extends CompositeView{\n        public MarkdownContainerView(Element e){\n            super(e);\n        }\n        public void paint(Graphics g,Shape allocation){\n            for(int i=0;i&lt;getViewCount();++i){\n                Shape a=getChildAllocation(i,allocation);\n                if(a!=null)getView(i).paint(g,a);\n            }\n        }\n        /**\n         * A stub, added for compatibility.\n         * Makes no sense for read-only documents.\n         * @see View#modelToView(int,Shape,Bias)\n         */\n        public Shape modelToView(int pos,Shape a,Bias b)throws BadLocationException{\n            return new Rectangle();\n        }\n        /**\n         * A stub, added for compatibility.\n         * Makes no sense for read-only documents.\n         * @see View#viewToModel(float, float, Shape, Bias[])\n         */\n        public int viewToModel(float x,float y,Shape a,Bias[]biasReturn){\n            return 0;\n        }\n        protected boolean isBefore(int x,int y,Rectangle alloc){\n            return (alloc.outcode(x,y)&amp;Rectangle.OUT_LEFT)!=0;\n        }\n        protected boolean isAfter(int x,int y,Rectangle alloc){\n            return (alloc.outcode(x,y)&amp;Rectangle.OUT_RIGHT)!=0;\n        }\n        protected View getViewAtPoint(int x,int y,Rectangle alloc){\n            return null;\n        }\n    }\n    static class TextView extends MarkdownView{\n        public TextView(Text e){\n            super(e);\n        }\n        public float getPreferredSpan(int axis){\n            FontMetrics fm=getContainer().getFontMetrics(getContainer().getFont());\n            if(axis==X_AXIS)return fm.stringWidth(((Text)getElement()).text);\n            else if(axis==Y_AXIS)return fm.getHeight();\n            else throw new IllegalArgumentException();\n        }\n        public void paint(Graphics g,Shape allocation){\n            Graphics2D g2=(Graphics2D)g;\n            g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING,RenderingHints.VALUE_TEXT_ANTIALIAS_ON);\n            g2.setClip(allocation);\n            Rectangle r=allocation.getBounds();\n            FontMetrics fm=g2.getFontMetrics();\n            String text=((Text)getElement()).text;\n            g2.setColor(getContainer().getForeground());\n            g2.drawString(text,r.x+(r.width-fm.stringWidth(text))/2,r.y+(r.height+fm.getAscent()+fm.getLeading()-fm.getDescent())/2);\n        }\n    }\n    static class CodeSpanView extends MarkdownView{\n        public CodeSpanView(CodeSpan e){\n            super(e);\n        }\n        public float getPreferredSpan(int axis){\n            FontMetrics fm=getContainer().getFontMetrics(getContainer().getFont());\n            if(axis==X_AXIS)return fm.stringWidth(((CodeSpan)getElement()).text)+fm.getHeight()/3;\n            else if(axis==Y_AXIS)return fm.getHeight();\n            else throw new IllegalArgumentException();\n        }\n        public void paint(Graphics g,Shape allocation){\n            Graphics2D g2=(Graphics2D)g;\n            g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING,RenderingHints.VALUE_TEXT_ANTIALIAS_ON);\n            g2.setClip(allocation);\n            Rectangle r=allocation.getBounds();\n            g2.setColor(new Color(50,50,50,200));\n            g2.fillRoundRect(r.x,r.y,r.width,r.height,r.height/5,r.height/5);\n            g2.setStroke(new BasicStroke(r.height/10,1,1));\n            g2.setColor(Color.BLACK);\n            g2.drawRoundRect(r.x,r.y,r.width,r.height,r.height/5,r.height/5);\n            FontMetrics fm=g2.getFontMetrics();\n            String text=((CodeSpan)getElement()).text;\n            g2.setFont(new Font(Font.MONOSPACED,Font.PLAIN,getContainer().getFont().getSize()));\n            g2.setColor(Color.WHITE);\n            g2.drawString(text,r.x+(r.width-fm.stringWidth(text))/2,r.y+(r.height+fm.getAscent()+fm.getLeading()-fm.getDescent())/2);\n        }\n    }\n    static class MDListView extends MarkdownContainerView{\n        private float xSpanCached=-1,ySpanCached=-1;\n        public MDListView(MDList e,ViewFactory f){\n            super(e);\n        }\n        public float getPreferredSpan(int axis){\n            if(axis==Y_AXIS){\n                if(ySpanCached==-1){\n                    ySpanCached=0;\n                    for(int i=0;i&lt;getViewCount();++i)ySpanCached+=getView(i).getPreferredSpan(Y_AXIS);\n                }\n                return ySpanCached;\n            }else if(axis==X_AXIS){\n                if(xSpanCached==-1){\n                    xSpanCached=0;\n                    for(int i=0;i&lt;getViewCount();++i)xSpanCached=Math.max(ySpanCached,getView(i).getPreferredSpan(X_AXIS));\n                }\n                return xSpanCached;\n            }else throw new IllegalArgumentException();\n        }\n        public Shape getChildAllocation(int index,Shape s){\n            Rectangle r=s.getBounds();\n            return new Rectangle(r.x,r.y+(int)(index*getPreferredSpan(Y_AXIS)/getViewCount()),r.width,r.height/getViewCount());\n        }\n        public void replace(int offset,int length,View[]views){\n            super.replace(offset,length,views);\n            xSpanCached=-1;\n            ySpanCached=-1;\n        }\n        protected void childAllocation(int index,Rectangle a){\n            a.setBounds(getChildAllocation(index,a).getBounds());\n        }\n    }\n    public View create(Element elem){\n        View v=switch(elem){\n            case MarkdownDocument.Text e-&gt;new TextView(e);\n            case MarkdownDocument.CodeSpan e-&gt;new CodeSpanView(e);\n            case MDList e-&gt;new MDListView(e,this);\n            default-&gt;new BoxView(elem,BoxView.X_AXIS);\n            // default-&gt;throw new UnsupportedOperationException(&quot;No view for &quot;+elem.getName());\n        };\n        return v;\n    }\n}\n</code></pre>\n",
+    "tags" : [ "java", "swing" ],
+    "owner" : {
+      "account_id" : 29118402,
+      "reputation" : 85,
+      "user_id" : 22306589,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/pBXhDmqf.png?s=256",
+      "display_name" : "Tech of the Absence",
+      "link" : "https://stackoverflow.com/users/22306589/tech-of-the-absence"
+    },
+    "is_answered" : false,
+    "view_count" : 101,
+    "answer_count" : 1,
+    "score" : 2,
+    "last_activity_date" : 1750677580,
+    "creation_date" : 1749969350,
+    "link" : "https://stackoverflow.com/questions/79666355/how-do-i-implement-compositeview-so-it-displays-the-components-correctly",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79675155,
+    "question_id" : 79666355,
+    "body" : "<p>This is a classic issue in custom <code>View</code> implementations in Swing’s <code>javax.swing.text</code> framework. To fix this issue try to override <code>layout(int width, int height)</code> in <code>MDListView</code> If you don’t then the base <code>CompositeView</code> would not call your <code>getChildAllocation()</code> correctly.</p>\n<pre><code>@Override\nprotected void layout(int width, int height) {\n    int n = getViewCount();\n    if (n == 0) return;\n\n    int y = 0;\n    for (int i = 0; i &lt; n; i++) {\n        View v = getView(i);\n        int h = (int) v.getPreferredSpan(Y_AXIS);\n        v.setSize(width, h);\n        // Store the offset in the child allocation manually if needed\n        childAllocations[i] = new Rectangle(0, y, width, h); // Optional cache\n        y += h;\n    }\n}\n</code></pre>\n<p>Implement <code>getChildAllocation(int index, Shape a)</code> like bellow</p>\n<pre><code>@Override\npublic Shape getChildAllocation(int index, Shape a) {\n    if (a == null) return null;\n    Rectangle alloc = a.getBounds();\n    layout(alloc.width, alloc.height); // force layout\n\n    int y = 0;\n    for (int i = 0; i &lt; index; i++) {\n        y += (int) getView(i).getPreferredSpan(Y_AXIS);\n    }\n    int h = (int) getView(index).getPreferredSpan(Y_AXIS);\n    return new Rectangle(alloc.x, alloc.y + y, alloc.width, h);\n}\n</code></pre>\n<p>make sure setSize() is called on the root view</p>\n<pre class=\"lang-java prettyprint-override\"><code>view.setSize(containerWidth, containerHeight);\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 6962218,
+      "reputation" : 442,
+      "user_id" : 5341306,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/8rhmy.jpg?s=256",
+      "display_name" : "Imran.Khan",
+      "link" : "https://stackoverflow.com/users/5341306/imran-khan"
+    },
+    "creation_date" : 1750597439,
+    "last_activity_date" : 1750597439,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140532978,
+    "post_id" : 79666355,
+    "body" : "@camilajenny, my confidence in these &quot;correct&quot; values is based on an exact match with one&#39;s of the subcomponent. By reasonable size, I definetly don&#39;t mean the size of my entire flawed Markdown parser and files with original input text. I&#39;ll add <code>MarkdownViewFactory</code> code though. I also cannot provide any change that broke the desired behaviour, as it does not work at all. However, child component CAN be rendered outside of this <code>MDListView</code>, what means that the error is right in <code>MarkdownContainerView</code> class.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 29118402,
+      "reputation" : 85,
+      "user_id" : 22306589,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/pBXhDmqf.png?s=256",
+      "display_name" : "Tech of the Absence",
+      "link" : "https://stackoverflow.com/users/22306589/tech-of-the-absence"
+    },
+    "creation_date" : 1750598440,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140531939,
+    "post_id" : 79666355,
+    "body" : "@TechoftheAbsence I think you shouldn&#39;t restrict yourself with the size of the code you paste, there&#39;s no mention of any <i>reasonable limit</i> in <a href=\"https://stackoverflow.com/help/minimal-reproducible-example\">stackoverflow.com/help/minimal-reproducible-example</a>, and it&#39;s not mentioned here either <a href=\"https://meta.stackoverflow.com/questions/322364/how-much-code-is-too-much-code-to-put-into-a-question\" title=\"how much code is too much code to put into a question\">meta.stackoverflow.com/questions/322364/&hellip;</a>. If you post 1000 lines so be it, it doesn&#39;t really matter if it&#39;s just one copy paste to IntelliJ if it&#39;s 30 or 1000 lines, just keep it minimal, just enough code to reproduce the error",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 9983336,
+      "reputation" : 5256,
+      "user_id" : 7769052,
+      "user_type" : "registered",
+      "accept_rate" : 75,
+      "profile_image" : "https://i.sstatic.net/t94zs.jpg?s=256",
+      "display_name" : "camilajenny",
+      "link" : "https://stackoverflow.com/users/7769052/camilajenny"
+    },
+    "creation_date" : 1750530946,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140531932,
+    "post_id" : 79666355,
+    "body" : "@TechoftheAbsence your belief that it returns correct values doesn&#39;t make them correct, what do you mean by &#39;correct&#39; is a good start. By debugging info I mean what was the change that broke your desired behavior? Think of your Minimal Working Example where the rectangle show up somehow, not the way you want, and then tell us what change makes it not show at all",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 9983336,
+      "reputation" : 5256,
+      "user_id" : 7769052,
+      "user_type" : "registered",
+      "accept_rate" : 75,
+      "profile_image" : "https://i.sstatic.net/t94zs.jpg?s=256",
+      "display_name" : "camilajenny",
+      "link" : "https://stackoverflow.com/users/7769052/camilajenny"
+    },
+    "creation_date" : 1750530582,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140531097,
+    "post_id" : 79666355,
+    "body" : "@MarcePuente, 1) It is quite hard to compose code of a reasonable size you could run. 2) I want <code>MDListView</code> to place components <i>visibly</i>. Look at the screenshot, please.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 29118402,
+      "reputation" : 85,
+      "user_id" : 22306589,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/pBXhDmqf.png?s=256",
+      "display_name" : "Tech of the Absence",
+      "link" : "https://stackoverflow.com/users/22306589/tech-of-the-absence"
+    },
+    "creation_date" : 1750490373,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140531092,
+    "post_id" : 79666355,
+    "body" : "@Abra, you&#39;ve got it right. It is a <code>JEditorPane</code>.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 29118402,
+      "reputation" : 85,
+      "user_id" : 22306589,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/pBXhDmqf.png?s=256",
+      "display_name" : "Tech of the Absence",
+      "link" : "https://stackoverflow.com/users/22306589/tech-of-the-absence"
+    },
+    "creation_date" : 1750490228,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140531084,
+    "post_id" : 79666355,
+    "body" : "Well, I&#39;ve added some additional information.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 29118402,
+      "reputation" : 85,
+      "user_id" : 22306589,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/pBXhDmqf.png?s=256",
+      "display_name" : "Tech of the Absence",
+      "link" : "https://stackoverflow.com/users/22306589/tech-of-the-absence"
+    },
+    "creation_date" : 1750490085,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140531056,
+    "post_id" : 79666355,
+    "body" : "@camilajenny, by saying &quot;correct non-empty rectangle&quot; I mean that it is returning correct values for <code>X_AXIS</code> and <code>Y_AXIS</code>. It would be more clear, if I said &quot;correct non-empty <i>dimension</i>&quot;.    What kind of debug info do you need?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 29118402,
+      "reputation" : 85,
+      "user_id" : 22306589,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/pBXhDmqf.png?s=256",
+      "display_name" : "Tech of the Absence",
+      "link" : "https://stackoverflow.com/users/22306589/tech-of-the-absence"
+    },
+    "creation_date" : 1750489251,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140518419,
+    "post_id" : 79666355,
+    "body" : "why a correct non-empty rectangle is of <code>float</code> type? it seems to be the core problem, and maybe it just returns 0 or something you don&#39;t expect, we need more debugging details to help you",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 9983336,
+      "reputation" : 5256,
+      "user_id" : 7769052,
+      "user_type" : "registered",
+      "accept_rate" : 75,
+      "profile_image" : "https://i.sstatic.net/t94zs.jpg?s=256",
+      "display_name" : "camilajenny",
+      "link" : "https://stackoverflow.com/users/7769052/camilajenny"
+    },
+    "creation_date" : 1750101042,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140518086,
+    "post_id" : 79666355,
+    "body" : "Hello Tech of the Absence, 1) you need help, we need a code that can be executed (<a href=\"https://stackoverflow.com/help/minimal-reproducible-example\">see</a>), 2) you need help, I need an idiot-proof explanation of what you want to achieve.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10843443,
+      "reputation" : 924,
+      "user_id" : 20882864,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+      "display_name" : "Marce Puente",
+      "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+    },
+    "creation_date" : 1750092780,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140517527,
+    "post_id" : 79666355,
+    "body" : "I understand that you posted a partial image of your GUI. Is that a <code>JEditorPane</code> (or maybe a <code>JTextPane</code>) ?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2485939,
+      "reputation" : 20969,
+      "user_id" : 2164365,
+      "user_type" : "registered",
+      "accept_rate" : 40,
+      "profile_image" : "https://i.sstatic.net/RKSgV.png?s=256",
+      "display_name" : "Abra",
+      "link" : "https://stackoverflow.com/users/2164365/abra"
+    },
+    "creation_date" : 1750081857,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79675155" : [ {
+      "comment_id" : 140537914,
+      "post_id" : 79675155,
+      "body" : "@TechoftheAbsence yes layout is managed by the view hierarchy which is created by the ViewFactory. please check <a href=\"https://github.com/imranyousafzai/TestRepo\" rel=\"nofollow noreferrer\">github.com/imranyousafzai/TestRepo</a> code and let me know if you have any issue.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 6962218,
+        "reputation" : 442,
+        "user_id" : 5341306,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/8rhmy.jpg?s=256",
+        "display_name" : "Imran.Khan",
+        "link" : "https://stackoverflow.com/users/5341306/imran-khan"
+      },
+      "creation_date" : 1750762603,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140537116,
+      "post_id" : 79675155,
+      "body" : "That is exactly what ChatGPT suggested. There is no <code>layout</code> method there.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 29118402,
+        "reputation" : 85,
+        "user_id" : 22306589,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/pBXhDmqf.png?s=256",
+        "display_name" : "Tech of the Absence",
+        "link" : "https://stackoverflow.com/users/22306589/tech-of-the-absence"
+      },
+      "creation_date" : 1750747439,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

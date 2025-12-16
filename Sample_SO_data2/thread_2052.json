@@ -1,0 +1,163 @@
+{
+  "question" : {
+    "question_id" : 79654920,
+    "title" : "Android Service field that seems to be modified outside of code",
+    "body" : "<p>I'm experiencing a rather strange error, something that used to occur occasionally in C++ but I thought was impossible in Java.</p>\n<p>To give some context, I'm writing an Android app that has an Activity and a Service. The Activity starts the Service and gives it an Intent with a short string (yes / no, it's a boolean actually but has to be supplied as text) in a text field. The Service saves the string in a field of its own.<br />\nSo far nothing unusual.<br />\nThe Activity can stop the Service and start it again.<br />\nThe problem is, after I stop and start the Service from the Activity, at some point it looks like the content of the saved text field is modified by something different than my code. The service sets it to &quot;yes&quot; in onStartCommand, and then, when it has to use it after some time, it finds &quot;no&quot; in it instead.<br />\nNote that it doesn't happen the first time I start the service (first time after I force stop the app, or after reboot), which makes me almost certain it's not a stupid error of my part. It happens consistently after I stop the service and start it again.</p>\n<p>Now, leaving aside the possibility that it still is an error of mine, which can never be ruled out completely, my question is: is this even possible ? Can it happen in Java that a field is changed outside the code, so to speak, by a heap error ? I'm thinking something that writes outside bounds, or a text area that's freed wrongly and then overwritten. Like it used to happen in C++.<br />\nAlso, it's almost certainly not an out of memory error. First, my app is very small at this point, and there's a lot of memory on the test device, and second, I'm not getting any exception.</p>\n<p>I'd be very grateful for an answer by somebody expert enough to shed some light on this.</p>\n<p>Edit: The strange behavior happens in a Handler.handleMessage call (which occurs after a delay of a few seconds). At the end of onStartCommand, the string is yes, and when Handler.handleMessage starts, it's no. In between there's no other code from my app called.</p>\n<p>Edit 2: OK, I did a stripped down version of the Service subclass, that exhibits the same wrong behavior as the full class, at least on my test device. In case anybody wants to test it and try to find out what's actually the problem.</p>\n<p>Some indications:</p>\n<p>The stripped down version does nothing useful, just beeps at specific time intervals. You'll notice that it does beep the first time the service is started, then after it is stopped and restarted it doesn't.</p>\n<p>I only posted the Service subclass. You'll have to integrate it in a project and start and stop it from an Activity.\nTo start it, you call startService with an intent on which you've called<br />\nintent.putExtra (&quot;com.service.showOnLockScreen&quot;, &quot;yes&quot;);<br />\nTo stop it, you call startService with an intent on which you've called<br />\nintent.putExtra (&quot;com.service.showOnLockScreen&quot;, &quot;no&quot;);</p>\n<p>I've left the calls to LogMessage there, at significant code points, in case you need them. But the LogMessage function is empty, you have to supply your own code (or use another tracing or debugging method).</p>\n<p>You'll notice some comments in Romanian. Sorry but I didn't translate them to English. If you're curious you'll have to use Google Translate.</p>\n<p>Finally, I've commented the call to killProcess, so you can see the erroneous behavior. If you uncomment it, it gets fixed and it will beep every time it is stopped and restarted. (Note: Create the Service in its own process, otherwise the Activity will get killed too.)</p>\n<pre><code>public class TestService extends Service\n{\n    @Override\n    public IBinder onBind(Intent intent) {\n        return null;\n    }\n\n    void LogMessage (String aMessage)\n    {\n    }\n\n    void SavePersistentSettingInt (String aSetting, int aValue)\n    {\n        SharedPreferences settings = PreferenceManager.getDefaultSharedPreferences (this);\n        SharedPreferences.Editor editor = settings.edit ();\n        editor.putInt (aSetting, aValue);\n        editor.commit(); // asa se face ca sa-l salveze pe disc\n    }\n    int GetPersistentSettingInt (String aSetting, int aDefaultValue)\n    {\n        SharedPreferences settings = PreferenceManager.getDefaultSharedPreferences (this);\n        return settings.getInt (aSetting, aDefaultValue);\n    }\n\n    int mShowOnLockScreen = -1;\n    void SetShowOnLockScreen (String aChecked) // &quot;yes&quot; / &quot;no&quot;\n    {\nLogMessage (&quot;SetShowOnLockScreen &quot; + aChecked);\n\n        mShowOnLockScreen = aChecked.equals (&quot;yes&quot;) ? 1 : 0;\n        SavePersistentSettingInt (&quot;showOnLockScreen&quot;, mShowOnLockScreen);\n\nLogMessage (&quot;mSOLS after SetShowOnLockScreen &quot; + mShowOnLockScreen);\n    }\n    int ShowOnLockScreenValue ()\n    {\n        if (mShowOnLockScreen == -1)\n            mShowOnLockScreen = GetPersistentSettingInt (\n                    &quot;showOnLockScreen&quot;, 0);\nLogMessage (&quot;ShowOnLockScreenValue &quot; + mShowOnLockScreen);\n\n        return mShowOnLockScreen;\n    }\n    boolean IsSetShowOnLockScreen ()\n    {\n        return ShowOnLockScreenValue() == 1;\n    }\n\n    /* TONE_CDMA_ALERT_INCALL_LITE = 91;\n       TONE_CDMA_EMERGENCY_RINGBACK = 92;\n       TONE_CDMA_ALERT_CALL_GUARD = 93;\n       TONE_CDMA_SOFT_ERROR_LITE = 94;\n     */\n    private static void beep (int aVolume, int aDuration, int aTone)\n    {\n        ToneGenerator toneG = new ToneGenerator(AudioManager.STREAM_ALARM, aVolume);\n        toneG.startTone(aTone, aDuration);\n    }\n    private static void beep (int aVolume, int aDuration)\n    {\n        beep (aVolume, aDuration, TONE_CDMA_ALERT_CALL_GUARD);\n    }\n\n    @Override\n    public void onCreate ()\n    {\nLogMessage (&quot;onCreate called&quot;);\n\n        // cica nu e nevoie sa apelezi in servicii (dar se pare ca nici nu strica)\n        // super.onCreate();\n\n        /* Si atit.\n           Restul se face in InitialiseService care se apeleaza din onStartCommand. Pentru ca\n           onCreate se apeleaza inainte de onStartCommand, dar parametrul, adica Intent-ul, ca sa\n           stii cine dracu te-a apelat, se da de-abia in onStartCommand .\n         */\n    }\n\n    void InitialiseService ()\n    {\n        // construim mTimerHandler si ii dam primul mesaj\n        try {\n            if (mTimerHandler == null)\n                mTimerHandler = NewTimerHandler ();\n            mTimerHandler.sendMessageDelayed (\n                    mTimerHandler.obtainMessage (Event1), 1000); // 1 sec\n        }\n        catch (Exception e)\n        {\n            beep (200, 400);\n        }\n    }\n\n    @Override\n    public void onDestroy ()\n    {\nLogMessage (&quot;onDestroy called&quot;);\n\n        // cica nu e nevoie sa apelezi in servicii (dar se pare ca nici nu strica)\n        // super.onDestroy ();\n\n        if (mTimerHandler != null)\n        {\nLogMessage (&quot;removeCallbacksAndMessages called&quot;);\n            mTimerHandler.removeCallbacksAndMessages (null);\n        }\n\n        //Process.killProcess (Process.myPid());\n    }\n\n    @Override\n    public int onStartCommand (Intent aIntent, int flags, int startId)\n    {\nLogMessage (&quot;onStartCommand called&quot;);\n\n        if (aIntent == null)\n            return START_STICKY;\n\n        String s = aIntent.getStringExtra (&quot;com.service.showOnLockScreen&quot;);\n        if (s != null)\n            SetShowOnLockScreen (s);\nLogMessage (&quot;SOLS in onStartCommand after SetShowOnLockScreen: &quot; + mShowOnLockScreen);\n\n        if (IsSetShowOnLockScreen ())\n            InitialiseService ();\n        else\n        {\n            stopSelf ();\n            return START_NOT_STICKY;\n        }\nLogMessage (&quot;SOLS after InitializeService: &quot; + mShowOnLockScreen);\n\n        // If we get killed, after returning from here, restart\n        return START_STICKY;\n    }\n\n    int GetCurrentSecond ()\n    {\n        return Calendar.getInstance().get (Calendar.SECOND);\n    }\n\n    final static int Event1 = 0;\n    private static Handler mTimerHandler = null;\n    Handler NewTimerHandler ()\n    {\n        return new Handler (Looper.getMainLooper ())\n        {\n            @Override\n            public void handleMessage (@NonNull Message msg)\n            {\nLogMessage (&quot;SOLS at begin of handleMessage: &quot; + mShowOnLockScreen);\n\n                try {\n                    if (msg.what == Event1)\n                    {\n                        // trimitem noul mesj un pic dupa inceperea minutului urmator\n                        int delay = 60 - GetCurrentSecond ();\n                        if (delay &lt; 10)\n                            delay = 10; // lasam cel putin 10 secunde\n                        sendMessageDelayed (obtainMessage (Event1),\n                                delay * 1000); // la inc. min. urmator\n\n//beep (200, 200, TONE_CDMA_ALERT_CALL_GUARD);\nLogMessage (&quot;SOLS before main action: &quot; + mShowOnLockScreen);\n\n                        if (IsSetShowOnLockScreen ())\n                            // uneori vine mesaj de handler si dupa ce s-a dat comanda de\n                            // auto-distrugere\n                            beep (100, 200);\n                    }\n                    else\n                    {\n                        beep (200, 400);\n                    }\n                }\n                catch (Exception e)\n                {\n                    beep (200, 400);\n                }\n            }\n        };\n    }\n}\n</code></pre>\n",
+    "tags" : [ "java", "android" ],
+    "owner" : {
+      "account_id" : 10096235,
+      "reputation" : 161,
+      "user_id" : 7461525,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/1122cef96f63aae375d8d81682bd7232?s=256&d=identicon&r=PG",
+      "display_name" : "VSim",
+      "link" : "https://stackoverflow.com/users/7461525/vsim"
+    },
+    "is_answered" : true,
+    "view_count" : 72,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1749690615,
+    "creation_date" : 1749143282,
+    "link" : "https://stackoverflow.com/questions/79654920/android-service-field-that-seems-to-be-modified-outside-of-code",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79658883,
+    "question_id" : 79654920,
+    "body" : "<p>OK, I think I figured it out.</p>\n<p>Strange as it may seem, it looks like the Handler from the first Service instance wasn't destroyed, somehow it persisted in memory with some data from the first instance, including said string. When the Service was created the second time, it probably got the Handler from the first time, with its data.</p>\n<p>Sounds like a phantasmagoric explanation. In any case, I can say for sure that I called killProcess at the end of Service.onDestroy, and it solved the problem. Now it works as intended the second and third time and so on.<br />\nSo this is the best explanation I have. If somebody can figure out a better one, please tell me about it.<br />\nEdit: I did one more test, I added a time stamp field in the Handler class, and it confirms this. The second time it's called after the service is destroyed and created again, the Handler has the same time stamp as the first time. If the process is killed when the service is destroyed, of course the next time the Handler is created anew and has a newer time stamp.<br />\nIn any case, it looks like an OS bug. I'd be curious if somebody else has experienced anything similar.</p>\n",
+    "score" : 0,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 10096235,
+      "reputation" : 161,
+      "user_id" : 7461525,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/1122cef96f63aae375d8d81682bd7232?s=256&d=identicon&r=PG",
+      "display_name" : "VSim",
+      "link" : "https://stackoverflow.com/users/7461525/vsim"
+    },
+    "creation_date" : 1749472520,
+    "last_activity_date" : 1749690615,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140507223,
+    "post_id" : 79654920,
+    "body" : "@CommonsWare OK, I added the stripped down Service subclass. I&#39;d appreciate it if you can look at it.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10096235,
+      "reputation" : 161,
+      "user_id" : 7461525,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/1122cef96f63aae375d8d81682bd7232?s=256&d=identicon&r=PG",
+      "display_name" : "VSim",
+      "link" : "https://stackoverflow.com/users/7461525/vsim"
+    },
+    "creation_date" : 1749690901,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140495094,
+    "post_id" : 79654920,
+    "body" : "&quot;I asked a question&quot; -- you asked a question about your <code>Service</code> and its behavior when that <code>Service</code> is started and stopped. You then failed to provide the code in the <code>Service</code>, or the code that is involved in starting and stopping the <code>Service</code>, let alone any code involved in how you are determining that this particular behavior is occurring.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 39846,
+      "reputation" : 1011235,
+      "user_id" : 115145,
+      "user_type" : "registered",
+      "accept_rate" : 84,
+      "profile_image" : "https://i.sstatic.net/wDnd8.png?s=256",
+      "display_name" : "CommonsWare",
+      "link" : "https://stackoverflow.com/users/115145/commonsware"
+    },
+    "creation_date" : 1749291868,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140494593,
+    "post_id" : 79654920,
+    "body" : "I didn&#39;t ask for that. I asked a question, I&#39;d like an answer from somebody who&#39;s expert enough to tell me if such a thing is even possible. I have some more debugging to do and if I don&#39;t get to the bottom of it, one variant indeed is that I make a skeleton app and if the problem persists there too, post it here maybe somebody can tell me what&#39;s wrong with it. But I&#39;m not there yet. Thanks anyway.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10096235,
+      "reputation" : 161,
+      "user_id" : 7461525,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/1122cef96f63aae375d8d81682bd7232?s=256&d=identicon&r=PG",
+      "display_name" : "VSim",
+      "link" : "https://stackoverflow.com/users/7461525/vsim"
+    },
+    "creation_date" : 1749254693,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140492826,
+    "post_id" : 79654920,
+    "body" : "&quot;I&#39;m writing an Android app that has an Activity and a Service&quot; -- nobody can help you with them, unless you include the relevant source code in the question.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 39846,
+      "reputation" : 1011235,
+      "user_id" : 115145,
+      "user_type" : "registered",
+      "accept_rate" : 84,
+      "profile_image" : "https://i.sstatic.net/wDnd8.png?s=256",
+      "display_name" : "CommonsWare",
+      "link" : "https://stackoverflow.com/users/115145/commonsware"
+    },
+    "creation_date" : 1749205165,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79658883" : [ {
+      "comment_id" : 140512933,
+      "post_id" : 79658883,
+      "body" : "@CommonsWare  Now that I fixed it, I&#39;m not going to change it to maybe have other unexpected difficulties. If some more problems appear I might consider doing this. In any case, even if the solution is, as you say, low-level (whatever that means; AFAIK it&#39;s the recommended solution for short-term timer tasks), it&#39;s standard, official and documented. Now that we&#39;ve established that my Service doesn&#39;t have bugs, maybe you can look at the problem I&#39;ve mentioned. Or not. As you like. I&#39;d think it&#39;s an interesting question for an Android expert.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10096235,
+        "reputation" : 161,
+        "user_id" : 7461525,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/1122cef96f63aae375d8d81682bd7232?s=256&d=identicon&r=PG",
+        "display_name" : "VSim",
+        "link" : "https://stackoverflow.com/users/7461525/vsim"
+      },
+      "creation_date" : 1749874074,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140512932,
+      "post_id" : 79658883,
+      "body" : "@CommonsWare Thanks for looking at it. As you can see here  <a href=\"https://developer.android.com/develop/background-work/services\" rel=\"nofollow noreferrer\">developer.android.com/develop/background-work/services</a>    it explicitly says &quot;Note: Unlike the activity lifecycle callback methods, you are not required to call the superclass implementation of these callback methods.&quot; And their example doesn&#39;t call them either. So this is definitely not a bug. If this is the biggest problem you could spot then I&#39;m actually glad about it.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10096235,
+        "reputation" : 161,
+        "user_id" : 7461525,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/1122cef96f63aae375d8d81682bd7232?s=256&d=identicon&r=PG",
+        "display_name" : "VSim",
+        "link" : "https://stackoverflow.com/users/7461525/vsim"
+      },
+      "creation_date" : 1749874018,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140508187,
+      "post_id" : 79658883,
+      "body" : "Your service has bugs. Of particular note, you are not chaining to the superclass in <code>onCreate()</code>, and you are not chaining to the superclass in <code>onDestroy()</code>. You might consider cleaning up those bugs before you go blaming  others. Also note that <code>Handler</code> is a very low-level solution, one that contains many challenges for developers. For your apparent use case, <code>ScheduledExecutorService</code>, or even the antiquated <code>Timer</code>/<code>TimerTask</code>, would be safer choices.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 39846,
+        "reputation" : 1011235,
+        "user_id" : 115145,
+        "user_type" : "registered",
+        "accept_rate" : 84,
+        "profile_image" : "https://i.sstatic.net/wDnd8.png?s=256",
+        "display_name" : "CommonsWare",
+        "link" : "https://stackoverflow.com/users/115145/commonsware"
+      },
+      "creation_date" : 1749724255,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

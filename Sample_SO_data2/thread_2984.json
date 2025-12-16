@@ -1,0 +1,219 @@
+{
+  "question" : {
+    "question_id" : 79583360,
+    "title" : "How to generate a lambda with a captured `int` argument using `LambdaMetafactory.metafactory` for a static method?",
+    "body" : "<p>I'm trying to dynamically generate a lambda using <code>LambdaMetafactory.metafactory</code>, where the target method has an additional captured <code>int</code> parameter.</p>\n<h2>Context</h2>\n<p>Assume I have the following functional interface:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@FunctionalInterface\npublic interface Binder {\n    void parseAndStore(byte[] src, byte[] dst);\n}\n</code></pre>\n<p>And the static method I want to call looks like this:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class BinderFactory {\n    public static void bindField(byte[] src, byte[] dst, int offset) {\n        // Business logic\n    }\n}\n</code></pre>\n<p>At runtime, I want to produce a Binder instance like this:</p>\n<pre class=\"lang-java prettyprint-override\"><code>Binder binder = (src, dst) -&gt; BinderFactory.bindField(src, dst, offset);\n</code></pre>\n<p>The offset is known only at runtime and should be captured</p>\n<h3>What I tried</h3>\n<pre class=\"lang-java prettyprint-override\"><code>public class BinderBuilder {\n    public static Binder createBinder(String methodName, int offset) {\n        try {\n            MethodHandles.Lookup lookup = MethodHandles.lookup();\n\n            // (byte[], byte[], int) -&gt; void\n            MethodHandle target = lookup.findStatic(\n                BinderFactory.class,\n                methodName,\n                MethodType.methodType(void.class, byte[].class, byte[].class, int.class)\n            );\n\n            // Bind the offset argument at position 2\n            MethodHandle bound = MethodHandles.insertArguments(target, 2, offset);\n\n            CallSite site = LambdaMetafactory.metafactory(\n                lookup,\n                &quot;parseAndStore&quot;, // functional interface method\n                MethodType.methodType(Binder.class), // invokedType: () -&gt; Binder\n                MethodType.methodType(void.class, byte[].class, byte[].class), // erased SAM\n                bound, // implementation handle with offset bound\n                MethodType.methodType(void.class, byte[].class, byte[].class) // implType\n            );\n\n            return (Binder) site.getTarget().invoke(); // invoke factory\n        } catch (Throwable t) {\n            throw new RuntimeException(&quot;Failed to bind lambda&quot;, t);\n        }\n    }\n}\n</code></pre>\n<h3>Problem</h3>\n<p>When I run the code, I get:</p>\n<blockquote>\n<p>Caused by: java.lang.invoke.LambdaConversionException: no direct\nmethod, cannot crack method handle ...</p>\n</blockquote>\n<h3>Expected</h3>\n<p>I want a single-call Binder lambda that internally captures the offset value and calls:</p>\n<pre class=\"lang-java prettyprint-override\"><code>BinderFactory.bindField(src, dst, offset);\n</code></pre>\n<h3>Questions</h3>\n<p>Why does the metafactory setup fail with a “no direct method” or “cannot crack” exception?</p>\n<p>Is <code>insertArguments()</code> enough to bind the captured offset, or is another approach needed?</p>\n<p>Are my <code>invokedType</code>, <code>samMethodType</code>, and <code>implMethodType</code> correctly specified?</p>\n<p>How can I ensure that the result is a single-layer lambda (no factory indirection)?</p>\n<p>Any guidance on resolving this lambda binding issue would be appreciated. I’d prefer sticking to <code>LambdaMetafactory.metafactory</code> for performance and clarity, unless <code>altMetafactory</code> is absolutely required.</p>\n",
+    "tags" : [ "java", "invokedynamic" ],
+    "owner" : {
+      "account_id" : 1412195,
+      "reputation" : 1372,
+      "user_id" : 1338565,
+      "user_type" : "registered",
+      "accept_rate" : 20,
+      "profile_image" : "https://www.gravatar.com/avatar/d08b34dbf6a126fc8fa21c1738d3c75c?s=256&d=identicon&r=PG",
+      "display_name" : "Thiru kumaran",
+      "link" : "https://stackoverflow.com/users/1338565/thiru-kumaran"
+    },
+    "is_answered" : true,
+    "view_count" : 82,
+    "answer_count" : 2,
+    "score" : 3,
+    "last_activity_date" : 1745156138,
+    "creation_date" : 1745152846,
+    "link" : "https://stackoverflow.com/questions/79583360/how-to-generate-a-lambda-with-a-captured-int-argument-using-lambdametafactory",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79583407,
+    "question_id" : 79583360,
+    "body" : "<p>Rather than using <code>insertArguments</code>, you can pass the captured values in a different way (which is how the compiler generates <code>invokedynamic</code> for lambdas). The documentation for the <code>invokeType</code> parameter says:</p>\n<blockquote>\n<p><code>invokedType</code> - The expected signature of the <code>CallSite</code>. The parameter types represent the types of capture variables; the return type is the interface to implement.</p>\n</blockquote>\n<p>So you can pass <code>(int) -&gt; Binder</code> as the <code>invokeType</code>. Then you can pass the thing found by <code>lookup.findStatic</code> directly as the <code>implMethod</code>.</p>\n<p>Finally, pass the <code>offset</code> when you call <code>getTarget().invoke(...)</code>.</p>\n<pre><code>public static Binder createBinder(String methodName, int offset) {\n    try {\n        MethodHandles.Lookup lookup = MethodHandles.lookup();\n\n        MethodHandle target = lookup.findStatic(\n                BinderFactory.class,\n                methodName,\n                MethodType.methodType(void.class, int.class, byte[].class, byte[].class)\n        );\n\n        CallSite site = LambdaMetafactory.metafactory(\n                lookup,\n                &quot;parseAndStore&quot;,\n                MethodType.methodType(Binder.class, int.class),\n                MethodType.methodType(void.class, byte[].class, byte[].class),\n                target,\n                MethodType.methodType(void.class, byte[].class, byte[].class)\n        );\n\n        return (Binder) site.getTarget().invoke(offset); // pass the offset here!\n    } catch (Throwable t) {\n        throw new RuntimeException(&quot;Failed to bind lambda&quot;, t);\n    }\n}\n</code></pre>\n<p>Note that the captured parameters need to go <em>first</em>, so <code>bindField</code> needs to have a signature like this:</p>\n<pre><code>public static void bindField(int offset, byte[] src, byte[] dst)\n</code></pre>\n",
+    "score" : 4,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 6651855,
+      "reputation" : 292280,
+      "user_id" : 5133585,
+      "user_type" : "registered",
+      "accept_rate" : 96,
+      "profile_image" : "https://i.sstatic.net/dfqcw.png?s=256",
+      "display_name" : "Sweeper",
+      "link" : "https://stackoverflow.com/users/5133585/sweeper"
+    },
+    "creation_date" : 1745156138,
+    "last_activity_date" : 1745156138,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79583401,
+    "question_id" : 79583360,
+    "body" : "<p>I applied the answer of <a href=\"https://stackoverflow.com/questions/77098680/methodhandle-cannot-be-cracked-when-using-lambdametafactory\">MethodHandle cannot be cracked when using LambdaMetafactory?</a> myself. The difference is in the way the <code>CallSite</code> is setup (3rd and 5th argument) and called.</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class BinderBuilder {\n    public static Binder createBinder(String methodName, int offset) {\n        try {\n            MethodHandles.Lookup lookup = MethodHandles.lookup();\n\n            // (byte[], byte[], int) -&gt; void\n            MethodHandle target = lookup.findStatic(\n                BinderFactory.class,\n                methodName,\n                MethodType.methodType(void.class, byte[].class, byte[].class, int.class)\n            );\n\n            // Bind the offset argument at position 2\n            MethodHandle bound = MethodHandles.insertArguments(target, 2, offset);\n\n            CallSite site = LambdaMetafactory.metafactory(\n                lookup,\n                &quot;parseAndStore&quot;, // functional interface method\n                MethodType.methodType(Binder.class, MethodHandle.class),\n                MethodType.methodType(void.class, byte[].class, byte[].class), // erased SAM\n                MethodHandles.exactInvoker(MethodType.methodType(void.class, byte[].class, byte[].class)),\n                MethodType.methodType(void.class, byte[].class, byte[].class) // implType\n            );\n\n            return (Binder) site.getTarget().invokeExact(bound);\n        } catch (Throwable t) {\n            throw new IllegalStateException(&quot;Failed to bind lambda&quot;, t);\n        }\n    }\n}\n</code></pre>\n",
+    "score" : 3,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 1211967,
+      "reputation" : 9964,
+      "user_id" : 1180351,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/pKB8y.png?s=256",
+      "display_name" : "Rob Spoor",
+      "link" : "https://stackoverflow.com/users/1180351/rob-spoor"
+    },
+    "creation_date" : 1745155421,
+    "last_activity_date" : 1745155421,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140359562,
+    "post_id" : 79583360,
+    "body" : "&quot;MethodHandle.invokeExact() is reflective and incurs call-site overhead. &quot; - No.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 785560,
+      "reputation" : 15259,
+      "user_id" : 845414,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/8fbe63f77ce3f9656c62b27db4d8583b?s=256&d=identicon&r=PG",
+      "display_name" : "Johannes Kuhn",
+      "link" : "https://stackoverflow.com/users/845414/johannes-kuhn"
+    },
+    "creation_date" : 1745363108,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140352300,
+    "post_id" : 79583360,
+    "body" : "LambdaMetafactory compiles an actual lambda at runtime, backed by an invokedynamic instruction. This allows the JVM to treat it like a regular method call — inlining it, eliminating allocations, and optimizing control flow.  This makes LambdaMetafactory-based functional interfaces much faster, especially in tight loops or high-frequency execution paths.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1412195,
+      "reputation" : 1372,
+      "user_id" : 1338565,
+      "user_type" : "registered",
+      "accept_rate" : 20,
+      "profile_image" : "https://www.gravatar.com/avatar/d08b34dbf6a126fc8fa21c1738d3c75c?s=256&d=identicon&r=PG",
+      "display_name" : "Thiru kumaran",
+      "link" : "https://stackoverflow.com/users/1338565/thiru-kumaran"
+    },
+    "creation_date" : 1745155696,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140352299,
+    "post_id" : 79583360,
+    "body" : "Thank you Rob.The key motivation behind using LambdaMetafactory over directly invoking a MethodHandle (e.g., via invokeExact) lies in runtime performance and JVM optimization.  MethodHandle.invokeExact() is reflective and incurs call-site overhead. It prevents the JVM from applying aggressive optimizations like inlining.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1412195,
+      "reputation" : 1372,
+      "user_id" : 1338565,
+      "user_type" : "registered",
+      "accept_rate" : 20,
+      "profile_image" : "https://www.gravatar.com/avatar/d08b34dbf6a126fc8fa21c1738d3c75c?s=256&d=identicon&r=PG",
+      "display_name" : "Thiru kumaran",
+      "link" : "https://stackoverflow.com/users/1338565/thiru-kumaran"
+    },
+    "creation_date" : 1745155648,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140352281,
+    "post_id" : 79583360,
+    "body" : "You can also check <a href=\"https://stackoverflow.com/questions/77098680/methodhandle-cannot-be-cracked-when-using-lambdametafactory\" title=\"methodhandle cannot be cracked when using lambdametafactory\">stackoverflow.com/questions/77098680/&hellip;</a>.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1211967,
+      "reputation" : 9964,
+      "user_id" : 1180351,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/pKB8y.png?s=256",
+      "display_name" : "Rob Spoor",
+      "link" : "https://stackoverflow.com/users/1180351/rob-spoor"
+    },
+    "creation_date" : 1745155164,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140352278,
+    "post_id" : 79583360,
+    "body" : "Is using <code>LambdaMetafactory</code> necessary? Because I could get it to work by replacing the <code>CallSite</code> with a lambda that wraps <code>bound.invokeExact(src, dst)</code> in a try-catch block.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1211967,
+      "reputation" : 9964,
+      "user_id" : 1180351,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/pKB8y.png?s=256",
+      "display_name" : "Rob Spoor",
+      "link" : "https://stackoverflow.com/users/1180351/rob-spoor"
+    },
+    "creation_date" : 1745155108,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79583407" : [ {
+      "comment_id" : 140352721,
+      "post_id" : 79583407,
+      "body" : "Thank you @Sweeper. JMH reveals that the performance is significantly faster, almost matching direct method call.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1412195,
+        "reputation" : 1372,
+        "user_id" : 1338565,
+        "user_type" : "registered",
+        "accept_rate" : 20,
+        "profile_image" : "https://www.gravatar.com/avatar/d08b34dbf6a126fc8fa21c1738d3c75c?s=256&d=identicon&r=PG",
+        "display_name" : "Thiru kumaran",
+        "link" : "https://stackoverflow.com/users/1338565/thiru-kumaran"
+      },
+      "creation_date" : 1745171341,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79583401" : [ {
+      "comment_id" : 140352718,
+      "post_id" : 79583401,
+      "body" : "Both solutions works, but JMH benchmarks reveals @Sweeper&#39;s solution is significantly faster, almost matching direct method calls.  Exactinvoker Solution introduces an extra MethodHandle indirection and is ~2.5&#215; slower.  Thank you",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1412195,
+        "reputation" : 1372,
+        "user_id" : 1338565,
+        "user_type" : "registered",
+        "accept_rate" : 20,
+        "profile_image" : "https://www.gravatar.com/avatar/d08b34dbf6a126fc8fa21c1738d3c75c?s=256&d=identicon&r=PG",
+        "display_name" : "Thiru kumaran",
+        "link" : "https://stackoverflow.com/users/1338565/thiru-kumaran"
+      },
+      "creation_date" : 1745171193,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140352330,
+      "post_id" : 79583401,
+      "body" : "Interesting. I didn&#39;t know about <code>exactInvoker</code>. Rather than capturing the <code>int</code>, this &quot;captures&quot; (in a sense) the <code>bound</code> method handle. I wonder how this differs from my answer in terms of performance.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 6651855,
+        "reputation" : 292280,
+        "user_id" : 5133585,
+        "user_type" : "registered",
+        "accept_rate" : 96,
+        "profile_image" : "https://i.sstatic.net/dfqcw.png?s=256",
+        "display_name" : "Sweeper",
+        "link" : "https://stackoverflow.com/users/5133585/sweeper"
+      },
+      "creation_date" : 1745157038,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140352306,
+      "post_id" : 79583401,
+      "body" : "Thank you @Rob Spoor. I will check and confirm",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1412195,
+        "reputation" : 1372,
+        "user_id" : 1338565,
+        "user_type" : "registered",
+        "accept_rate" : 20,
+        "profile_image" : "https://www.gravatar.com/avatar/d08b34dbf6a126fc8fa21c1738d3c75c?s=256&d=identicon&r=PG",
+        "display_name" : "Thiru kumaran",
+        "link" : "https://stackoverflow.com/users/1338565/thiru-kumaran"
+      },
+      "creation_date" : 1745155904,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

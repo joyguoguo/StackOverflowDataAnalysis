@@ -1,0 +1,449 @@
+{
+  "question" : {
+    "question_id" : 79657132,
+    "title" : "What does AWS mean when they say that there are scalability issues with Checked Exceptions?",
+    "body" : "<p>I am upgrading AWS' Java SDK from 1.x to 2.x. In 2.x, it seems that most exceptional cases are modeled with Unchecked Exceptions, as opposed to Checked Exceptions like it was in 1.x.</p>\n<p>When trying to figure out why, someone on Reddit pointed me to <a href=\"https://docs.aws.amazon.com/sdk-for-java/latest/developer-guide/handling-exceptions.html#why-unchecked-exceptions\" rel=\"nofollow noreferrer\">this snippet</a> of AWS documentation:</p>\n<blockquote>\n<p>The AWS SDK for Java uses runtime (or unchecked) exceptions instead of\nchecked exceptions for these reasons:</p>\n<ul>\n<li><p>To allow developers fine-grained control over the errors they want to handle without forcing them to handle exceptional cases they aren’t\nconcerned about (and making their code overly verbose)</p>\n</li>\n<li><p>To prevent scalability issues inherent with checked exceptions in large applications</p>\n</li>\n</ul>\n<p>In general, checked exceptions work well on small scales, but can\nbecome troublesome as applications grow and become more complex.</p>\n</blockquote>\n<p>Now, I don't know how small &quot;small-scale&quot; really is, but I have found Checked Exceptions an absolute pleasure to work with. I don't see what they mean at all by saying there is significant friction at larger scales.</p>\n<p>What sort of friction can I expect Checked Exceptions to give me on &quot;large-scale&quot; applications? A couple more <code>try</code>-<code>catch</code> statements?</p>\n",
+    "tags" : [ "java", "amazon-web-services", "aws-sdk-java-2.0", "checked-exceptions", "unchecked-exception" ],
+    "owner" : {
+      "account_id" : 14010051,
+      "reputation" : 260,
+      "user_id" : 10118965,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/61afd55894624ae8f6e4189b68db1f30?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "davidalayachew",
+      "link" : "https://stackoverflow.com/users/10118965/davidalayachew"
+    },
+    "is_answered" : true,
+    "view_count" : 110,
+    "closed_date" : 1749425020,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1749378733,
+    "creation_date" : 1749311890,
+    "link" : "https://stackoverflow.com/questions/79657132/what-does-aws-mean-when-they-say-that-there-are-scalability-issues-with-checked",
+    "closed_reason" : "Opinion-based"
+  },
+  "answers" : [ {
+    "answer_id" : 79657747,
+    "question_id" : 79657132,
+    "body" : "<p>The AWS API design team didn't do a good job. These arguments are nonsense.</p>\n<blockquote>\n<p>To allow developers fine-grained control over the errors they want to handle without forcing them to handle exceptional cases they aren’t concerned about (and making their code overly verbose)</p>\n</blockquote>\n<p>This is gobbledygook. Giving it my utter best effort at being a sensible statement, then, the complaint boils down to more or less:</p>\n<ul>\n<li>If <em>all</em> sources of 'things could go wrong' are considered, just about every API endpoint wrapper method we would publish would get a <code>throws</code> clause that lists lots of exceptions. 5, maybe 20.</li>\n</ul>\n<p>But hopefully that's not actually what they mean because that's ridiculous - you can make supertypes. It could just <code>throws AwsException</code>. See for example how the cryptographic APIs of java itself have a boatload of exceptions, but they all extend <a href=\"https://docs.oracle.com/javase/8/docs/api/java/security/GeneralSecurityException.html\" rel=\"nofollow noreferrer\"><code>GeneralSecurityException</code></a> (note the large amount of subclasses listed). IOException is similar; it has plenty of subtypes.</p>\n<p>For truly exotic situations that really only occur for a single API endpoint, if for some reason &quot;I have 150 distinct checked exception types&quot; is unmaintainable (I don't really see why that's actually a problem, but lets roll with it), exception types are actual, full java types. You can give them an enum or similar to convey a well known error code. For example, SQLException's own <a href=\"https://docs.oracle.com/javase/8/docs/api/java/sql/SQLException.html#getSQLState--\" rel=\"nofollow noreferrer\"><code>getSQLState()</code></a> implements this strategy. I don't recommend this - <code>catch (DuplicateKeyException e)</code> is a lot nicer than <code>catch (SQLException e) { if e.getSQLState().equals(&quot;1200F&quot;) {</code> - but it's a solution if, for example, the authors of the types are a separate team from the authors of the API itself.</p>\n<blockquote>\n<p>To prevent scalability issues inherent with checked exceptions in large applications</p>\n</blockquote>\n<p>Nonsense.</p>\n<p>Large applications do not scale if you treat them as a big mess o spaghetti. The way to scale large application designs is modularization. And not in the 'use the jigsaw stuff (module-info)' sense - more abstract than that. If you draw the complete design of your system out on a whiteboard, it should be possible to separate the whole thing into a bunch of components that are almost independent - draw a few big circles around these components, and the idea is that the amount of 'lines' that flow between the big circles is very small. This way, a given component can be understood on its own and e.g. the learning curve when onboarding a new team member is better than 'well, spend 3 years getting familiar with all of this 15-years-in-continuous-use, 4 million lines of code project'.</p>\n<p>Such a component then acts like a small/medium sized app for most purposes. Hence the very nature of the argument 'it works for small stuff but fails for big stuff' is suspect right out of the gate, and we haven't even gotten to the 'this is an argument about checked exceptions' part.</p>\n<p>It's even weaker once that's brought in. Here's an example of what they are presumably talking about:</p>\n<pre><code>class GameState {\n  public void saveGame(String saveName) throws SQLException {\n    ...\n  }\n}\n//NB: This is bad design used as an example.\n</code></pre>\n<p>The problem here is that in this 'large' app (a game, of some sort), the code that wants to trigger 'save game' now is all of a sudden confronted with the fact that, evidently, databases are involved. Other than the <code>throws SQLException</code> part, imagine that the code you were writing that wants to call this <code>saveGame</code> has <em>never</em> run into 'oh, this thing uses databases somewhere'. Now the mere existence of that <code>throws</code> clause changes the rules and 'impacts scalability of the development process' because a bunch of code is now being written where the author needs to now first figure out how that DB is involved.</p>\n<p>Except, this is trivially avoidable, and the above is simply bad design. There are only 2 options:</p>\n<ul>\n<li>The save game mechanic is so entangled with DB design, and the abstract is leaky: the callers of saveGame <strong>must know it works that way</strong> or bad things will happen. In this case, the design is inherently less scalable than optimal, and the checked exceptions aren't a material aspect of this design. The point is moot.</li>\n<li>The save game mechanic so happens to use DBs. Right now. it's properly abstracted away: Callers don't need to know or care about it, the save game API declares its own caveats, preconditions, and guarantees. It is feasible to imagine some alternative or future implementation swaps out a DB for a file system, or changes DB engines. Callers should not be bothered with having to know that a DB backs this. This is, obviously, the preferred design for the purposes of scaling development.</li>\n</ul>\n<p>But, the code as written above is badly designed if it's the second case. This is how the code should be written:</p>\n<pre><code>class GameState {\n  void saveGame(String saveName) throws SaveException {\n    try {\n      // impl detail that writes to a DB\n    } catch (SQLException e) {\n      throw new SaveException(&quot;Explain stuff&quot;, e);\n    }\n  }\n\n  public static class SaveException extends Exception { .. }\n}\n</code></pre>\n<p>Yes, this is more code, but the amount of code you should be writing isn't affected if you change to RuntimeExceptions - giving separate error conditions separate exception types <strong>is fundamental</strong> if you want to scale your application; the ability for code to respond specifically to a given error condition can't be done if everybody writes <code>throw new RuntimeException(...)</code> for every error that could occur.</p>\n<p>And that 'more code' thing is, in fact, what allows you to scale: Have each layer in your large app do a good job at abstracting away its implementation details. This way, callers of the save system need to learn about the <code>saveGame</code> method, <em>including</em> the ways in which it communicates error conditions to you, but that's where the learning exercise ends. There is now no need for callers to know anything about DBs.</p>\n<p>Conclusion: The AWS team is prejudicially arguing (they don't like checked exceptions for whatever reason and felt like writing down &quot;We decided to change from checked exceptions to unchecked exceptions cuz we felt like it&quot; sounded unprofessional so they reached out for the first plausible sounding reason without thinking about it very long), or seemingly inexperienced in how exceptions (checked or not) fit in proper design.</p>\n<p>Remember: &quot;Just make everything a runtime exception&quot; is steering <em>away</em> from the type system, and most programmers agree that you should be using the type system <em>more</em> in order to keep larger projects maintainable. &quot;Checked exceptions are bad for scalability&quot; doesn't pass the smell test right off the bat, for that reason.</p>\n<p>NB: This question is bordering on off topic, as SO isn't designed to tackle opinionated issues and checked exceptions have a rather large amount of opinionated surface area. However, there are somewhat objective issues, such as how to tackle 'hundreds of checked exceptions' and 'include the exceptions thrown by your implementation details in the job of ensuring implementation details are properly abstracted away' that are fit for SO.</p>\n<p>NB2: I've attempted to think of every reasonable argument in favour of the axioms laid forth by the AWS team in the sections quoted by the question. I may well have failed to take into consideration a bunch of them. I'll attempt to update this answer if further reasoning is provided.</p>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 401843,
+      "reputation" : 107206,
+      "user_id" : 768644,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+      "display_name" : "rzwitserloot",
+      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+    },
+    "creation_date" : 1749378733,
+    "last_activity_date" : 1749378733,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140498067,
+    "post_id" : 79657132,
+    "body" : "@MattTimmermans Thanks for clarifying. I see -- abstract away internals so that the outside world doesn&#39;t know, even if the internal is the exception type. And that applies for both Checked and Unchecked Exceptions.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 14010051,
+      "reputation" : 260,
+      "user_id" : 10118965,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/61afd55894624ae8f6e4189b68db1f30?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "davidalayachew",
+      "link" : "https://stackoverflow.com/users/10118965/davidalayachew"
+    },
+    "creation_date" : 1749432649,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140497965,
+    "post_id" : 79657132,
+    "body" : "No, it isn&#39;t.  The dependency inversion principle implies that the implementation details of your dependencies should often be none of your business.  This includes the various ways in which they may fail -- which might make sense to your caller (who provides the dependency) even though <i>you</i> don&#39;t know anything about them.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 7178634,
+      "reputation" : 60923,
+      "user_id" : 5483526,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/780a651189f64a2cbf4b7f62cf852005?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Matt Timmermans",
+      "link" : "https://stackoverflow.com/users/5483526/matt-timmermans"
+    },
+    "creation_date" : 1749426555,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140497960,
+    "post_id" : 79657132,
+    "body" : "@MattTimmermans Regarding your transitive closure point, isn&#39;t that exactly our job as developers? And like Reinier said in the accepted answer -- you don&#39;t avoid this by using Unchecked Exceptions. At best, the Unchecked Exceptions allow you to avoid dealing with the problem, but I&#39;d argue that&#39;s just developers avoiding the problem, as mentioned. It doesn&#39;t sound like a good thing to me, at least.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 14010051,
+      "reputation" : 260,
+      "user_id" : 10118965,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/61afd55894624ae8f6e4189b68db1f30?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "davidalayachew",
+      "link" : "https://stackoverflow.com/users/10118965/davidalayachew"
+    },
+    "creation_date" : 1749426204,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140497958,
+    "post_id" : 79657132,
+    "body" : "Checked exceptions are also almost universally misunderstood.  People think that having a <code>throws</code> clause means that you won&#39;t throw any exceptions that aren&#39;t in there... but of course that&#39;s not what it says, and what it <i>does</i> say is useless.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7178634,
+      "reputation" : 60923,
+      "user_id" : 5483526,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/780a651189f64a2cbf4b7f62cf852005?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Matt Timmermans",
+      "link" : "https://stackoverflow.com/users/5483526/matt-timmermans"
+    },
+    "creation_date" : 1749425960,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140497956,
+    "post_id" : 79657132,
+    "body" : "The scale-related version of the problem is having to catch, adapt, and rethrow any exceptions from the whole transitive closure of all your dependencies, or expose exceptions related to the specific internal details of your dependency choices in your own interface.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7178634,
+      "reputation" : 60923,
+      "user_id" : 5483526,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/780a651189f64a2cbf4b7f62cf852005?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Matt Timmermans",
+      "link" : "https://stackoverflow.com/users/5483526/matt-timmermans"
+    },
+    "creation_date" : 1749425854,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140497946,
+    "post_id" : 79657132,
+    "body" : "@MattTimmermans While I agree that that is a pain point of Checked Exceptions, it&#39;s also a pain point that exists on the small-scale, and I don&#39;t think it gets meaningfully bigger at the large-scale. Can you explain more what you mean?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 14010051,
+      "reputation" : 260,
+      "user_id" : 10118965,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/61afd55894624ae8f6e4189b68db1f30?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "davidalayachew",
+      "link" : "https://stackoverflow.com/users/10118965/davidalayachew"
+    },
+    "creation_date" : 1749425475,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140497929,
+    "post_id" : 79657132,
+    "body" : "Checked exceptions make it very difficult to use streams...  which really illustrates fundamental problems with the whole checked exception idea.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 7178634,
+      "reputation" : 60923,
+      "user_id" : 5483526,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/780a651189f64a2cbf4b7f62cf852005?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Matt Timmermans",
+      "link" : "https://stackoverflow.com/users/5483526/matt-timmermans"
+    },
+    "creation_date" : 1749425173,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140495721,
+    "post_id" : 79657132,
+    "body" : "@aled I was actually thinking that their might be a few AWS people around here. I know I met a few StackOverflow in general, so it wouldn&#39;t surprise me if they subscribe to the AWS Collective.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 14010051,
+      "reputation" : 260,
+      "user_id" : 10118965,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/61afd55894624ae8f6e4189b68db1f30?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "davidalayachew",
+      "link" : "https://stackoverflow.com/users/10118965/davidalayachew"
+    },
+    "creation_date" : 1749314005,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140495716,
+    "post_id" : 79657132,
+    "body" : "Unless someone from the AWS SDK answers here we can only speculate. That maybe the reason for those opinion votes. Maybe they use the sdk in their own apps?",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 372682,
+      "reputation" : 26512,
+      "user_id" : 721855,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/vZiox.png?s=256",
+      "display_name" : "aled",
+      "link" : "https://stackoverflow.com/users/721855/aled"
+    },
+    "creation_date" : 1749313880,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140495710,
+    "post_id" : 79657132,
+    "body" : "@aled Sure, but they changed everyone&#39;s SDK. That&#39;s not nothing -- that implies that they weighed the costs against the benefit, and found Checked Exceptions to be a big enough impediment to remove them in favor Unchecked Exceptions, assuming their reasons are to be believed. And assuming some form of logical deduction.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 14010051,
+      "reputation" : 260,
+      "user_id" : 10118965,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/61afd55894624ae8f6e4189b68db1f30?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "davidalayachew",
+      "link" : "https://stackoverflow.com/users/10118965/davidalayachew"
+    },
+    "creation_date" : 1749313714,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140495700,
+    "post_id" : 79657132,
+    "body" : "Small scale probably means anything not Amazon-scale to them, but that&#39;s just my opinion. I would not worry about that until you detect an actual issue and can profile it to point to exceptions causing a real issue.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 372682,
+      "reputation" : 26512,
+      "user_id" : 721855,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/vZiox.png?s=256",
+      "display_name" : "aled",
+      "link" : "https://stackoverflow.com/users/721855/aled"
+    },
+    "creation_date" : 1749313494,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140495693,
+    "post_id" : 79657132,
+    "body" : "I see the close reasons are saying that this is &quot;Opinion-Based&quot;, which is fair. Would I be better off asking AWS themselves? Since I don&#39;t really know where else to direct this question. I figured that, since it was under the AWS Collective, that they would be well equipped to help me understand AWS&#39; own documentation.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 14010051,
+      "reputation" : 260,
+      "user_id" : 10118965,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/61afd55894624ae8f6e4189b68db1f30?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "davidalayachew",
+      "link" : "https://stackoverflow.com/users/10118965/davidalayachew"
+    },
+    "creation_date" : 1749313147,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140495691,
+    "post_id" : 79657132,
+    "body" : "@VGR Checked Exceptions are valuable. The only pain point I see is the level of effort involved in handling them. Doesn&#39;t mean the Checked Exceptions themselves are to blame.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 14010051,
+      "reputation" : 260,
+      "user_id" : 10118965,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/61afd55894624ae8f6e4189b68db1f30?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "davidalayachew",
+      "link" : "https://stackoverflow.com/users/10118965/davidalayachew"
+    },
+    "creation_date" : 1749313111,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140495685,
+    "post_id" : 79657132,
+    "body" : "I&#39;ll re-add this part of it then:  I have wasted many hours trying to determine what exceptions the methods of various non-Oracle libraries (not just the AWS SDK) can actually throw.  If only there had been some way to, y&#39;know, declare that...",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 2053598,
+      "reputation" : 44991,
+      "user_id" : 1831987,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/38b1c37530189ec4471a43a618e33f67?s=256&d=identicon&r=PG",
+      "display_name" : "VGR",
+      "link" : "https://stackoverflow.com/users/1831987/vgr"
+    },
+    "creation_date" : 1749312967,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140495673,
+    "post_id" : 79657132,
+    "body" : "@VGR Heh, I liked the old version of your comment better.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 14010051,
+      "reputation" : 260,
+      "user_id" : 10118965,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/61afd55894624ae8f6e4189b68db1f30?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "davidalayachew",
+      "link" : "https://stackoverflow.com/users/10118965/davidalayachew"
+    },
+    "creation_date" : 1749312768,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140495665,
+    "post_id" : 79657132,
+    "body" : "Maybe tagging AWS was a mistake. This is only tangentially related to AWS. The real question is about Checked Exceptions, and what potential costs they may have. Feel free to remove the tags if this question is misplaced. Alternatively, this might be a better fit for Software Engineering SE vs StackOverflow SE.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 14010051,
+      "reputation" : 260,
+      "user_id" : 10118965,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/61afd55894624ae8f6e4189b68db1f30?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "davidalayachew",
+      "link" : "https://stackoverflow.com/users/10118965/davidalayachew"
+    },
+    "creation_date" : 1749312645,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79657747" : [ {
+      "comment_id" : 140497932,
+      "post_id" : 79657747,
+      "body" : "Since the question is now closed, I will at least award you the answer. I was going to hold out until I could get some AWS folks on this, but since it is closed, that means no more new answers. I do encourage you to look into those points you said that you might edit your answer to include. Alternatively, if you feel like I could ask a better question, let me know, and I will edit my question.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 14010051,
+        "reputation" : 260,
+        "user_id" : 10118965,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/61afd55894624ae8f6e4189b68db1f30?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "davidalayachew",
+        "link" : "https://stackoverflow.com/users/10118965/davidalayachew"
+      },
+      "creation_date" : 1749425235,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140497812,
+      "post_id" : 79657747,
+      "body" : "@rzwitserloot It isn&#39;t my argument though.  I&#39;m just paraphrasing what Clean Code says.  Nor I&#39;m I advocating Clean Code as &quot;good,&quot; just pointing out where where this sort of idea comes from.  (Though I didn&#39;t actually know it was so controversial.)  So your reply is more or less my point: to inform folks what the core idea is (of AWS is in the OP) so that they can track its sources and make informed decisions.  (Also the site seems to have clipped the end of my comment and I can&#39;t fix it.  Odd...)",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2709823,
+        "reputation" : 11069,
+        "user_id" : 2338547,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/QT3fG.png?s=256",
+        "display_name" : "markspace",
+        "link" : "https://stackoverflow.com/users/2338547/markspace"
+      },
+      "creation_date" : 1749418089,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140497798,
+      "post_id" : 79657747,
+      "body" : "@markspace Your actual argument is nonsense. In the sense that AWS hasn&#39;t fixed it. If some exotic AWS exception occurs, say, &#39;BucketDailyLimitExceededException&#39;, it.. <b>still happens right now</b> with <b>all the same caveats</b>. The only way your argument makes sense is if your complaint is about the 100s of types of checked exceptions, in which case, read my answer - one supertype fixes that, or, if you intentionally just <code>throw new RuntimeException(&quot;error msg&quot;)</code>, which AWS2 <i>does not actually do</i>, so, isn&#39;t relevant.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 401843,
+        "reputation" : 107206,
+        "user_id" : 768644,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+        "display_name" : "rzwitserloot",
+        "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+      },
+      "creation_date" : 1749417401,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140497794,
+      "post_id" : 79657747,
+      "body" : "@markspace Clean Code is rather legendary for being extremely controversial, with pretty much every experienced programmer I know more or less hating it at this point – the pithy advice lines are as true as ever, but they are nebulous. The actual &quot;this is what a pragmatic implementation of my advice would look like&quot; code snippets in that book are bewilderingly unmaintainable (massive code bloat to chase &#39;no method should be more than a handful of lines&#39;, as an example). This is way too specific for Martin to give meaningful advice. Do you have another source?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 401843,
+        "reputation" : 107206,
+        "user_id" : 768644,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+        "display_name" : "rzwitserloot",
+        "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+      },
+      "creation_date" : 1749417303,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140497660,
+      "post_id" : 79657747,
+      "body" : "@rzwitserloot I&#39;ve see AWS&#39;s position argued elsewhere too, in Clean Code by Martin et al.  You basically address why their points don&#39;t hold up well, but I wanted to add the source (or a source) of this sort of idea for everyone reading SO.  The idea behind saveGame() throws SQLException is that an exception, once thrown, must then be propagated up the call stack for all code to deal with.  This I think is the issue for them, and not the very large number of exceptions (as in a multitude of types).  As you point out the solution is to catch and rethrow exceptions as more relevant exception ty",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2709823,
+        "reputation" : 11069,
+        "user_id" : 2338547,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/QT3fG.png?s=256",
+        "display_name" : "markspace",
+        "link" : "https://stackoverflow.com/users/2338547/markspace"
+      },
+      "creation_date" : 1749411405,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140497182,
+      "post_id" : 79657747,
+      "body" : "<b><i>NB2: I&#39;ve attempted to think of every reasonable argument in favour of the axioms laid forth by the AWS team in the sections quoted by the question. I may well have failed to take into consideration a bunch of them. I&#39;ll attempt to update this answer if further reasoning is provided.</i></b> -- I&#39;ll try to get in touch with some AWS folks, and see if I can&#39;t get them to jump in and give their insight. They might be the only ones who can tell us exactly HOW they reached that conclusion. Or I might just put this on the various Java/Programmig subreddits, where it would be more on-topic anyways.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 14010051,
+        "reputation" : 260,
+        "user_id" : 10118965,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/61afd55894624ae8f6e4189b68db1f30?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "davidalayachew",
+        "link" : "https://stackoverflow.com/users/10118965/davidalayachew"
+      },
+      "creation_date" : 1749391661,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140497175,
+      "post_id" : 79657747,
+      "body" : "<b><i>Remember: &quot;Just make everything a runtime exception&quot; is steering away from the type system, and most programmers agree that you should be using the type system more in order to keep larger projects maintainable.</i></b> -- might also be good to link to the official docs for this -- <a href=\"https://docs.oracle.com/javase/tutorial/essential/exceptions/runtime.html\" rel=\"nofollow noreferrer\">docs.oracle.com/javase/tutorial/essential/exceptions/&hellip;</a>",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 14010051,
+        "reputation" : 260,
+        "user_id" : 10118965,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/61afd55894624ae8f6e4189b68db1f30?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "davidalayachew",
+        "link" : "https://stackoverflow.com/users/10118965/davidalayachew"
+      },
+      "creation_date" : 1749391475,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140497166,
+      "post_id" : 79657747,
+      "body" : "And thanks for the <code>saveGame</code> example -- I&#39;ve definitely made the mistake to mix unrelated concerns via the <code>Exception</code> type. If you could link to Oracle/Java documentation for this, that would probably make this answer even better, so that I can read more.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 14010051,
+        "reputation" : 260,
+        "user_id" : 10118965,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/61afd55894624ae8f6e4189b68db1f30?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "davidalayachew",
+        "link" : "https://stackoverflow.com/users/10118965/davidalayachew"
+      },
+      "creation_date" : 1749391237,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140497165,
+      "post_id" : 79657747,
+      "body" : "Hello Reinier. Thanks for the answer. Yes, this is bordering on off-topic, but I figured I could sneak by on the basis that I am asking for clarification about official AWS documentation lol. Seems like it worked out lol.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 14010051,
+        "reputation" : 260,
+        "user_id" : 10118965,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/61afd55894624ae8f6e4189b68db1f30?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "davidalayachew",
+        "link" : "https://stackoverflow.com/users/10118965/davidalayachew"
+      },
+      "creation_date" : 1749391229,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

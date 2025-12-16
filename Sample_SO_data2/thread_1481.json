@@ -1,0 +1,82 @@
+{
+  "question" : {
+    "question_id" : 79705151,
+    "title" : "Is there an auto-increment feature or approach for Spring Boot MongoDB entities in a reactive save API?",
+    "body" : "<p>I have a Spring Boot microservice that provides non-blocking APIs for creating and managing entities called <code>Product</code>. The services uses a MongoDB. For design purposes, each <code>Product</code> needs to have a numeric <code>productId</code> value in addition to the primary key field <code>id</code> that is automatically assigned when a new <code>Product</code> is created.</p>\n<p>The problem is that I cannot think of a way to set the <code>productId</code> of the new <code>Product</code> entity that doesn’t use a blocking database call that counts the number of existing <code>Product</code> entities in the database and then increments that number. Ideally, I’d like an auto-increment feature that will do this on the entity itself when it is persisted to the database. Any help or suggestions are appreciated</p>\n<p><code>Product</code></p>\n<pre><code>package com.bh25034.products.model;\n\nimport lombok.AllArgsConstructor;\nimport lombok.Data;\nimport lombok.NoArgsConstructor;\nimport lombok.ToString;\nimport org.springframework.data.annotation.Id;\nimport org.springframework.data.mongodb.core.index.Indexed;\nimport org.springframework.data.mongodb.core.mapping.Document;\n\n@AllArgsConstructor\n@NoArgsConstructor\n@Data\n@Document(collection = &quot;products&quot;)\n@ToString(callSuper = true)\npublic class Product {\n\n    @Id\n    private String id;\n    @Indexed(unique = true)\n    //TODO: this is where I’d like to have something like a GeneratedValue or auto-increment feature that’s safe from race conditions\n    private Long productId;\n    private String name;\n    private String description;\n\n}\n\n</code></pre>\n<p><code>ProductService</code></p>\n<pre><code>package com.bh25034.products.service.impl;\n\nimport com.bh25034.products.configuration.AppConfiguration;\nimport com.bh25034.products.event.EventType;\nimport com.bh25034.products.event.ProductEvent;\nimport com.bh25034.products.exception.NotFoundException;\nimport com.bh25034.products.mapping.ProductMapper;\nimport com.bh25034.products.messaging.ProductEventMessageProducer;\nimport com.bh25034.products.model.Product;\nimport com.bh25034.products.model.dto.ProductDto;\nimport com.bh25034.products.repository.ProductRepository;\nimport com.bh25034.products.service.ProductService;\nimport lombok.RequiredArgsConstructor;\nimport lombok.extern.slf4j.Slf4j;\nimport org.springframework.stereotype.Service;\nimport reactor.core.publisher.Flux;\nimport reactor.core.publisher.Mono;\n\nimport java.util.Date;\n\nimport static java.lang.String.format;\n\n@RequiredArgsConstructor\n@Slf4j\n@Service\npublic class ProductService {\n\n    private final ProductRepository productRepository;\n    private final ProductMapper productMapper;\n\n    \n    public Mono&lt;ProductDto&gt; getProduct(final String id) {\n        return productRepository.findById(id)\n                .switchIfEmpty(Mono.error(new NotFoundException(format(&quot;Could not find product %s&quot;, id))))\n                .map(productMapper::toProductDto);\n    }\n\n    \n    public Mono&lt;ProductDto&gt; getProductByProductId(final long productId) {\n        return productRepository.findByProductId(productId)\n                .switchIfEmpty(Mono.error(new NotFoundException(format(&quot;Could not find product with productId: %s&quot;, productId))))\n                .map(productMapper::toProductDto);\n    }\n\n    \n    public Flux&lt;ProductDto&gt; getAllProducts() {\n        return productRepository.findAll().map(productMapper::toProductDto);\n    }\n\n    \n    public Mono&lt;ProductDto&gt; createProduct(final ProductDto productDto) {\n        Product product = productMapper.toProduct(productDto);\n    //TODO: thought about setting the productId here but it could lead to duplicate key exceptions if another product is persisted between this line and the following save() call to the repository\n        return productRepository.save(product).map(savedProduct -&gt; {\n            ProductDto savedProductDto = productMapper.toProductDto(savedProduct);\n            return savedProductDto;\n        });\n    }\n\n    \n    public Mono&lt;Void&gt; deleteProduct(final String id) {\n        return productRepository.deleteById(id);\n    }\n\n    \n    public Mono&lt;Void&gt; deleteProductByProductId(final long productId) {\n        return productRepository.findByProductId(productId)\n                .map(productRepository::delete)\n                .flatMap(voidMono -&gt; voidMono);\n    }\n\n}\n\n</code></pre>\n<p><code>ProductDto</code></p>\n<pre><code>package com.bh25034.products.model.dto;\n\nimport lombok.AllArgsConstructor;\nimport lombok.Data;\nimport lombok.NoArgsConstructor;\nimport lombok.ToString;\n\n@AllArgsConstructor\n@NoArgsConstructor\n@Data\n@ToString\npublic class ProductDto {\n\n    private String id;\n    private long productId;\n    private String name;\n    private String description;\n\n}\n\n</code></pre>\n<p><code>ProductMapper</code></p>\n<pre><code>\npackage com.bh25034.products.mapping;\n\nimport com.bh25034.products.model.Product;\nimport com.bh25034.products.model.dto.ProductDto;\nimport org.mapstruct.Mapper;\nimport org.mapstruct.Mapping;\nimport org.mapstruct.Mappings;\n\n@Mapper(componentModel = &quot;spring&quot;)\npublic interface ProductMapper {\n\n    ProductDto toProductDto(Product product);\n\n    @Mappings({\n            @Mapping(target = &quot;id&quot;, ignore = true)\n    })\n    Product toProduct(ProductDto productDto);\n\n}\n\n\n</code></pre>\n<p><code>ProductRepository</code></p>\n<pre><code>package com.bh25034.products.repository;\n\nimport com.bh25034.products.model.Product;\nimport org.springframework.data.mongodb.repository.ReactiveMongoRepository;\nimport org.springframework.stereotype.Repository;\nimport reactor.core.publisher.Mono;\n\n@Repository\npublic interface ProductRepository extends ReactiveMongoRepository&lt;Product, String&gt; {\n\n    Mono&lt;Product&gt; findByProductId(long productId);\n\n\n}\n\n\n\n</code></pre>\n",
+    "tags" : [ "java", "mongodb", "spring-boot", "spring-webflux", "reactive-programming" ],
+    "owner" : {
+      "account_id" : 11865640,
+      "reputation" : 415,
+      "user_id" : 8683238,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/10b76fad3be494ae66fe743481356a05?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Space Cadet",
+      "link" : "https://stackoverflow.com/users/8683238/space-cadet"
+    },
+    "is_answered" : true,
+    "view_count" : 68,
+    "answer_count" : 1,
+    "score" : 2,
+    "last_activity_date" : 1752830762,
+    "creation_date" : 1752770618,
+    "link" : "https://stackoverflow.com/questions/79705151/is-there-an-auto-increment-feature-or-approach-for-spring-boot-mongodb-entities",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79705521,
+    "question_id" : 79705151,
+    "body" : "<h3>Single JVM</h3>\n<p>If you have just one JVM running the Service, then you can use the JVM to manage shared state:</p>\n<ol>\n<li>Upon startup perform a max aggregate Mongo query to find highest number, store in an <code>AtomicLong</code> typed variable</li>\n<li>Each time you want the next id use the threadsafe feature of <a href=\"https://docs.oracle.com/javase/8/docs/api/java/util/concurrent/atomic/AtomicLong.html\" rel=\"nofollow noreferrer\"><code>AtomicLong</code></a> to obtain the next id</li>\n</ol>\n<h3>State in the DB</h3>\n<p>If you have more than one JVM then you no option but to use some other mechanism to managed shared state.  The DB is probably your best option, you could:</p>\n<ol>\n<li>Have a collection with one document that maintains the next <code>productId</code> and use the following atomic operation to increment the id and return the value:</li>\n</ol>\n<pre><code>db.getCollection('someCollection').findAndModify(\n{\n     query: { _id: &quot;someKey&quot; },\n     update: { $inc: { productId: 1 } },\n     upsert: true\n   }\n)\n</code></pre>\n<ol start=\"2\">\n<li>That returns 100,101,102, etc on subsequent calls, use that value in your <code>ProductService.createProduct()</code></li>\n</ol>\n<p>In both cases</p>\n<ul>\n<li>for safety add a Unique index on your <code>productId</code> field</li>\n<li>you may lose a number if there is an exception</li>\n</ul>\n",
+    "score" : 2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 2073393,
+      "reputation" : 3675,
+      "user_id" : 1847378,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/e8990d3c34829910b2318ed16b09544d?s=256&d=identicon&r=PG",
+      "display_name" : "AndrewL",
+      "link" : "https://stackoverflow.com/users/1847378/andrewl"
+    },
+    "creation_date" : 1752796481,
+    "last_activity_date" : 1752796481,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79705521" : [ {
+      "comment_id" : 140599150,
+      "post_id" : 79705521,
+      "body" : "@Stewart Yup, that&#39;s what I meant.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 2073393,
+        "reputation" : 3675,
+        "user_id" : 1847378,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/e8990d3c34829910b2318ed16b09544d?s=256&d=identicon&r=PG",
+        "display_name" : "AndrewL",
+        "link" : "https://stackoverflow.com/users/1847378/andrewl"
+      },
+      "creation_date" : 1752823934,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140599127,
+      "post_id" : 79705521,
+      "body" : "By &quot;lose a number&quot;, do you mean the sequence might go `101, 102, 104, 105&quot; ?   If so, an unused ID value isn&#39;t a big problem.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 55989,
+        "reputation" : 19067,
+        "user_id" : 167745,
+        "user_type" : "registered",
+        "accept_rate" : 76,
+        "profile_image" : "https://i.sstatic.net/wBebv.jpg?s=256",
+        "display_name" : "Stewart",
+        "link" : "https://stackoverflow.com/users/167745/stewart"
+      },
+      "creation_date" : 1752823327,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

@@ -1,0 +1,79 @@
+{
+  "question" : {
+    "question_id" : 79676301,
+    "title" : "How to bulk create / insert data in Java Spring?",
+    "body" : "<p>I'm currently trying to read a csv file and want to create, for example a user for each row.</p>\n<p>Currently I have this import method:</p>\n<pre><code>@Override\n@Transactional\npublic void importUserData(final UserDataDTO toBeSavedDTO) {\n    final String file = decodeFile(toBeSavedDTO); // Base64 decoding\n\n    final List&lt;UserDTO&gt; imports = parser.parseImport(file);\n\n    if (imports == null || imports.isEmpty()) {\n        throw new Exception();\n    }\n\n    // delete existing entries\n    dao.deleteUserEntries();\n\n    imports.foreach(dao::createUser);\n}\n</code></pre>\n<p>Here I decode that file and parse it to a list of UserDTO.\nThen I delete the DB and create an entry for each user. It basically does a persist.\nThis work but it takes a lot of time and is not performant.</p>\n<p>Is there a way to do a batch insert or something like that?\nMaybe with a flush after every batch?</p>\n",
+    "tags" : [ "java", "spring", "database", "hibernate" ],
+    "owner" : {
+      "account_id" : 16860055,
+      "reputation" : 1124,
+      "user_id" : 12191075,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/udxuQ.jpg?s=256",
+      "display_name" : "Haidepzai",
+      "link" : "https://stackoverflow.com/users/12191075/haidepzai"
+    },
+    "is_answered" : true,
+    "view_count" : 118,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1750745185,
+    "creation_date" : 1750687607,
+    "link" : "https://stackoverflow.com/questions/79676301/how-to-bulk-create-insert-data-in-java-spring",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79676422,
+    "question_id" : 79676301,
+    "body" : "<p><strong>Bulk inserts</strong> are significantly more performant than inserting each record individually. Spring + JPA (or Hibernate) doesn’t do batch inserts out of the box unless explicitly configured, but with a few optimizations, you can <strong>improve performance dramatically</strong>.</p>\n<p>In <code>application.properties</code> or <code>application.yml</code>, configure Hibernate to use batch inserts:</p>\n<pre><code>spring.jpa.properties.hibernate.jdbc.batch_size=50\nspring.jpa.properties.hibernate.order_inserts=true\nspring.jpa.properties.hibernate.order_updates=true\nspring.jpa.properties.hibernate.generate_statistics=true\n</code></pre>\n<p>This tells Hibernate to group insert statements in batches of 50 (or your preferred size).</p>\n<p>Modify your loop to flush and clear the <code>EntityManager</code> every N records to <strong>avoid memory bloat</strong> and allow batching to trigger:</p>\n<pre><code>@Autowired\nprivate EntityManager entityManager;\n\n@Override\n@Transactional\npublic void importUserData(final UserDataDTO toBeSavedDTO) {\n    final String file = decodeFile(toBeSavedDTO); // Base64 decoding\n\n    final List&lt;UserDTO&gt; imports = parser.parseImport(file);\n\n    if (imports == null || imports.isEmpty()) {\n        throw new RuntimeException(&quot;No user data to import&quot;);\n    }\n\n    dao.deleteUserEntries(); // Clear the table first\n\n    int batchSize = 50;\n    int count = 0;\n\n    for (UserDTO dto : imports) {\n        dao.createUser(dto);  // Persists a User entity\n        count++;\n\n        if (count % batchSize == 0) {\n            entityManager.flush();\n            entityManager.clear(); // Detach entities from persistence context\n        }\n    }\n\n    entityManager.flush(); // flush remaining\n    entityManager.clear();\n}\n</code></pre>\n<p>Make sure <code>dao.createUser()</code> does <strong>not call <code>save()</code> on a <code>CrudRepository</code></strong> which breaks batching. Instead, persist using <code>EntityManager.persist(entity)</code>.</p>\n<pre><code>public void createUser(UserDTO dto) {\n    User entity = mapDtoToEntity(dto);\n    entityManager.persist(entity); // This supports batching\n}\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 17398416,
+      "reputation" : 98,
+      "user_id" : 12607770,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/92e05bb2097cb38f47efd23b067b1e23?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Devesh Kumar",
+      "link" : "https://stackoverflow.com/users/12607770/devesh-kumar"
+    },
+    "creation_date" : 1750692623,
+    "last_activity_date" : 1750692623,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140536966,
+    "post_id" : 79676301,
+    "body" : "This question is similar to: <a href=\"https://stackoverflow.com/questions/30352212/hibernate-batch-insert\">Hibernate batch insert</a>. If you believe it’s different, please <a href=\"https://stackoverflow.com/posts/79676301/edit\">edit</a> the question, make it clear how it’s different and/or how the answers on that question are not helpful for your problem.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3052937,
+      "reputation" : 18534,
+      "user_id" : 2587166,
+      "user_type" : "registered",
+      "accept_rate" : 83,
+      "profile_image" : "https://i.sstatic.net/pgHgd.jpg?s=256",
+      "display_name" : "Luca Basso Ricci",
+      "link" : "https://stackoverflow.com/users/2587166/luca-basso-ricci"
+    },
+    "creation_date" : 1750742949,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140535433,
+    "post_id" : 79676301,
+    "body" : "Is you DAO layer doing a commit after every user create?  If so, disable that and do a &quot;begin transaction&quot; &lt;insert&gt;&lt;insert&gt;&lt;insert&gt;.... &quot;commit&quot; and it should speed it up and give you th &quot;every batch flush&quot; you&#39;re looking for.  Since you don&#39;t say anyting more about your DAO I can&#39;t be more specific.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2399674,
+      "reputation" : 2776,
+      "user_id" : 2097675,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/ea8b0e79d096f1b359aeb6e5353b5ef5?s=256&d=identicon&r=PG",
+      "display_name" : "JJF",
+      "link" : "https://stackoverflow.com/users/2097675/jjf"
+    },
+    "creation_date" : 1750689411,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

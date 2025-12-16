@@ -1,0 +1,108 @@
+{
+  "question" : {
+    "question_id" : 79773228,
+    "title" : "Migration from JBoss embedded JMS broker to remote ActiveMQ Artemis",
+    "body" : "<p>I need to migrate all queues and topics from the existing JBoss embedded JMS broker to a remote ActiveMQ Artemis broker (i.e. outside JBoss server).</p>\n<p>I configured both embedded broker and remote broker in same <code>standalone-full.xml</code> file. Removed one queue from the embedded broker, and added it to the remote broker and pointed producers and consumers to the remote broker queue. After migrating all the queues/topics completely I'll remove the embedded broker.</p>\n<p>Here's the <code>subsystem</code> config:</p>\n<pre class=\"lang-xml prettyprint-override\"><code>&lt;subsystem xmlns=&quot;urn:jboss:domain:messaging-activemq:15.0&quot;&gt;\n  &lt;server name=&quot;default&quot;&gt;\n    &lt;in-vm-connector name=&quot;in-vm&quot; server-id=&quot;0&quot;/&gt;\n    &lt;in-vm-acceptor  name=&quot;in-vm&quot; server-id=&quot;0&quot;/&gt;\n\n    &lt;!-- embedded queues --&gt;\n    &lt;jms-queue name=&quot;DemoLocalQueue&quot; entries=&quot;java:/jms/queue/DemoLocalQueue&quot;/&gt;\n\n    &lt;!-- Migrated to Remote broker --&gt;\n    &lt;!-- &lt;jms-queue name=&quot;TestQueue&quot; entries=&quot;java:/jms/queue/TestQueue&quot;/&gt; --&gt;\n\n    &lt;!-- Default embedded CFs --&gt;\n    &lt;connection-factory name=&quot;InVmConnectionFactory&quot;\n                        entries=&quot;java:/ConnectionFactory&quot;\n                        connectors=&quot;in-vm&quot;/&gt;\n    &lt;pooled-connection-factory name=&quot;activemq-ra&quot;\n                               entries=&quot;java:/JmsXA java:jboss/DefaultJMSConnectionFactory&quot;\n                               connectors=&quot;in-vm&quot;\n                               transaction=&quot;xa&quot;/&gt;\n\n  &lt;/server&gt;\n\n  &lt;!-- ===== Remote Artemis connector + pooled CF ===== --&gt;\n  &lt;remote-connector name=&quot;remote-broker-connector&quot; socket-binding=&quot;remote-broker&quot;/&gt;\n  &lt;pooled-connection-factory\n      name=&quot;DemoRemoteCF&quot;\n      entries=&quot;java:/jms/DemoRemoteCF java:jboss/exported/jms/DemoRemoteCF&quot;\n      connectors=&quot;remote-broker-connector&quot;\n      reconnect-attempts=&quot;-1&quot;\n      user=&quot;${DEMO_JMS_USER}&quot;\n      password=&quot;${DEMO_JMS_PASS}&quot;/&gt;\n&lt;/subsystem&gt;\n</code></pre>\n<p>Added below socket binding:</p>\n<pre class=\"lang-xml prettyprint-override\"><code>&lt;outbound-socket-binding name=&quot;remote-broker&quot;&gt;\n    &lt;remote-destination host=&quot;172.xxx.xxx.xxx&quot; port=&quot;61616&quot;/&gt;\n&lt;/outbound-socket-binding&gt;\n</code></pre>\n<p>The MDB for the <code>TestQueue</code> is as below:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@MessageDriven(activationConfig = {\n  @ActivationConfigProperty(propertyName=&quot;destination&quot;,             propertyValue=&quot;TestQueue&quot;),\n  @ActivationConfigProperty(propertyName=&quot;destinationType&quot;,         propertyValue=&quot;jakarta.jms.Queue&quot;),\n  @ActivationConfigProperty(propertyName=&quot;connectionFactoryLookup&quot;, propertyValue=&quot;java:/jms/DemoRemoteCF&quot;),\n  @ActivationConfigProperty(propertyName=&quot;acknowledgeMode&quot;,         propertyValue=&quot;Auto-acknowledge&quot;),\n  @ActivationConfigProperty(propertyName=&quot;useJNDI&quot;,                 propertyValue=&quot;false&quot;),\n  @ActivationConfigProperty(propertyName=&quot;maxSession&quot;,              propertyValue=&quot;1&quot;)\n})\npublic class DemoConnectorMDB implements MessageListener {\n  public void onMessage(Message m) { /* ... */ }\n}\n</code></pre>\n<p>When Start the JBoss server, it continuously logs</p>\n<pre><code>10:13:24,525 INFO [org.apache.activemq.artemis.ra.ActiveMQRALogger] (default-threads - 4) AMQ151000: awaiting topic/queue creation TestQueue \n10:13:26,525 INFO [org.apache.activemq.artemis.ra.ActiveMQRALogger] (default-threads - 4) AMQ151004: Instantiating jakarta.jms.Queue &quot;TestQueue&quot; directly since UseJNDI=false. \n10:13:26,528 INFO [org.apache.activemq.artemis.ra.ActiveMQRALogger] (default-threads - 4) AMQ151000: awaiting topic/queue creation TestQueue \n10:13:28,529 INFO [org.apache.activemq.artemis.ra.ActiveMQRALogger] (default-threads - 4) AMQ151004: Instantiating jakarta.jms.Queue &quot;TestQueue&quot; directly since UseJNDI=false. \n10:13:28,535 INFO [org.apache.activemq.artemis.ra.ActiveMQRALogger] (default-threads - 4) AMQ151000: awaiting topic/queue creation TestQueue \n10:13:30,536 INFO [org.apache.activemq.artemis.ra.ActiveMQRALogger] (default-threads - 4) AMQ151004: Instantiating jakarta.jms.Queue &quot;TestQueue&quot; directly since UseJNDI=false. \n10:13:30,538 INFO [org.apache.activemq.artemis.ra.ActiveMQRALogger] (default-threads - 4) AMQ151000: awaiting topic/queue creation TestQueue \n10:13:32,539 INFO [org.apache.activemq.artemis.ra.ActiveMQRALogger] (default-threads - 4) AMQ151004: Instantiating jakarta.jms.Queue &quot;TestQueue&quot; directly since UseJNDI=false. \n10:13:32,541 INFO [org.apache.activemq.artemis.ra.ActiveMQRALogger] (default-threads - 4) AMQ151000: awaiting topic/queue creation TestQueue \n10:13:34,542 INFO [org.apache.activemq.artemis.ra.ActiveMQRALogger] (default-threads - 4) AMQ151004: Instantiating jakarta.jms.Queue &quot;TestQueue&quot; directly since UseJNDI=false. \n10:13:34,550 INFO [org.apache.activemq.artemis.ra.ActiveMQRALogger] (default-threads - 4) AMQ151000: awaiting topic/queue creation TestQueue \n10:13:36,551 INFO [org.apache.activemq.artemis.ra.ActiveMQRALogger] (default-threads - 4) AMQ151004: Instantiating jakarta.jms.Queue &quot;TestQueue&quot; directly since UseJNDI=false. \n10:13:36,554 INFO [org.apache.activemq.artemis.ra.ActiveMQRALogger] (default-threads - 4) AMQ151000: awaiting topic/queue creation TestQueue \n10:13:38,554 INFO [org.apache.activemq.artemis.ra.ActiveMQRALogger] (default-threads - 4) AMQ151004: Instantiating jakarta.jms.Queue &quot;TestQueue&quot; directly since UseJNDI=false. \n10:13:38,556 INFO [org.apache.activemq.artemis.ra.ActiveMQRALogger] (default-threads - 4) AMQ151000: awaiting topic/queue creation TestQueue \n10:13:40,557 INFO [org.apache.activemq.artemis.ra.ActiveMQRALogger] (default-threads - 4) AMQ151004: Instantiating jakarta.jms.Queue &quot;TestQueue&quot; directly since UseJNDI=false. \n10:13:40,563 INFO [org.apache.activemq.artemis.ra.ActiveMQRALogger] (default-threads - 4) AMQ151000: awaiting topic/queue creation TestQueue \n10:13:42,563 INFO [org.apache.activemq.artemis.ra.ActiveMQRALogger] (default-threads - 4) AMQ151004: Instantiating jakarta.jms.Queue &quot;TestQueue&quot; directly since UseJNDI=false. \n10:13:42,565 INFO [org.apache.activemq.artemis.ra.ActiveMQRALogger] (default-threads - 4) AMQ151000: awaiting topic/queue creation TestQueue \n10:13:44,566 INFO [org.apache.activemq.artemis.ra.ActiveMQRALogger] (default-threads - 4) AMQ151004: Instantiating jakarta.jms.Queue &quot;TestQueue&quot; directly since UseJNDI=false.\n</code></pre>\n<p>I could produce messages into the <code>TestQueue</code> but MDB did not consume those messages from the <code>TestQueue</code>. Any solutions for this issue would be really helpful.</p>\n",
+    "tags" : [ "java", "jboss", "activemq-artemis", "message-driven-bean" ],
+    "owner" : {
+      "account_id" : 24984725,
+      "reputation" : 23,
+      "user_id" : 18846655,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/c84edcd0d71fe08eba0170beca384121?s=256&d=identicon&r=PG",
+      "display_name" : "Pasindu",
+      "link" : "https://stackoverflow.com/users/18846655/pasindu"
+    },
+    "is_answered" : false,
+    "view_count" : 95,
+    "answer_count" : 0,
+    "score" : 0,
+    "last_activity_date" : 1758720226,
+    "creation_date" : 1758683278,
+    "link" : "https://stackoverflow.com/questions/79773228/migration-from-jboss-embedded-jms-broker-to-remote-activemq-artemis",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140759782,
+    "post_id" : 79773228,
+    "body" : "How were you producing messages? Were you sending them from a standalone producer or a producer running in JBoss? What protocol did you use?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 11434008,
+      "reputation" : 36292,
+      "user_id" : 8381946,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-ORs8fPNVzDU/AAAAAAAAAAI/AAAAAAAADBs/F3IsdsProVY/s256-rj/photo.jpg",
+      "display_name" : "Justin Bertram",
+      "link" : "https://stackoverflow.com/users/8381946/justin-bertram"
+    },
+    "creation_date" : 1758811090,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140759772,
+    "post_id" : 79773228,
+    "body" : "What exactly did you try? Two different suggestions were made.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 11434008,
+      "reputation" : 36292,
+      "user_id" : 8381946,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-ORs8fPNVzDU/AAAAAAAAAAI/AAAAAAAADBs/F3IsdsProVY/s256-rj/photo.jpg",
+      "display_name" : "Justin Bertram",
+      "link" : "https://stackoverflow.com/users/8381946/justin-bertram"
+    },
+    "creation_date" : 1758810988,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140758497,
+    "post_id" : 79773228,
+    "body" : "@JustinBertram Thanks for your response, I tried but still the same.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 24984725,
+      "reputation" : 23,
+      "user_id" : 18846655,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/c84edcd0d71fe08eba0170beca384121?s=256&d=identicon&r=PG",
+      "display_name" : "Pasindu",
+      "link" : "https://stackoverflow.com/users/18846655/pasindu"
+    },
+    "creation_date" : 1758779407,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140757579,
+    "post_id" : 79773228,
+    "body" : "you can set enable-amq1-prefix to false on your DemoRemoteCF declaration so that the queue name is TestQueue and not jms.queue.TestQueue, same on the &lt;external-jms-queue&gt; element   &lt;external-jms-queue name=&quot;TestQueue&quot; entries=&quot;java:/jms/queue/DemoRemoteQueue&quot; enable-amq1-prefix=&quot;false&quot; /&gt;  and inject this queue via JNDI into your MDB",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1491171,
+      "reputation" : 3617,
+      "user_id" : 1398228,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/gX5hy.png?s=256",
+      "display_name" : "ehsavoie",
+      "link" : "https://stackoverflow.com/users/1398228/ehsavoie"
+    },
+    "creation_date" : 1758735184,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140755988,
+    "post_id" : 79773228,
+    "body" : "Try adding <code>multicastPrefix=jms.topic.;anycastPrefix=jms.queue.</code> to the URL of the <code>acceptor</code> in the <code>broker.xml</code> of your ActiveMQ Artemis instance.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 11434008,
+      "reputation" : 36292,
+      "user_id" : 8381946,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-ORs8fPNVzDU/AAAAAAAAAAI/AAAAAAAADBs/F3IsdsProVY/s256-rj/photo.jpg",
+      "display_name" : "Justin Bertram",
+      "link" : "https://stackoverflow.com/users/8381946/justin-bertram"
+    },
+    "creation_date" : 1758690112,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

@@ -1,0 +1,206 @@
+{
+  "question" : {
+    "question_id" : 79581197,
+    "title" : "How do I scale a Reactor Http Server connections per second?",
+    "body" : "<p>How do I scale Reactor Http Server connections per second?</p>\n<p>Right now the toy app scales to 500 connections per second (exactly).</p>\n<p>(I'm not concerned with the number of requests that can be processed per second on a single connection.)</p>\n<p>If its of interest of using MacOS (Sequoia 15.3.2), OpenJDK 21, and Reactor-Netty 1.2.4</p>\n<p>Searching the Reactor documentation I can find information about Http client scaling (which is configured in the constructor), but that same option is not available in the Http server.</p>\n<p>I have not been able to determine through my research what the constraint is (weather it lies in the library or OS, although given the small number, I am guessing the library). Thus I do not know if it is related to pools, threads, schedulers, channels, connection queues, or a hard coded limit.</p>\n<p>A minimum viable example (very simplified version of the code) using Http to remove encryption overhead.</p>\n<pre class=\"lang-java prettyprint-override\"><code>package example;\n\nimport reactor.core.publisher.Mono;\nimport reactor.netty.DisposableServer;\nimport reactor.netty.http.HttpProtocol;\nimport reactor.netty.http.server.HttpServer;\n\npublic final class MVP {\n\n  public static void main(String[] args) throws Exception {\n    HttpServer server = HttpServer.create()\n      .port(80)\n      .wiretap(false)\n      .compress(false)\n      .protocol(HttpProtocol.HTTP11);\n    server.warmup();\n    DisposableServer disposableServer = server\n      .route(routes -&gt;\n        routes.post(&quot;/fortune&quot;, (req, res) -&gt; {\n          Mono&lt;String&gt; returnContent = req\n            .receive()\n            .aggregate()\n            .asString()\n            .filter(str -&gt; str.length() &gt; 0);\n          return res.sendString(returnContent);\n        })\n      )\n      .bindNow();\n    Mono.when(disposableServer.onDispose()).block();\n  }\n}\n</code></pre>\n<p>Test script</p>\n<pre class=\"lang-bash prettyprint-override\"><code>#!/bin/bash\n\nhostname=$(hostname)\ntime1=$(date +%s)\necho &quot;Start time: ${time1}&quot;\n# Test rapid connections\nfor i in {1..10000}\ndo\n  # sleep 0.00001\n  curl --cacert ./certs.pem http://${hostname}/fortune -d &quot;key${i}=${time1}&quot; -H &quot;Content-Type:application/x-www-form-urlencoded&quot; -o /dev/null &gt; /dev/null 2&gt;&amp;1 &amp;\ndone\ntime2=$(date +%s)\necho &quot;End time (estimated): ${time2}&quot;\necho &quot;Connections per second:&quot;\nawk &quot;BEGIN { print 10000.0/(${time2} - ${time1}) }&quot;\n</code></pre>\n<p>Build dependencies:</p>\n<pre><code>implementation group: 'io.netty', name: 'netty-all', version: '4.1.118.Final'\nimplementation group: 'io.projectreactor.netty', name: 'reactor-netty-core', version: '1.2.4'\nimplementation group: 'io.projectreactor.netty', name: 'reactor-netty-http', version: '1.2.4'\n</code></pre>\n",
+    "tags" : [ "java", "spring-webflux", "reactor-netty" ],
+    "owner" : {
+      "account_id" : 33109821,
+      "reputation" : 1,
+      "user_id" : 25667394,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/a31ff3accf383a051979eae9060026ce?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "G.K. Meier",
+      "link" : "https://stackoverflow.com/users/25667394/g-k-meier"
+    },
+    "is_answered" : false,
+    "view_count" : 90,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1745568574,
+    "creation_date" : 1744985204,
+    "link" : "https://stackoverflow.com/questions/79581197/how-do-i-scale-a-reactor-http-server-connections-per-second",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79583822,
+    "question_id" : 79581197,
+    "body" : "<p>Just to sum up the comments above:</p>\n<p>Adjusting the original example to <code>Flux.from(req.receive().aggregate().asString().delayElement(Duration.ofNanos(1)).filter(str -&gt; (str.length() &gt; 0))).next();</code> resulted in being able to exceed the 500 connections per second.</p>\n<p>Upon studying <code>delayElement</code> the documentation states that the <code>parallel</code> scheduler is then used.</p>\n<p>Thus the constraint appears to be the scheduler. Once that theory was established it was tested by replacing <code>delayElement</code> with <code>.subscribeOn(Schedulers.boundedElastic())</code> and confirmed to have the same result (being able to exceed 500).</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 33109821,
+      "reputation" : 1,
+      "user_id" : 25667394,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/a31ff3accf383a051979eae9060026ce?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "G.K. Meier",
+      "link" : "https://stackoverflow.com/users/25667394/g-k-meier"
+    },
+    "creation_date" : 1745188806,
+    "last_activity_date" : 1745188806,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140352898,
+    "post_id" : 79581197,
+    "body" : "If you found the answer to your question, please properly post it as an answer.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 15064163,
+      "reputation" : 17111,
+      "user_id" : 10871900,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/720202b6e19abc330dcd92e6a1254562?s=256&d=identicon&r=PG",
+      "display_name" : "dan1st",
+      "link" : "https://stackoverflow.com/users/10871900/dan1st"
+    },
+    "creation_date" : 1745177374,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140352603,
+    "post_id" : 79581197,
+    "body" : "I think I have kind of figured out the answer to this based on my observation above. It turns out that calling <code>delayElement</code> changes scheduler (to <code>parallel()</code>). Another scheduler which works is <code>boundedElastic</code> and <code>.subscribeOn(Schedulers.boundedElastic())</code> can be substituted for <code>delayElement</code>. I believe that is a good enough explanation to answer this question. Thank you",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 33109821,
+      "reputation" : 1,
+      "user_id" : 25667394,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/a31ff3accf383a051979eae9060026ce?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "G.K. Meier",
+      "link" : "https://stackoverflow.com/users/25667394/g-k-meier"
+    },
+    "creation_date" : 1745167473,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140352470,
+    "post_id" : 79581197,
+    "body" : "Do you still have the 500 limit with jmeter and the original code in your question?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 15064163,
+      "reputation" : 17111,
+      "user_id" : 10871900,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/720202b6e19abc330dcd92e6a1254562?s=256&d=identicon&r=PG",
+      "display_name" : "dan1st",
+      "link" : "https://stackoverflow.com/users/10871900/dan1st"
+    },
+    "creation_date" : 1745162339,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140352444,
+    "post_id" : 79581197,
+    "body" : "With all of the above comments I did not want to detract from the original question of the 500 limit. For instance I can simply rearrange the above code as follows to get back to the 500 limit. <code>Flux.from(req.receive().aggregate().asString().filter(str -&gt; (str.length() &gt; 0))).next().delayElement(Duration.ofNanos(1));</code>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 33109821,
+      "reputation" : 1,
+      "user_id" : 25667394,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/a31ff3accf383a051979eae9060026ce?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "G.K. Meier",
+      "link" : "https://stackoverflow.com/users/25667394/g-k-meier"
+    },
+    "creation_date" : 1745161250,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140351273,
+    "post_id" : 79581197,
+    "body" : "A note on the above - using Flux.from and a delay of 1 ns resulted in the least (none) jmeter socket errors. I think a delay of 0.5 ns would have been even better but I couldn&#39;t figure out how to do that.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 33109821,
+      "reputation" : 1,
+      "user_id" : 25667394,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/a31ff3accf383a051979eae9060026ce?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "G.K. Meier",
+      "link" : "https://stackoverflow.com/users/25667394/g-k-meier"
+    },
+    "creation_date" : 1745098255,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140351208,
+    "post_id" : 79581197,
+    "body" : "I think your right. I&#39;m running out of CPU forking curl. <a href=\"https://projectreactor.io/docs/netty/snapshot/reference/http-client.html\" rel=\"nofollow noreferrer\">projectreactor.io/docs/netty/snapshot/reference/&hellip;</a> discusses a connection limit of 500 connection on http client - maybe its related. I tried with jmeter and was able to get to 2000 threads by 2 iterations (2000 is artificial os limit) no ramp up. This is what I finally came up with which produced the best jmeter results  <code>Flux.from(req.receive().aggregate().asString().delayElement(&zwnj;&#8203;Duration.ofNanos(1))&zwnj;&#8203;.filter(str -&gt; (str.length() &gt; 0))).next();</code>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 33109821,
+      "reputation" : 1,
+      "user_id" : 25667394,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/a31ff3accf383a051979eae9060026ce?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "G.K. Meier",
+      "link" : "https://stackoverflow.com/users/25667394/g-k-meier"
+    },
+    "creation_date" : 1745095420,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140349843,
+    "post_id" : 79581197,
+    "body" : "What does your CPU and memory usage look like? Are you at the limit?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 15064163,
+      "reputation" : 17111,
+      "user_id" : 10871900,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/720202b6e19abc330dcd92e6a1254562?s=256&d=identicon&r=PG",
+      "display_name" : "dan1st",
+      "link" : "https://stackoverflow.com/users/10871900/dan1st"
+    },
+    "creation_date" : 1745045155,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140349284,
+    "post_id" : 79581197,
+    "body" : "I still need to know where that 500 limit comes from because I&#39;m sure its still a constraint somewhere; however, after looking at how I had written the code dealing with R2DBC, I realized I was wrapping long running Mono&#39;s there with Mono.from(). Thus by wrapping <code>req.receive().aggregate().asString().filter(str -&gt; str.length() &gt; 0);</code> I was able to exceed 500 by a bit",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 33109821,
+      "reputation" : 1,
+      "user_id" : 25667394,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/a31ff3accf383a051979eae9060026ce?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "G.K. Meier",
+      "link" : "https://stackoverflow.com/users/25667394/g-k-meier"
+    },
+    "creation_date" : 1745013427,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140348258,
+    "post_id" : 79581197,
+    "body" : "I confirmed that the rate of forking of the curl instances is not constrained (to 500)",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 33109821,
+      "reputation" : 1,
+      "user_id" : 25667394,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/a31ff3accf383a051979eae9060026ce?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "G.K. Meier",
+      "link" : "https://stackoverflow.com/users/25667394/g-k-meier"
+    },
+    "creation_date" : 1744987950,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140348113,
+    "post_id" : 79581197,
+    "body" : "My guess is that it might be your bash script which could be a limiting factor/doesn&#39;t really seem to measure anything useful.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 15064163,
+      "reputation" : 17111,
+      "user_id" : 10871900,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/720202b6e19abc330dcd92e6a1254562?s=256&d=identicon&r=PG",
+      "display_name" : "dan1st",
+      "link" : "https://stackoverflow.com/users/10871900/dan1st"
+    },
+    "creation_date" : 1744985282,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

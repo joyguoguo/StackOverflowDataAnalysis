@@ -1,0 +1,99 @@
+{
+  "question" : {
+    "question_id" : 79846659,
+    "title" : "Unable to create a web driver object if the selenium container is stuck in the middle of a session",
+    "body" : "<p>I have the following piece of code that I use to create web drivers for my Spring Boot application.</p>\n<pre class=\"lang-java prettyprint-override\"><code>public RemoteWebDriver createDriver() {\n    ChromeOptions options = new ChromeOptions();\n    URL containerLocator;\n\n    try {\n        URI containerIdentifier = new URI(this.driverSocket);\n        containerLocator = containerIdentifier.toURL();\n    }\n    catch (URISyntaxException | MalformedURLException e) {\n        this.logService.createInfoLog(this.messageService.createChapterURLExceptionMessage(this.driverSocket));\n        return null;\n    }\n\n    this.logService.createInfoLog(this.messageService.getLoggingInfoChapterCreatedDriver());\n    return new RemoteWebDriver(containerLocator, options);\n}\n</code></pre>\n<p>This code is used to create drivers whenever I call my Spring Boot service to do some Selenium parsing. For example:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Async\npublic CompletableFuture&lt;FutureData&gt; startParsingTask(String sessionId) {\n    RemoteWebDriver driver = this.createDriver();\n    if (driver.getSessionId() != null) {\n        this.logService.createInfoLog(this.messageService.getLoggingInfoActiveSessionFound());\n        driver.quit();\n        driver = this.createDriver();\n    }\n    else {\n        this.logService.createInfoLog(this.messageService.getLoggingInfoNoActiveSessionFound());\n    }\n\n    // Try to parse and quit the driver after the attempt\n    try {\n        this.doParsingTask(driver, sessionId);\n        this.logService.createInfoLog(this.messageService.getLoggingInfoParseSucceeded());\n        driver.quit();\n        this.logService.createInfoLog(this.messageService.getLoggingInfoQuitDriver());\n    }\n    ...\n}\n</code></pre>\n<p>I am not concerned with the second block of code. My issue is that, due to the asynchronous nature of my Selenium sessions, there are cases where the task will throw an exception and error out. This leaves the Selenium container that the driver connects to stuck in the middle of a session and not properly quit.</p>\n<p>If the Spring Boot backend then tries to run a task that requires the driver, it freezes at the following line from the first block of code:</p>\n<pre class=\"lang-java prettyprint-override\"><code>return new RemoteWebDriver(containerLocator, options);\n</code></pre>\n<p>I have tested my program and determined that this is where my asynchronous tasks get stuck, but I do not know how to fix it using the first block of code. I have checked similar posts on Stack Overflow, but they all give solutions that require the WebDriver object to be instantiated first, which I can't use because the program gets stuck during instantiation.</p>\n<p>Is there a way to modify the first block of code to create a WebDriver session without getting stuck due to a hung session in the Selenium container?</p>\n<p>For further context, here is the Docker command I use to create the container:</p>\n<pre class=\"lang-bash prettyprint-override\"><code>docker run -d -p 4444:4444 -p 7900:7900 --shm-size=&quot;2g&quot; selenium/standalone-chrome:136.0-20251101\n</code></pre>\n",
+    "tags" : [ "java", "spring-boot", "selenium-webdriver", "asynchronous" ],
+    "owner" : {
+      "account_id" : 44931784,
+      "reputation" : 23,
+      "user_id" : 32011068,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/e30287b1a5e72b36641d45c2d3d27aab?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Laolu Ade OG CSR",
+      "link" : "https://stackoverflow.com/users/32011068/laolu-ade-og-csr"
+    },
+    "is_answered" : true,
+    "view_count" : 45,
+    "answer_count" : 2,
+    "score" : 1,
+    "last_activity_date" : 1765745817,
+    "creation_date" : 1765648629,
+    "link" : "https://stackoverflow.com/questions/79846659/unable-to-create-a-web-driver-object-if-the-selenium-container-is-stuck-in-the-m",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79846883,
+    "question_id" : 79846659,
+    "body" : "<p>You can’t “force” <code>new RemoteWebDriver(...)</code> to succeed if the <strong>Selenium Standalone</strong> container is <strong>single-session</strong> and currently hung/busy. When it’s stuck, the HTTP call that creates a new session blocks waiting for the server to respond.</p>\n<p>Practical fixes (pick one):</p>\n<ol>\n<li><p><strong>Set timeouts so it fails fast instead of freezing</strong><br />\nUse an <code>HttpClient</code> with connect/read timeouts and pass it to the driver. Then you can catch the timeout and recover (restart container / retry).</p>\n<pre><code>import org.openqa.selenium.remote.RemoteWebDriver;\nimport org.openqa.selenium.remote.http.ClientConfig;\nimport org.openqa.selenium.remote.http.HttpClient;\n\nClientConfig cfg = ClientConfig.defaultConfig()\n        .readTimeout(Duration.ofSeconds(30))\n        .connectionTimeout(Duration.ofSeconds(10));\n\nHttpClient.Factory factory = HttpClient.Factory.createDefault(cfg);\n\nreturn new RemoteWebDriver(containerLocator, options, factory);\n</code></pre>\n<p>(If you’re on Selenium 3, upgrade—Selenium 4 added this cleaner HTTP client config.)</p>\n</li>\n<li><p><strong>Don’t use a single “standalone” for async jobs — use Selenium Grid / multiple nodes</strong><br />\n<code>selenium/standalone-chrome</code> is effectively <strong>one browser at a time</strong>. If one session hangs, everyone else queues. For async tasks, run a Grid (hub + multiple chrome nodes) or use Selenoid. Then each task gets an independent session and a hung one won’t block creation for others.</p>\n</li>\n<li><p><strong>Health-check + kill the stuck session/container before creating a new driver</strong><br />\nBefore creating the driver, ping <code>GET /status</code>. If it times out or reports “busy” forever, restart the container (or replace it with an orchestrated service). You can also query <code>/sessions</code> (Grid) to identify sessions and delete them, but Standalone often can’t reliably recover from a wedged chromedriver—restart is the real fix.</p>\n</li>\n<li><p><strong>Guarantee cleanup</strong> (still important)<br />\nEven though you said ignore block 2, your <code>quit()</code> must be in <code>finally</code>, and also add <code>pageLoadTimeout</code> / <code>scriptTimeout</code> so tasks don’t hang indefinitely.</p>\n</li>\n</ol>\n<p><strong>Bottom line:</strong> the correct approach is <strong>(1) add HTTP timeouts</strong> so <code>RemoteWebDriver</code> creation doesn’t freeze, and <strong>(2) stop using a single standalone container for concurrent async work</strong>—use Grid / multiple containers or restart-on-failure.</p>\n",
+    "score" : 2,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 1807468,
+      "reputation" : 335,
+      "user_id" : 1644280,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f18fe15e4ebd5283482de3fc4a939058?s=256&d=identicon&r=PG",
+      "display_name" : "Lavi Kumar",
+      "link" : "https://stackoverflow.com/users/1644280/lavi-kumar"
+    },
+    "creation_date" : 1765693344,
+    "last_activity_date" : 1765693495,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79847246,
+    "question_id" : 79846659,
+    "body" : "<p>Also answering to build on what Lavi said.</p>\n<p>I found out that another way to solve the problem slightly is to create the driver using its own completable future. Here is the Spring Boot service I made to do so-</p>\n<pre><code>package com.laoluade.ingestor.ao3.services;\n\nimport org.openqa.selenium.chrome.ChromeOptions;\nimport org.openqa.selenium.remote.RemoteWebDriver;\nimport org.springframework.beans.factory.annotation.Autowired;\nimport org.springframework.beans.factory.annotation.Value;\nimport org.springframework.stereotype.Service;\n\nimport java.net.MalformedURLException;\nimport java.net.URI;\nimport java.net.URISyntaxException;\nimport java.net.URL;\nimport java.util.concurrent.CompletableFuture;\nimport java.util.concurrent.TimeUnit;\n\n@Service\npublic class DriverService {\n    // Service components\n    @Autowired\n    private final LogService logService;\n\n    @Autowired\n    private final MessageService messageService;\n\n    // Driver creation constants\n    private final String driverSocket;\n    private final long timeoutSecs;\n\n    public DriverService(LogService logService, MessageService messageService,\n                                @Value(&quot;${server.driver.socket}&quot;) String driverSocket,\n                                @Value(&quot;${server.driver.timeoutSecs}&quot;) long timeoutSecs) {\n        this.logService = logService;\n        this.messageService = messageService;\n        this.driverSocket = driverSocket;\n        this.timeoutSecs = timeoutSecs;\n\n        this.logService.createInfoLog(this.messageService.createDriverSocketMessage(this.driverSocket));\n    }\n\n    public CompletableFuture&lt;RemoteWebDriver&gt; createDriver() {\n        return CompletableFuture.supplyAsync(() -&gt; {\n            URL containerLocator;\n            try {\n                URI containerIdentifier = new URI(this.driverSocket);\n                containerLocator = containerIdentifier.toURL();\n            }\n            catch (URISyntaxException | MalformedURLException e) {\n                this.logService.createErrorLog(this.messageService.createURLExceptionMessage(this.driverSocket));\n                return null;\n            }\n\n            RemoteWebDriver driver = new RemoteWebDriver(containerLocator, new ChromeOptions());\n            this.logService.createInfoLog(this.messageService.getLoggingInfoCreatedDriver());\n            return driver;\n        });\n    }\n\n    public RemoteWebDriver obtainDriverOrNull() {\n        try {\n            CompletableFuture&lt;RemoteWebDriver&gt; possibleDriver = createDriver();\n            possibleDriver.completeOnTimeout(null, this.timeoutSecs, TimeUnit.SECONDS);\n            possibleDriver.join();\n            return possibleDriver.get();\n        }\n        catch (Exception e) {\n            return null;\n        }\n    }\n}\n</code></pre>\n<p>For one, this seperates driver creation into it's own service so that the logic can all be here instead. Secondly, it creates a two-function process where createDriver() runs as an asynchronous future, which obtainDriverOrNull() applies the completeOnTimeout() function on to return a default value if it ends up taking too long. It returns a web driver if the creation is successful, null if not.</p>\n<p>I tested the situation I posted this question for and while it doesn't solve the problem of the standalone container stalling, it does solve the problem of the program hanging due to being unable to create the driver. There is also no need to add the Async annotation to this.</p>\n<p>As for plugging it back into my original service, it is as easy as this-</p>\n<pre><code>@Async\npublic CompletableFuture&lt;ServerFutureData&gt; startCreateTask(String link, String sessionId,\n                                                                  ParseType parseType) {\n    // Attempt to obtain a new driver\n    RemoteWebDriver driver = this.driverService.obtainDriverOrNull();\n    if (driver == null) {\n        return returnFailedFuture(this.messageService.getLoggingErrorCreatedDriverFailed(), sessionId);\n    }\n</code></pre>\n<p>Just remember to autowire the new service to use it in Spring Boot.</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 44931784,
+      "reputation" : 23,
+      "user_id" : 32011068,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/e30287b1a5e72b36641d45c2d3d27aab?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Laolu Ade OG CSR",
+      "link" : "https://stackoverflow.com/users/32011068/laolu-ade-og-csr"
+    },
+    "creation_date" : 1765745817,
+    "last_activity_date" : 1765745817,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79846883" : [ {
+      "comment_id" : 140903395,
+      "post_id" : 79846883,
+      "body" : "<a href=\"https://stackoverflow.com/help/gen-ai-policy\">stackoverflow.com/help/gen-ai-policy</a>",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 8866,
+        "reputation" : 61531,
+        "user_id" : 16148,
+        "user_type" : "registered",
+        "accept_rate" : 73,
+        "profile_image" : "https://i.sstatic.net/XTzm1.jpg?s=256",
+        "display_name" : "Corey Goldberg",
+        "link" : "https://stackoverflow.com/users/16148/corey-goldberg"
+      },
+      "creation_date" : 1765756729,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140903265,
+      "post_id" : 79846883,
+      "body" : "This answer worked for me. I confirmed that standalone containers are one browser at a time and that using orchestration or grid methods are the best ways to really kill a session.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 44931784,
+        "reputation" : 23,
+        "user_id" : 32011068,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/e30287b1a5e72b36641d45c2d3d27aab?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Laolu Ade OG CSR",
+        "link" : "https://stackoverflow.com/users/32011068/laolu-ade-og-csr"
+      },
+      "creation_date" : 1765745280,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

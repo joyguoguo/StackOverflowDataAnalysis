@@ -1,0 +1,62 @@
+{
+  "question" : {
+    "question_id" : 79556400,
+    "title" : "NULL not allowed for column &#39;ID&#39; in Hibernate",
+    "body" : "<p>I am creating integrational tests for my dao objects. I am <strong>not</strong> allowed to use <code>Spring framework</code>. This is the model:</p>\n<pre class=\"lang-java prettyprint-override\"><code>import lombok.AccessLevel;\nimport lombok.Data;\nimport lombok.Setter;\n\nimport javax.persistence.*;\nimport java.util.ArrayList;\nimport java.util.List;\n\n@Entity\n@Table(name = &quot;pets&quot;)\n@Data\npublic class Pet {\n    @Id\n    @GeneratedValue(strategy = GenerationType.IDENTITY)\n    @Setter(AccessLevel.NONE)\n    private Long id;\n\n    @Column\n    private String name;\n\n    @Column\n    @Enumerated(EnumType.STRING)\n    private Breed breed;\n\n    @Column\n    @Enumerated(EnumType.STRING)\n    private FurColor color;\n\n    @ManyToOne\n    @JoinColumn(name = &quot;owner_id&quot;)\n    private Owner owner;\n\n    @ManyToMany\n    @JoinTable(\n            name = &quot;pet_friends&quot;,\n            joinColumns = @JoinColumn(name = &quot;pet_id&quot;),\n            inverseJoinColumns = @JoinColumn(name = &quot;friend_id&quot;)\n    )\n    @Setter(AccessLevel.NONE)\n    private List&lt;Pet&gt; friends = new ArrayList&lt;&gt;();\n\n    public void AddFriend(Pet friend) {\n        friends.add(friend);\n    }\n}\n</code></pre>\n<p>I am trying to do the basic tests using <code>JUnit</code> 5 and <code>DbUnit</code> built with maven These are the <code>pom.xml</code> dependencies</p>\n<pre class=\"lang-xml prettyprint-override\"><code>&lt;dependencies&gt;\n        &lt;dependency&gt;\n            &lt;groupId&gt;org.hibernate&lt;/groupId&gt;\n            &lt;artifactId&gt;hibernate-core&lt;/artifactId&gt;\n            &lt;version&gt;5.5.7.Final&lt;/version&gt;\n        &lt;/dependency&gt;\n\n        &lt;dependency&gt;\n            &lt;groupId&gt;org.projectlombok&lt;/groupId&gt;\n            &lt;artifactId&gt;lombok&lt;/artifactId&gt;\n            &lt;version&gt;1.18.36&lt;/version&gt;\n            &lt;scope&gt;provided&lt;/scope&gt;\n        &lt;/dependency&gt;\n\n        &lt;dependency&gt;\n            &lt;groupId&gt;com.h2database&lt;/groupId&gt;\n            &lt;artifactId&gt;h2&lt;/artifactId&gt;\n            &lt;version&gt;2.2.224&lt;/version&gt;\n            &lt;scope&gt;test&lt;/scope&gt;\n        &lt;/dependency&gt;\n\n        &lt;dependency&gt;\n            &lt;groupId&gt;org.dbunit&lt;/groupId&gt;\n            &lt;artifactId&gt;dbunit&lt;/artifactId&gt;\n            &lt;version&gt;2.7.3&lt;/version&gt;\n            &lt;scope&gt;test&lt;/scope&gt;\n        &lt;/dependency&gt;\n \n        &lt;dependency&gt;\n            &lt;groupId&gt;org.junit.jupiter&lt;/groupId&gt;\n            &lt;artifactId&gt;junit-jupiter-engine&lt;/artifactId&gt;\n            &lt;version&gt;5.9.1&lt;/version&gt;\n            &lt;scope&gt;test&lt;/scope&gt;\n        &lt;/dependency&gt;\n    &lt;/dependencies&gt;\n</code></pre>\n<p>This the dao save method:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Override\n    public Pet save(Pet entity) {\n        var session = hib.openSession();\n        var transaction = session.beginTransaction();\n\n        try {\n            session.save(entity);\n            transaction.commit();\n        } catch (Exception e) {\n            transaction.rollback();\n        }\n\n        session.close();\n        return entity;\n    }\n</code></pre>\n<p>This is the dao test:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@TestInstance(TestInstance.Lifecycle.PER_METHOD)\npublic class PetDaoTests {\n    private SessionFactory sessionFactory;\n    private PetDao petDao;\n    private DataSource dataSource;\n\n    @BeforeEach\n    public void setUp() {\n        var config = new Configuration().configure(&quot;test.hibernate.cfg.xml&quot;);\n        sessionFactory = config.buildSessionFactory();\n        petDao = new PetDao(sessionFactory);\n\n        var jdbch2 = new JdbcDataSource();\n        jdbch2.setUrl(config.getProperty(&quot;hibernate.connection.url&quot;));\n        jdbch2.setUser(config.getProperty(&quot;hibernate.connection.username&quot;));\n        jdbch2.setPassword(config.getProperty(&quot;hibernate.connection.password&quot;));\n        dataSource = jdbch2;\n    }\n\n    @AfterEach\n    public void tearDown() {\n        sessionFactory.close();\n    }\n\n    @Test\n    public void checlconn() {\n        var p = new Pet();\n        p.setName(&quot;some&quot;);\n        petDao.save(p);\n        System.out.println(p);\n\n        var session = sessionFactory.openSession();\n        var pets = session.createQuery(&quot;from Pet&quot;, Pet.class).list();\n        Assertions.assertEquals(1, pets.size());\n    }\n}\n</code></pre>\n<p>Hibernate configuration:</p>\n<pre class=\"lang-xml prettyprint-override\"><code>&lt;!DOCTYPE hibernate-configuration PUBLIC &quot;-//Hibernate/Hibernate Configuration DTD 3.0//EN&quot; &quot;http://hibernate.sourceforge.net/hibernate-configuration-3.0.dtd&quot;&gt;\n&lt;hibernate-configuration&gt;\n    &lt;session-factory&gt;\n\n        &lt;property name=&quot;hibernate.connection.driver_class&quot;&gt;org.h2.Driver&lt;/property&gt;\n        &lt;property name=&quot;hibernate.connection.url&quot;&gt;jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1&lt;/property&gt;\n        &lt;property name=&quot;hibernate.connection.username&quot;&gt;sa&lt;/property&gt;\n        &lt;property name=&quot;hibernate.connection.password&quot;&gt;sa&lt;/property&gt;\n\n        &lt;property name=&quot;hibernate.dialect&quot;&gt;org.hibernate.dialect.H2Dialect&lt;/property&gt;\n        &lt;property name=&quot;hibernate.show_sql&quot;&gt;true&lt;/property&gt;\n        &lt;property name=&quot;hibernate.format_sql&quot;&gt;true&lt;/property&gt;\n        &lt;property name=&quot;hbm2ddl.auto&quot;&gt;create&lt;/property&gt;\n        &lt;property name=&quot;hibernate.current_session_context_class&quot;&gt;thread&lt;/property&gt;\n\n        &lt;mapping class=&quot;ru.serov.model.Pet&quot; /&gt;\n        &lt;mapping class=&quot;ru.serov.model.Owner&quot; /&gt;\n\n    &lt;/session-factory&gt;\n&lt;/hibernate-configuration&gt;\n</code></pre>\n<p>I know that using all the instruments of <code>DbUnit</code> with <code>JUnit</code> 5 may not work that's why I implement all the methods natively</p>\n<p>The error it returns is:</p>\n<pre class=\"lang-bash prettyprint-override\"><code>ERROR: Значение NULL не разрешено для поля &quot;ID&quot;\nNULL not allowed for column &quot;ID&quot;; SQL statement:\ninsert into pets (id, breed, color, name, owner_id) values (null, ?, ?, ?, ?) [23502-224]\n</code></pre>\n<p>right after insertion - but as I think the committing of transaction must be flushing the session and the changes must be visible</p>\n<p>I also thought that there is something about <code>hibernate.current_session_class</code> property but nothing changed when I edit it</p>\n<p>There were some attempts to create the same thing on <code>JUnit</code> <strong>4</strong> with <code>DbUnit</code> but had the same error</p>\n<p>what is the cause of the problem?</p>\n",
+    "tags" : [ "java", "hibernate", "jpa" ],
+    "owner" : {
+      "account_id" : 40490856,
+      "reputation" : 31,
+      "user_id" : 29806504,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/YFFZOj2x.jpg?s=256",
+      "display_name" : "slavyanchiks",
+      "link" : "https://stackoverflow.com/users/29806504/slavyanchiks"
+    },
+    "is_answered" : true,
+    "view_count" : 114,
+    "answer_count" : 1,
+    "score" : 2,
+    "last_activity_date" : 1743883777,
+    "creation_date" : 1743811065,
+    "link" : "https://stackoverflow.com/questions/79556400/null-not-allowed-for-column-id-in-hibernate",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79557347,
+    "question_id" : 79556400,
+    "body" : "<p>This error means that Hibernate is trying to insert <code>null</code> to <code>id</code> column. But <code>id</code> should be auto-generated because you use <code>@GeneratedValue(strategy = GenerationType.IDENTITY)</code>.</p>\n<p>To fix this, you can try to add the following setting in your <code>hibernate.cfg.xml</code> file:</p>\n<pre class=\"lang-xml prettyprint-override\"><code>&lt;property name=&quot;hibernate.id.new_generator_mappings&quot;&gt;true&lt;/property&gt;\n</code></pre>\n<p>This tells Hibernate to use new ID generation system, which works better with databases\nlike H2.</p>\n<p>From <a href=\"https://docs.jboss.org/hibernate/orm/5.2/userguide/html_single/Hibernate_User_Guide.html?utm_source=chatgpt.com#_identifier_options\" rel=\"nofollow noreferrer\">official Hibernate docs</a> (section: 23.5.2, Identifier options):</p>\n<blockquote>\n<p>hibernate.id.new_generator_mappings (e.g. true (default value) or false)\nSetting which indicates whether or not the new IdentifierGenerator are used for AUTO, TABLE and SEQUENCE.</p>\n<p>Existing applications may want to disable this (set it false) for upgrade compatibility from 3.x and 4.x to 5.x.</p>\n</blockquote>\n",
+    "score" : 0,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 38931631,
+      "reputation" : 671,
+      "user_id" : 29023248,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/WxoZEuKw.png?s=256",
+      "display_name" : "Aleksey Bykov",
+      "link" : "https://stackoverflow.com/users/29023248/aleksey-bykov"
+    },
+    "creation_date" : 1743876876,
+    "last_activity_date" : 1743883777,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140304169,
+    "post_id" : 79556400,
+    "body" : "You might want to increase the visibility on the setter for <code>id</code> to <code>PROTECTED</code>.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 15064163,
+      "reputation" : 17111,
+      "user_id" : 10871900,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/720202b6e19abc330dcd92e6a1254562?s=256&d=identicon&r=PG",
+      "display_name" : "dan1st",
+      "link" : "https://stackoverflow.com/users/10871900/dan1st"
+    },
+    "creation_date" : 1743925341,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

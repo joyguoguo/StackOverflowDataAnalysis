@@ -1,0 +1,63 @@
+{
+  "question" : {
+    "question_id" : 79599461,
+    "title" : "How to invoke Apache Derby stored procedure using Spring SimpleJdbcCall",
+    "body" : "<p>I have written an Apache Derby Stored Procedure with a single integer parameter named &quot;ID&quot;. I am trying to invoke this using Spring Jdbc's SimpleJdbcCall. After the stored procedure is looked up and the parameter is bound to my input parameter, the SimpleJdbcCall creates the following string that represents the call <code>[{call EMPLOYEE_TIME_BY_ID(ID =&gt; ?)}]</code>.</p>\n<p>To execute the statement, this string is parsed. At which point, I am getting a parse error when it encounters the <code>&gt;</code>. It looks like the parser has no idea how to make sense of the <code>=&gt;</code> in the call string. So why does it put this in the call string only to later reject it?</p>\n<p>The resulting error message is <code>CallableStatementCallback; bad SQL grammar [{call EMPLOYEE_TIME_BY_ID(ID =&gt; ?)}]</code>.</p>\n<p>The error occurs in the method <code>org.apache.derby.impl.sql.compile.ParserImpl.parseStatement()</code>. The first parameter to this method is the call string <code>{call EMPLOYEE_TIME_BY_ID(id =&gt; ?)}</code>. This calls a private method that eventually throws an exception with the message <code>org.apache.derby.impl.sql.compile.ParseException: Encountered &quot;&gt;&quot; at line 1, column 31</code>. The error code is <code>42X01</code>.</p>\n<p>I am confused as to how the call string could formatted in such a way that it cannot later be parsed. The Stored Procedure is invoked as follows:</p>\n<pre><code>   public JSONArray getClosedPeriodDataMap(String spName, Map&lt;String, SqlParameterValue&gt; inParams) {\nSimpleJdbcCall simpleJdbcCall =\n        jdbcCallFactory.create()\n            .withProcedureName(spName)\n            .withNamedBinding()\n            .returningResultSet(&quot;JSONObjectList&quot;, new JSONObjectRowMapper());\n    MapSqlParameterSource source = new MapSqlParameterSource(inParams);\n    var resultsMap = simpleJdbcCall.execute(source);\n    JSONArray resultArray = new JSONArray();\n    resultArray.putAll(resultsMap.get(&quot;JSONObjectList&quot;));\n    return resultArray;\n}\n</code></pre>\n<p>where <code>inParams</code> is a map with one parameter, defined as a <code>SqlParameterValue</code> like this:</p>\n<pre><code>  Map&lt;String, SqlParameterValue&gt; params = new HashMap&lt;&gt;();\n  SqlParameterValue idValue = SqlParameterHelper.makeIntValue(&quot;ID&quot;, 1);\n  params.put(&quot;ID&quot;, idValue);\n  request.setParams(params);\n</code></pre>\n<p>And <code>SqlParameterHelper.makeIntValue()</code> is defined as:</p>\n<pre><code>  static SqlParameterValue makeIntValue(String name, int value) {\n    SqlParameter param = new SqlParameter(name, Types.INTEGER);\n    return new SqlParameterValue(param, value);\n  }\n</code></pre>\n<p>The in parameter seems to be getting bound correctly. The output parameter is properly recognized as a return parameter. It's just when the calling process attempts to parse the calling string it created that it gets confused.</p>\n<p>The table is created as follows:</p>\n<pre><code>CREATE TABLE EMPLOYEE_TIME(\n  ID            INT PRIMARY KEY,\n  NAME          VARCHAR(20) not null,\n  START_DATE    DATE not null ,\n  END_DATE      DATE,\n  HOURS_WORKED  NUMERIC not null\n);\n</code></pre>\n<p>The procedure, which must always be a Java method in Apache Derby, is created as follows:</p>\n<pre><code>CREATE PROCEDURE EMPLOYEE_TIME_BY_ID(IN ID INTEGER)\nPARAMETER STYLE JAVA\nLANGUAGE JAVA\nMODIFIES SQL DATA\nDYNAMIC RESULT SETS 1\nEXTERNAL NAME 'com.something.StoredProcedures.getEmployeeTimeById';\n</code></pre>\n<p>The method (which never even gets close to being called due to the parse exception) is defined as follows:</p>\n<pre><code>public static class StoredProcedures { \n\n  public void getEmployeeTimeById(final int id, ResultSet[] timesheets) throws SQLException {\n     try (Connection conn = DriverManager.getConnection(&quot;jdbc:default:connection&quot;);\n       PreparedStatement ps = conn.prepareStatement(&quot;SELECT * FROM DBA.EMPLOYEE_TIME WHERE id = ?&quot;)) {\n      ps.setInt(1, id);\n      ResultSet results = ps.executeQuery();\n      timesheets[0] = results;\n    }\n}\n</code></pre>\n<p>By the way, a typical Apache Derby call string would be something like</p>\n<p><code>CallableStatement cs = conn.prepareCall(&quot;{ call MY_PROC(?, ?)}&quot;);</code>.</p>\n<p>Notice that there's no <code>=&gt;</code>. It's not clear why that bizarre &quot;arrow&quot; is inserted into the call string. Maybe the best solution is to bag Spring's <code>SimpleJdbcCall</code> altogether and just invoke the call through a normal JDBC <code>CallableStatement</code>.</p>\n<p><em>Update:</em> The <code>=&gt;</code> operator is inserted by <code>org.springframework.jdbc.core.metadata.GenericCallMetaDataProvider.namedParameterBindingToUse()</code> but only when the given parameter is a named parameter. It does not matter if <code>SimpleJdbcCall.withNamedBinding()</code> method is invoked if the declared parameter is given a name. For example, if the parameter is provided as a <code>SqlParameter</code> with a name. Any named parameter will cause the Apache Derby parser to throw an exception when it attempts to parse the <code>=&gt;</code> operator. It might be possible to override <code>org.springframework.jdbc.core.metadata.CallMetaDataContext.createParameterBinding()</code> to ignore named binding and simply return <code>&quot;?&quot;</code> instead of something like <code>&quot;ID =&gt; ?&quot;</code>.</p>\n<p>Or it might be possible to override the <code>DerbyCallMetaDataProvider.namedParameterBindingToUse()</code> which is using its superclass's method <code>GenericCallMetaDataProvider.namedParameterBindingToUse()</code> which is the culprit responsible for injecting the <code>=&gt;</code> binding operator. In contrast, both Sybase and SqlServer implementations of this method produce something like <code>&quot;ID ?&quot;</code>. I don't know if Derby can handle that syntax either, so it is probably better to avoid named parameter binding altogether with Apache Derby unless at some point the parser is enhanced to handle <code>=&gt;</code> in the call string or the <code>DerbyCallMetaDataProvider.namedParameterBindingToUse()</code> produces something that its own parser can parse.</p>\n<p>I am going to eliminate all named parameters from my test code and try again. The helpful answer below from @life888888 does not use named parameters. It seems a shame that Apache Derby cannot handle named parameters as they are a powerful feature and one of the justifications for using Spring's JDBC classes.</p>\n",
+    "tags" : [ "java", "simplejdbccall" ],
+    "owner" : {
+      "account_id" : 440731,
+      "reputation" : 711,
+      "user_id" : 830455,
+      "user_type" : "registered",
+      "accept_rate" : 75,
+      "profile_image" : "https://i.sstatic.net/JRO0I.jpg?s=256",
+      "display_name" : "Robert White",
+      "link" : "https://stackoverflow.com/users/830455/robert-white"
+    },
+    "is_answered" : false,
+    "view_count" : 86,
+    "answer_count" : 0,
+    "score" : 0,
+    "last_activity_date" : 1746163067,
+    "creation_date" : 1745981216,
+    "link" : "https://stackoverflow.com/questions/79599461/how-to-invoke-apache-derby-stored-procedure-using-spring-simplejdbccall",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140384097,
+    "post_id" : 79599461,
+    "body" : "I am using Windows and Java 21. I am also attempting to use named binding with the <code>SimpleJdbcCall</code>.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 440731,
+      "reputation" : 711,
+      "user_id" : 830455,
+      "user_type" : "registered",
+      "accept_rate" : 75,
+      "profile_image" : "https://i.sstatic.net/JRO0I.jpg?s=256",
+      "display_name" : "Robert White",
+      "link" : "https://stackoverflow.com/users/830455/robert-white"
+    },
+    "creation_date" : 1746017274,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140382500,
+    "post_id" : 79599461,
+    "body" : "This question is helpful, but not really pertinent to my question. It mentions nothing about Spring&#39;s <code>SimpleJdbcCall</code>. It leads me to believe I should bag the attempt to use Spring&#39;s <code>SimpleJdbcCall</code>, which as it turns out is not all that simple given the mysteries involved in invoking it properly. Maybe the better approach is to use a simple JDBC <code>CallableStatement</code> as mentioned in the referenced Question.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 440731,
+      "reputation" : 711,
+      "user_id" : 830455,
+      "user_type" : "registered",
+      "accept_rate" : 75,
+      "profile_image" : "https://i.sstatic.net/JRO0I.jpg?s=256",
+      "display_name" : "Robert White",
+      "link" : "https://stackoverflow.com/users/830455/robert-white"
+    },
+    "creation_date" : 1745985260,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

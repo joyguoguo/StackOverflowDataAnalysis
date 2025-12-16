@@ -1,0 +1,328 @@
+{
+  "question" : {
+    "question_id" : 79765350,
+    "title" : "How to efficiently split a text file with an arbitrary Charset without damaging code points?",
+    "body" : "<p>Given a valid text file file and its <code>java.nio.charset.Charset</code> how can I efficiently (preferably using <code>RandomAccessFile.seek()</code> or <code>InputStream.skip()</code>, without <a href=\"https://github.com/basilevs/jstackfilter/blob/master/core/core/src/main/java/org/basilevs/jstackfilter/FastChunkSplitter.java\" rel=\"nofollow noreferrer\">reading the whole file</a>) split it into two or more chunks while ensuring that no chunks contain partial code points (it would be nice not to split a character/grapheme, but that's probably too hard)?</p>\n<p>For fixed-length encodings the answer is trivial - split on aligned positions. However, I'm not sure if <code>CharsetDecoder.averageBytesPerChar() == CharsetDecoder.maxBytesPerChar()</code> is a proper indication of a fixed length encoding, so it would be nice to find one.</p>\n<p>Some variable length encodings are not <a href=\"https://en.wikipedia.org/wiki/Self-synchronizing_code\" rel=\"nofollow noreferrer\">self-synchron­izing</a>, how can I find their character or code point in a byte stream after split?</p>\n<p><sub>The objective is to split the file for parallel processing. Classic IO fails to load all CPU cores while reading a file sequentially.</sub></p>\n",
+    "tags" : [ "java", "character-encoding", "java-nio" ],
+    "owner" : {
+      "account_id" : 43022,
+      "reputation" : 24624,
+      "user_id" : 125562,
+      "user_type" : "registered",
+      "accept_rate" : 64,
+      "profile_image" : "https://i.sstatic.net/SdIqA.png?s=256",
+      "display_name" : "Basilevs",
+      "link" : "https://stackoverflow.com/users/125562/basilevs"
+    },
+    "is_answered" : true,
+    "view_count" : 126,
+    "answer_count" : 1,
+    "score" : 3,
+    "last_activity_date" : 1757954841,
+    "creation_date" : 1757950700,
+    "link" : "https://stackoverflow.com/questions/79765350/how-to-efficiently-split-a-text-file-with-an-arbitrary-charset-without-damaging",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79765399,
+    "question_id" : 79765350,
+    "body" : "<p>What you want is completely impossible.</p>\n<p>Charset is a broad abstraction. The intent is that as many imaginable charset encodings can be represented by it as possible. This is a general principle in programming: The more 'handcuffs' you stick on an interface, the easier it is to work with and the more you can do with it, but the fewer systems actually fit in the abstraction.</p>\n<p>Perhaps instead you wanted to ask a slightly different question:</p>\n<ul>\n<li>How do I split a text file <em>written in UTF-8</em>.</li>\n</ul>\n<p>Or perhaps:</p>\n<ul>\n<li>How do I split a text file for as many encodings as possible.</li>\n</ul>\n<p>For the UTF family it is quite easy. But note that UTF-8 is generally praised as a magnificent invention <em>because</em> it has the property that the thing you want to do is in fact possible. Simple takes on charset design result in designs where the job you want is literally impossible.</p>\n<p>Imagine the following charset encoding for unicode:</p>\n<ol>\n<li>A single byte indicating how many bytes are used to represent each character. So, 1, 2, 3, or 4. Let's call this <code>charSize</code>.</li>\n<li>A 32-bit value indicating how many characters follow, represented by that encoding. Let's call this <code>runLen</code>.</li>\n<li><code>runLen * charSize</code> bytes.</li>\n<li>Go back to #1.</li>\n</ol>\n<p>This encoding is plausible and could trivially be turned into a complete java Charset definition.</p>\n<p>And yet, the thing you want is not possible. In a random access system you can still get through it faster than literally streaming through it (once you read #1 and #2 you can just skip over <code>runLen * charSize</code> part if you don't need to split inside it), but you can't simply read some bytes in the middle and know where to chop. You must start from the first byte, and there are no method that Charset has which would allow charset-agnostic code to most efficiently chop such a file up. A 'chopper' for this hypothetical format CAN exist and can be fairly efficient, but it'd have to written specifically for this exact charset encoding.</p>\n<p>QED: An algorithm that can efficiently chop any input given only 'random access stream of bytes' and '1 Charset impl' is <em>not possible</em>.</p>\n<h2>How to do it for UTF-8 specifically</h2>\n<p>A single UTF-8 value has the convenient property that any byte that starts with bits <code>10</code> is a continuation; and any byte that isn't that, defines a character and <em>may</em> have continuations (bytes starting with bits 10). You in fact know how many continuation bytes follow based only on that first byte:</p>\n<ul>\n<li>First bit is 0: That byte is a whole character (ASCII).</li>\n<li>First bits are 10: This is a continuation. Go back.</li>\n<li>First bits are 110: This is a 2-byte thing.</li>\n<li>First bits are 1110: 3-byte.</li>\n<li>First bits are 11110: 4-byte.</li>\n</ul>\n<p>Therefore, to split a file in the middle, simply read a byte, and keep reading until you hit a byte that does <em>not</em> start with <code>10</code> (i.e. <code>(b &amp; 0xC0) != 0xC0</code>)) - that is the start of a whole new character. Include all bytes before this point in 'the left chunk' and the not-10 byte + all that remains in the 'right chunk'.</p>\n<h2>A warning about unicode</h2>\n<p>Unicode is a lot more complicated than this. UTF-8 can be trivially lopped into bits with random access fast performance, but <em>a sequence of complete symbols nevertheless go together</em>. For example, this sequence of unicode values:</p>\n<ul>\n<li>U+0065</li>\n<li>U+0301</li>\n</ul>\n<p>Is the symbol é. 2 unicode values (not UTF-8 bytes; no, full unicode values. In UTF-8 terms, 2 bytes that do not start with 0b10) - one symbol. That's the plain jane ascii <code>e</code> plus the unicode symbol &quot;put ´ on the previous symbol&quot;.</p>\n<p>Similar shenanigans occur with emoji (you can easily hook together 7 or more emojis which are themselves in java surrogate pairs, for strings whose <code>.length()</code> would return 14 or more, and yet they are 1 single glyph. Flag emojis work like this, and you have modifiers. You can have 'hug' + 'man' + 'man' + 'brown' + 'olive' or whatever - to indicate the genders and colours of who is doing the hugging.</p>\n<p>Another source of problems is directional indicates (there's a unicode character that means &quot;.. and now the text goes right-to-left&quot;).</p>\n<p>If you chop a text file in twain, <em>even if you do it right and use the 0b10 trick to ensure you don't chop right through a single unicode value</em>, you can still end up with one file ending in &quot;e&quot; and the next file starting with &quot;´&quot;, whereas the source simply had a &quot;é&quot;.</p>\n<p>You should think about this. If it's important you don't chop emoji modifiers and/or decomposed chars and/or directional modifiers, hoo boy. This question boils down to extremely convoluted code. Think &quot;manmonth of work&quot; levels of complicated.</p>\n<p>Remember: Unicode; it's more complicated than you think it is.</p>\n",
+    "score" : 6,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 401843,
+      "reputation" : 107206,
+      "user_id" : 768644,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+      "display_name" : "rzwitserloot",
+      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+    },
+    "creation_date" : 1757954015,
+    "last_activity_date" : 1757954336,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140737528,
+    "post_id" : 79765350,
+    "body" : "@gthanop the obvious solution is to search for a match in all possible pairs of characters, but universe heat death does not let me.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 43022,
+      "reputation" : 24624,
+      "user_id" : 125562,
+      "user_type" : "registered",
+      "accept_rate" : 64,
+      "profile_image" : "https://i.sstatic.net/SdIqA.png?s=256",
+      "display_name" : "Basilevs",
+      "link" : "https://stackoverflow.com/users/125562/basilevs"
+    },
+    "creation_date" : 1757953733,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140737523,
+    "post_id" : 79765350,
+    "body" : "Oh. I was initially thinking that given a list of possible charsets one could find for themselves if they fit the two-LFs scenario or not. But in order to find if a charset fits, one would have to study their spec or something, which sounds time consuming (should depend on the charset). Good luck with the question, it is an interesting one.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 9059972,
+      "reputation" : 3471,
+      "user_id" : 6746785,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/3zi2O.png?s=256",
+      "display_name" : "gthanop",
+      "link" : "https://stackoverflow.com/users/6746785/gthanop"
+    },
+    "creation_date" : 1757953592,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140737487,
+    "post_id" : 79765350,
+    "body" : "@gthanop thanks for mentioning this. Although I do not know how to find such encodings either.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 43022,
+      "reputation" : 24624,
+      "user_id" : 125562,
+      "user_type" : "registered",
+      "accept_rate" : 64,
+      "profile_image" : "https://i.sstatic.net/SdIqA.png?s=256",
+      "display_name" : "Basilevs",
+      "link" : "https://stackoverflow.com/users/125562/basilevs"
+    },
+    "creation_date" : 1757952487,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140737480,
+    "post_id" : 79765350,
+    "body" : "@Basilevs your implementation seems to split <i>text chunks</i> (which are there defined as text lines between empty ones, as far as I understand). That is, you are currently splitting based on line feeds. I am just mentioning this, because it may enable you to whitelist even more charsets. For example, given a charset and the line feed sequence, there may exist no valid character sequence for two back-to-back line feed sequences other than the two LFs themselves (so then start with random access and then read text before and after until you see two LFs back-to-back, for example).",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 9059972,
+      "reputation" : 3471,
+      "user_id" : 6746785,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/3zi2O.png?s=256",
+      "display_name" : "gthanop",
+      "link" : "https://stackoverflow.com/users/6746785/gthanop"
+    },
+    "creation_date" : 1757952338,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140737459,
+    "post_id" : 79765350,
+    "body" : "@Basilevs you don&#39;t &quot;detect&quot; this, you have white list created by you which will contain list of such encodings",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3415144,
+      "reputation" : 24365,
+      "user_id" : 2864275,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f1f73deb5983ac46af2a74732752292e?s=256&d=identicon&r=PG",
+      "display_name" : "Iłya Bursov",
+      "link" : "https://stackoverflow.com/users/2864275/i%c5%82ya-bursov"
+    },
+    "creation_date" : 1757951515,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140737457,
+    "post_id" : 79765350,
+    "body" : "For some charsets and encodings, like UTF-8, it is possible to tell that you are in the middle of a multi-byte sequence, but that wouldn&#39;t be possible for an arbitrary charset. For example, Shift-JIS: <a href=\"https://en.wikipedia.org/wiki/Shift_JIS#:~:text=Since%20the%20same%20byte%20value%20can%20be%20either%20first%20or%20second%20byte\" rel=\"nofollow noreferrer\">en.wikipedia.org/wiki/&hellip;</a>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 318670,
+      "reputation" : 16477,
+      "user_id" : 636009,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/IIQJV.jpg?s=256",
+      "display_name" : "David Conrad",
+      "link" : "https://stackoverflow.com/users/636009/david-conrad"
+    },
+    "creation_date" : 1757951508,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140737453,
+    "post_id" : 79765350,
+    "body" : "@IłyaBursov this would be a nice answer if there were some means to detect a self-synchronizing encoding.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 43022,
+      "reputation" : 24624,
+      "user_id" : 125562,
+      "user_type" : "registered",
+      "accept_rate" : 64,
+      "profile_image" : "https://i.sstatic.net/SdIqA.png?s=256",
+      "display_name" : "Basilevs",
+      "link" : "https://stackoverflow.com/users/125562/basilevs"
+    },
+    "creation_date" : 1757951460,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140737449,
+    "post_id" : 79765350,
+    "body" : "@JannikS. my <a href=\"https://github.com/basilevs/jstackfilter/blob/master/core/core/src/main/java/org/basilevs/jstackfilter/FastChunkSplitter.java\" rel=\"nofollow noreferrer\">current implementation</a> is not fast enough. The question is not about writing code - it is about API and a nature of encodings in general. I can&#39;t find any means/API to synchronize arbitrary encoding.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 43022,
+      "reputation" : 24624,
+      "user_id" : 125562,
+      "user_type" : "registered",
+      "accept_rate" : 64,
+      "profile_image" : "https://i.sstatic.net/SdIqA.png?s=256",
+      "display_name" : "Basilevs",
+      "link" : "https://stackoverflow.com/users/125562/basilevs"
+    },
+    "creation_date" : 1757951380,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140737448,
+    "post_id" : 79765350,
+    "body" : "<code>how can I efficiently</code> if you want to support all possible charsets (like utf16 or some jp/cn)  - then you can&#39;t do this, you have to read whole file sequentially first to find possible split positions and only then send file to parallel processing, of course you can try to hardcode what charsets are safe to split (like ascii or utf8) and use quicker method for them, but for the rest - rely on initial preprocessing",
+    "score" : 3,
+    "owner" : {
+      "account_id" : 3415144,
+      "reputation" : 24365,
+      "user_id" : 2864275,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f1f73deb5983ac46af2a74732752292e?s=256&d=identicon&r=PG",
+      "display_name" : "Iłya Bursov",
+      "link" : "https://stackoverflow.com/users/2864275/i%c5%82ya-bursov"
+    },
+    "creation_date" : 1757951368,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140737429,
+    "post_id" : 79765350,
+    "body" : "StackOverflow is not a code writing service. Please <a href=\"https://stackoverflow.com/posts/79765350/edit\">edit</a> your question to show us what you&#39;ve tried.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 30223964,
+      "reputation" : 262,
+      "user_id" : 23162960,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2451acfac254a6fc75757ecf89d75f9a?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Jannik S.",
+      "link" : "https://stackoverflow.com/users/23162960/jannik-s"
+    },
+    "creation_date" : 1757951052,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79765399" : [ {
+      "comment_id" : 140742273,
+      "post_id" : 79765399,
+      "body" : "Well, for 8 bit encodings you can check whether they have a 1:1 mapping that would allow such an optimization. But you’d miss the important UTF-8 encoding with such a check, so hardcoding this special case would still be needed. Whereas the majority of charsets you’d cover with such check are irrelevant in today’s IT.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 3211603,
+        "reputation" : 301001,
+        "user_id" : 2711488,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+        "display_name" : "Holger",
+        "link" : "https://stackoverflow.com/users/2711488/holger"
+      },
+      "creation_date" : 1758112691,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140742263,
+      "post_id" : 79765399,
+      "body" : "Keep in mind that since Java 9, <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/nio/file/Files.html#lines(java.nio.file.Path,java.nio.charset.Charset)\" rel=\"nofollow noreferrer\"><code>Files.lines(…)</code></a> already does this: “<i>This implementation supports good parallel stream performance for the standard charsets UTF-8, US-ASCII and ISO-8859-1. Such line-optimal charsets have the property that the encoded bytes of a line feed (&#39;\\n&#39;) or a carriage return (&#39;\\r&#39;) are efficiently identifiable from other encoded characters when randomly accessing the bytes of the file.</i>” Don’t waste your time reinventing the wheel.",
+      "score" : 3,
+      "owner" : {
+        "account_id" : 3211603,
+        "reputation" : 301001,
+        "user_id" : 2711488,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+        "display_name" : "Holger",
+        "link" : "https://stackoverflow.com/users/2711488/holger"
+      },
+      "creation_date" : 1758112460,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140739604,
+      "post_id" : 79765399,
+      "body" : "Could you edit this into answer somehow?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 43022,
+        "reputation" : 24624,
+        "user_id" : 125562,
+        "user_type" : "registered",
+        "accept_rate" : 64,
+        "profile_image" : "https://i.sstatic.net/SdIqA.png?s=256",
+        "display_name" : "Basilevs",
+        "link" : "https://stackoverflow.com/users/125562/basilevs"
+      },
+      "creation_date" : 1758027667,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140739411,
+      "post_id" : 79765399,
+      "body" : "@Basilevs Okay, it sounds like what you want is: &quot;Given a charset, how do I determine if the answer is true or false to the question: Will CharsetDecoder&#39;s &#39;Malcoded&#39; thing allow me to implement this algorithm by just feeding a sequence of bytes obtained by jumping to an arbitrary midpoint and looping 1 byte forward until decoding the sequence <i>does not</i> result in a malcoded error&quot;. There is no such API. You&#39;d have to hardcode a list.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 401843,
+        "reputation" : 107206,
+        "user_id" : 768644,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+        "display_name" : "rzwitserloot",
+        "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+      },
+      "creation_date" : 1758022650,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140737610,
+      "post_id" : 79765399,
+      "body" : "Actually, I do not need to know how to synchronize encodings, because <code>CharsetDecoder</code> API has an option to skip malcoded bytes. So I only need to know if it is at all possible for a given encoding.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 43022,
+        "reputation" : 24624,
+        "user_id" : 125562,
+        "user_type" : "registered",
+        "accept_rate" : 64,
+        "profile_image" : "https://i.sstatic.net/SdIqA.png?s=256",
+        "display_name" : "Basilevs",
+        "link" : "https://stackoverflow.com/users/125562/basilevs"
+      },
+      "creation_date" : 1757956152,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140737595,
+      "post_id" : 79765399,
+      "body" : "@Basilevs Hardcode a list of known encodings. It&#39;s not enough to know &#39;it is possible for UTF-8&#39;; you must know <i>how</i> to do it. You must encode this 0xC0 stuff. Pragmatically speaking, a list of &#39;these encodings are fixed size&#39; + &#39;this is how you efficiently split UTF-8&#39; takes care of 99% of everything out there, no?",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 401843,
+        "reputation" : 107206,
+        "user_id" : 768644,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+        "display_name" : "rzwitserloot",
+        "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+      },
+      "creation_date" : 1757955813,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140737554,
+      "post_id" : 79765399,
+      "body" : "I understand that O(1) split is impossible in general. But how do I find encodings where it is possible? I could then fall back to a slow method for bad encodings.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 43022,
+        "reputation" : 24624,
+        "user_id" : 125562,
+        "user_type" : "registered",
+        "accept_rate" : 64,
+        "profile_image" : "https://i.sstatic.net/SdIqA.png?s=256",
+        "display_name" : "Basilevs",
+        "link" : "https://stackoverflow.com/users/125562/basilevs"
+      },
+      "creation_date" : 1757954795,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

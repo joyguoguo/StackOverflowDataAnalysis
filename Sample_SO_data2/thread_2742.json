@@ -1,0 +1,162 @@
+{
+  "question" : {
+    "question_id" : 79600513,
+    "title" : "Redis caching issue in Java: data is being cached but not being fetched from cache when Called",
+    "body" : "<p>I have been trying to implement caching, data is being cached in the memory, but not being fetched from the cache memory when called second or third time, instead it's fetching from db  everytime when called.   The question is <em><strong>why it is not fetching cached data?\nwhat mistake i am doing?</strong></em></p>\n<p>i have provided output, where in many places there are escape sequence (three backward slashes) (\\)\nbut this website is removing it for some reason and displaying one backward slash . idk if this is casuing the issue</p>\n<pre><code>@GetMapping(&quot;/listOfActiveJobsByEnterprise/enterpriseId/{enterpriseId}&quot;)\npublic ResponseEntity&lt;List&lt;JobWithStatsDTO&gt;&gt; getActiveJobPostsByEnterpriseId(\n        @PathVariable Long enterpriseId,\n        @RequestParam(defaultValue = &quot;0&quot;) int page,\n        @RequestParam(defaultValue = &quot;50&quot;) int size) {\n    Optional&lt;User&gt; user = userService.findById(enterpriseId);\n    if (user.isPresent()) {\n        List&lt;JobWithStatsDTO&gt; response =      demandMvpJobDetailsService.getActiveJobDetailsWithStats(enterpriseId, page, size);\n        return new ResponseEntity&lt;&gt;(response, HttpStatus.OK);\n    } else {\n        return new ResponseEntity&lt;&gt;(HttpStatus.NOT_FOUND);\n    }\n}\n\n@Override\n@Transactional(readOnly = true)\n@Cacheable(value = &quot;activeJobsWithStats&quot;, key = &quot;#enterpriseId + '_' + #page + '_'     + #size&quot;, cacheManager = &quot;customCacheManager&quot;)\n\npublic List&lt;JobWithStatsDTO&gt; getActiveJobDetailsWithStats(Long enterpriseId, int   page, int size) {\n    Pageable pageable = PageRequest.of(page, size);\n    Page&lt;EnterpriseJobDetailsModel&gt; activeJobPosts =    getActiveJobPostsByEnterpriseId(enterpriseId, pageable);\n    List&lt;EnterpriseJobDetailsModel&gt; content = activeJobPosts.getContent();\n    log.info(&quot;NotFetching from cache&quot;);\n    // Use transaction to fetch all necessary data\n    List&lt;JobWithStatsDTO&gt; response = new ArrayList&lt;&gt;();\n    for (EnterpriseJobDetailsModel job : content) {\n        JobDTO jobDTO = JobDTO.fromEntity(job);\n        Long applicationsCount = appliedJobByCandidiateRepository.countByEnterpriseJobDetailsModel(job);\n        Long viewsCount = jobViewsRepository.countByEnterpriseJobDetailsModel(job);\n\n        response.add(JobWithStatsDTO.from(jobDTO, applicationsCount, viewsCount));\n    }\n    log.info(response.toString());\n    return response;\n}\n</code></pre>\n<pre><code>```java\n    package com.campus.demandmvp.config;\n\n    import com.fasterxml.jackson.annotation.JsonTypeInfo;\n    import com.fasterxml.jackson.databind.ObjectMapper;\n    import com.fasterxml.jackson.databind.jsontype.impl.LaissezFaireSubTypeValidator;\n    import org.springframework.cache.annotation.EnableCaching;\n    import org.springframework.context.annotation.Bean;\n    import org.springframework.context.annotation.Configuration;\n    import org.springframework.context.annotation.Primary;\n    import org.springframework.data.redis.cache.RedisCacheConfiguration;\n    import org.springframework.data.redis.cache.RedisCacheManager;\n    import org.springframework.data.redis.connection.RedisConnectionFactory;\n    import   org.springframework.data.redis.serializer.GenericJackson2JsonRedisSerializer;\n    import org.springframework.data.redis.serializer.RedisSerializationContext;\n    import org.springframework.data.redis.serializer.StringRedisSerializer;\n\n    import java.time.Duration;\n    import java.util.HashMap;\n    import java.util.Map;\n\n    @Configuration\n    @EnableCaching\n    public class CacheConfig {\n\n    // Cache names as constants\n    public static final String ALL_PROFILES_CACHE = &quot;allEnterpriseProfiles&quot;;\n    public static final String ACTIVE_JOBS_WITH_STATS = &quot;activeJobsWithStats&quot;;\n\n    // TTL durations\n    private static final Duration DEFAULT_TTL = Duration.ofMinutes(30);\n    private static final Duration ALL_PROFILES_TTL = Duration.ofMinutes(15);\n    private static final Duration JOBS_TTL = Duration.ofMinutes(10);\n\n    @Bean\n    public ObjectMapper cacheObjectMapper() {\n        ObjectMapper mapper = new ObjectMapper();\n        mapper.activateDefaultTyping(\n                LaissezFaireSubTypeValidator.instance,\n                ObjectMapper.DefaultTyping.NON_FINAL,\n                JsonTypeInfo.As.PROPERTY\n        );\n        return mapper;\n    }\n\n    @Bean\n    public GenericJackson2JsonRedisSerializer redisSerializer() {\n        return new GenericJackson2JsonRedisSerializer(cacheObjectMapper());\n    }\n\n    @Primary\n    @Bean(name = &quot;customCacheManager&quot;)\n    public RedisCacheManager customCacheManager(RedisConnectionFactory connectionFactory, GenericJackson2JsonRedisSerializer redisSerializer) {\n        // Default cache configuration\n        RedisCacheConfiguration defaultConfig = RedisCacheConfiguration.defaultCacheConfig()\n                .entryTtl(DEFAULT_TTL)\n                .disableCachingNullValues()\n                .serializeKeysWith(\n                        RedisSerializationContext.SerializationPair.fromSerializer(new StringRedisSerializer())\n                )\n                .serializeValuesWith(\n                        RedisSerializationContext.SerializationPair.fromSerializer(redisSerializer)\n                );\n\n        // Custom cache configurations\n        Map&lt;String, RedisCacheConfiguration&gt; cacheConfigs = new HashMap&lt;&gt;();\n        cacheConfigs.put(ALL_PROFILES_CACHE, defaultConfig.entryTtl(ALL_PROFILES_TTL));\n        cacheConfigs.put(ACTIVE_JOBS_WITH_STATS, defaultConfig.entryTtl(JOBS_TTL));\n\n        return RedisCacheManager.builder(connectionFactory)\n                .cacheDefaults(defaultConfig)\n                .withInitialCacheConfigurations(cacheConfigs)\n                .transactionAware()\n                .build();\n    }\n}\n</code></pre>\n<p><strong>Redis Output:</strong></p>\n<blockquote>\n<p>127.0.0.1:6379&gt; get  &quot;activeJobsWithStats::17_0_50&quot;\n&quot;[&quot;java.util.ArrayList&quot;,[{&quot;@class&quot;:&quot;com.campus.demandmvp.response.JobWithStatsDTO&quot;,&quot;job&quot;:{&quot;@class&quot;:&quot;com.campus.demandmvp.response.JobDTO&quot;,&quot;id&quot;:67,&quot;jobpost&quot;:&quot;\\n , Python assessment ,  The ideal candidate will have a strong work ethic and attention to detail.&quot;,&quot;user&quot;:{&quot;@class&quot;:&quot;com.campus.demandmvp.response.UserDTO&quot;,&quot;id&quot;:17,&quot;email&quot;:&quot;k@gmail.com&quot;,&quot;firstName&quot;:&quot;Kotresh&quot;,&quot;lastName&quot;:&quot;Patil&quot;,&quot;nameOfEnterPrise&quot;:&quot;Kotresh Patil&quot;,&quot;pnCode&quot;:&quot;+91&quot;,&quot;phoneNumber&quot;:70220,&quot;creationDate&quot;:1745633466159,&quot;profilePhoto&quot;:&quot;enterprise_profile_75a79967-29ab-4b21-8d50-73b935423cf2.jpeg&quot;,&quot;accessWhatsapp&quot;:false,&quot;userType&quot;:&quot;PROFESSOR&quot;,&quot;emailVerified&quot;:false},&quot;jobPostDate&quot;:1745646948750,&quot;status&quot;:true,&quot;uniqueLink&quot;:&quot;&quot;,&quot;areaOfEvaluation&quot;:&quot;\\&quot;Algorithm design\\&quot;,\\&quot;Solving real-world problems\\&quot;,\\&quot;Consistency in naming\\&quot;,\\&quot;Repository management\\&quot;,\\&quot;Writing docstrings\\&quot;,\\&quot;Breaking down tasks\\&quot;,\\&quot;Planning workflows\\&quot;&quot;,&quot;other_benifts&quot;:&quot;NOT_APPLICABLE&quot;,&quot;jobTitle&quot;:&quot;Python Work Ethic&quot;,&quot;job_comments&quot;:&quot; , Python assessment ,  The ideal candidate will have a strong work ethic and attention to detail.&quot;,&quot;companyOverview&quot;:&quot;&quot;,&quot;krrs&quot;:&quot;NOT_APPLICABLE&quot;,&quot;keyQualifications&quot;:&quot;NOT_APPLICABLE&quot;,&quot;presence&quot;:&quot;NOT_APPLICABLE&quot;,&quot;type_of_job&quot;:&quot;TIER_3&quot;,&quot;skill_tags&quot;:&quot;Python programming proficiency,Debugging and problem-solving,Code quality and best practices,Understanding of algorithms,Hands-on coding exercises,Attention to detail in code,Version control and git usage,Code documentation practices,Task management and focus,Time management under deadlines&quot;,&quot;jobCountry&quot;:&quot;NOT_APPLICABLE&quot;,&quot;jobCity&quot;:&quot;NOT_APPLICABLE&quot;,&quot;suggestedCompensationMin&quot;:&quot;0&quot;,&quot;suggestedCompensationMax&quot;:&quot;0&quot;,&quot;noOfInterviews&quot;:100,&quot;salaryCurrency&quot;:&quot;NOT_APPLICABLE&quot;,&quot;minSalary&quot;:0.0,&quot;maxSalary&quot;:0.0,&quot;compensationFrequency&quot;:&quot;NOT_APPLICABLE&quot;,&quot;minExperience&quot;:0,&quot;maxExperience&quot;:1,&quot;education_level&quot;:null,&quot;jobtype&quot;:&quot;NOT_APPLICABLE&quot;},&quot;totalCandidatesAppliedForTheParticularJob&quot;:0,&quot;jobViewCount&quot;:0},{&quot;@class&quot;:&quot;com.campus.demandmvp.response.JobWithStatsDTO&quot;,&quot;job&quot;:{&quot;@class&quot;:&quot;com.campus.demandmvp.response.JobDTO&quot;,&quot;id&quot;:66,&quot;jobpost&quot;:&quot;\\n , Java developer ,  The ideal candidate will have a strong work ethic and attention to detail.&quot;,&quot;user&quot;:{&quot;@class&quot;:&quot;com.campus.demandmvp.response.UserDTO&quot;,&quot;id&quot;:17,&quot;email&quot;:&quot;k@gmail.com&quot;,&quot;firstName&quot;:&quot;Kotresh&quot;,&quot;lastName&quot;:&quot;Patil&quot;,&quot;nameOfEnterPrise&quot;:&quot;Kotresh Patil&quot;,&quot;pnCode&quot;:&quot;+91&quot;,&quot;phoneNumber&quot;:7800,&quot;creationDate&quot;:1745633466159,&quot;profilePhoto&quot;:&quot;enterprise_profile_75a79967-29ab-4b21-8d50-73b935423cf2.jpeg&quot;,&quot;accessWhatsapp&quot;:false,&quot;userType&quot;:&quot;PROFESSOR&quot;,&quot;emailVerified&quot;:false},&quot;jobPostDate&quot;:1745643926017,&quot;status&quot;:true,&quot;uniqueLink&quot;:\\&quot;,&quot;areaOfEvaluation&quot;:&quot;\\&quot;Branching and merging\\&quot;,\\&quot;Logic formulation\\&quot;,\\&quot;Unit testing\\&quot;,\\&quot;Code accuracy\\&quot;,\\&quot;Code reviews\\&quot;,\\&quot;Time management\\&quot;,\\&quot;Maven/Gradle usage\\&quot;&quot;,&quot;other_benifts&quot;:&quot;NOT_APPLICABLE&quot;,&quot;jobTitle&quot;:&quot;Java Developer Assessment&quot;,&quot;job_comments&quot;:&quot; , Java developer ,  The ideal candidate will have a strong work ethic and attention to detail.&quot;,&quot;companyOverview&quot;:&quot;&quot;,&quot;krrs&quot;:&quot;NOT_APPLICABLE&quot;,&quot;keyQualifications&quot;:&quot;NOT_APPLICABLE&quot;,&quot;presence&quot;:&quot;NOT_APPLICABLE&quot;,&quot;type_of_job&quot;:&quot;TIER_3&quot;,&quot;skill_tags&quot;:&quot;Java Programming Proficiency,Object-Oriented Design Principles,Algorithm and Data Structures,Version Control Systems (Git),Problem Solving Skills,Software Debugging and Testing,Attention to Detail,Team Collaboration Skills,Work Ethic Evaluation,Understanding of Build Tools&quot;,&quot;jobCountry&quot;:&quot;NOT_APPLICABLE&quot;,&quot;jobCity&quot;:&quot;NOT_APPLICABLE&quot;,&quot;suggestedCompensationMin&quot;:&quot;0&quot;,&quot;suggestedCompensationMax&quot;:&quot;0&quot;,&quot;noOfInterviews&quot;:100,&quot;salaryCurrency&quot;:&quot;NOT_APPLICABLE&quot;,&quot;minSalary&quot;:0.0,&quot;maxSalary&quot;:0.0,&quot;compensationFrequency&quot;:&quot;NOT_APPLICABLE&quot;,&quot;minExperience&quot;:0,&quot;maxExperience&quot;:1,&quot;education_level&quot;:null,&quot;jobtype&quot;:&quot;NOT_APPLICABLE&quot;},&quot;totalCandidatesAppliedForTheParticularJob&quot;:0,&quot;jobViewCount&quot;:1},{&quot;@class&quot;:&quot;com.campus.demandmvp.response.JobWithStatsDTO&quot;,&quot;job&quot;:</p>\n</blockquote>\n",
+    "tags" : [ "java", "spring", "caching", "redis" ],
+    "owner" : {
+      "account_id" : 27608914,
+      "reputation" : 21,
+      "user_id" : 21072463,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/AEdFTp5usjfWu5AoxDZGVdNrg0TtkESg788xLEfPeQqRtw=k-s256",
+      "display_name" : "Super Saiyan Goku",
+      "link" : "https://stackoverflow.com/users/21072463/super-saiyan-goku"
+    },
+    "is_answered" : true,
+    "view_count" : 116,
+    "answer_count" : 1,
+    "score" : 2,
+    "last_activity_date" : 1746042516,
+    "creation_date" : 1746022859,
+    "link" : "https://stackoverflow.com/questions/79600513/redis-caching-issue-in-java-data-is-being-cached-but-not-being-fetched-from-cac",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79601004,
+    "question_id" : 79600513,
+    "body" : "<p>I think this may be related to the way the <code>@Cachable</code> and <code>@Transaction</code> annotations work and the order in which their proxies are implemented.</p>\n<p>Try removing transaction and .transactionAware() from the code and see the result.<br />\nIf the cache works this way, you can try giving these beans different <code>@Order</code> or separating them into different methods.</p>\n",
+    "score" : 2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 30382589,
+      "reputation" : 23,
+      "user_id" : 23283324,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/uo1o9.jpg?s=256",
+      "display_name" : "l_______",
+      "link" : "https://stackoverflow.com/users/23283324/l"
+    },
+    "creation_date" : 1746042237,
+    "last_activity_date" : 1746042516,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140390807,
+    "post_id" : 79600513,
+    "body" : "If you are calling that method internally in the class then it will not go through the AOP proxy. So a direct call will not invoke the cache, but calling it on an injected instance should. See <a href=\"https://docs.spring.io/spring-framework/reference/core/aop/proxying.html\" rel=\"nofollow noreferrer\">docs.spring.io/spring-framework/reference/core/aop/&hellip;</a>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10326,
+      "reputation" : 9711,
+      "user_id" : 19450,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/40d9bb2e8df635f2f598b7577c5b3eb9?s=256&d=identicon&r=PG",
+      "display_name" : "Ben Manes",
+      "link" : "https://stackoverflow.com/users/19450/ben-manes"
+    },
+    "creation_date" : 1746203058,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140385406,
+    "post_id" : 79600513,
+    "body" : "@AndrewS hey bro i dont exactly know what Call stack means but if you are asking which method  i am calling to fetch the data is given in first section i have given both end point as well as service layer method ( getActiveJobDetailsWithStats ) that is where i am trying to fetch data from cache first call from db then after from cache",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 27608914,
+      "reputation" : 21,
+      "user_id" : 21072463,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/AEdFTp5usjfWu5AoxDZGVdNrg0TtkESg788xLEfPeQqRtw=k-s256",
+      "display_name" : "Super Saiyan Goku",
+      "link" : "https://stackoverflow.com/users/21072463/super-saiyan-goku"
+    },
+    "creation_date" : 1746041488,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140385100,
+    "post_id" : 79600513,
+    "body" : "Please update the question with the call stack where data is cached, and the call stack where data is not fetched from the cache.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 8909811,
+      "reputation" : 2861,
+      "user_id" : 6650475,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/fe85994d05ad7aaaa1c47d638b37bc45?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Andrew S",
+      "link" : "https://stackoverflow.com/users/6650475/andrew-s"
+    },
+    "creation_date" : 1746034599,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140384695,
+    "post_id" : 79600513,
+    "body" : "Please edit your question to remove personal information from it, unless it yours and you are ok with it. There are phone numbers, email, etc",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 209503,
+      "reputation" : 23867,
+      "user_id" : 460557,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/b4565f97815833390c9c880e9e8522e4?s=256&d=identicon&r=PG",
+      "display_name" : "Jorge Campos",
+      "link" : "https://stackoverflow.com/users/460557/jorge-campos"
+    },
+    "creation_date" : 1746026501,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140384512,
+    "post_id" : 79600513,
+    "body" : "Welcome to Stack Overflow! Please take the <a href=\"https://stackoverflow.com/tour\">tour</a> and read <a href=\"https://stackoverflow.com/questions/how-to-ask\">How to Ask</a>. You&#39;ve provided your code and its output, which is great. However, what do you want us to do? Please <a href=\"https://stackoverflow.com/posts/79600513/edit\">edit</a> your post to include a question and the specific thing you&#39;d like to have help with. Are the results incorrect, do you get an error, something else entirely...?",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 6767185,
+      "reputation" : 18235,
+      "user_id" : 5211833,
+      "user_type" : "registered",
+      "accept_rate" : 83,
+      "profile_image" : "https://i.sstatic.net/Pyme2.jpg?s=256",
+      "display_name" : "Adriaan",
+      "link" : "https://stackoverflow.com/users/5211833/adriaan"
+    },
+    "creation_date" : 1746023182,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79601004" : [ {
+      "comment_id" : 140390063,
+      "post_id" : 79601004,
+      "body" : "i have removed @transactional still no luck",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 27608914,
+        "reputation" : 21,
+        "user_id" : 21072463,
+        "user_type" : "registered",
+        "profile_image" : "https://lh3.googleusercontent.com/a/AEdFTp5usjfWu5AoxDZGVdNrg0TtkESg788xLEfPeQqRtw=k-s256",
+        "display_name" : "Super Saiyan Goku",
+        "link" : "https://stackoverflow.com/users/21072463/super-saiyan-goku"
+      },
+      "creation_date" : 1746189973,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140386890,
+      "post_id" : 79601004,
+      "body" : "Your answer could be improved with additional supporting information. Please <a href=\"https://stackoverflow.com/posts/79601004/edit\">edit</a> to add further details, such as citations or documentation, so that others can confirm that your answer is correct. You can find more information on how to write good answers <a href=\"/help/how-to-answer\">in the help center</a>.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : -1,
+        "reputation" : 1,
+        "user_id" : -1,
+        "user_type" : "moderator",
+        "profile_image" : "https://www.gravatar.com/avatar/a007be5a61f6aa8f3e85ae2fc18dd66e?s=256&d=identicon&r=PG",
+        "display_name" : "Community",
+        "link" : "https://stackoverflow.com/users/-1/community"
+      },
+      "creation_date" : 1746101950,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

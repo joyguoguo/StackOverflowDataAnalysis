@@ -37,7 +37,7 @@
 
 **自定义数据库连接：**
 ```powershell
-.\validate-data-integrity.ps1 -dbHost localhost -dbPort 5432 -dbName stackoverflow_java -dbUser postgres -dbPassword 123456
+.\validate-data-integrity.ps1 -dbHost localhost -dbPort 5432 -dbName stackoverflow_java -dbUser checker -dbPassword 123456
 ```
 
 ### 方法2：直接使用psql命令

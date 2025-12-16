@@ -1,0 +1,185 @@
+{
+  "question" : {
+    "question_id" : 79551257,
+    "title" : "Efficiently build a large array with MethodHandles",
+    "body" : "<p>I have a need to construct a <code>MethodHandle</code> with signature <code>(InternalContext)-&gt;Object[]</code> from a <code>List&lt;MethodHandle&gt;</code> each with the signature <code>(InternalContext)-&gt;Object</code>.</p>\n<p>If the list is small &lt;253 elements I can do something like</p>\n<pre><code>  static MethodHandle makeArrayUsingCollector(List&lt;MethodHandle&gt; elements) {\n    // (Object[]) -&gt; Object[]\n    var handle = MethodHandles.identity(Object[].class);\n    // (Object,Object...Object) -&gt; Object[]\n    handle = handle.asCollector(Object[].class, elements.size());\n    // (InternalContext,InternalContext..InternalContext) -&gt; Object[]\n    handle = MethodHandles.filterArguments(handle, 0, elements.toArray(new MethodHandle[0]));\n    // (InternalContext) -&gt; Object[]\n    handle = MethodHandles.permuteArguments(\n        handle, methodType(Object[].class, InternalContext.class), new int[elements.size()]);\n    return handle;\n  }\n</code></pre>\n<p>However, if the list is larger the <code>asCollector()</code> call will fail since the resulting handle will have too many parameters.</p>\n<p>So I tried something like this:</p>\n<pre><code>  private static final int MAX_ARITY = 255;\n\n  static MethodHandle buildLargeArrayNaive(List&lt;MethodHandle&gt; elementFactories) {\n    if (elementFactories.size() &lt; MAX_ARITY) {\n      return makeArrayUsingCollector(elementFactories);\n    }\n    var setter = MethodHandles.arrayElementSetter(Object[].class);\n    // (Object[], InternalContext) -&gt; void\n    MethodHandle handle = null;\n    for (int i = 0; i &lt; elementFactories.size(); i++) {\n      // (Object[], InternalContext) -&gt; void\n      var setElement =\n          MethodHandles.filterArguments(\n              MethodHandles.insertArguments(setter, 1, i), 1, elementFactories.get(i));\n      if (handle == null) {\n        handle = setElement;\n      } else {\n        handle = MethodHandles.foldArguments(setElement, handle);\n      }\n    }\n\n    // (Object[], InternalContext) -&gt; Object[]\n    handle =\n        MethodHandles.foldArguments(\n            MethodHandles.dropArguments(\n                MethodHandles.identity(Object[].class), 1, InternalContext.class),\n            handle);\n    return MethodHandles.foldArguments(\n        handle,\n        MethodHandles.insertArguments(\n            MethodHandles.arrayConstructor(Object[].class), 0, elementFactories.size()));\n  }\n</code></pre>\n<p>Which basically constructs an array explicitly and then sets each element combining everything with <code>foldArguments</code></p>\n<p>This works, but the resulting <code>MethodHandle</code> produces <code>StackOverflowError</code> when constructing large arrays (say 100K elements).  From the docs on <code>foldArguments</code> this makes sense since each call sets up a 'tail call' structure.</p>\n<p>If i was generating literal bytecode to do this I would probably generate a method with as many <code>aastore</code> instructions as could fit and then set up a kind of 'tree' structure to call all these methods.</p>\n<pre><code>static makeArray(InternalContext ctx) {\n  var a = new Object[&lt;num-elements];\n  fillArray0(a, context)\n  fillArray1(a, context)\n  ...\n  return a;\n}\nstatic void fillArray0(Object[] a, InternalContext context) {\n  a[0] = &lt;element-factory&gt;(context);\n  ...\n}\n</code></pre>\n<p>I did discover i could solve this with recursion</p>\n<pre><code> static MethodHandle buildLargeArrayRecursive(List&lt;MethodHandle&gt; elementFactories) {\n    // (Object[], InternalContext) -&gt; void\n    var handle = doBuildLargeArrayRecursive(0, elementFactories);\n    // (Object[], InternalContext) -&gt; Object[]\n    handle =\n        MethodHandles.foldArguments(\n            MethodHandles.dropArguments(\n                MethodHandles.identity(Object[].class), 1, InternalContext.class),\n            handle);\n    ;\n    return MethodHandles.foldArguments(\n        handle,\n        MethodHandles.insertArguments(\n            MethodHandles.arrayConstructor(Object[].class), 0, elementFactories.size()));\n  }\n\n  static final MethodHandle ARRAY_SETTER = MethodHandles.arrayElementSetter(Object[].class);\n\n  static MethodHandle doBuildLargeArrayRecursive(int offset, List&lt;MethodHandle&gt; elementFactories) {\n    int size = elementFactories.size();\n    if (size == 0) {\n      return MethodHandles.empty(methodType(void.class, Object[].class, InternalContext.class));\n    }\n    if (size == 1) {\n      return MethodHandles.filterArguments(\n          MethodHandles.insertArguments(ARRAY_SETTER, 1, offset), 1, elementFactories.get(0));\n    }\n    int half = size / 2;\n    var left = elementFactories.subList(0, half);\n    var right = elementFactories.subList(half, size);\n    return MethodHandles.foldArguments(\n        doBuildLargeArrayRecursive(offset + half, right), doBuildLargeArrayRecursive(offset, left));\n  }\n</code></pre>\n<p>which seems to scale to at least 100K elements.  But clearly this will consume O(logN) stack space.. that is probably fine but this is also a lot of method calls...</p>\n<p>A few things occurred while staring at this:</p>\n<ul>\n<li><p>Should i create helper 'bulk-set' methods to handle more base cases?  e.g. <code>static void set4(Object[], int offset, Object o1...Object o3){...}</code> could maybe help reduce recursion? Or should i just rely on the VM to do this via inlining?</p>\n</li>\n<li><p>I see that Setting array elements is an 'intrinsic' operation that compiles to an <code>aastore</code> instruction, is there some way to combine things so that an arbitrary number of those could be in the same <code>LambdaForm</code>?</p>\n</li>\n<li><p>Would it be better to construct small arrays and patch them together using <code>System.arraycopy</code>?</p>\n</li>\n</ul>\n",
+    "tags" : [ "java", "methodhandle" ],
+    "owner" : {
+      "account_id" : 13018,
+      "reputation" : 14858,
+      "user_id" : 25920,
+      "user_type" : "registered",
+      "accept_rate" : 88,
+      "profile_image" : "https://www.gravatar.com/avatar/8ba539fc9d7a90bc51a27590742ac153?s=256&d=identicon&r=PG",
+      "display_name" : "luke",
+      "link" : "https://stackoverflow.com/users/25920/luke"
+    },
+    "is_answered" : true,
+    "view_count" : 84,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1743973486,
+    "creation_date" : 1743616430,
+    "link" : "https://stackoverflow.com/questions/79551257/efficiently-build-a-large-array-with-methodhandles",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79558740,
+    "question_id" : 79551257,
+    "body" : "<p>Using an adhoc <a href=\"https://gist.github.com/lukesandberg/196c2c39325915dc1aed8167c6947d39\" rel=\"nofollow noreferrer\">JMH benchmark</a> to try different ideas</p>\n<ul>\n<li><p><code>normalLoop</code></p>\n<ul>\n<li><p>This scenario creates a simple method</p>\n<pre><code>  static Object[] makeFromHandles(MethodHandle[] handles, Context context) throws Throwable {\n    Object[] array = new Object[handles.length];\n    for (int i = 0; i &lt; handles.length; i++) {\n      array[i] = (Object) handles[i].invokeExact(context);\n    }\n    return array;\n  }\n</code></pre>\n<p>then binds the delegate handles to it.  This definitely wins for simplicity and in theory this loop will be trivial for the VM to optimize (the <code>handles</code> parameter will be a constant according to the VM)</p>\n</li>\n</ul>\n</li>\n<li><p><code>asCollector</code></p>\n<ul>\n<li>This uses the <code>asCollector</code> approach described in the OP but only works for small numbers of parameters.  The second simplest and probably the most intuitive solution.</li>\n</ul>\n</li>\n<li><p><code>recursive</code></p>\n<ul>\n<li>this is the recursive <code>foldArguments</code> approach described by the OP.  Scales easily and is not too complex.</li>\n</ul>\n</li>\n<li><p><code>recursiveWithHelpers</code></p>\n<ul>\n<li>This is the same as recursive but uses a number of helper methods to bulk assign array slots.  <code>set2</code>, <code>set4</code>, <code>set8</code> and <code>set16</code>. Then it breaks the larger list down by powers of 2 to target those helpers using <code>foldArguments</code> to manage the rest.  Definitely more complicated but perhaps is useful by making the tree produced by <code>recursive</code> shallower?</li>\n</ul>\n</li>\n<li><p><code>arrayCopySetter</code></p>\n<ul>\n<li>This uses the <code>asCollector</code> approach to build up small arrays and then uses <code>System.arraycopy</code> to merge them into the target array.</li>\n<li>Possibly a good idea because we can leverage the VM intrinisic for copying and the <code>asCollector</code> approach.</li>\n</ul>\n</li>\n</ul>\n<p>According to the benchmark results all these approaches are actually quite similar.  Here is a snippet of the results... (see the gist for full results/code)</p>\n<pre><code>Benchmark                                           (size)    Mode      Cnt       Score   Error   Units\nObjectArrayBenchmarks.arrayCopySetter                   10   thrpt        2      55.668          ops/us\nObjectArrayBenchmarks.arrayCopySetter                  100   thrpt        2       3.549          ops/us\nObjectArrayBenchmarks.arrayCopySetter                 1000   thrpt        2       0.156          ops/us\nObjectArrayBenchmarks.asCollector                       10   thrpt        2      59.297          ops/us\nObjectArrayBenchmarks.asCollector                      100   thrpt        2       1.742          ops/us\nObjectArrayBenchmarks.normalLoop                        10   thrpt        2      35.753          ops/us\nObjectArrayBenchmarks.normalLoop                       100   thrpt        2       3.273          ops/us\nObjectArrayBenchmarks.normalLoop                      1000   thrpt        2       0.143          ops/us\nObjectArrayBenchmarks.recursive                         10   thrpt        2      60.146          ops/us\nObjectArrayBenchmarks.recursive                        100   thrpt        2       4.161          ops/us\nObjectArrayBenchmarks.recursive                       1000   thrpt        2       0.220          ops/us\nObjectArrayBenchmarks.recursiveWithHelpers              10   thrpt        2      59.053          ops/us\nObjectArrayBenchmarks.recursiveWithHelpers             100   thrpt        2       4.137          ops/us\nObjectArrayBenchmarks.recursiveWithHelpers            1000   thrpt        2       0.201          ops/us\n</code></pre>\n<p>So the <code>recursive</code> approach seems like a narrow winner. The handwritten 'helpers' do not pay for themselves.  But it is interesting to see that the <code>arrayCopySetter</code> approach is so competitive, I'm guessing the JVM can easily leverage escape analysis to eliminate the allocations for the temporaries and maybe even fuse the copies.  <code>normalLoop</code> is appealing but fails for basic 'megamorphic MethodHandle' reasons.</p>\n<p>I suppose the one reason that the <code>normalLoop</code> approach might be desirable is simply due to code size.  With the other solutions the size of the resulting <code>MethodHandle</code> is proportional to the number of input handles, but with <code>normalLoop</code> it is essentially O(1) overhead</p>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 13018,
+      "reputation" : 14858,
+      "user_id" : 25920,
+      "user_type" : "registered",
+      "accept_rate" : 88,
+      "profile_image" : "https://www.gravatar.com/avatar/8ba539fc9d7a90bc51a27590742ac153?s=256&d=identicon&r=PG",
+      "display_name" : "luke",
+      "link" : "https://stackoverflow.com/users/25920/luke"
+    },
+    "creation_date" : 1743973486,
+    "last_activity_date" : 1743973486,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140295045,
+    "post_id" : 79551257,
+    "body" : "I understand what method handles do. 100K is certainly large, but again this is for implementing Google Guice. If someone contributes 100K elements to a multibinder I want to support it and of course I want to be efficient about it.  We are producing MethodHandles in the same situations that Dagger2 implements abstract methods, so the same basic structure applies just we are using MethodHandles instead of java source files.  I&#39;m not sure why this wouldn&#39;t be plausible?  Preliminary testing has demonstrated that it scales to many large applications.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 13018,
+      "reputation" : 14858,
+      "user_id" : 25920,
+      "user_type" : "registered",
+      "accept_rate" : 88,
+      "profile_image" : "https://www.gravatar.com/avatar/8ba539fc9d7a90bc51a27590742ac153?s=256&d=identicon&r=PG",
+      "display_name" : "luke",
+      "link" : "https://stackoverflow.com/users/25920/luke"
+    },
+    "creation_date" : 1743688122,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140292831,
+    "post_id" : 79551257,
+    "body" : "Juggling hundreds of thousands of MethodReferences is not really a plausible way forward, especially not trying to build composite references that call each one.  You wouldn&#39;t write code with 100K lines, and wouldn&#39;t expect the JVM to handle it well; that&#39;s what MethodHandles do -- they generate bytecode at runtime.  It doesn&#39;t matter how fast something is if it can&#39;t do the thing you need it to do.  If you feel the need to use MethodHandle based approaches, use them only for a limited number of elements -- it sounds like 253 is a natural limit.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 465573,
+      "reputation" : 200423,
+      "user_id" : 869736,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/ae7bb06b9a23a4dd7eea69e853d47d12?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Louis Wasserman",
+      "link" : "https://stackoverflow.com/users/869736/louis-wasserman"
+    },
+    "creation_date" : 1743644551,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140292510,
+    "post_id" : 79551257,
+    "body" : "The reason i need a MethodHandle instead of a <code>Function</code> is so it can be combined with other MethodHandles.  I could wire up everything with Function objects (in fact that is the current implementation, see <code>InternalFactory</code>), but that inhibits VM optimizations around inlining and static linkage.  Preliminary benchmarks reveal that the MethodHandle approach is 2-3 times as fast at injecting simple objects.  This is simply because the MethodHandle objects give the VM more information for optimization than can typically be derived from a small number of <code>invokeinterface</code> instructions.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 13018,
+      "reputation" : 14858,
+      "user_id" : 25920,
+      "user_type" : "registered",
+      "accept_rate" : 88,
+      "profile_image" : "https://www.gravatar.com/avatar/8ba539fc9d7a90bc51a27590742ac153?s=256&d=identicon&r=PG",
+      "display_name" : "luke",
+      "link" : "https://stackoverflow.com/users/25920/luke"
+    },
+    "creation_date" : 1743634442,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140292421,
+    "post_id" : 79551257,
+    "body" : "This is in service of reimplementing Google Guice in terms of MethodHandles instead of our current bytecode generation.  This will allow us to eliminate various boxing and virtual method call overheads.  This specific pattern is required for the implementation of multibinders where we want to use a large number of user supplied bindings to produce an <code>ImmutableSet</code>.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 13018,
+      "reputation" : 14858,
+      "user_id" : 25920,
+      "user_type" : "registered",
+      "accept_rate" : 88,
+      "profile_image" : "https://www.gravatar.com/avatar/8ba539fc9d7a90bc51a27590742ac153?s=256&d=identicon&r=PG",
+      "display_name" : "luke",
+      "link" : "https://stackoverflow.com/users/25920/luke"
+    },
+    "creation_date" : 1743631785,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140292380,
+    "post_id" : 79551257,
+    "body" : "I would probably not consider using MethodHandles for these.  If you must use them at all, adapt them to <code>Function</code>s and call them in traditional ways.  I would seriously reconsider why you&#39;re using <code>MethodHandle</code> at all; it seems unlikely to be helpful in this situation.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 465573,
+      "reputation" : 200423,
+      "user_id" : 869736,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/ae7bb06b9a23a4dd7eea69e853d47d12?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Louis Wasserman",
+      "link" : "https://stackoverflow.com/users/869736/louis-wasserman"
+    },
+    "creation_date" : 1743630342,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79558740" : [ {
+      "comment_id" : 140314007,
+      "post_id" : 79558740,
+      "body" : "This implementation finally landed: <a href=\"https://github.com/google/guice/blob/33232b41cca24b939c58e29388d733e215927307/core/src/com/google/inject/internal/InternalMethodHandles.java#L970\" rel=\"nofollow noreferrer\">github.com/google/guice/blob/&hellip;</a>",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 13018,
+        "reputation" : 14858,
+        "user_id" : 25920,
+        "user_type" : "registered",
+        "accept_rate" : 88,
+        "profile_image" : "https://www.gravatar.com/avatar/8ba539fc9d7a90bc51a27590742ac153?s=256&d=identicon&r=PG",
+        "display_name" : "luke",
+        "link" : "https://stackoverflow.com/users/25920/luke"
+      },
+      "creation_date" : 1744156269,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140313179,
+      "post_id" : 79558740,
+      "body" : "Well my goal is to scale to abitrary numbers and i wrote tests to ensure that.  From a performance perspective my biggest concerns are about sizes in the range [0,1000) since those are most common.  I also just got bored waiting for the benchmarks to run an so trimmed down the parameters.  I don&#39;t really expect there to be a difference at higher sizes, though i am happy to be proven wrong on this.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 13018,
+        "reputation" : 14858,
+        "user_id" : 25920,
+        "user_type" : "registered",
+        "accept_rate" : 88,
+        "profile_image" : "https://www.gravatar.com/avatar/8ba539fc9d7a90bc51a27590742ac153?s=256&d=identicon&r=PG",
+        "display_name" : "luke",
+        "link" : "https://stackoverflow.com/users/25920/luke"
+      },
+      "creation_date" : 1744136948,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140311565,
+      "post_id" : 79558740,
+      "body" : "Why do you benchmark with at most 1000 when your ultimate goal is to support 100k?",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 3211603,
+        "reputation" : 301001,
+        "user_id" : 2711488,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+        "display_name" : "Holger",
+        "link" : "https://stackoverflow.com/users/2711488/holger"
+      },
+      "creation_date" : 1744113321,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

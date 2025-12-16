@@ -1,0 +1,63 @@
+{
+  "question" : {
+    "question_id" : 79750200,
+    "title" : "Are bouncycastle java libraries compatible with themselves?",
+    "body" : "<p>I am using several third party libs which have <strong>dependencies to various bouncycastle libraries</strong>. Here some examples:</p>\n<ul>\n<li>bcpkix-jdk18on</li>\n<li>bcprov-jdk15to18</li>\n<li>bcprov-lts8on</li>\n<li>bcutil-lts8on</li>\n<li>...</li>\n</ul>\n<p>After updating one of these dependencies, I experienced very strange behavior at runtime, not finding methods or fields. It seems that a class of version X has been loaded by the classloader and after that an incompatible class of version Y could not find a field in version X.</p>\n<p>So far so good. I tried to fix this using maven dependency management so that compatible versions are used at compile time.</p>\n<p>I chose <strong>1.79</strong> for bc...-jdk15to18 and bc...-jdk18on and <strong>2.73.7</strong> for bc...-lts8on, because:</p>\n<blockquote>\n<p>&quot;Release 2.73.7 8 November, 2024 This release is based on BC 1.79 [...]&quot; <a href=\"https://www.bouncycastle.org/download/bouncy-castle-java-lts/\" rel=\"nofollow noreferrer\">https://www.bouncycastle.org/download/bouncy-castle-java-lts/</a></p>\n</blockquote>\n<p>so i thought this is safe, but actually it seems not to be safe. Still NoSuchFieldException, NoSuchMethodException and so on</p>\n<p>I checked github mirrors for a Class which made some troubles:</p>\n<ul>\n<li><a href=\"https://github.com/bcgit/bc-lts-java/blob/r2rv73dot6/core/src/main/java/org/bouncycastle/crypto/digests/SHA384Digest.java\" rel=\"nofollow noreferrer\">SHA384Digest lts8on version 1.79</a></li>\n<li><a href=\"https://github.com/bcgit/bc-java/blob/r1rv79/core/src/main/java/org/bouncycastle/crypto/digests/SHA384Digest.java\" rel=\"nofollow noreferrer\">SHA384Digest jdk18on version 2.73.7</a></li>\n</ul>\n<p>You can see that the sources are different and declaring different public methods, e.g. SHA384Digest#newInstance().</p>\n<ul>\n<li>First question: Should this considered to be a bug?</li>\n<li>Second question: What am I supposed to do?\nExclude all the bouncycastle dependencies from third party libraries? Write a custom classloader? Fix this by preload &quot;compatible&quot; classes at a specific time?</li>\n</ul>\n<p><strong>EDIT</strong></p>\n<p>Since I answered the title question within the post itself, let me just clarify:</p>\n<ol>\n<li>There are many variants of bouncycastle.org libraries. In this case maven artifacts with identifiers ending with jdk18on and lts8on were obviously mixed together and classes of lts18on began calling classes for jdk8on. I can not provide a minimal reproducible example at the moment.</li>\n<li>Attention! Even though lts18on version 2.73.7 &quot;is based on BC 1.79&quot;, they are not 100% compatible!</li>\n<li>This is not a bug. You have to manage your dependencies. Since libraries should use a stable API (or the Service Provider Interface for java.security.Provider) the &quot;just use newest&quot; approach should work.</li>\n</ol>\n",
+    "tags" : [ "java", "maven", "dependencies", "pom.xml", "bouncycastle" ],
+    "owner" : {
+      "account_id" : 6840742,
+      "reputation" : 403,
+      "user_id" : 5261237,
+      "user_type" : "registered",
+      "profile_image" : "https://lh6.googleusercontent.com/-I1GNOwrVWS8/AAAAAAAAAAI/AAAAAAAAABQ/7fTehSaNGyI/s256-rj/photo.jpg",
+      "display_name" : "Bastian",
+      "link" : "https://stackoverflow.com/users/5261237/bastian"
+    },
+    "is_answered" : true,
+    "view_count" : 112,
+    "closed_date" : 1756562667,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1756711245,
+    "creation_date" : 1756465823,
+    "link" : "https://stackoverflow.com/questions/79750200/are-bouncycastle-java-libraries-compatible-with-themselves",
+    "closed_reason" : "Needs more focus"
+  },
+  "answers" : [ {
+    "answer_id" : 79750580,
+    "question_id" : 79750200,
+    "body" : "<blockquote>\n<p>Are bouncycastle java libraries compatible with themselves?</p>\n</blockquote>\n<p>No.</p>\n<blockquote>\n<p>First question: Should this considered to be a bug?</p>\n</blockquote>\n<p>No. In the sense of 'if you file a bug report it would be denied with &quot;works as intended&quot;/&quot;wontfix&quot; because BC isn't designed to operate properly when multiple versions of itself are all on the classpath'.</p>\n<p>And that goes for virtually all java libraries. Sticking two different versions of the same library on the classpath breaks stuff. Even if your code seems to run fine right now it's likely not to in some nook or cranny so don't ever do that.</p>\n<p>There are a few ways to solve the problem.</p>\n<ul>\n<li>version/hash based fatjar schemes (not recommended)</li>\n<li>just use newest</li>\n<li>runtime module systems</li>\n</ul>\n<h2>Just use newest</h2>\n<p>Just stick the newest release of BC on the classpath <em>and nothing else</em>. Build tools tend to do this automatically, or if not, have options to 'exclude' older versions.</p>\n<p>Now the requirement is that BC as a library is backwards compatible. Generally libraries are <em>intended to be</em> backwards compatible unless their documentation states that they are not (such as google's guava library which explicitly states it is not).</p>\n<p>However, be aware of Hyrum's Law:</p>\n<p><img src=\"https://imgs.xkcd.com/comics/workflow_2x.png\" alt=\"XKCD about Hyrum's law\" title=\"Workflow\" /></p>\n<p>Any update is potentially capable of being incompatible. Just, usually, especially if the library author intends to be backwards compatible, it'll be fine.</p>\n<h2>Runtime module systems</h2>\n<p><a href=\"https://www.baeldung.com/osgi\" rel=\"nofollow noreferrer\">OSGi</a> is the most famous one; various appservers (think 'web server thing that hosts multiple java-written webapps' sometimes also have such functionality.</p>\n<p>Each classloader can be 'independent' of all others; you can load BC15 in one of them and BC18 in another, <em>both</em> are loaded simultaneously, and the same class (same name, same package) from 2 different versions can both be loaded. Whatever code you have that needs BC15 uses BC15, whatever uses BC18 uses BC18.</p>\n<p>The downsides are threefold:</p>\n<ul>\n<li>You need to write your code as apps to run in an appserver or runtime module system.</li>\n<li>The memory load increases (unlikely to be relevant; classes aren't very large).</li>\n<li>You cannot interop, <em>at all</em> in terms of the dynamically loaded library between modules. Modules need to talk to each other. It's java, so they talk to each other by invoking each other's methods and passing objects around (as parameter or via the return type). The type of that object <strong>cannot</strong> be anything you module-load. For example, if you allow each module to use its own guava (as you should: Guava is not backwards compatible!), then you cannot use <code>ImmutableList</code> (a guava type) as return type or parameter type on any 'exported' method (any method intended to be invoked by other modules).</li>\n</ul>\n<h2>fatjar schemes</h2>\n<p>Fatjar schemes will open a dependency (such as BC), take every class file, and rewrite it: It renames the package from <code>org.bouncycastle</code> to <code>com.foo.yourapp.org.bouncycastle</code> generally. This is a big mistake in the design of these fatjar schemes; it would have been much smarter to go with e.g. <code>fatjar.c12355124123.org.bouncycastle</code> where the c thing is a hash, or <code>fatjar.v15.org.bouncycastle</code> where the v thing is the full version string. That way, actually identical versions are merged and there will never be a conflict. 2 modules can talk to each other in terms of the dependency <em>if</em> they have the exact same version.</p>\n<p>Various fatjar tools can be configured to work like that. Or you insulate the BC15-needing stuff and the BC18-needing stuff and fatjar them independently so that the post-fatjar names don't overlap.</p>\n<p>fatjarring is annoying: It needlessly messes up your deployments. It takes <em>much</em> longer (unjarring, rewriting, rejarring into single massive jars, then transferring these giants to CI servers, test environments, and production), for no good reason as jars can list their own classpaths. There are also issues with how jars can be 'signed' and fatjar breaks this, and the BC jars are signed.</p>\n<p>Hence, this one is not recommended.</p>\n<p>Note that if you're already fatjarring or the deps you have are external and badly fatjarred, then you might have to commit to this option.</p>\n",
+    "score" : 3,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 401843,
+      "reputation" : 107206,
+      "user_id" : 768644,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+      "display_name" : "rzwitserloot",
+      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+    },
+    "creation_date" : 1756486787,
+    "last_activity_date" : 1756508521,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140701464,
+    "post_id" : 79750200,
+    "body" : "Please <a href=\"https://stackoverflow.com/posts/79750200/edit\">edit</a> the question to add a <a href=\"https://stackoverflow.com/help/minimal-reproducible-example\">minimal reproducible example</a>.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 372682,
+      "reputation" : 26512,
+      "user_id" : 721855,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/vZiox.png?s=256",
+      "display_name" : "aled",
+      "link" : "https://stackoverflow.com/users/721855/aled"
+    },
+    "creation_date" : 1756469848,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

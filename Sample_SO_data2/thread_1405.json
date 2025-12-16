@@ -1,0 +1,45 @@
+{
+  "question" : {
+    "question_id" : 79713985,
+    "title" : "NanoHTTPD server on Embedded Android TV: HTTP works but HTTPS shows blank page after authentication",
+    "body" : "<p>I’m working on an embedded Android TV project. I’m using NanoHTTPD as the web server. The server hosts a simple web page that can be accessed from a browser by entering the IP address of the TV.</p>\n<p>Here’s how it works with HTTP:</p>\n<ul>\n<li>I open the browser and enter the TV’s IP address (e.g., <a href=\"http://192.168.1.x:8080\" rel=\"nofollow noreferrer\">http://192.168.1.x:8080</a>).</li>\n<li>A login prompt appears (Basic/Digest Auth).</li>\n<li>After entering the correct credentials, the page is displayed successfully.</li>\n</ul>\n<p>However, when I switch to HTTPS:</p>\n<ul>\n<li>I access the page at <a href=\"https://192.168.1.x:8443\" rel=\"nofollow noreferrer\">https://192.168.1.x:8443</a>.</li>\n<li>The login prompt still appears.</li>\n<li>After entering correct credentials, the page remains blank — it does not load, and no content is displayed.</li>\n<li>There are no errors in ADB logs or browser console.</li>\n</ul>\n<p>Additional Info:</p>\n<p>Target device: Android 9-based embedded TV</p>\n<p>Browser: Chrome/Edge (tested from a PC in the same network)</p>\n<p>SSL: Self-signed certificate</p>\n<p>Authentication: Basic and Digest (tested both)</p>\n<p>No errors in ADB logcat or NanoHTTPD logs</p>\n<p>Here is what I’ve already done:</p>\n<ul>\n<li>I’ve created a self-signed certificate using OpenSSL.</li>\n<li>I’ve configured NanoHTTPD to use SSL with the certificate.</li>\n<li>The server starts without errors and listens on the HTTPS port.</li>\n<li>I made sure that the MIME types and response structure are the same as HTTP.</li>\n<li>The credentials are accepted correctly; the problem is after authentication.</li>\n</ul>\n<p>What I’d like to ask:</p>\n<ul>\n<li>Could you please look at the code snippets below and let me know if there are any mistakes or missing configurations in the HTTPS setup?</li>\n<li>Do I need to handle HTTPS requests differently in NanoHTTPD compared to HTTP?</li>\n<li>Could the problem be related to how the browser handles the self-signed certificate?</li>\n</ul>\n<pre><code>    public HTTPServer(Context context, String serverPath) {\n        super(SERVER_HOSTNAME, SERVER_PORT);\n        this.context = context;\n        this.serverPath = serverPath;\n        readCredentials();\n\n        try {\n            String ipAddress = getDeviceIpAddress();\n            char[] ksPassword = &quot;password&quot;.toCharArray();\n            String keystoreFilePath = &quot;/odm/etc/tvconfig/crestron/keystore.p12&quot;;\n\n            File keystoreDir = new File(&quot;/odm/etc/tvconfig/crestron/&quot;);\n            if (!keystoreDir.exists()) {\n                boolean created = keystoreDir.mkdirs();\n                if (created) {\n                    Log.d(TAG, &quot;Keystore created: &quot; + keystoreDir.getAbsolutePath());\n                } else {\n                    Log.e(TAG, &quot;Keystore couldn't be created: &quot; + keystoreDir.getAbsolutePath());\n                }\n            }\n\n            File keystoreFile = new File(keystoreFilePath);\n            KeyStore loadedKeyStore;\n            if (!keystoreFile.exists() || keystoreFile.length() == 0) {\n                Log.d(TAG, &quot;Keystore is non-existing or blank, creating a new one...&quot;);\n                loadedKeyStore = createDynamicKeyStore(ipAddress, String.valueOf(ksPassword), keystoreFilePath);\n                Log.d(TAG, &quot;Keystore saved at  '&quot; + keystoreFilePath);\n            }\n\n            loadedKeyStore = KeyStore.getInstance(&quot;PKCS12&quot;);\n            try (FileInputStream fis = new FileInputStream(keystoreFile)) { \n                loadedKeyStore.load(fis, ksPassword);\n                Log.d(TAG, &quot;Keystore successfully loaded from '&quot; + keystoreFilePath);\n            }\n\n            KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());\n            kmf.init(loadedKeyStore, ksPassword);\n\n            SSLContext sslContext = SSLContext.getInstance(&quot;TLS&quot;);\n            sslContext.init(kmf.getKeyManagers(), null, null);\n            makeSecure(sslContext.getServerSocketFactory(), null);\n            Log.d(TAG, &quot;HTTPS is secured&quot;);\n\n        } catch (Exception e) {\n            Log.e(TAG, &quot;HTTPServer error: &quot; + e.getMessage(), e);\n        }\n\n        generateNonce();\n    }\n\n// generating a generic certificate file:\n\n    public KeyStore createDynamicKeyStore(String ip, String password, String filePath) throws Exception {\n        KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance(&quot;RSA&quot;);\n        keyPairGenerator.initialize(2048);\n        KeyPair keyPair = keyPairGenerator.generateKeyPair();\n\n        long now = System.currentTimeMillis();\n        Date startDate = new Date(now - 3600000L);\n        Date endDate = new Date(now + 365L * 24 * 3600 * 1000);\n\n        X500Name issuer = new X500Name(&quot;CN=&quot; + ip);\n        X500Name subject = issuer;\n\n        BigInteger serial = BigInteger.valueOf(now);\n\n        GeneralName ipName = new GeneralName(GeneralName.iPAddress, ip);\n        GeneralNames subjectAltName = new GeneralNames(ipName);\n\n        ContentSigner signer = new JcaContentSignerBuilder(&quot;SHA256withRSA&quot;).build(keyPair.getPrivate());\n        X509v3CertificateBuilder certBuilder = new JcaX509v3CertificateBuilder(\n            issuer, serial, startDate, endDate, subject, keyPair.getPublic());\n\n        certBuilder.addExtension(Extension.subjectAlternativeName, false, subjectAltName);\n\n        X509Certificate certificate = new JcaX509CertificateConverter().getCertificate(certBuilder.build(signer));\n\n        KeyStore keyStore = KeyStore.getInstance(&quot;PKCS12&quot;);\n        keyStore.load(null, null); \n        keyStore.setKeyEntry(&quot;dynamickey&quot;, keyPair.getPrivate(), password.toCharArray(), new java.security.cert.Certificate[]{certificate});\n\n        try (FileOutputStream fos = new FileOutputStream(filePath)) {\n        keyStore.store(fos, password.toCharArray());\n        Log.d(TAG, &quot;KeyStore successfully saved at '&quot; + filePath);\n        }\n\n        return keyStore;\n    }\n</code></pre>\n",
+    "tags" : [ "java", "android", "https", "android-source", "nanohttpd" ],
+    "owner" : {
+      "account_id" : 43207045,
+      "reputation" : 11,
+      "user_id" : 31135411,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/501bfa906fbbd7cb9883a4b80845fd27?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Hilal Demir",
+      "link" : "https://stackoverflow.com/users/31135411/hilal-demir"
+    },
+    "is_answered" : false,
+    "view_count" : 221,
+    "answer_count" : 0,
+    "score" : 1,
+    "last_activity_date" : 1753392260,
+    "creation_date" : 1753392260,
+    "link" : "https://stackoverflow.com/questions/79713985/nanohttpd-server-on-embedded-android-tv-http-works-but-https-shows-blank-page-a",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140617593,
+    "post_id" : 79713985,
+    "body" : "Have you checked the actual HTTP response e.g. in browser developer tools on network tab? A &quot;blank page&quot; can still contain interesting error messages e.g. in header or the status code/line.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 50585,
+      "reputation" : 43469,
+      "user_id" : 150978,
+      "user_type" : "registered",
+      "accept_rate" : 78,
+      "profile_image" : "https://www.gravatar.com/avatar/feadc214792e2581c3c750140e3eb2c7?s=256&d=identicon&r=PG",
+      "display_name" : "Robert",
+      "link" : "https://stackoverflow.com/users/150978/robert"
+    },
+    "creation_date" : 1753436114,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

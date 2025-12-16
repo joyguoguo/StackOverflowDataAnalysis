@@ -1,0 +1,192 @@
+{
+  "question" : {
+    "question_id" : 79687806,
+    "title" : "Redis cache consistency: how do you deal with it?",
+    "body" : "<p>Redis is quite popular in Java, spring itself provides quite easy abstraction for caching using redis.\nYou just apply an annotation @Cacheable or use programmatic approach cache.get(..).\nThere is also an option for cache.evict to remove stale entries and load new ones.\nAnd basically this is it when talking about redis. There is not much being talked about keeping the cache eventually consistent.</p>\n<p>With redis and horizontal scaling, many app instances can try to load entries and evict them at once.\nSo for example, instance A loads an entry. It takes some time due to /reasons/. Meanwhile instance B starts loading and it goes fast. Newer B value lands in cache but is overrides by older A value.</p>\n<p>OR</p>\n<p>cache A is loading value to cache. Meanwhile instance B evicts the value.\nThen cache A saves the value in cache.\nCache ends up with stałe value, there is no /eventuality/ os consistency here.</p>\n<p>My approach is to use redis locks and some fancy eviction registry to allow for not blocking eviction when other process is loading the value.\nBut I am surprised that there is so little being talked about this problem. At first hand it seems that there is no difference between in-memory and externalised cache.</p>\n<p>How do you deal with this problem? Any out of the box solutions?</p>\n",
+    "tags" : [ "java", "spring", "caching", "redis" ],
+    "owner" : {
+      "account_id" : 18241932,
+      "reputation" : 101,
+      "user_id" : 13278813,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2ab5153eb2a56d46bb77182a5af47a64?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "piotrd",
+      "link" : "https://stackoverflow.com/users/13278813/piotrd"
+    },
+    "is_answered" : true,
+    "view_count" : 145,
+    "answer_count" : 1,
+    "score" : -3,
+    "last_activity_date" : 1752005470,
+    "creation_date" : 1751475168,
+    "link" : "https://stackoverflow.com/questions/79687806/redis-cache-consistency-how-do-you-deal-with-it",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79694780,
+    "question_id" : 79687806,
+    "body" : "<p>Redis is simple and fast, that's why it's used as a cache.</p>\n<p>However, there are edge cases where you might have stale data in your redis, from an older database read.</p>\n<p>For example, you have 2 independent services: A and B.</p>\n<ul>\n<li>A does a read operation in the DB + some processing, and will store the result in REDIS</li>\n<li>B does an update on the data A just got, and will evict the instance from REDIS</li>\n</ul>\n<p>Redis can receive the operations like this:</p>\n<pre><code>DEL op:123 &lt;- from B\nSET op:123 &quot;some processed value&quot; &lt;- from A\n</code></pre>\n<p><strong>What you can do to manage this:</strong></p>\n<p>You could use versions, given your DB data is versioned. You can also store timestamp instead of versions.</p>\n<p>A will do:</p>\n<ul>\n<li>read the version from the version index</li>\n<li>add the version to the version index</li>\n<li>add the processed value under the version key</li>\n</ul>\n<pre><code>ZRANGE op:123:v 0 0 REV // this will return nothing, since at this step Redis is empty\nZADD op:123:v 1 &quot;v1&quot;\nSET op:123:v1 &quot;some processed value&quot;\n</code></pre>\n<p>In this case, B will do one operation, simulating an evict:</p>\n<pre><code>ZADD op:123:v 2 &quot;v2&quot;\n</code></pre>\n<p>Essentially, you are not removing it, just adding another version</p>\n<p>Some other system C, will check the latest value like this:</p>\n<pre><code>ZRANGE op:123:v 0 0 REV // will return v2\nGET op:123:v2 // will return nothing, so the value is not in cache\nSET op:123:v2 &quot;Another processed value&quot;\n</code></pre>\n<p><strong>Cleanup old versions</strong></p>\n<p>For this you need to build an async process that will find and evict old versions from the cache.</p>\n<p><strong>Other options</strong></p>\n<p>Using <code>ZADD</code> and <code>ZRANGE</code> would make it easier as you can add the versions as score to order them:</p>\n<pre><code>ZADD op:1 1 &quot;Version 1&quot;\nZADD op:1 2 &quot;Version 2&quot;\n</code></pre>\n<p>To get the latest:</p>\n<pre><code>ZRANGE op:1 0 0 REV // will return &quot;Version 2&quot;\n</code></pre>\n<p>The issue with this is that you add all values to the cache, and that's not ideal.</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 1601399,
+      "reputation" : 638,
+      "user_id" : 1482356,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/d6160b6e40d230fa92c6da8072b2f7e5?s=256&d=identicon&r=PG",
+      "display_name" : "Peter Adrian",
+      "link" : "https://stackoverflow.com/users/1482356/peter-adrian"
+    },
+    "creation_date" : 1752005470,
+    "last_activity_date" : 1752005470,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79694780" : [ {
+      "comment_id" : 140605531,
+      "post_id" : 79694780,
+      "body" : "@PeterAdrian There are other ways to handle it: 1) by using a sequence on the DB side: everytime a change is happening that can essentially change the data in the cache, you use the sequence to get the next number, and add that number to the index cache. This is how others know that there&#39;s a newer version. 2) using something as simple as the DB time. Although it can cause issues on concurrent changes, it&#39;s still a good and viable option for cache. You just have to enter the last timestamp that the data was changed. Then, when you read the data, it will return you accurate result.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1601399,
+        "reputation" : 638,
+        "user_id" : 1482356,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/d6160b6e40d230fa92c6da8072b2f7e5?s=256&d=identicon&r=PG",
+        "display_name" : "Peter Adrian",
+        "link" : "https://stackoverflow.com/users/1482356/peter-adrian"
+      },
+      "creation_date" : 1753090335,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140587689,
+      "post_id" : 79694780,
+      "body" : "*graph of entities, each versioned separately.  There is no db that keeps track of the graph itself, we just want to spare computations with each fetch and load this structure from cache. Also we need to reconstruct it whenever any underlying entity changes (we can use events for than to invalidate graph). So without obvious versioning, the locks would have to be utilised I guess to keep the order if writing correnct.     I am also wondering about invalidation. Going back to your previous example that sounds good for versioned entities, how would I invalidate entries? How o preven",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 18241932,
+        "reputation" : 101,
+        "user_id" : 13278813,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/2ab5153eb2a56d46bb77182a5af47a64?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "piotrd",
+        "link" : "https://stackoverflow.com/users/13278813/piotrd"
+      },
+      "creation_date" : 1752486202,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140587680,
+      "post_id" : 79694780,
+      "body" : "Ok I might understood now:  We never overwrite the value. We always write a new one together with its &quot;index&quot; key. Then when we get(), we fetch first the index keys and choose the one with highest version. For that key, we get the latest value. Of course, then we need some bookkeping that will remove old index keys and not-needed values.   I think this is a good idea, for sue it will work for caching versioned entities.   But I think it is not universal.     What if you need to create a graph of objects. There is no db table to version the graph, its components are versioned separ",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 18241932,
+        "reputation" : 101,
+        "user_id" : 13278813,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/2ab5153eb2a56d46bb77182a5af47a64?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "piotrd",
+        "link" : "https://stackoverflow.com/users/13278813/piotrd"
+      },
+      "creation_date" : 1752485924,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140586014,
+      "post_id" : 79694780,
+      "body" : "@piotrd Instance B will write version 2 under user.v2 and instance A will write version 1 under user.v1. When another instance will query the cache, it will see in index v2 as the biggest and will take user.v2 as the latest one. No overrides are happening",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 1601399,
+        "reputation" : 638,
+        "user_id" : 1482356,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/d6160b6e40d230fa92c6da8072b2f7e5?s=256&d=identicon&r=PG",
+        "display_name" : "Peter Adrian",
+        "link" : "https://stackoverflow.com/users/1482356/peter-adrian"
+      },
+      "creation_date" : 1752408668,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140586007,
+      "post_id" : 79694780,
+      "body" : "I think you are not taking into account simultaneous load to cache by 2 separate instances. In that case, old version may overwrite new one.   Consider this, as I already repeated several times:  Instance A reads value version 1, but not yet writes to cache.   Instance B reads value version 2 (it changed again) and writes it to cache.   The finally Instance A writes it value to cache.   So we have now version 2 in db but version 1 in cache.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 18241932,
+        "reputation" : 101,
+        "user_id" : 13278813,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/2ab5153eb2a56d46bb77182a5af47a64?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "piotrd",
+        "link" : "https://stackoverflow.com/users/13278813/piotrd"
+      },
+      "creation_date" : 1752408416,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140585832,
+      "post_id" : 79694780,
+      "body" : "@piotrd Not dependent on the version in cache because when I say version, i mean the version of the data that is being cached, not the version inside the cache. So if you have an entity in the DB called User, it would have a field called version,  when you cache it, you would cahe version x of the entity user. Each time the entity it&#39;s updated, it will have a new version and also would update the version index in the cache. That would be <code>zadd user.versions x &#39;vx&#39;</code>, x being the version of the data. If x has version 10, that would be 10. If you don&#39;t have a version, you could use timestamp.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1601399,
+        "reputation" : 638,
+        "user_id" : 1482356,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/d6160b6e40d230fa92c6da8072b2f7e5?s=256&d=identicon&r=PG",
+        "display_name" : "Peter Adrian",
+        "link" : "https://stackoverflow.com/users/1482356/peter-adrian"
+      },
+      "creation_date" : 1752399417,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140585742,
+      "post_id" : 79694780,
+      "body" : "How version can not depend on previous one? You have to know what is a precious one to increment it and write current",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 18241932,
+        "reputation" : 101,
+        "user_id" : 13278813,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/2ab5153eb2a56d46bb77182a5af47a64?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "piotrd",
+        "link" : "https://stackoverflow.com/users/13278813/piotrd"
+      },
+      "creation_date" : 1752393352,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140583555,
+      "post_id" : 79694780,
+      "body" : "@piotrd The version means that your data is versioned, does not rely on the prev version in the cache. For example: you want to cache the stash of a guild in a game; you need to update the value each time someone updates the stash. For version, you can use the read/update timestamp (it might be the case when it&#39;s good enough) or you could use a field on the stash record that you increment each time it is a change on that record. While in the timestamp case there&#39;s a small chance it returns the same time, with the field version there&#39;s no way this would happen.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1601399,
+        "reputation" : 638,
+        "user_id" : 1482356,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/d6160b6e40d230fa92c6da8072b2f7e5?s=256&d=identicon&r=PG",
+        "display_name" : "Peter Adrian",
+        "link" : "https://stackoverflow.com/users/1482356/peter-adrian"
+      },
+      "creation_date" : 1752266002,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140582042,
+      "post_id" : 79694780,
+      "body" : "Hey. Thanks for answer, but this gets complicated when we factor that several services might try to load values into cache.    So instance A loads a value because it changed. Then, instance B starts to load it because there was another change.   A takes longer, either due to networking or any other reason.   So B writes newest value into cache (lets say previous version was &quot;1&quot;, it writes the version &quot;2&quot;.   And after that, instance A writes its /old/ value. It could have read the old version &quot;1&quot;, or maybe already the new one &quot;2&quot;, and write updated version to redis with OLD value.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 18241932,
+        "reputation" : 101,
+        "user_id" : 13278813,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/2ab5153eb2a56d46bb77182a5af47a64?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "piotrd",
+        "link" : "https://stackoverflow.com/users/13278813/piotrd"
+      },
+      "creation_date" : 1752228881,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

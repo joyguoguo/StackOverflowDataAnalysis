@@ -1,0 +1,145 @@
+{
+  "question" : {
+    "question_id" : 79749938,
+    "title" : "Writing safe, non-ugly Swing tests",
+    "body" : "<p>I keep hearing this recommendation to always access Swing components on the EDT, including in tests. In plain Java, it usually means calling <code>invokeLater()</code> / <code>invokeAndWait()</code>.</p>\n<p>Indeed, <em>some</em> tests <em>do</em> encounter what seem to be race issues. However, I'm still not totally comfortable with how it looks. <a href=\"https://web.archive.org/web/20120201020550/http://fest.easytesting.org/\" rel=\"nofollow noreferrer\">FEST's</a> <code>GuiActionRunner</code> makes it even a little bit uglier since <code>GuiTask</code>, <code>GuiQuery</code> are abstract classes and cannot be expressed as lambdas.</p>\n<pre class=\"lang-java prettyprint-override\"><code>// example test\n    @Test\n    @SuppressWarnings({&quot;OptionalGetWithoutIsPresent&quot;, &quot;unchecked&quot;})\n    void givenMatchPredicate_ifNoSearchTextSet_andNextButtonClicked_nothingHappens() {\n        /*\n        A\n        |__B\n        |  |__C\n        |__D\n         */\n        DefaultMutableTreeNode root = new DefaultMutableTreeNode(TreeObject.from(&quot;A&quot;));\n        DefaultMutableTreeNode nodeB = new DefaultMutableTreeNode(TreeObject.from(&quot;B&quot;));\n        root.add(nodeB);\n        TreeObject objectC = TreeObject.from(&quot;C&quot;);\n        DefaultMutableTreeNode nodeC = new DefaultMutableTreeNode(objectC);\n        nodeB.add(nodeC);\n        DefaultMutableTreeNode nodeD = new DefaultMutableTreeNode(TreeObject.from(&quot;D&quot;));\n        root.add(nodeD);\n\n        SwingUtilities.invokeLater(() -&gt; {\n           /* essentially, a modal dialog with a JTree, searchField and\n              arrow buttons to navigate between search matches */\n            TreeSelectDialog&lt;TreeObject&gt; dialog = TreeSelectDialog.of(null, () -&gt; root);\n            BiPredicate&lt;TreeObject, String&gt; predicateMock = mock();\n            dialog.setMatchPredicate(predicateMock);\n            JTextComponent searchField = finder.find(dialog, JTextComponent.class).get();\n            JButton nextButton = finder.find(dialog, JButton.class, &quot;nextButton&quot;).get();\n            tree = finder.find(dialog, JTree.class).get();\n            SwingUtilities.invokeLater(dialog::doModal);\n            robot.waitForIdle();\n            assumeTrue(searchField instanceof ValueField);\n            assumeFalse(((ValueField&lt;?&gt;) searchField).getPlaceholderText() == null);\n            Object initialSelectedObject = getSelectedObject();\n\n            nextButton.doClick();\n\n            then(predicateMock).shouldHaveNoInteractions();\n            assertEquals(initialSelectedObject, getSelectedObject());\n            assertEquals(Colors.placeholder(), searchField.getForeground());\n            dialog.dispose();\n        });\n    }\n</code></pre>\n<p>I tried to refactor it using <code>InvocationInterceptor</code>. However, my <code>waitForIdle()</code> calls fail since you <em>&quot;cannot call method from the event dispatcher thread&quot;</em>. <code>invokeLater()</code> <em>also</em> executes the code on EDT, including <code>waitForIdle()</code>, but the exception is swallowed and no assertions are actually executed.</p>\n<p>Wrapping <code>doModal()</code> in <code>invokeLater()</code> and then <code>waitForIdle()</code> was my attempt to defer assumptions/assertions before the dialog gets actually displayed (<code>doModal()</code> is essentially a decorated <code>setVisible(true)</code>).</p>\n<pre class=\"lang-java prettyprint-override\"><code>@ExtendWith(EdtExtension.class)\nclass TreeSelectDialogTest {\n    // outer SwingUtilities.invokeLater(...) removed\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>import org.junit.jupiter.api.extension.ExtensionContext;\nimport org.junit.jupiter.api.extension.InvocationInterceptor;\nimport org.junit.jupiter.api.extension.ReflectiveInvocationContext;\nimport org.junit.platform.commons.util.ExceptionUtils;\n\nimport javax.swing.SwingUtilities;\nimport java.lang.reflect.InvocationTargetException;\nimport java.lang.reflect.Method;\n\npublic class EdtExtension implements InvocationInterceptor {\n\n    @Override\n    public void interceptTestMethod(Invocation&lt;Void&gt; invocation, ReflectiveInvocationContext&lt;Method&gt; invocationContext, ExtensionContext extensionContext) {\n        invokeInEdt(invocation);\n    }\n\n    private void invokeInEdt(Invocation&lt;Void&gt; invocation) {\n        try {\n            SwingUtilities.invokeAndWait(() -&gt; {\n                try {\n                    invocation.proceed();\n                } catch (Throwable e) {\n                    ExceptionUtils.throwAsUncheckedException(e);\n                }\n            });\n        } catch (InterruptedException | InvocationTargetException e) {\n            ExceptionUtils.throwAsUncheckedException(e);\n        }\n    }\n}\n</code></pre>\n<pre><code>Caused by: java.lang.IllegalThreadStateException: Cannot call method from the event dispatcher thread\n    at org.fest.swing.core.BasicRobot.waitForIdle(BasicRobot.java:669)\n    at org.fest.swing.core.BasicRobot.waitForIdle(BasicRobot.java:654)\n</code></pre>\n<p>What it the most concise and readable way to refactor my test? If FEST can help, you can use it.</p>\n<p>Java 8.</p>\n",
+    "tags" : [ "java", "swing", "junit5", "fest" ],
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2683,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "is_answered" : true,
+    "view_count" : 154,
+    "answer_count" : 2,
+    "score" : 2,
+    "last_activity_date" : 1756970763,
+    "creation_date" : 1756451929,
+    "link" : "https://stackoverflow.com/questions/79749938/writing-safe-non-ugly-swing-tests",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79750770,
+    "question_id" : 79749938,
+    "body" : "<h1>Invoking Tests on EDT</h1>\n<p>If you're using JUnit Jupiter then you can write an <a href=\"https://docs.junit.org/current/api/org.junit.jupiter.api/org/junit/jupiter/api/extension/InvocationInterceptor.html\" rel=\"nofollow noreferrer\"><code>InvocationInterceptor</code></a> extension that invokes tests on the EDT. You just have to make sure you wait for the test to complete and that any errors thrown by the test are propagated to JUnit. This will avoid needing <code>invokeLater</code> and/or <code>invokeAndWait</code> calls inside your tests.</p>\n<p>Here's a <em>proof-of-concept</em>. It uses <code>java.awt.Robot</code> instead of FEST's or AssertJ Swing's <code>BasicRobot</code>. It also uses <code>SwingUtilities::invokeLater</code> instead of <code>GuiActionRunner</code>. Both these things can easily be changed for your real code.</p>\n<pre class=\"lang-java prettyprint-override\"><code>import static org.junit.platform.commons.util.ExceptionUtils.throwAsUncheckedException;\n\nimport java.awt.AWTException;\nimport java.awt.Robot;\nimport java.lang.reflect.InvocationTargetException;\nimport java.lang.reflect.Method;\nimport javax.swing.SwingUtilities;\nimport org.junit.jupiter.api.extension.DynamicTestInvocationContext;\nimport org.junit.jupiter.api.extension.ExtensionContext;\nimport org.junit.jupiter.api.extension.ExtensionContext.Namespace;\nimport org.junit.jupiter.api.extension.InvocationInterceptor;\nimport org.junit.jupiter.api.extension.ReflectiveInvocationContext;\n\npublic class EdtExtension implements InvocationInterceptor {\n\n  private static final Namespace NAMESPACE = Namespace.create(EdtExtension.class);\n  private static final Object ROBOT_KEY = Robot.class;\n\n  @Override\n  public void interceptTestMethod(\n      Invocation&lt;Void&gt; invocation,\n      ReflectiveInvocationContext&lt;Method&gt; invocationContext,\n      ExtensionContext extensionContext)\n      throws Throwable {\n    // Invoke @Test methods on EDT\n    invokeOnEdt(invocation, extensionContext);\n  }\n\n  @Override\n  public void interceptDynamicTest(\n      Invocation&lt;Void&gt; invocation,\n      DynamicTestInvocationContext invocationContext,\n      ExtensionContext extensionContext)\n      throws Throwable {\n    // Invoke DynamicNode tests on EDT\n    invokeOnEdt(invocation, extensionContext);\n  }\n\n  @Override\n  public void interceptTestTemplateMethod(\n      Invocation&lt;Void&gt; invocation,\n      ReflectiveInvocationContext&lt;Method&gt; invocationContext,\n      ExtensionContext extensionContext)\n      throws Throwable {\n    // Invoke @TestTemplate (e.g., @ParameterizedTest) methods on EDT\n    invokeOnEdt(invocation, extensionContext);\n  }\n\n  private void invokeOnEdt(Invocation&lt;Void&gt; invocation, ExtensionContext context) throws Throwable {\n    Robot robot = getAwtRobot(context);\n    try {\n      SwingUtilities.invokeAndWait(() -&gt; {\n        try {\n          invocation.proceed();\n        } catch (Throwable t) {\n          // Note: ExceptionUtils is considered internal JUnit API\n          throw throwAsUncheckedException(t);\n        }\n      });\n    } catch (InvocationTargetException ex) {\n      Throwable cause = ex.getCause();\n      throw cause != null ? cause : ex;\n    } finally {\n      robot.waitForIdle();\n    }\n  }\n\n  private Robot getAwtRobot(ExtensionContext context) {\n    ExtensionContext.Store store = context.getRoot().getStore(NAMESPACE);\n    return store.getOrComputeIfAbsent(ROBOT_KEY, this::createAwtRobot, Robot.class);\n  }\n\n  private Robot createAwtRobot(Object unused) {\n    try {\n      return new Robot();\n    } catch (AWTException ex) {\n      // Note: ExceptionUtils is considered internal JUnit API\n      throw throwAsUncheckedException(ex);\n    }\n  }\n}\n</code></pre>\n<h2>Trying it Out</h2>\n<p>Using the above extension with the following test class:</p>\n<pre class=\"lang-java prettyprint-override\"><code>import static org.junit.jupiter.api.Assertions.assertTrue;\nimport static org.junit.jupiter.api.Assertions.fail;\n\nimport javax.swing.SwingUtilities;\nimport org.junit.jupiter.api.DisplayName;\nimport org.junit.jupiter.api.DynamicNode;\nimport org.junit.jupiter.api.DynamicTest;\nimport org.junit.jupiter.api.Test;\nimport org.junit.jupiter.api.TestFactory;\nimport org.junit.jupiter.api.extension.ExtendWith;\nimport org.junit.jupiter.params.ParameterizedTest;\nimport org.junit.jupiter.params.provider.ValueSource;\n\n@ExtendWith(EdtExtension.class)\n@DisplayName(&quot;Test EdtExtension&quot;)\npublic class EdtExtensionTests {\n\n  @Test\n  @DisplayName(&quot;invokes regular tests on EDT&quot;)\n  void test() {\n    assertTrue(SwingUtilities.isEventDispatchThread(), &quot;EDT&quot;);\n  }\n\n  @TestFactory\n  DynamicNode dynamicTest() {\n    return DynamicTest.dynamicTest(\n        &quot;invokes dynamic tests on EDT&quot;,\n        () -&gt; assertTrue(SwingUtilities.isEventDispatchThread(), &quot;EDT&quot;));\n  }\n\n  @ParameterizedTest(name = &quot;invokes templated tests on EDT&quot;)\n  @ValueSource(strings = &quot;foo&quot;)\n  void templateTest(String param) {\n    assertTrue(SwingUtilities.isEventDispatchThread(), &quot;EDT&quot;);\n  }\n\n  @Test\n  @DisplayName(&quot;does not swallow exceptions thrown out of test (FAILURE EXPECTED)&quot;)\n  void failingTest() {\n    fail(&quot;This should cause the test to fail&quot;);\n  }\n}\n</code></pre>\n<p>Gives me the following output when the tests are executed by Gradle:</p>\n<pre class=\"lang-none prettyprint-override\"><code>Test EdtExtension &gt; templateTest(String) &gt; invokes templated tests on EDT PASSED\n\nTest EdtExtension &gt; dynamicTest() &gt; invokes dynamic tests on EDT PASSED\n\nTest EdtExtension &gt; does not swallow exceptions thrown out of test (FAILURE EXPECTED) FAILED\n    org.opentest4j.AssertionFailedError at GuiTests.java:42\n\nTest EdtExtension &gt; invokes regular tests on EDT PASSED\n</code></pre>\n<p>Now, that's not a particularly robust or automatic way to test the extension, but it does give the expected results.</p>\n<hr />\n<h1>Waiting for Idle</h1>\n<blockquote>\n<p>I tried to refactor it using InvocationInterceptor. However, my waitForIdle() calls fail since you &quot;cannot call method from the event dispatcher thread&quot;. invokeLater() also executes the code on EDT, including waitForIdle(), but the exception is swallowed and no assertions are actually executed.</p>\n</blockquote>\n<p>Just like FEST's and AssertJ Swing's <code>BasicRobot</code>, the <code>java.awt.Robot::waitForIdle</code> method cannot be invoked on the EDT. The above calls that method just after <code>invokeAndWait</code> returns, thus off the EDT.</p>\n<p>If you need to <code>waitForIdle</code> before executing any assertions, then the extension needs to be modified. The cleanest solution, I believe, will be to implement a way to invoke &quot;setup methods&quot; that setup the GUI before the test. Then the extension will wait-for-idle some time before invoking the test. How you want to specify &quot;setup methods&quot; is up to you, but here's an example that simply searches for all methods with a certain annotation.</p>\n<p><strong>SwingSetup.java</strong> (annotation)</p>\n<pre class=\"lang-java prettyprint-override\"><code>import java.lang.annotation.Documented;\nimport java.lang.annotation.ElementType;\nimport java.lang.annotation.Retention;\nimport java.lang.annotation.RetentionPolicy;\nimport java.lang.annotation.Target;\n\n@Documented\n@Retention(RetentionPolicy.RUNTIME)\n@Target({ElementType.ANNOTATION_TYPE, ElementType.METHOD})\npublic @interface SwingSetup {}\n</code></pre>\n<p><strong>EdtExtension.java</strong> (modified from above)</p>\n<p>Now implements <code>BeforeEachCallback</code> to invoke instance methods annotated with <code>@SwingSetup</code> before each test.</p>\n<pre class=\"lang-java prettyprint-override\"><code>import static org.junit.platform.commons.support.AnnotationSupport.findAnnotatedMethods;\nimport static org.junit.platform.commons.support.HierarchyTraversalMode.TOP_DOWN;\nimport static org.junit.platform.commons.util.ExceptionUtils.throwAsUncheckedException;\n\nimport java.awt.AWTException;\nimport java.awt.Robot;\nimport java.lang.reflect.InvocationTargetException;\nimport java.lang.reflect.Method;\nimport java.util.List;\nimport javax.swing.SwingUtilities;\nimport org.junit.jupiter.api.extension.BeforeEachCallback;\nimport org.junit.jupiter.api.extension.DynamicTestInvocationContext;\nimport org.junit.jupiter.api.extension.ExecutableInvoker;\nimport org.junit.jupiter.api.extension.ExtensionContext;\nimport org.junit.jupiter.api.extension.ExtensionContext.Namespace;\nimport org.junit.jupiter.api.extension.InvocationInterceptor;\nimport org.junit.jupiter.api.extension.ReflectiveInvocationContext;\nimport org.junit.platform.commons.support.ModifierSupport;\n\npublic class EdtExtension implements BeforeEachCallback, InvocationInterceptor {\n\n  private static final Namespace NAMESPACE = Namespace.create(EdtExtension.class);\n  private static final Object ROBOT_KEY = Robot.class;\n\n  @Override\n  public void beforeEach(ExtensionContext context) throws Exception {\n    // Invoke all instance @SwingSetup methods\n    Object instance = context.getRequiredTestInstance();\n    List&lt;Method&gt; methods = getSetupMethods(context);\n    ExecutableInvoker invoker = context.getExecutableInvoker();\n    for (Method method : methods) {\n      // Using ExecutableInvoker allows parameter injection\n      SwingUtilities.invokeAndWait(() -&gt; invoker.invoke(method, instance));\n    }\n    getAwtRobot(context).waitForIdle();\n  }\n\n  @SuppressWarnings(&quot;unchecked&quot;)\n  private List&lt;Method&gt; getSetupMethods(ExtensionContext context) {\n    Class&lt;?&gt; testClass = context.getRequiredTestClass();\n    ExtensionContext.Store store = context.getRoot().getStore(NAMESPACE);\n    return store.getOrComputeIfAbsent(\n        testClass,\n        key -&gt; {\n          List&lt;Method&gt; methods = findAnnotatedMethods(key, SwingSetup.class, TOP_DOWN);\n          return methods.stream().filter(ModifierSupport::isNotStatic).toList();\n        },\n        List.class);\n  }\n\n  @Override\n  public void interceptTestMethod(\n      Invocation&lt;Void&gt; invocation,\n      ReflectiveInvocationContext&lt;Method&gt; invocationContext,\n      ExtensionContext extensionContext)\n      throws Throwable {\n    // Invoke @Test methods on EDT\n    invokeOnEdt(invocation, extensionContext);\n  }\n\n  @Override\n  public void interceptDynamicTest(\n      Invocation&lt;Void&gt; invocation,\n      DynamicTestInvocationContext invocationContext,\n      ExtensionContext extensionContext)\n      throws Throwable {\n    // Invoke DynamicNode tests on EDT\n    invokeOnEdt(invocation, extensionContext);\n  }\n\n  @Override\n  public void interceptTestTemplateMethod(\n      Invocation&lt;Void&gt; invocation,\n      ReflectiveInvocationContext&lt;Method&gt; invocationContext,\n      ExtensionContext extensionContext)\n      throws Throwable {\n    // Invoke @TestTemplate (e.g., @ParameterizedTest) methods on EDT\n    invokeOnEdt(invocation, extensionContext);\n  }\n\n  private void invokeOnEdt(Invocation&lt;Void&gt; invocation, ExtensionContext context) throws Throwable {\n    Robot robot = getAwtRobot(context);\n    try {\n      SwingUtilities.invokeAndWait(() -&gt; {\n        try {\n          invocation.proceed();\n        } catch (Throwable t) {\n          // Note: ExceptionUtils is considered internal JUnit API\n          throw throwAsUncheckedException(t);\n        }\n      });\n    } catch (InvocationTargetException ex) {\n      Throwable cause = ex.getCause();\n      throw cause != null ? cause : ex;\n    } finally {\n      robot.waitForIdle();\n    }\n  }\n\n  private Robot getAwtRobot(ExtensionContext context) {\n    ExtensionContext.Store store = context.getRoot().getStore(NAMESPACE);\n    return store.getOrComputeIfAbsent(ROBOT_KEY, this::createAwtRobot, Robot.class);\n  }\n\n  private Robot createAwtRobot(Object unused) {\n    try {\n      return new Robot();\n    } catch (AWTException ex) {\n      // Note: ExceptionUtils is considered internal JUnit API\n      throw throwAsUncheckedException(ex);\n    }\n  }\n}\n</code></pre>\n<h2>Trying it Out</h2>\n<p>Using the modified extension with the following test class:</p>\n<pre class=\"lang-java prettyprint-override\"><code>import static org.junit.jupiter.api.Assertions.assertFalse;\nimport static org.junit.jupiter.api.Assertions.assertTrue;\n\nimport javax.swing.SwingUtilities;\nimport org.junit.jupiter.api.DisplayName;\nimport org.junit.jupiter.api.Test;\nimport org.junit.jupiter.api.extension.ExtendWith;\n\n@ExtendWith(EdtExtension.class)\n@DisplayName(&quot;Test EdtExtension&quot;)\npublic class EdtExtensionTests {\n\n  private boolean setupGuiCalled;\n\n  @SwingSetup\n  void setupGui() {\n    assertTrue(SwingUtilities.isEventDispatchThread(), &quot;isEventDispatchThread&quot;);\n    assertFalse(setupGuiCalled, &quot;setupGui called previously&quot;);\n    setupGuiCalled = true;\n  }\n\n  @Test\n  @DisplayName(&quot;invokes @SwingSetup methods before tests&quot;)\n  void testGui() {\n    assertTrue(SwingUtilities.isEventDispatchThread(), &quot;isEventDispatchThread&quot;);\n    assertTrue(setupGuiCalled, &quot;setupGui was not called before test&quot;);\n  }\n}\n</code></pre>\n<p>Gives the following results (Gradle):</p>\n<pre class=\"lang-none prettyprint-override\"><code>Test EdtExtension &gt; invokes @SwingSetup methods before tests PASSED\n</code></pre>\n<p>Again, not the best way to test extensions but it gives the expected results.</p>\n<h2>Notes</h2>\n<p>I'm not sure how well either of the above <code>EdtExtension</code> classes behave in every situation, such as with <code>@Nested</code> tests or test classes with a lifecycle of <code>PER_CLASS</code>. You may want or need to make the extension more robust. I recently made <a href=\"https://stackoverflow.com/a/79740615/6395627\">a similar answer</a> for a question related to JavaFX and TestFX (a testing framework for JavaFX apps). That may help provide some inspiration.</p>\n",
+    "score" : 3,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 8532578,
+      "reputation" : 49904,
+      "user_id" : 6395627,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Slaw",
+      "link" : "https://stackoverflow.com/users/6395627/slaw"
+    },
+    "creation_date" : 1756500713,
+    "last_activity_date" : 1756500713,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79755391,
+    "question_id" : 79749938,
+    "body" : "<p>While creating a JUnit extension <em>may</em> work in some contexts (here's <a href=\"https://stackoverflow.com/a/79750333/20692967\">my implementation</a>), it seems to have a serious limitation: you <a href=\"https://stackoverflow.com/questions/79753446/asserting-on-displayed-jdialogs\">can't</a> display a modal dialog and make assertions on it if the whole test is executed in the EDT. I means you'd have to feed it your test code bit by bit, typically only those parts that involve manipulating Swing objects (not assertions).</p>\n<p>The test in question could be refactored like so.</p>\n<pre class=\"lang-java prettyprint-override\"><code>    @BeforeEach\n    void setUp() {\n        dialog = createDialog();\n        // extracting tree, searchField, nextButton from the dialog\n        // creating rootSupplierMock\n    }\n\n    @AfterEach\n    void tearDown() {\n        dialog.dispose();\n    }\n\n    TreeSelectDialog&lt;TreeObject&gt; createDialog() {\n        return GuiActionRunner.execute(new GuiQuery&lt;TreeSelectDialog&lt;TreeObject&gt;&gt;() {\n            protected TreeSelectDialog&lt;TreeObject&gt; executeInEDT() {\n                TreeSelectDialog&lt;TreeObject&gt; dialog = TreeSelectDialog.of(null, rootSupplierMock);\n                return dialog;\n            }\n        });\n    }\n\n// ...\n\n    @Test\n    @SuppressWarnings(&quot;unchecked&quot;)\n    void givenMatchPredicate_ifNoSearchTextSet_andNextButtonClicked_nothingHappens() throws InterruptedException, InvocationTargetException {\n        BiPredicate&lt;TreeObject, String&gt; predicateMock = mock();\n        dialog.setMatchPredicate(predicateMock);\n        assumeTrue(searchField instanceof ValueField);\n        assumeFalse(((ValueField&lt;?&gt;) searchField).getPlaceholderText() == null);\n        Object initialSelectedObject = getSelectedObject();\n\n        SwingUtilities.invokeAndWait(nextButton::doClick);\n\n        then(predicateMock).shouldHaveNoInteractions();\n        assertEquals(initialSelectedObject, getSelectedObject());\n        assertEquals(Colors.placeholder(), searchField.getForeground());\n    }\n\n    private Object getSelectedObject() {\n        return Optional.ofNullable(tree.getLastSelectedPathComponent())\n                .map(DefaultMutableTreeNode.class::cast)\n                .map(DefaultMutableTreeNode::getUserObject)\n                .orElse(null);\n    }\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2683,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "creation_date" : 1756970617,
+    "last_activity_date" : 1756970617,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140703125,
+    "post_id" : 79749938,
+    "body" : "@lbalazscs because we have a legacy project",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2683,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "creation_date" : 1756532519,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140702556,
+    "post_id" : 79749938,
+    "body" : "Why fest? assertj-swing is a more recent fork/version of fest. I don&#39;t know about fest, but in assertj-swing, you can call GuiActionRunner.execute(Callable query) or GuiActionRunner.execute(GuiActionRunnable task) and both Callable and GuiActionRunnable can be lambdas.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1281940,
+      "reputation" : 17839,
+      "user_id" : 1235867,
+      "user_type" : "registered",
+      "accept_rate" : 80,
+      "profile_image" : "https://www.gravatar.com/avatar/1f2891fef756bf043d9b576af26bc021?s=256&d=identicon&r=PG",
+      "display_name" : "lbalazscs",
+      "link" : "https://stackoverflow.com/users/1235867/lbalazscs"
+    },
+    "creation_date" : 1756495641,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140701691,
+    "post_id" : 79749938,
+    "body" : "@Slaw see also: <a href=\"https://stackoverflow.com/questions/79750309/rethrowing-throwables-from-edt\">Rethrowing Throwables from EDT</a>, <a href=\"https://stackoverflow.com/questions/79750346/making-tests-pass-if-they-fail\">Making tests pass if they fail</a>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2683,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "creation_date" : 1756475212,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140701246,
+    "post_id" : 79749938,
+    "body" : "@Slaw please see my edit",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2683,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "creation_date" : 1756464041,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140701014,
+    "post_id" : 79749938,
+    "body" : "If you&#39;re using JUnit 5 then you can write an <a href=\"https://docs.junit.org/current/api/org.junit.jupiter.api/org/junit/jupiter/api/extension/InvocationInterceptor.html\" rel=\"nofollow noreferrer\"><code>InvocationInterceptor</code></a> extension that calls the test methods on the EDT. My answer <a href=\"https://stackoverflow.com/a/79740615/6395627\">here</a> demonstrates that--among other things--for JavaFX. Shouldn&#39;t be too hard to refactor for Swing. Just make sure you wait for the <code>invokeLater</code> action to complete and to propagate any errors. Of course, that makes the <i>entire test</i> run on the EDT, which you may not want.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 8532578,
+      "reputation" : 49904,
+      "user_id" : 6395627,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Slaw",
+      "link" : "https://stackoverflow.com/users/6395627/slaw"
+    },
+    "creation_date" : 1756457790,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

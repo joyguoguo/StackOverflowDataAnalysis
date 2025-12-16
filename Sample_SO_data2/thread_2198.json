@@ -1,0 +1,62 @@
+{
+  "question" : {
+    "question_id" : 79641737,
+    "title" : "Validating request body in Spring WebFlux",
+    "body" : "<p>How do you validate a request DTO in a reactive Spring Web application?</p>\n<p>In a regular Spring Web application, you would simply annotate the DTO with things like <code>@Size</code>, <code>@Email</code> and then put <code>@Valid</code> beside the controller method parameter, like so:</p>\n<pre class=\"lang-java prettyprint-override\"><code> import jakarta.validation.constraints.*;\n\n    public class UserSignupRequestDTO {\n\n        @NotBlank(message = &quot;Email cannot be blank&quot;)\n        @Email(message = &quot;Email should be valid&quot;)\n        private String email;\n\n        @NotBlank(message = &quot;Password cannot be blank&quot;)\n        @Size(min = 8, message = &quot;Password must be at least 8 characters long&quot;)\n        private String password;\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>    @RestController\n    public class SignupController {\n\n        @PostMapping(&quot;/signup&quot;)\n        public ResponseEntity&lt;?&gt; signup(@Valid @RequestBody UserSignupRequestDTO signupRequest) {\n            // ...\n        }\n    }\n</code></pre>\n<p>However, it's not an option for a reactive handler:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Configuration\npublic class RouterConfig {\n    private final TokenHandler tokenHandler;\n\n    public RouterConfig(TokenHandler tokenHandler) {\n        this.tokenHandler = tokenHandler;\n    }\n\n    @Bean\n    @RouterOperation(beanClass = TokenHandler.class, beanMethod = &quot;signUp&quot;)\n    public RouterFunction&lt;ServerResponse&gt; signUpRoute() {\n        return RouterFunctions.route()\n                .POST(&quot;/signup&quot;, tokenHandler::signUp)\n                .build();\n    }\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>// TokenHandler implementation\n    @Override\n    public Mono&lt;ServerResponse&gt; signUp(ServerRequest request) {\n        return request.bodyToMono(UserSignupRequestDto.class) // this has to be validated\n                .map(userMapper::toUser)\n                .map(userService::save)\n                .map(tokenService::generateTokenFor)\n                .transform(jwt -&gt; ServerResponse.status(HttpStatus.CREATED).body(jwt, String.class));\n    }\n</code></pre>\n<p>What is Spring's suggested way of validating a request body DTO in such circumstances? I would still like to involve Jakarta's validation annotations without, obviously, writing any annotation-processing code myself.</p>\n",
+    "tags" : [ "java", "spring-webflux", "hibernate-validator" ],
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2683,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "is_answered" : true,
+    "view_count" : 156,
+    "answer_count" : 1,
+    "score" : 3,
+    "last_activity_date" : 1748432192,
+    "creation_date" : 1748418222,
+    "link" : "https://stackoverflow.com/questions/79641737/validating-request-body-in-spring-webflux",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79642112,
+    "question_id" : 79641737,
+    "body" : "<p>As I've said in my comment, you can inject a <code>Validator</code>. The following successfully throws a <code>ConstraintViolationException</code>:</p>\n<pre class=\"lang-java prettyprint-override\"><code>// TokenHandler implementation\n    @Autowired\n    private Validator validator;\n\n    @Override\n    public Mono&lt;ServerResponse&gt; signUp(ServerRequest request) {\n        return request.bodyToMono(UserSignupRequestDto.class) // this has to be validated\n                .map(this::validate)\n                .map(userMapper::toUser)\n                .map(userService::save)\n                .map(tokenService::generateTokenFor)\n                .transform(jwt -&gt; ServerResponse.status(HttpStatus.CREATED).body(jwt, String.class));\n    }\n\n    private &lt;T&gt; T validate(T object) {\n        Set&lt;ConstraintViolation&lt;T&gt;&gt; violations = validator.validate(object);\n        if (violations.isEmpty()) {\n            return object;\n        }\n        throw new ConstraintViolationException(violations);\n    }\n</code></pre>\n<p>Without any error handling in place that doesn't get turned into a nice error message, but that's a next step.</p>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 1211967,
+      "reputation" : 9964,
+      "user_id" : 1180351,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/pKB8y.png?s=256",
+      "display_name" : "Rob Spoor",
+      "link" : "https://stackoverflow.com/users/1180351/rob-spoor"
+    },
+    "creation_date" : 1748432192,
+    "last_activity_date" : 1748432192,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140465070,
+    "post_id" : 79641737,
+    "body" : "You can probably inject a <code>Validator</code> in your controller, then call that in a <code>map</code> call. It returns the violations so you need to wrap that in a <code>ConstraintViolationException</code>.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1211967,
+      "reputation" : 9964,
+      "user_id" : 1180351,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/pKB8y.png?s=256",
+      "display_name" : "Rob Spoor",
+      "link" : "https://stackoverflow.com/users/1180351/rob-spoor"
+    },
+    "creation_date" : 1748419251,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

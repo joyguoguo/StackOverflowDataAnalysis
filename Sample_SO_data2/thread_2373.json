@@ -1,0 +1,63 @@
+{
+  "question" : {
+    "question_id" : 79627799,
+    "title" : "How to maximise throughput with RequestResponseIO on GCP Dataflow",
+    "body" : "<p>I'm trying to use RequestResponseIO on Dataflow to make parallel requests to an endpoint. As a test, I've created a Cloud Run helloworld endpoint which just receives these requests; it can handle up to 80 concurrent requests per instance and scale up to 100 instances by default. Request latency is generally ~1ms but RRIO maxes out at ~100 elements/s.</p>\n<p>My RRIO Caller code is:</p>\n<pre><code>public class MakeRequest implements Caller&lt;String, String&gt; {\n  private static HttpRequestFactory REQUEST_FACTORY;\n  private static final Logger LOG = LoggerFactory.getLogger(MakeRequest.class);\n  private static final String url = &quot;REDACTED&quot;;\n\n  public MakeRequest() {}\n\n  public HttpRequestFactory getRequestFactory() {...}\n\n  public static IdTokenCredentials generateIdTokenCredentials(String url) throws IOException {...}\n\n  public static HttpRequestFactory createHttpFactory(String url) {...}\n\n  public String call(String reqString) {\n    HttpRequest request;\n    try {\n      request = getRequestFactory().buildGetRequest(new GenericUrl(url));\n    } catch (IOException e) {\n      throw new RuntimeException(e);\n    }\n\n    HttpResponse response = null;\n    try {\n      response = request.execute();\n      return response.getContent().toString();\n    } catch (IOException e) {\n      throw new RuntimeException(e);\n    }\n  }\n}\n</code></pre>\n<p>There's a lot of extra code to handle authentication with Cloud Run which I've cut out but the bulk of the logic is in the <code>call</code> function which I've created following the docs <a href=\"https://beam.apache.org/documentation/io/built-in/webapis/#practical-examples\" rel=\"nofollow noreferrer\">here</a>. As this is just test code I'm dropping the String elements passed in.</p>\n<p>I can't figure out why RRIO doesn't keep ramping up the number of requests it makes as Cloud Run can clearly handle much higher throughput than it's receiving. Run doesn't even return a 429 No Available Instance error so it's clearly not overloaded. I've tried adding a custom <code>callShouldBackOff</code> implementation which should log out whenever the <code>update()</code> functions are called and it doesn't seem to be hit at all:</p>\n<pre><code>        .apply(\n            RequestResponseIO.of(new MakeRequest(), StringUtf8Coder.of())\n                .withCallShouldBackoff(new TestCallShouldBackoffBasedOnRejectionProbability&lt;&gt;()));\n</code></pre>\n<p>Am I missing some way of increasing parallelism or throughput of the function? How does RRIO determine it should slow down the rate at which it calls the API?</p>\n<p>I'm looking at this as a production issue where we group calls together into a single request JSON body. With 1000 elements in the body Run takes ~1s to process the request, with 100 elements in the body Run takes ~0.1s to process the request. RRIO seems to run these at 1/s or 10/s respectively which seems to imply it's hitting some sort of cap, when Run can absolutely scale much higher.</p>\n<p>TIA!</p>\n",
+    "tags" : [ "java", "google-cloud-dataflow", "apache-beam" ],
+    "owner" : {
+      "account_id" : 15245600,
+      "reputation" : 11,
+      "user_id" : 11000557,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/284ac20da409a825707b046bc682a57f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "O Bishop",
+      "link" : "https://stackoverflow.com/users/11000557/o-bishop"
+    },
+    "is_answered" : false,
+    "view_count" : 81,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1748400615,
+    "creation_date" : 1747599676,
+    "link" : "https://stackoverflow.com/questions/79627799/how-to-maximise-throughput-with-requestresponseio-on-gcp-dataflow",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79641433,
+    "question_id" : 79627799,
+    "body" : "<p>Thank you for raising this issue. As of this writing, the JavaDoc for <a href=\"https://beam.apache.org/releases/javadoc/current/org/apache/beam/io/requestresponse/RequestResponseIO.html#withCallShouldBackoff-org.apache.beam.io.requestresponse.CallShouldBackoff-\" rel=\"nofollow noreferrer\">RequestResponseIO.withCallShouldBackoff</a> is incorrect in stating that the default is a no-op <a href=\"https://beam.apache.org/releases/javadoc/current/org/apache/beam/io/requestresponse/CallShouldBackoff.html\" rel=\"nofollow noreferrer\">CallShouldBackoff</a>; blame me the author :-) (See <a href=\"https://github.com/apache/beam/issues/35055\" rel=\"nofollow noreferrer\">GitHub issue</a>).</p>\n<p>When invoking <a href=\"https://beam.apache.org/releases/javadoc/current/org/apache/beam/io/requestresponse/RequestResponseIO.html#of-org.apache.beam.io.requestresponse.Caller-org.apache.beam.sdk.coders.Coder-\" rel=\"nofollow noreferrer\">RequestResponseIO.of</a>, it invokes a non-public <code>withDefaults</code> method that sets the instance's <code>CallShouldBackOff</code> to a package private <a href=\"https://github.com/apache/beam/blob/master/sdks/java/io/rrio/src/main/java/org/apache/beam/io/requestresponse/CallShouldBackoffBasedOnRejectionProbability.java\" rel=\"nofollow noreferrer\">CallShouldBackoffBasedOnRejectionProbability</a> implementation based on <a href=\"https://sre.google/sre-book/handling-overload/\" rel=\"nofollow noreferrer\">https://sre.google/sre-book/handling-overload/</a>.</p>\n<p>I recommend first ruling in or out whether the default <a href=\"https://beam.apache.org/releases/javadoc/current/org/apache/beam/io/requestresponse/CallShouldBackoff.html\" rel=\"nofollow noreferrer\">CallShouldBackoff</a> is the root cause of the throttling and then consider a few options on what to do next.</p>\n<h4>Rule in/out RequestResponseIO default CallShouldBackoff</h4>\n<p>The easiest way to rule in or out the default <a href=\"https://beam.apache.org/releases/javadoc/current/org/apache/beam/io/requestresponse/CallShouldBackoff.html\" rel=\"nofollow noreferrer\">CallShouldBackoff</a> is to implement one that turns off backoff entirely. This should be <strong>done with care</strong> depending on the upstream source to prevent unexpected costs to downstream Cloud Run usage.</p>\n<pre class=\"lang-java prettyprint-override\"><code>class UnsafeNoBackoff\n    implements CallShouldBackoff&lt;MyResponse&gt; {\n\n    // Will never signal to perform a backoff.\n    @Override\n    public boolean isTrue() { return false; }\n\n    @Override\n    public void update(UserCodeExecutionException exception) { /* Noop */ }\n\n    @Override\n    public void update(ResponseT response) { /* Noop */ }\n}\n</code></pre>\n<p>Then,</p>\n<pre class=\"lang-java prettyprint-override\"><code>RequestResponseIO.of(new MyCaller())\n.withCallShouldBackoff(new UnsafeNoBackoff());\n</code></pre>\n<p>Another method is to use <a href=\"https://beam.apache.org/releases/javadoc/current/org/apache/beam/io/requestresponse/RequestResponseIO.html#withMonitoringConfiguration-org.apache.beam.io.requestresponse.Monitoring-\" rel=\"nofollow noreferrer\">RequestResponseIO.withMonitoringConfiguration</a>.</p>\n<pre class=\"lang-java prettyprint-override\"><code>RequestResponseIO.of(new MyCaller())\n   .withMonitoringConfiguration(Monitoring.withEverythingCountedExceptedCaching());\n</code></pre>\n<p>This will populate <a href=\"https://cloud.google.com/dataflow/docs/guides/using-cloud-monitoring#custom-metrics\" rel=\"nofollow noreferrer\">Dataflow Custom metrics</a> that you could bring into a single custom <a href=\"https://cloud.google.com/monitoring/charts/dashboards\" rel=\"nofollow noreferrer\">Google Cloud monitoring dashboard</a> along with <a href=\"https://cloud.google.com/run/docs/monitoring#built-in_metrics\" rel=\"nofollow noreferrer\">Cloud Run metrics</a>.</p>\n<h4>Future options</h4>\n<ol>\n<li>Use your own custom <a href=\"https://beam.apache.org/releases/javadoc/current/org/apache/beam/io/requestresponse/CallShouldBackoff.html\" rel=\"nofollow noreferrer\">CallShouldBackoff</a> and provide this to the <a href=\"https://beam.apache.org/releases/javadoc/current/org/apache/beam/io/requestresponse/RequestResponseIO.html#withCallShouldBackoff-org.apache.beam.io.requestresponse.CallShouldBackoff-\" rel=\"nofollow noreferrer\">withCallShouldBackoff</a> method.</li>\n</ol>\n<pre class=\"lang-java prettyprint-override\"><code>RequestResponseIO.of(new MyCaller())\n.withCallShouldBackoff(new MyCustomBackoffSignal());\n</code></pre>\n<ol start=\"2\">\n<li>Don't use RequestResponseIO</li>\n</ol>\n<p>If all you need is to call a single endpoint without a special backoff implementation, consider writing your own <a href=\"https://beam.apache.org/documentation/transforms/java/elementwise/pardo/\" rel=\"nofollow noreferrer\">ParDo</a> using <a href=\"https://cloud.google.com/java/docs/reference/google-http-client/latest/com.google.api.client.http.HttpRequestFactory\" rel=\"nofollow noreferrer\">HttpRequestFactory</a> (which was also in your code snippet) and incorporate <a href=\"https://cloud.google.com/run/docs/authenticating/service-to-service#use_the_authentication_libraries\" rel=\"nofollow noreferrer\">Authentication</a> into your <a href=\"https://beam.apache.org/releases/javadoc/current/org/apache/beam/sdk/transforms/DoFn.Setup.html\" rel=\"nofollow noreferrer\">@Setup</a> annotated ParDo method <code>@Setup void setup() { ... }</code>.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 1241691,
+      "reputation" : 841,
+      "user_id" : 1204142,
+      "user_type" : "registered",
+      "accept_rate" : 76,
+      "profile_image" : "https://www.gravatar.com/avatar/3c6ddbb7b612d14cfb834ba48815dadc?s=256&d=identicon&r=PG",
+      "display_name" : "Damon",
+      "link" : "https://stackoverflow.com/users/1204142/damon"
+    },
+    "creation_date" : 1748400615,
+    "last_activity_date" : 1748400615,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140463366,
+    "post_id" : 79627799,
+    "body" : "Do you see your Dataflow job scales up? For batch jobs, <a href=\"https://cloud.google.com/dataflow/docs/horizontal-autoscaling#batch\" rel=\"nofollow noreferrer\">cloud.google.com/dataflow/docs/horizontal-autoscaling#batch</a> explains whether scaling up occurs.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 27880607,
+      "reputation" : 427,
+      "user_id" : 21289117,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/AGNmyxYhfq7WhmEAVPcOJfXKfItze8lWwfcCJOg1dVUv=k-s256",
+      "display_name" : "XQ Hu",
+      "link" : "https://stackoverflow.com/users/21289117/xq-hu"
+    },
+    "creation_date" : 1748364292,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

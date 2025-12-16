@@ -1,0 +1,158 @@
+{
+  "question" : {
+    "question_id" : 79695520,
+    "title" : "Comparing two objects, ignoring distinction between null and empty string properties",
+    "body" : "<p>We have a DB field editable in GUI. Entity fields correspond to GUI components, such as <code>JTextField</code>s.</p>\n<p>Whenever the user tries to close the form dialog, we need to <a href=\"https://softwareengineering.stackexchange.com/questions/458735/tracking-data-change-in-gui-form/458737\">check</a> whether any data was modified. We could:</p>\n<ol>\n<li>Save the initial data in memory once the dialog is displayed.</li>\n<li>Collect all the GUI data on disposal attempts.</li>\n<li>Then compare the two. If they differ, we may show a confirmation dialog (some disagree it's a good UX/UI decision, but it's not the point).</li>\n</ol>\n<p>The problem is <code>JTextField</code>s never return nulls. So if you have a null field in the DB, then compare a corresponding text field's <code>text</code> to that null, you'll get a false positive.</p>\n<p>I need to compare two objects (entities) in a way that doesn't distinguish between null and empty string properties.</p>\n<p>It's relatively straightforward to write such code. But I'm more interested in <strong>not</strong> writing code (maybe, there's something OOB that could help me).</p>\n<p>Any idea how I can achieve my goal concisely and elegantly?</p>\n<pre class=\"lang-java prettyprint-override\"><code>import org.junit.jupiter.api.Test;\n\nimport java.util.Objects;\n\nimport static org.junit.jupiter.api.Assertions.assertTrue;\n\npublic class EqualityTest {\n\n    @Test\n    public void equalityTest() {\n        User emptyNameUser = new User(&quot;&quot;);\n        User nullNameUser = new User(null);\n        boolean usersEqual = equal(emptyNameUser, nullNameUser);\n        assertTrue(usersEqual);\n    }\n\n    private boolean equal(User userOne, User userTwo) {\n        // doesn't work since null and empty strings are not equal\n        return Objects.equals(userOne, userTwo);\n    }\n\n    static class User {\n\n        // imagine there are scores of properties\n        String name;\n\n        public User(String name) {\n            this.name = name;\n        }\n        \n        // vanilla equals() and hashCode()\n        @Override\n        public boolean equals(Object o) {\n            if (this == o) return true;\n            if (!(o instanceof User)) return false;\n            User user = (User) o;\n            return Objects.equals(name, user.name);\n        }\n\n        @Override\n        public int hashCode() {\n            return Objects.hashCode(name);\n        }\n    }\n}\n</code></pre>\n",
+    "tags" : [ "java" ],
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2683,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "is_answered" : false,
+    "view_count" : 98,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1752273839,
+    "creation_date" : 1752059560,
+    "link" : "https://stackoverflow.com/questions/79695520/comparing-two-objects-ignoring-distinction-between-null-and-empty-string-proper",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79698888,
+    "question_id" : 79695520,
+    "body" : "<p>The standard <code>Object#equals()</code> implementation, as well as other equality helpers like <code>System#identityHashCode()</code> and <code>Reference#refersTo()</code>, are fundamentally incompatible with this goal. You will need to roll your own equality scheme.</p>\n<p>The simplest and most idiomatic thing to do would be to overload <code>Object#equals()</code> for the types this should apply to, such that any 2 objects of that type with a null or empty string property are considered equal. It would also be appropriate to additionally override <code>Object#hashCode()</code> for consistent behavior. For instance, given some nullable <code>String name</code> field, you could do this:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Override\npublic boolean equals(Object obj) {\n    if (!(obj instanceof YourClass other)) return false;\n    if (this.name == null || this.name.isEmpty()) \n        return other.name == null || other.name.isEmpty();\n    return this.name.equals(other.name);\n}\n\n@Override\npublic int hashCode() {\n    if (this.name == null || this.name.isEmpty()) return 0;\n    return this.name.hashCode();\n}\n</code></pre>\n<p>However, perhaps you want some kind of general solution that leverages the nature of your objects (lets say they are POJOs or <code>Serializable</code>). You <em>could</em> do some reflection to compare fields by any mechanism you'd like. Here's a quick and dirty example:</p>\n<pre class=\"lang-java prettyprint-override\"><code>/** Determines whether 2 POJOs are equal by custom equality */\npublic static boolean equals(Object a, Object b) {\n    if (a == null) return b == null;\n    if (b == null) return false;\n    Class&lt;?&gt; type = a.getClass();\n    if (!type.equals(b.getClass())) return false;\n    for (Property prop : getProperties(type)) {\n        if (!valueEquals(prop.type(), prop.get(a), prop.get(b))) return false;\n    }\n    return true;\n}\n\n/** Determines the hash code of a POJO by custom equality */\npublic static int hashCode(Object obj) {\n    if (obj == null) return 0;\n    int hash = 7;\n    for (Property prop : getProperties(obj.getClass())) {\n        hash = 31 * hash + valueHashCode(prop.type(), prop.get(obj));\n    }\n    return hash;\n}\n\nprivate static boolean valueEquals(Class&lt;?&gt; type, Object a, Object b) {\n    // Custom equality\n    if (String.class.equals(type)) {\n        if (a == null || ((String) a).isEmpty())\n            return b == null || ((String) b).isEmpty();\n        return a.equals(b);\n    }\n    return equals(a, b);\n}\n\nprivate static int valueHashCode(Class&lt;?&gt; type, Object obj) {\n    // Custom equality\n    if (String.class.equals(type)) {\n        if (obj == null || ((String) obj).isEmpty()) return 0;\n        return obj.hashCode();\n    }\n    return hashCode(obj);\n}\n\nprivate static List&lt;Property&gt; getProperties(Class&lt;?&gt; clazz) {\n    List&lt;Property&gt; ret = new ArrayList&lt;&gt;();\n    getProperties0(ret, clazz);\n    ret.sort(Comparator.naturalOrder());\n    return ret;\n}\n\nprivate static void getProperties0(List&lt;Property&gt; out, Class&lt;?&gt; clazz) {\n    do {\n        int mod;\n        for (Field f : clazz.getDeclaredFields()) {\n            mod = f.getModifiers();\n            if (Modifier.isTransient(mod)) continue;\n            if (Modifier.isStatic(mod)) continue;\n            out.add(new Property(f));\n        }\n        clazz = clazz.getSuperclass();\n    } while (clazz != null &amp;&amp; !clazz.equals(Object.class));\n}\n\nprivate record Property(\n        Field handle\n) implements Comparable&lt;Property&gt; {\n\n    public Property {\n        try {\n            handle.setAccessible(true);\n        } catch (InaccessibleObjectException | SecurityException e) {\n            throw new IllegalArgumentException(&quot;Field \\&quot;&quot; + handle.getName() + &quot;\\&quot; cannot be made accessible&quot;);\n        }\n    }\n\n    @Override\n    public int compareTo(Property other) {\n        return CharSequence.compare(this.handle.getName(), other.handle.getName());\n    }\n\n    public Class&lt;?&gt; type() {\n        return this.handle.getType();\n    }\n\n    public Object get(Object holder) {\n        try {\n            return this.handle.get(holder);\n        } catch (IllegalAccessException e) {\n            throw new IllegalStateException(&quot;Unexpected reflection error&quot;, e);\n        }\n    }\n\n}\n</code></pre>\n<p>Which you could then use on <strong>ANY</strong> compliant object like so:</p>\n<pre class=\"lang-java prettyprint-override\"><code>Named a = new Named(&quot;&quot;);\nNamed b = new Named(null);\nNamed c = new Named(&quot;foo&quot;);\n\nSystem.out.println(equals(a, b)); // true\nSystem.out.println(equals(b, a)); // true\nSystem.out.println(equals(a, c)); // false\nSystem.out.println(equals(c, b)); // false\nSystem.out.println(hashCode(a)); // 217\nSystem.out.println(hashCode(b)); // 217\nSystem.out.println(hashCode(c)); // 101791\n</code></pre>\n<p>In production, implementing caches and handling recursion would definitely be appropriate. I happen to have a novel and efficient approach for the latter <a href=\"https://github.com/WasabiThumb/jtoml/blob/master/serializer-reflect/src/main/java/io/github/wasabithumb/jtoml/util/ReferenceHolder.java\" rel=\"nofollow noreferrer\">here</a> (used <a href=\"https://github.com/WasabiThumb/jtoml/blob/dbe90e9d4d66e9ae20f2c71b4f72c8c4fd421914/serializer-reflect/src/main/java/io/github/wasabithumb/jtoml/serial/reflect/ReflectTomlSerializer.java#L116\" rel=\"nofollow noreferrer\">here</a>).</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 14914414,
+      "reputation" : 1185,
+      "user_id" : 10808904,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Ts8fIsJj.png?s=256",
+      "display_name" : "Xavier Pedraza",
+      "link" : "https://stackoverflow.com/users/10808904/xavier-pedraza"
+    },
+    "creation_date" : 1752273414,
+    "last_activity_date" : 1752273839,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140577152,
+    "post_id" : 79695520,
+    "body" : "@k314159 <a href=\"https://en.wiktionary.org/wiki/OOB\" rel=\"nofollow noreferrer\">out of the box</a>, that is provided by standard or external libraries",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2683,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "creation_date" : 1752071681,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140577148,
+    "post_id" : 79695520,
+    "body" : "Sorry for the stupid question, but what does OOB mean?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 19118721,
+      "reputation" : 12499,
+      "user_id" : 13963086,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/9df2c3c4c87d8050b8fd6a59c88c7133?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "k314159",
+      "link" : "https://stackoverflow.com/users/13963086/k314159"
+    },
+    "creation_date" : 1752071553,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140577118,
+    "post_id" : 79695520,
+    "body" : "@k314159 <code>equals()</code> should stay the same. I need to ignore the distinction between null and empty strings in one particular place, not everywhere. I know how to implement field iteration from a technical standpoint. However, I&#39;m looking for something niftier, preferably OOB",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2683,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "creation_date" : 1752071261,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140577060,
+    "post_id" : 79695520,
+    "body" : "Are you looking to write a custom <code>equals</code> override for the class? Is it of manageable size so that you can compare field by field? Or do you want to iterate over all fields using reflection?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 19118721,
+      "reputation" : 12499,
+      "user_id" : 13963086,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/9df2c3c4c87d8050b8fd6a59c88c7133?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "k314159",
+      "link" : "https://stackoverflow.com/users/13963086/k314159"
+    },
+    "creation_date" : 1752070732,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140576915,
+    "post_id" : 79695520,
+    "body" : "@TimMoore No, I don&#39;t want to compare strings, I want to compare objects that can have string properties",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2683,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "creation_date" : 1752068446,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140576511,
+    "post_id" : 79695520,
+    "body" : "Or even the built in <a href=\"https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/util/Objects.html#requireNonNullElse(T,T)\" rel=\"nofollow noreferrer\">docs.oracle.com/en/java/javase/21/docs/api/java.base/java/ut&zwnj;&#8203;il/&hellip;</a>",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 14357,
+      "reputation" : 9557,
+      "user_id" : 29470,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/65d747d7ca1ea7c6fae309cce663236c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Tim Moore",
+      "link" : "https://stackoverflow.com/users/29470/tim-moore"
+    },
+    "creation_date" : 1752060278,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140576503,
+    "post_id" : 79695520,
+    "body" : "Are you looking for a library method, like in Apache commons-lang? <a href=\"https://commons.apache.org/proper/commons-lang/apidocs/org/apache/commons/lang3/StringUtils.html#defaultString(java.lang.String)\" rel=\"nofollow noreferrer\">commons.apache.org/proper/commons-lang/apidocs/org/apache/&hellip;</a>",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 14357,
+      "reputation" : 9557,
+      "user_id" : 29470,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/65d747d7ca1ea7c6fae309cce663236c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Tim Moore",
+      "link" : "https://stackoverflow.com/users/29470/tim-moore"
+    },
+    "creation_date" : 1752060118,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

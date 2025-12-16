@@ -1,0 +1,179 @@
+{
+  "question" : {
+    "question_id" : 79774294,
+    "title" : "Batch job using Spring-batch@5 not triggered with @Scheduled annotation",
+    "body" : "<p>I'm trying implementing scheduled batch job with Spring-batch@latest and Scheduler@latest.</p>\n<p>Both batch job and scheduler trigger work fine collectively.</p>\n<p>The problem occurs when I put @Scheduled on the method including batch job method.</p>\n<pre><code>import org.springframework.scheduling.annotation.EnableScheduling;\nimport org.springframework.scheduling.annotation.Scheduled;\nimport org.springframework.stereotype.Component;\n\nimport com.my.app.internal.api.batch.service.EmployeeService;\n\nimport lombok.RequiredArgsConstructor;\nimport lombok.extern.slf4j.Slf4j;\n\n@Slf4j\n@Component\n@EnableScheduling\n@RequiredArgsConstructor\npublic class ScheduledBatchTrigger {\n\n    private final EmployeeSaveJobConfig employeeSaveJobConfig;\n\n    @Scheduled(cron = &quot;0 */15 * * * *&quot;)\n    public void triggerScheduledBatch() {\n        log.warn(&quot;Scheduled batch triggered&quot;);\n        try {\n            employeeSaveJobConfig.jobSaveEmployee();\n        } catch (Exception e) {\n            log.warn(&quot;Error Occurred during batch trigger: {}&quot;, e.getMessage());\n            log.error(e.getMessage());\n        }\n        log.warn(&quot;Scheduled batch ended&quot;);\n    }\n}\n</code></pre>\n<p>The code above prints out</p>\n<pre><code>Scheduled batch triggered\nScheduled batch ended\n</code></pre>\n<p>but no signs of execution for <code>employeeSaveJobConfig.jobSaveEmployee()</code> method,\neven though I've put lots of loggers inside the method.</p>\n<p>Am I missing something?</p>\n<p>Here are my codes in &quot;Job&quot; and &quot;Service&quot;:</p>\n<pre><code>import org.springframework.batch.core.Job;\nimport org.springframework.batch.core.Step;\nimport org.springframework.batch.core.job.builder.JobBuilder;\nimport org.springframework.batch.core.launch.support.RunIdIncrementer;\nimport org.springframework.batch.core.repository.JobRepository;\nimport org.springframework.batch.core.step.builder.StepBuilder;\nimport org.springframework.batch.repeat.RepeatStatus;\nimport org.springframework.context.annotation.Bean;\nimport org.springframework.context.annotation.Configuration;\nimport org.springframework.transaction.PlatformTransactionManager;\n\nimport com.my.app.internal.api.batch.service.EmployeeService;\nimport com.my.domain.rdbs.domain.user.Employee;\n\nimport lombok.RequiredArgsConstructor;\nimport lombok.extern.slf4j.Slf4j;\n\n@Slf4j\n@Configuration\n@RequiredArgsConstructor\npublic class EmployeeSaveJobConfig {\n\n    private final JobRepository jobRepository;\n    private final EmployeeService employeeService;\n    private final PlatformTransactionManager transactionManager;\n\n    @Bean\n    public Job jobSaveEmployee() {\n        log.warn(&quot;Starting job save employee job&quot;);\n        return new JobBuilder(&quot;EMPLOYEE_SAVE_JOB&quot;, jobRepository)\n                                    .incrementer(new RunIdIncrementer())\n                                    .start(employeeSaveStep())\n                                    .build();\n    }\n\n    @Bean\n    public Step employeeSaveStep() {\n        return new StepBuilder(&quot;EMPLOYEE_SAVE_JOB-step&quot;, jobRepository)\n                .tasklet((contribution, chunkContext) -&gt; {\n                    log.warn(employeeService.saveEmployee());\n                    return RepeatStatus.FINISHED;\n                }, transactionManager)\n                .build();\n    }\n}\n</code></pre>\n<p>Job</p>\n<pre><code>import java.io.IOException;\nimport java.net.URI;\nimport java.net.http.HttpClient;\nimport java.net.http.HttpRequest;\nimport java.net.http.HttpResponse;\nimport java.time.LocalDateTime;\nimport java.util.Optional;\nimport java.util.Set;\n\nimport org.springframework.beans.factory.annotation.Value;\nimport org.springframework.stereotype.Service;\n\nimport com.fasterxml.jackson.core.JsonProcessingException;\nimport com.fasterxml.jackson.databind.JsonNode;\nimport com.fasterxml.jackson.databind.ObjectMapper;\nimport com.my.domain.rdbs.domain.user.Employee;\nimport com.my.domain.rdbs.repository.EmployeeRepository;\n\nimport lombok.RequiredArgsConstructor;\nimport lombok.extern.slf4j.Slf4j;\n\n@Slf4j\n@Service\n@RequiredArgsConstructor\npublic class EmployeeService {\n\n    private final EmployeeRepository employeeRepository;\n\n    @Value(&quot;${spring.profiles.active}&quot;)\n    private String activeProfile;\n\n    @Value(&quot;${employee.regular.identification-id}&quot;)\n    private Set&lt;String&gt; regularIdSet;\n\n    private JsonNode fetchDataFromDataBase(String accessToken) throws JsonProcessingException {\n        final HttpResponse&lt;String&gt; response;\n        try (HttpClient client = HttpClient.newHttpClient()) {\n            final HttpRequest request =\n                    HttpRequest.newBuilder()\n                               .uri(URI.create(&quot;https://api.employee.com/v1/persons&quot;))\n                               .header(&quot;Authorization&quot;, &quot;Bearer &quot; + accessToken)\n                               .build();\n            response = client.send(request, HttpResponse.BodyHandlers.ofString());\n        } catch (IOException | InterruptedException e) {\n            throw new RuntimeException(e);\n        }\n\n        final ObjectMapper mapper = new ObjectMapper();\n        return mapper.readTree(response.body());\n    }\n\n    private Employee collectRequiredData(String rawData) throws JsonProcessingException {\n        final ObjectMapper mapper = new ObjectMapper();\n        final JsonNode jsonData = mapper.readTree(rawData);\n        final String identificationId = jsonData.get(&quot;identificationId&quot;).textValue();\n        return Employee.builder()\n                       .personId(jsonData.get(&quot;personId&quot;).textValue())\n                       .account(jsonData.get(&quot;account&quot;).textValue())\n                       .mailAddress(jsonData.get(&quot;mailaddress&quot;).textValue())\n                       .identificationId(identificationId)\n                       .regularEmployee(isUserRegularEmployee(identificationId))\n                       .updatedAt(LocalDateTime.now())\n                       .build();\n    }\n\n    public String saveEmployee() throws Exception {\n        String accessToken = &quot;&quot;;\n        if (!&quot;local&quot;.equals(activeProfile)) {\n            accessToken = fetchTokenFrom();\n        }\n\n        final JsonNode jsonData = fetchDataFromDataBase(accessToken);\n        if (jsonData.isArray()) {\n            for (JsonNode json : jsonData) {\n                final Employee currentEmployee = collectRequiredData(json.toString());\n                currentEmployee.setRegularEmployee(isUserRegularEmployee(currentEmployee.getPersonId()));\n                Optional.of(\n                    employeeRepository.findByPersonId(json.get(&quot;personId&quot;).textValue())\n                                      .map(existingEmployee -&gt; {\n                                          existingEmployee.setAccount(json.get(&quot;account&quot;).textValue());\nexistingEmployee.setMailAddress(json.get(&quot;mailaddress&quot;).textValue());\nexistingEmployee.setRegularEmployee(isUserRegularEmployee(existingEmployee.getPersonId()));\nexistingEmployee.setUpdatedAt(LocalDateTime.now());\n                                          return employeeRepository.save(existingEmployee);\n                                      }))\n                    .orElseGet(() -&gt; {\n                        return Optional.ofNullable(employeeRepository.save(currentEmployee));\n                    });\n            }\n        }\n        return &quot;Finished!&quot;;\n    }\n\n    public boolean isUserRegularEmployee(String personId) {\n        final Optional&lt;Employee&gt; employee = employeeRepository.findByPersonId(personId);\n\n        if (employee.isPresent()) {\n            return regularIdSet.contains(employee.get().getIdentificationId());\n        } else {\n            return false;\n        }\n    }\n\n}\n</code></pre>\n<p>Service</p>\n<p>Thanks in advance.</p>\n<p>What I tried)</p>\n<p>While Job has never been triggered, a method from EmployeeService is triggered:</p>\n<pre><code>import org.springframework.scheduling.annotation.EnableScheduling;\nimport org.springframework.scheduling.annotation.Scheduled;\nimport org.springframework.stereotype.Component;\n\nimport com.my.app.internal.api.batch.service.EmployeeService;\n\nimport lombok.RequiredArgsConstructor;\nimport lombok.extern.slf4j.Slf4j;\n\n@Slf4j\n@Component\n@EnableScheduling\n@RequiredArgsConstructor\npublic class ScheduledBatchTrigger {\n\n    private final EmployeeService employeeService;\n\n    @Scheduled(cron = &quot;0 */15 * * * *&quot;)\n    public void triggerScheduledBatch() {\n        log.warn(&quot;Scheduled batch triggered&quot;);\n        try {\n            employeeService.saveEmployee();\n        } catch (Exception e) {\n            log.warn(&quot;Error Occurred during batch trigger: {}&quot;, e.getMessage());\n            log.error(e.getMessage());\n        }\n        log.warn(&quot;Scheduled batch ended&quot;);\n    }\n}\n</code></pre>\n<p>This code runs <code>employeeService.saveEmployee()</code> method, which runs for about 7 mins.\n(If this cron works, I will disassemble the job in pieces for paging)</p>\n",
+    "tags" : [ "java", "spring-boot", "spring-batch" ],
+    "owner" : {
+      "account_id" : 18691500,
+      "reputation" : 3,
+      "user_id" : 14820599,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a-/AOh14GgxxntRLlt7IgfGG81J4pHtSWyDE5OGt-SXcbuc=k-s256",
+      "display_name" : "dokimyj",
+      "link" : "https://stackoverflow.com/users/14820599/dokimyj"
+    },
+    "is_answered" : true,
+    "view_count" : 121,
+    "answer_count" : 2,
+    "score" : 1,
+    "last_activity_date" : 1758786683,
+    "creation_date" : 1758761950,
+    "link" : "https://stackoverflow.com/questions/79774294/batch-job-using-spring-batch5-not-triggered-with-scheduled-annotation",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79774525,
+    "question_id" : 79774294,
+    "body" : "<p>This won't work, calling an <code>@Bean</code> method and expect it to launch the <code>Job</code> is not going to work. That is simple <strong>not</strong> how Spring Batch works. See <a href=\"https://docs.spring.io/spring-batch/reference/job/running.html#runningJobsFromWebContainer\" rel=\"nofollow noreferrer\">the reference guide</a> on how to launch a job from a different component (in this case a controller but is is the same for your trigger).</p>\n<p>You can do this in 1 of 2 ways</p>\n<ol>\n<li>Inject the <a href=\"https://docs.spring.io/spring-batch/docs/current/api/org/springframework/batch/core/launch/JobLauncher.html\" rel=\"nofollow noreferrer\"><code>JobLauncher</code></a> and <code>Job</code> into your <code>ScheduledBatchTrigger</code> and use the proper mechanism on the <code>JobLauncher</code> to start the job.</li>\n<li>Inject the <a href=\"https://docs.spring.io/spring-batch/docs/current/api/org/springframework/batch/core/launch/JobOperator.html\" rel=\"nofollow noreferrer\"><code>JobOperator</code></a> to launch the job by name (simpler)</li>\n</ol>\n<h1>Using <code>JobLauncher</code></h1>\n<pre class=\"lang-java prettyprint-override\"><code>@Slf4j\n@Component\n@EnableScheduling\n@RequiredArgsConstructor\npublic class ScheduledBatchTrigger {\n\n    private final JobLauncher jobLauncher;\n    private final Job jobSaveEmployee;\n\n    @Scheduled(cron = &quot;0 */15 * * * *&quot;)\n    public void triggerScheduledBatch() {\n        log.warn(&quot;Scheduled batch triggered&quot;);\n        try {\n            jobLauncher.run(jobSaveEmployee, null);\n        } catch (Exception e) {\n            log.warn(&quot;Error Occurred during batch trigger: {}&quot;, e.getMessage());\n            log.error(e.getMessage());\n        }\n        log.warn(&quot;Scheduled batch ended&quot;);\n    }\n}\n</code></pre>\n<h1>Using <code>JobOperator</code></h1>\n<pre class=\"lang-java prettyprint-override\"><code>@Slf4j\n@Component\n@EnableScheduling\n@RequiredArgsConstructor\npublic class ScheduledBatchTrigger {\n\n    private final JobOperator jobOperator;\n\n    @Scheduled(cron = &quot;0 */15 * * * *&quot;)\n    public void triggerScheduledBatch() {\n        log.warn(&quot;Scheduled batch triggered&quot;);\n        try {\n            jobOperator.start(&quot;jobSaveEmployee&quot;, null);\n        } catch (Exception e) {\n            log.warn(&quot;Error Occurred during batch trigger: {}&quot;, e.getMessage());\n            log.error(e.getMessage());\n        }\n        log.warn(&quot;Scheduled batch ended&quot;);\n    }\n}\n</code></pre>\n<p>Either of these should work in properly launching the job. Depending on the configuration you have your message <code>&quot;Scheduled batch ended&quot;</code> will show directly and the job run in the background.</p>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126826,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1758786683,
+    "last_activity_date" : 1758786683,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79774376,
+    "question_id" : 79774294,
+    "body" : "<p>My first thought here is that this might not have much to do with the <code>@Scheduled</code> annotation, but possibly with the configuration of your Spring application. You mentioned that you don't see any &quot;signs of execution&quot; for your <code>EmployeeSaveJobConfig</code> class—are you sure that the implementation you're expecting is <em>actually</em> there? Is <code>EmployeeSaveJobConfig</code> and interface, or a concrete implementation? There's a lot that <em>could</em> be going on there. I'd suggest possibly using a debugger to step through line by line to see what's happening. If those <code>Scheduled batch</code> messages are being logged, and you are <em>not</em> seeing that <code>Error Occurred during batch trigger</code> message, I don't see how your <code>jobSaveEmployee</code> method could <em>not</em> be being invoked.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 9051315,
+      "reputation" : 346,
+      "user_id" : 6741328,
+      "user_type" : "registered",
+      "profile_image" : "https://graph.facebook.com/10209045323343600/picture?type=large",
+      "display_name" : "Gus Murphy",
+      "link" : "https://stackoverflow.com/users/6741328/gus-murphy"
+    },
+    "creation_date" : 1758776233,
+    "last_activity_date" : 1758776233,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140758754,
+    "post_id" : 79774294,
+    "body" : "I&#39;m re-reading reference you gave me and retrying the things like jobLauncher... and it works! I&#39;ve read some examples for batch+scheduler but most of them are using obsolete *BuilderFactory and those rare cases of latest ones never mentioned what exactly &#39;JobLauncher&#39; is in their examples... Thanks!",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 18691500,
+      "reputation" : 3,
+      "user_id" : 14820599,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a-/AOh14GgxxntRLlt7IgfGG81J4pHtSWyDE5OGt-SXcbuc=k-s256",
+      "display_name" : "dokimyj",
+      "link" : "https://stackoverflow.com/users/14820599/dokimyj"
+    },
+    "creation_date" : 1758787828,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140758590,
+    "post_id" : 79774294,
+    "body" : "No it wouldn&#39;t. The job is an <code>@Bean</code> method it just creates a bean, a job is a definition os something to launch. The infrastructure (the <code>JobLauncher</code> or <code>JobOperator</code>) knows how to actually turn that definition into executable code. Instead of making assumptions I would suggest to read the documentation and learn how Spring Batch actually works.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126826,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1758783135,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140758540,
+    "post_id" : 79774294,
+    "body" : "Thanks for the reply, but then it doesn&#39;t explain how <code>triggerScheduledBatch()</code> could directly trigger <code>employService.saveEmployee()</code> without <code>JobLauncher</code> and <code>Job</code> injection... If <code>EmploySaveJobConfig</code> class is annotated with <code>@Service</code> instead, would the job(s) also be triggered?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 18691500,
+      "reputation" : 3,
+      "user_id" : 14820599,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a-/AOh14GgxxntRLlt7IgfGG81J4pHtSWyDE5OGt-SXcbuc=k-s256",
+      "display_name" : "dokimyj",
+      "link" : "https://stackoverflow.com/users/14820599/dokimyj"
+    },
+    "creation_date" : 1758781242,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140758491,
+    "post_id" : 79774294,
+    "body" : "Ofcourse this doesn&#39;t run. YOu are just calling the method from the <code>@Configuration</code> that create the job. It doesn&#39;t launch anything. If you want to trigger the job, inject the <code>JobLauncher</code> and yolur <code>Job</code> in your <code>ScheduledBatchTrigger</code> and use that to trigger the job execution (<a href=\"https://docs.spring.io/spring-batch/reference/job/running.html#runningJobsFromWebContainer\" rel=\"nofollow noreferrer\">docs.spring.io/spring-batch/reference/job/&hellip;</a>). Also move the <code>@EnableScheduling</code> to an <code>@Configuration</code> class where it belongs. Another (simpler?) option is to inject a <code>JobOperator</code> and call the <code>start</code> method with the name of the job to launch.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126826,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1758779056,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79774376" : [ {
+      "comment_id" : 140758689,
+      "post_id" : 79774376,
+      "body" : "It is a configuration class, which will setup the definition of the job, calling that method will do nothing.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 3192259,
+        "reputation" : 126826,
+        "user_id" : 2696260,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+        "display_name" : "M. Deinum",
+        "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+      },
+      "creation_date" : 1758786058,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140758544,
+      "post_id" : 79774376,
+      "body" : "&gt; are you sure that the implementation you&#39;re expecting is actually there?    Yes I assure, because my spring app starts up with the batch execution when <code>spring.batch.job.enabled</code> is <code>true</code>.    &gt; using a debugger to step through line by line to see what&#39;s happening.    Thanks for the reminder. I always forget there is a lit debugger on IntelliJ cuz I never used it even when I used to work with Spring MVC...",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 18691500,
+        "reputation" : 3,
+        "user_id" : 14820599,
+        "user_type" : "registered",
+        "profile_image" : "https://lh3.googleusercontent.com/a-/AOh14GgxxntRLlt7IgfGG81J4pHtSWyDE5OGt-SXcbuc=k-s256",
+        "display_name" : "dokimyj",
+        "link" : "https://stackoverflow.com/users/14820599/dokimyj"
+      },
+      "creation_date" : 1758781356,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79774525" : [ {
+      "comment_id" : 140759039,
+      "post_id" : 79774525,
+      "body" : "Using JobLauncher did the trick. Thanks!",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 18691500,
+        "reputation" : 3,
+        "user_id" : 14820599,
+        "user_type" : "registered",
+        "profile_image" : "https://lh3.googleusercontent.com/a-/AOh14GgxxntRLlt7IgfGG81J4pHtSWyDE5OGt-SXcbuc=k-s256",
+        "display_name" : "dokimyj",
+        "link" : "https://stackoverflow.com/users/14820599/dokimyj"
+      },
+      "creation_date" : 1758795885,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

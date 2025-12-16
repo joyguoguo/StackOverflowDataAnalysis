@@ -1,0 +1,118 @@
+{
+  "question" : {
+    "question_id" : 79652238,
+    "title" : "Why does parsing with this DateTimeFormatter throw an exception?",
+    "body" : "<p>Both of these DateTimeFormatters are nearly identical, however only the second one throws an exception. Both of these patterns are valid as far as I can tell.</p>\n<p>Why does changing <code>minWidth</code> cause parsing to fail in the second case?</p>\n<p>I'm using Java 21.</p>\n<p>This works, output is {},ISO resolved to 2024-12-31T23:59:59.123</p>\n<pre><code>var result1 = new DateTimeFormatterBuilder()\n        .appendPattern(&quot;yyyyMMddHHmmss&quot;)\n        .appendFraction(ChronoField.NANO_OF_SECOND, 3, 3, false) // minWidth is 3\n        .toFormatter()\n        .parse(&quot;20241231235959123&quot;);\nSystem.out.println(result1);\n</code></pre>\n<p>This throws an exception:</p>\n<pre class=\"lang-java prettyprint-override\"><code>var result2 = new DateTimeFormatterBuilder()\n        .appendPattern(&quot;yyyyMMddHHmmss&quot;)\n        .appendFraction(ChronoField.NANO_OF_SECOND, 1, 3, false) // minWidth is 1\n        .toFormatter()\n        .parse(&quot;20241231235959123&quot;);\nSystem.out.println(result2);\n</code></pre>\n<p>The exception:</p>\n<pre class=\"lang-none prettyprint-override\"><code>Exception in thread &quot;main&quot; java.time.format.DateTimeParseException: Text '20241231235959123' could not be parsed at index 0\n    at java.base/java.time.format.DateTimeFormatter.parseResolved0(DateTimeFormatter.java:2108)\n    at java.base/java.time.format.DateTimeFormatter.parse(DateTimeFormatter.java:1936)\n    at Main.main(Main.java:24)\n</code></pre>\n",
+    "tags" : [ "java", "datetime", "java-time", "datetimeformatter" ],
+    "owner" : {
+      "account_id" : 30529,
+      "reputation" : 2612,
+      "user_id" : 83280,
+      "user_type" : "registered",
+      "accept_rate" : 77,
+      "profile_image" : "https://www.gravatar.com/avatar/c810c9730f398554439a7f18a14ad11e?s=256&d=identicon&r=PG",
+      "display_name" : "Steven",
+      "link" : "https://stackoverflow.com/users/83280/steven"
+    },
+    "is_answered" : true,
+    "view_count" : 209,
+    "answer_count" : 3,
+    "score" : 4,
+    "last_activity_date" : 1749032750,
+    "creation_date" : 1749019545,
+    "link" : "https://stackoverflow.com/questions/79652238/why-does-parsing-with-this-datetimeformatter-throw-an-exception",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79652316,
+    "question_id" : 79652238,
+    "body" : "<p>This is because the pattern <code>yyyy</code> is a variable-width pattern (it can parse between 4 and 19 digits), and the fractional part is <em>also</em> a variable-width pattern. The parser has no way of determining which numbers belong to which part.</p>\n<p>Consider a simpler example:</p>\n<pre><code>var result = new DateTimeFormatterBuilder()\n    .appendPattern(&quot;yyyy&quot;)\n    .appendFraction(ChronoField.NANO_OF_SECOND, 1, 3, false)\n    .toFormatter()\n    .parse(&quot;123456&quot;);\n</code></pre>\n<p>What is the year in &quot;123456&quot;? Is it 1234, and 56 is fractional part? Or is it 12345, and 6 is the fractional part? This is ambiguous.</p>\n<p>You need to add some other delimiter (e.g. set decimal point to true), or limit the year to a fixed width.</p>\n<pre><code>var result = new DateTimeFormatterBuilder()\n    .appendValue(ChronoField.YEAR, 4) // fixed year to 4 digits\n    .appendPattern(&quot;MMddHHmmss&quot;)\n    .appendFraction(ChronoField.NANO_OF_SECOND, 1, 3, false) // minWidth is 1\n    .toFormatter()\n    .parse(&quot;20241231235959123&quot;);\n</code></pre>\n",
+    "score" : 9,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 6651855,
+      "reputation" : 292280,
+      "user_id" : 5133585,
+      "user_type" : "registered",
+      "accept_rate" : 96,
+      "profile_image" : "https://i.sstatic.net/dfqcw.png?s=256",
+      "display_name" : "Sweeper",
+      "link" : "https://stackoverflow.com/users/5133585/sweeper"
+    },
+    "creation_date" : 1749022793,
+    "last_activity_date" : 1749022793,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79652476,
+    "question_id" : 79652238,
+    "body" : "<p>As a supplement to the correct and helpful answer by Sweeper this answer finds the relevant documentation. You asked why your parsing threw an exception, and Sweeper already correctly said that it’s because <code>yyyy</code> denotes a variable-width field. I want to show you the two places in the documentation where this is specified. Since for example <code>MM</code> gives a fixed-width field of exactly two digits, one can easily get surprised when neither <code>yyyy</code> nor <code>uuuu</code> gives a fixed-width 4-digit field.</p>\n<p>The documentation of <code>DateTimeFormatterBuilder.appendPattern()</code> first refers to <em>DateTimeFormatter for a user-focused description of the patterns</em>. It in turn says specifically about years:</p>\n<blockquote>\n<p>The count of letters determines the minimum field width below which padding is used. … If the count of letters is less than four … Otherwise, the sign is output if the pad width is exceeded, as per <code>SignStyle.EXCEEDS_PAD</code>.</p>\n</blockquote>\n<p>So this allows <code>yyyy</code> to print, and as a consequence also parse a year with either 4 digits or more than four digits with a sign.</p>\n<p>The documentation of <code>DateTimeFormatterBuilder.appendPattern()</code> goes on to specify that appending a pattern of four or more letters <code>y</code> is equivalent to <code>appendValue(ChronoField.YEAR_OF_ERA, n, 19, SignStyle.EXCEEDS_PAD)</code> where <code>n</code> is the count of letters. We see that <code>yyyy</code> allows a field of width 4 through 19.</p>\n<p><strong>Why are years different from months, days, hours, etc.?</strong> The above may already give a hint why it would be unreasonable for <code>yyyy</code> to give us a fixed-width field. We already know that months go up to 12, in some calendar systems up to 13 or a little more, but they are not allowed to outgrow 2 digits. Java supports years up to 999 999 999 in some places, occasionally up to 1 000 000 000, so forbidding more than 4 digits would give us trouble in other situations. Therefore the special and different rule for years.</p>\n<p><strong>Links</strong></p>\n<ul>\n<li><a href=\"https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/time/format/DateTimeFormatterBuilder.html#appendPattern(java.lang.String)\" rel=\"nofollow noreferrer\"><code>DateTimeFormatterBuilder.appendPattern()</code> documentation</a></li>\n<li><a href=\"https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/time/format/DateTimeFormatter.html#patterns\" rel=\"nofollow noreferrer\"><code>DateTimeFormatter</code> patterns documentation</a></li>\n<li><a href=\"https://stackoverflow.com/questions/41177442/uuuu-versus-yyyy-in-datetimeformatter-formatting-pattern-codes\"><code>uuuu</code> versus <code>yyyy</code> in <code>DateTimeFormatter</code> formatting pattern codes?</a> on Stack Overflow</li>\n</ul>\n",
+    "score" : 4,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 42292974,
+      "reputation" : 41,
+      "user_id" : 30682589,
+      "user_type" : "unregistered",
+      "profile_image" : "https://www.gravatar.com/avatar/6950477aa6e277d73908c4726c2f20f0?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Hamza Schmit",
+      "link" : "https://stackoverflow.com/users/30682589/hamza-schmit"
+    },
+    "creation_date" : 1749028998,
+    "last_activity_date" : 1749030948,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79652581,
+    "question_id" : 79652238,
+    "body" : "<p><strong>Workaround</strong></p>\n<p>If you are not getting the parsing value &quot;20241231235959123&quot; from any other system then you may have to introduce a decimal separator to handle your nanoseconds.  In way  like &quot;20241231235959.123&quot;. After that set the decimalPoint boolean variable to true like</p>\n<pre><code>.appendFraction(ChronoField.NANO_OF_SECOND, 1, 3, true); \n</code></pre>\n<p>Then you will be able to handle both cases.</p>\n<pre><code>var result2 = new DateTimeFormatterBuilder()\n                .appendPattern(&quot;yyyyMMddHHmmss&quot;)\n                .appendFraction(ChronoField.NANO_OF_SECOND, 1, 3, true)\n                .toFormatter()\n                .parse(&quot;20241231235959.123&quot;);\n</code></pre>\n<p>Why it works for min and maxwidth 3, 3?</p>\n<p>It knows exactly last 3 digits will go to  nanoseconds, so no confusion, works fine.</p>\n<p>Why it doesn't work for 1,3?</p>\n<p>when you do min=1 and max =3 for fraction and have no separator, the parser can't clearly tell where ss ends and fraction starts. Also fractions are variable width which risky unless exact (as in first case) or separated.</p>\n<p><strong>Ideally you should use exact width like 3,3 or else provide a separator.</strong></p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 15385328,
+      "reputation" : 13,
+      "user_id" : 11099545,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-Te6k4LK9ovc/AAAAAAAAAAI/AAAAAAAAEMQ/UmWuczSB24I/s256-rj/photo.jpg",
+      "display_name" : "Vicky Sati",
+      "link" : "https://stackoverflow.com/users/11099545/vicky-sati"
+    },
+    "creation_date" : 1749032750,
+    "last_activity_date" : 1749032750,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140485655,
+    "post_id" : 79652238,
+    "body" : "probably you must start <i>&#39;adjacent value parsing&#39;</i>  - see <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/time/format/DateTimeFormatterBuilder.html#appendValue(java.time.temporal.TemporalField,int)\" rel=\"nofollow noreferrer\"><code>appendValue()</code></a> - for example start building with <code>appendValue(ChronoField.YEAR, 4)</code> (obviously instead of <code>yyyy</code>) -- btw <code>YEAR</code> is actually the pattern <code>&quot;uuuu&quot;</code>; the pattern <code>&quot;yyyy&quot;</code> is <code>YEAR_OF_ERA</code> -- btw2 the problem most probably is that <code>&quot;yyyy&quot;</code> is <i>translated</i> to <code>appendValue(ChronoField.YEAR_OF_ERA, 4, 19, SignStyle.EXCEEDS_PAD)</code>",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 31180,
+      "reputation" : 29752,
+      "user_id" : 85421,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/kKvXH.gif?s=256",
+      "display_name" : "user85421",
+      "link" : "https://stackoverflow.com/users/85421/user85421"
+    },
+    "creation_date" : 1749022563,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79652581" : [ {
+      "comment_id" : 140487143,
+      "post_id" : 79652581,
+      "body" : "Another workaround could be padding the string with 0s at the end until it has length 17, and then parse with the formatter that always requires 3 decimals. Personally I would prefer parsing the string as-is as in the answer by Sweeper, though. Tastes differ.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 7612423,
+        "reputation" : 87409,
+        "user_id" : 5772882,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Anonymous",
+        "link" : "https://stackoverflow.com/users/5772882/anonymous"
+      },
+      "creation_date" : 1749049162,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

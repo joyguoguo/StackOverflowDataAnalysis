@@ -1,0 +1,47 @@
+{
+  "question" : {
+    "question_id" : 79662328,
+    "title" : "Java Gatherer Downstream.isRejecting is inconsistent",
+    "body" : "<p>When the <code>gather2</code> returns <code>false</code>. <code>downstream.push</code> in gather1 - finisher is <code>false</code>. That is right.</p>\n<p>But why does <code>downstream.isRejecting</code> is <code>false</code> always? it should be <code>true</code> as downstream is rejecting. The problem happens only when we chain 2 gatherers.</p>\n<pre><code>   Stream.of(0)\n          .gather(gather1())\n          .gather(gather2())\n          .forEach(System.out::println);\n\nstatic Gatherer&lt;Integer, ?, Integer&gt; gather1() {\n    return Gatherer.ofSequential(\n            Gatherer.Integrator.ofGreedy((state, element, downstream) -&gt; downstream.push(element)),\n            (unused, downstream) -&gt; {\n                for (int i = 1; i &lt;= 10 &amp;&amp; !downstream.isRejecting(); i++) {\n                    System.out.println(&quot;finisher pushing &quot; + i + &quot;, push result &quot; + downstream.push(i) + &quot;, isRejecting &quot; + downstream.isRejecting());\n                }\n            }\n    );\n}\n\nstatic Gatherer&lt;Integer, ?, Integer&gt; gather2() {\n    return Gatherer.ofSequential(\n            Gatherer.Integrator.of(\n                    (state, element, downstream) -&gt; false\n            )\n    );\n}\n</code></pre>\n",
+    "tags" : [ "java", "java-stream", "java-24" ],
+    "owner" : {
+      "account_id" : 15328195,
+      "reputation" : 3610,
+      "user_id" : 11058704,
+      "user_type" : "registered",
+      "profile_image" : "https://lh4.googleusercontent.com/-ztEBhSShv88/AAAAAAAAAAI/AAAAAAAAAAA/ACevoQPLzwJV-FCsThe1at4N__EBPxj_gg/mo/s256-rj/photo.jpg",
+      "display_name" : "RamPrakash",
+      "link" : "https://stackoverflow.com/users/11058704/ramprakash"
+    },
+    "is_answered" : true,
+    "view_count" : 130,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1749662855,
+    "creation_date" : 1749658372,
+    "link" : "https://stackoverflow.com/questions/79662328/java-gatherer-downstream-isrejecting-is-inconsistent",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79662415,
+    "question_id" : 79662328,
+    "body" : "<p><a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/util/stream/Gatherer.Downstream.html#isRejecting()\" rel=\"nofollow noreferrer\"><code>isRejecting</code></a> operates on a best-effort basis.</p>\n<blockquote>\n<p>This is best-effort only, once this returns true it should never return false again for the same instance.</p>\n</blockquote>\n<p>So technically it is always &quot;correct&quot; for it to return <code>false</code>.</p>\n<p>Going through the implementation, we can see that the argument passed to the downstream parameter in a <code>Composite</code> gatherer is just a lambda expression (<a href=\"https://github.com/openjdk/jdk24u/blob/e5d351f2199e67ffb7ed7847e97ef41c72966fb5/src/java.base/share/classes/java/util/stream/Gatherers.java#L675\" rel=\"nofollow noreferrer\">source</a>). For example, in the finisher implementation,</p>\n<pre><code>void finish(Downstream&lt;? super RR&gt; c) {\n    if (leftFinisher != Gatherer.&lt;A, R&gt;defaultFinisher())\n        leftFinisher.accept(leftState, r -&gt; rightIntegrate(r, c));\n    if (rightFinisher != Gatherer.&lt;AA, RR&gt;defaultFinisher())\n        rightFinisher.accept(rightState, c);\n}\n</code></pre>\n<p><code>r -&gt; rightIntegrate(r, c)</code> is the downstream your <code>gather1</code> receives. This obviously doesn't implement <code>isRejected</code> at all. The default implementation is used, which returns false.</p>\n<p>Looking further down, there is a comment addressing this</p>\n<blockquote>\n<p>Currently we use the following to ferry elements from the left <code>Gatherer</code> to the right <code>Gatherer</code>, but we create the <code>Gatherer.Downstream</code> as a lambda which means that the default implementation of <code>isKnownDone()</code> is used.</p>\n<p>If it is determined that we want to be able to support the full interface of <code>Gatherer.Downstream</code> then we have the following options:</p>\n<ol>\n<li>Have <code>State</code> implement <code>Downstream&lt;? super R&gt;</code> and store the passed in <code>Downstream&lt;? super RR&gt; downstream</code> as an instance field in <code>integrate()</code> and read it in <code>push(R r)</code>.</li>\n<li>Allocate a new <code>Gatherer.Downstream&lt;? super R&gt;</code> for each invocation of <code>integrate()</code> which might prove costly.</li>\n</ol>\n</blockquote>\n<p>So basically, <code>isRejecting</code> always returns false for downstream in a gatherer chain. A &quot;better&quot; implementation is not supported yet.</p>\n",
+    "score" : 4,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 6651855,
+      "reputation" : 292280,
+      "user_id" : 5133585,
+      "user_type" : "registered",
+      "accept_rate" : 96,
+      "profile_image" : "https://i.sstatic.net/dfqcw.png?s=256",
+      "display_name" : "Sweeper",
+      "link" : "https://stackoverflow.com/users/5133585/sweeper"
+    },
+    "creation_date" : 1749662855,
+    "last_activity_date" : 1749662855,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : { }
+}

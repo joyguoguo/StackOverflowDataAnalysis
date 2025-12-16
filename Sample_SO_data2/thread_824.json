@@ -1,0 +1,708 @@
+{
+  "question" : {
+    "question_id" : 79772669,
+    "title" : "How to simplify a complex filter of an optionals stream",
+    "body" : "<p>I'm new to <code>Optional</code> in Java and would like to implement the following logic.</p>\n<p>Input is a list of strings (it's not empty).\nIf the list contains <code>chocolate</code>, I want this item. Otherwise, I want the first item matching the pattern <code>.*ap.*</code>. If I still don't get an item, I want the first item of the list.</p>\n<p>I already set up this piece of code which does the job but I want to know whether this code can be simplified:</p>\n<pre><code>List&lt;String&gt; testList = Arrays.asList(&quot;banana&quot;, &quot;apple&quot;, &quot;cheese&quot;, &quot;chocolate&quot;);\n\nString food = testList.stream()\n                      .filter(str -&gt; str.equals(&quot;chocolate&quot;))\n                      .findFirst()\n                      .orElseGet(() -&gt; testList.stream()\n                                               .filter(str -&gt; str.matches(&quot;.*ap.*&quot;))\n                                               .findFirst()\n                                               .orElseGet(() -&gt; testList.get(0)));\n</code></pre>\n",
+    "tags" : [ "java", "java-stream" ],
+    "owner" : {
+      "account_id" : 431428,
+      "reputation" : 1196,
+      "user_id" : 815455,
+      "user_type" : "registered",
+      "accept_rate" : 79,
+      "profile_image" : "https://www.gravatar.com/avatar/cbf701232dd4c3abcf5cddc5df2f8239?s=256&d=identicon&r=PG",
+      "display_name" : "Antje Janosch",
+      "link" : "https://stackoverflow.com/users/815455/antje-janosch"
+    },
+    "is_answered" : true,
+    "view_count" : 353,
+    "answer_count" : 6,
+    "score" : -1,
+    "last_activity_date" : 1760367585,
+    "creation_date" : 1758634577,
+    "link" : "https://stackoverflow.com/questions/79772669/how-to-simplify-a-complex-filter-of-an-optionals-stream",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79772708,
+    "question_id" : 79772669,
+    "body" : "<p>Streams are not always the right tool for the job.  Or for the <em>whole</em> job.  Everything does not need to go into a single statement.  But if you insist on a single-statement solution then you can get one that is relatively clean and not necessarily too wasteful by concatenating filtered streams:</p>\n<pre><code>    String food = Stream.concat(\n            testList.stream().filter(s -&gt; s.equals(&quot;chocolate&quot;))\n            testList.stream().filter(s -&gt; s.matches(&quot;.*ap.*&quot;))\n        ).findFirst()\n        .orElse(testList.get(0));\n</code></pre>\n<p>The <code>concat()</code> produces a stream that <em>lazily</em> concatenates the other two, so in combination with <code>findFirst()</code>, that avoids reading any elements from the second filtration if the first yields any elements.  The resulting <code>Optional</code> is empty if and only if no element of the list passes either filter, and in this case, the first element of the list is selected (or an <code>IndexOutOfBoundsException</code> is thrown if you were wrong about the list being non-empty).</p>\n<p>But I would probably write this, which I find easier to follow:</p>\n<pre><code>    String food;\n\n    if (testList.contains(&quot;chocolate&quot;)) {\n        food = &quot;chocolate&quot;;\n    } else {\n        food = testList.stream()\n                .filter(s -&gt; s.matches(&quot;.*ap.*&quot;))\n                .findFirst()\n                .orElse(testList.get(0));\n    }\n</code></pre>\n",
+    "score" : 7,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 2792262,
+      "reputation" : 190832,
+      "user_id" : 2402272,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+      "display_name" : "John Bollinger",
+      "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+    },
+    "creation_date" : 1758636809,
+    "last_activity_date" : 1758638839,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79772994,
+    "question_id" : 79772669,
+    "body" : "<p>A stream can be used with a <code>min</code> function to determine the most suitable match. Start with a int function to rate each value to 0 (best: chocolate), 1 (matched on ap) otherwise the item is rated 2. This could be in a method or this definition:</p>\n<pre><code>ToIntFunction&lt;? super String&gt; ordinal = \n           s -&gt; &quot;chocolate&quot;.equals(s) ? 0 : s.contains(&quot;ap&quot;) ? 1 : 2;\n</code></pre>\n<p>This uses VGR suggestion for string <code>contains</code> to avoid regex <code>matches</code>. Then using a stream with <code>min</code> based on a comparator for these ratings:</p>\n<pre><code>String food = testList.stream()\n     .min(Comparator.comparingInt(s -&gt; &quot;chocolate&quot;.equals(s) ? 0 \n                                       : s.contains(&quot;ap&quot;) ? 1 : 2))\n     .orElseThrow();\n</code></pre>\n<p>This does not use <code>list.get(0)</code>, and raises <code>NoSuchElementException: No value present</code> when list is empty (whereas your own code would throw <code>ArrayIndexOutOfBoundsException: Index 0 out of bounds for length 0</code>).</p>\n<p>This scans the stream once only, but does not exit the scan immediately if finding &quot;chocolate&quot; early in the stream.</p>\n<p>Updated based on suggestions from Rob Spoor, VGR, and John Bollinger - thanks.</p>\n",
+    "score" : 3,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 5998820,
+      "reputation" : 16284,
+      "user_id" : 4712734,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f6e922a2cb7e2da59286f27b162aaca5?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "DuncG",
+      "link" : "https://stackoverflow.com/users/4712734/duncg"
+    },
+    "creation_date" : 1758654793,
+    "last_activity_date" : 1758703634,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79773005,
+    "question_id" : 79772669,
+    "body" : "<p>The simplest way to solve it is to use <code>reduce</code> on the stream:</p>\n<pre class=\"lang-java prettyprint-override\"><code>testList.stream()\n  .reduce(\n    testList.get(0),\n    (a, b) -&gt; &quot;chocolate&quot;.equals(b) ? b : b.matches(&quot;.*ap.*&quot;) ? b : a);\n</code></pre>\n<p>but then you skip the <code>Optional</code> use.</p>\n<p>You created an XY problem, your conditional has to be solved by a collect or reduce of some sort by stream nature. Your solution runs twice on the stream, which isn't optimal.</p>\n",
+    "score" : 3,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 9983336,
+      "reputation" : 5256,
+      "user_id" : 7769052,
+      "user_type" : "registered",
+      "accept_rate" : 75,
+      "profile_image" : "https://i.sstatic.net/t94zs.jpg?s=256",
+      "display_name" : "camilajenny",
+      "link" : "https://stackoverflow.com/users/7769052/camilajenny"
+    },
+    "creation_date" : 1758655752,
+    "last_activity_date" : 1758655752,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79773368,
+    "question_id" : 79772669,
+    "body" : "<p>I suggest to chain your searches instead of nesting it.</p>\n<pre><code>    void test() {\n        List&lt;String&gt; testList = Arrays.asList(&quot;banana&quot;, &quot;apple&quot;, &quot;cheese&quot;, &quot;chocolate&quot;);\n\n        String food = testList.stream()\n                .filter(this::isChocolate)\n                .findFirst()\n                .or(() -&gt; testList.stream()\n                        .filter(this::isApp)\n                        .findFirst()\n                )\n                .orElseGet(() -&gt; testList.get(0));\n    }\n\n    private boolean isApp(String str) {\n        return str.matches(&quot;.*ap.*&quot;);\n    }\n\n    private boolean isChocolate(String str) {\n        return str.equals(&quot;chocolate&quot;);\n    }\n</code></pre>\n<p>You can go one step further with extracting boilerplate code:</p>\n<pre><code>    void test() {\n        List&lt;String&gt; testList = Arrays.asList(&quot;banana&quot;, &quot;apple&quot;, &quot;cheese&quot;, &quot;chocolate&quot;);\n\n        String food = findFirst(testList, this::isChocolate)\n                .or(() -&gt; findFirst(testList, this::isApp))\n                .orElseGet(() -&gt; testList.get(0));\n    }\n\n    private Optional&lt;String&gt; findFirst(List&lt;String&gt; testList, Predicate&lt;String&gt; filter) {\n        return testList.stream()\n                .filter(filter)\n                .findFirst();\n    }\n\n    private boolean isApp(String str) {\n        return str.matches(&quot;.*ap.*&quot;);\n    }\n\n    private boolean isChocolate(String str) {\n        return str.equals(&quot;chocolate&quot;);\n    }\n</code></pre>\n",
+    "score" : 2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 4497436,
+      "reputation" : 20796,
+      "user_id" : 3656904,
+      "user_type" : "registered",
+      "accept_rate" : 67,
+      "profile_image" : "https://www.gravatar.com/avatar/8bdbd1f89f8907e8e8b15ab88c084c65?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "talex",
+      "link" : "https://stackoverflow.com/users/3656904/talex"
+    },
+    "creation_date" : 1758697788,
+    "last_activity_date" : 1758698099,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79789394,
+    "question_id" : 79772669,
+    "body" : "<p>With JDK24 a <a href=\"https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/util/stream/Stream.html#gather(java.util.stream.Gatherer)\" rel=\"nofollow noreferrer\">stream gatherer</a> can be used to filter the food. This gatherer is defined with:</p>\n<ul>\n<li>initializer <code>ArrayList</code> to hold the stream state</li>\n<li>integrator which collects any chocolate, the first item, and the first matching &quot;ap&quot;</li>\n<li>finisher which pushes the best matching item down the stream.</li>\n</ul>\n<pre><code>Gatherer&lt;String, ArrayList&lt;String&gt;, String&gt; gatherer = Gatherer.ofSequential(\n    // initializer\n    ArrayList::new,\n    // integrator\n    (list, s, downstream) -&gt; {\n        boolean choc = &quot;chocolate&quot;.equals(s);\n        if (choc || list.isEmpty() || list.size() &lt; 2 &amp;&amp; s.contains(&quot;ap&quot;)) {\n            list.add(s);\n        }\n        return !choc;\n    },\n    // finisher\n    (list, downstream) -&gt; { if (!list.isEmpty()) downstream.push(list.getLast()); });\n\nString food = testList.stream().gather(gatherer)\n                      .findFirst().orElseThrow();\n</code></pre>\n<p>Most importantly, this performs at most a single pass through the stream and will short-circuit the scan whenever &quot;chocolate&quot; is found.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 5998820,
+      "reputation" : 16284,
+      "user_id" : 4712734,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f6e922a2cb7e2da59286f27b162aaca5?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "DuncG",
+      "link" : "https://stackoverflow.com/users/4712734/duncg"
+    },
+    "creation_date" : 1760367166,
+    "last_activity_date" : 1760367585,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79772820,
+    "question_id" : 79772669,
+    "body" : "<p>My inner “Taliban” has a negative feeling about “Streams.” Saving three lines of code with something that significantly degrades performance (except in very specific scenarios) is definitely heresy, so I avoid using them.</p>\n<pre><code>String food = testList.get( 0 );\nboolean notFound = true;\n\nfor( String aux : testList ) {\n   if( aux.equals( &quot;chocolate&quot; ) ) {\n      food = aux;\n      break;\n   }\n   else if( notFound &amp;&amp; aux.contains( &quot;ap&quot; ) ) {\n      food = aux;\n      notFound = false;\n   }\n}\n</code></pre>\n<p>For a solution based on <em>Stream</em>, see John Bollinger's response <a href=\"https://stackoverflow.com/questions/79772669/how-to-simplify-a-complex-filter-of-an-optionals-stream/79772708#79772708\">here</a></p>\n<p>For some reason I don't know, I can't reply to comments, so I'll reply here.</p>\n<p>Hello @talex, your comment seems to indicate that if a user takes the wrong route, I should tell them how to continue along that route... On the other hand, the OP talks about <em>Optional</em> that does not appear in the code, which led me to think that they are looking for a solution regardless of the path (although you may be right and I may be wrong), and if you have doubts about the performance of Streams, make comparisons, you may be surprised.</p>\n",
+    "score" : -2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 10843443,
+      "reputation" : 924,
+      "user_id" : 20882864,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+      "display_name" : "Marce Puente",
+      "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+    },
+    "creation_date" : 1758642678,
+    "last_activity_date" : 1758728280,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140755296,
+    "post_id" : 79772669,
+    "body" : "minimal: <code>() -&gt; testList.get(0)</code> → <code>() -&gt; testList.getFirst()</code> → <code>() -&gt; testList.get(0)</code> → <code>testList::getFirst</code>",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 31180,
+      "reputation" : 29752,
+      "user_id" : 85421,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/kKvXH.gif?s=256",
+      "display_name" : "user85421",
+      "link" : "https://stackoverflow.com/users/85421/user85421"
+    },
+    "creation_date" : 1758650321,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140754933,
+    "post_id" : 79772669,
+    "body" : "Regular expressions are expensive.  It’s best not to use them unless they are necessary.  You can replace <code>str.matches(&quot;.*ap.*&quot;)</code> with <code>str.contains(&quot;ap&quot;)</code>.",
+    "score" : 6,
+    "owner" : {
+      "account_id" : 2053598,
+      "reputation" : 44991,
+      "user_id" : 1831987,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/38b1c37530189ec4471a43a618e33f67?s=256&d=identicon&r=PG",
+      "display_name" : "VGR",
+      "link" : "https://stackoverflow.com/users/1831987/vgr"
+    },
+    "creation_date" : 1758640814,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140754740,
+    "post_id" : 79772669,
+    "body" : "It&#39;s not clear to me whether you want [optimal] code that achieves your requirements or if you insist on using <code>Optional</code> because you want to experiment with using that class.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2485939,
+      "reputation" : 20969,
+      "user_id" : 2164365,
+      "user_type" : "registered",
+      "accept_rate" : 40,
+      "profile_image" : "https://i.sstatic.net/RKSgV.png?s=256",
+      "display_name" : "Abra",
+      "link" : "https://stackoverflow.com/users/2164365/abra"
+    },
+    "creation_date" : 1758636563,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140754667,
+    "post_id" : 79772669,
+    "body" : "Usually AI is pretty good in optimizing the code. Did you try that? But here are some notes: You can use <code>.contains()</code> to find <code>chocolate</code> and you don&#39;t need to make a huge chaining block. Separate the concerns and your code will be more cohesive.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 5644665,
+      "reputation" : 37840,
+      "user_id" : 4467208,
+      "user_type" : "registered",
+      "accept_rate" : 51,
+      "profile_image" : "https://i.sstatic.net/8bvKDZTK.png?s=256",
+      "display_name" : "Murat Karag&#246;z",
+      "link" : "https://stackoverflow.com/users/4467208/murat-karag%c3%b6z"
+    },
+    "creation_date" : 1758635338,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140754631,
+    "post_id" : 79772669,
+    "body" : "I&#39;d say that streams are not the right tool for the job. That&#39;s why the code is awkward.",
+    "score" : 11,
+    "owner" : {
+      "account_id" : 45213,
+      "reputation" : 27280,
+      "user_id" : 133203,
+      "user_type" : "registered",
+      "accept_rate" : 97,
+      "profile_image" : "https://i.sstatic.net/Fp3hB.jpg?s=256",
+      "display_name" : "Federico klez Culloca",
+      "link" : "https://stackoverflow.com/users/133203/federico-klez-culloca"
+    },
+    "creation_date" : 1758634678,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79772994" : [ {
+      "comment_id" : 140755619,
+      "post_id" : 79772994,
+      "body" : "I like this, but potential drawbacks include that it consumes the whole input even if &quot;chocolate&quot; appears early, and that it performs a bunch of regex tests that are unnecessary when &quot;chocolate&quot; appears at all.  But for inputs the size of the example, those are unlikely to be a big deal.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2792262,
+        "reputation" : 190832,
+        "user_id" : 2402272,
+        "user_type" : "registered",
+        "accept_rate" : 85,
+        "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+        "display_name" : "John Bollinger",
+        "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+      },
+      "creation_date" : 1758663599,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140755435,
+      "post_id" : 79772994,
+      "body" : "Using <code>.min(Comparator.comparingInt(ordinal))</code> would be shorter. And you should use <code>ToIntFunction&lt;String&gt;</code> instead of <code>Function&lt;String, Integer&gt;</code> to prevent unnecessary boxing (even though you&#39;ll only get cached values).",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 1211967,
+        "reputation" : 9964,
+        "user_id" : 1180351,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/pKB8y.png?s=256",
+        "display_name" : "Rob Spoor",
+        "link" : "https://stackoverflow.com/users/1180351/rob-spoor"
+      },
+      "creation_date" : 1758655609,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79772708" : [ {
+      "comment_id" : 140756459,
+      "post_id" : 79772708,
+      "body" : "Could use <code>filter(&quot;chocolate&quot;::equals)</code>.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 5998820,
+        "reputation" : 16284,
+        "user_id" : 4712734,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/f6e922a2cb7e2da59286f27b162aaca5?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "DuncG",
+        "link" : "https://stackoverflow.com/users/4712734/duncg"
+      },
+      "creation_date" : 1758705538,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140755554,
+      "post_id" : 79772708,
+      "body" : "@camilajenny The question is about input as a <code>List</code>, not as a flux, and the two alternatives presented in this answer do not differ from each other in their suitability for use with a flux.  Nor do they differ in that regard from the OP&#39;s alternative, which the OP says does the needed job.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2792262,
+        "reputation" : 190832,
+        "user_id" : 2402272,
+        "user_type" : "registered",
+        "accept_rate" : 85,
+        "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+        "display_name" : "John Bollinger",
+        "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+      },
+      "creation_date" : 1758660501,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140755450,
+      "post_id" : 79772708,
+      "body" : "but if it&#39;s a flux of user roles, the first solution will work and your second simple solution won&#39;t without blocking, I don&#39;t think the second part of your answer is necessary",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 9983336,
+        "reputation" : 5256,
+        "user_id" : 7769052,
+        "user_type" : "registered",
+        "accept_rate" : 75,
+        "profile_image" : "https://i.sstatic.net/t94zs.jpg?s=256",
+        "display_name" : "camilajenny",
+        "link" : "https://stackoverflow.com/users/7769052/camilajenny"
+      },
+      "creation_date" : 1758656161,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140755317,
+      "post_id" : 79772708,
+      "body" : "@user85421 Acknowledged, and I am aware (but others might not immediately recognize it).  I have opted for simpler, clearer code, at  what I anticipate would be a negligibly small runtime cost.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2792262,
+        "reputation" : 190832,
+        "user_id" : 2402272,
+        "user_type" : "registered",
+        "accept_rate" : 85,
+        "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+        "display_name" : "John Bollinger",
+        "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+      },
+      "creation_date" : 1758651136,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140755302,
+      "post_id" : 79772708,
+      "body" : "note, minimal impact: <code>orElse(list.get(0))</code> is not the same as <code>orElseGet(() -&gt; list.get(0))</code> -- first one will always call <code>get(0)</code>, second one only if needed (in this particular case the difference probably is minimal)",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 31180,
+        "reputation" : 29752,
+        "user_id" : 85421,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/kKvXH.gif?s=256",
+        "display_name" : "user85421",
+        "link" : "https://stackoverflow.com/users/85421/user85421"
+      },
+      "creation_date" : 1758650549,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140754853,
+      "post_id" : 79772708,
+      "body" : "@KlitosKyriacou Yes, thanks.  I was making that change as you were writing your comment.  The <code>of(...).flatMap()</code> is still a useful trick when you want to concatenate more than two streams, though.",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 2792262,
+        "reputation" : 190832,
+        "user_id" : 2402272,
+        "user_type" : "registered",
+        "accept_rate" : 85,
+        "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+        "display_name" : "John Bollinger",
+        "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+      },
+      "creation_date" : 1758638998,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140754833,
+      "post_id" : 79772708,
+      "body" : "Instead of <code>Stream.of(...).flatMap(s -&gt; s)</code> you can just use <code>Stream.concat</code>.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 319988,
+        "reputation" : 11876,
+        "user_id" : 638028,
+        "user_type" : "registered",
+        "accept_rate" : 91,
+        "profile_image" : "https://i.sstatic.net/xj2Hg.png?s=256",
+        "display_name" : "Klitos Kyriacou",
+        "link" : "https://stackoverflow.com/users/638028/klitos-kyriacou"
+      },
+      "creation_date" : 1758638668,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79772820" : [ {
+      "comment_id" : 140757337,
+      "post_id" : 79772820,
+      "body" : "@DuncG You&#39;re absolutely right, my mistake.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10843443,
+        "reputation" : 924,
+        "user_id" : 20882864,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+        "display_name" : "Marce Puente",
+        "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+      },
+      "creation_date" : 1758727975,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140757335,
+      "post_id" : 79772820,
+      "body" : "@talex You&#39;re absolutely right, my mistake.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10843443,
+        "reputation" : 924,
+        "user_id" : 20882864,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+        "display_name" : "Marce Puente",
+        "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+      },
+      "creation_date" : 1758727961,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140756722,
+      "post_id" : 79772820,
+      "body" : "@Anonymous Yes. I prefer that answer either contain answer or explicitly refer to another in case it only provides alternative.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 4497436,
+        "reputation" : 20796,
+        "user_id" : 3656904,
+        "user_type" : "registered",
+        "accept_rate" : 67,
+        "profile_image" : "https://www.gravatar.com/avatar/8bdbd1f89f8907e8e8b15ab88c084c65?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "talex",
+        "link" : "https://stackoverflow.com/users/3656904/talex"
+      },
+      "creation_date" : 1758713931,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140756719,
+      "post_id" : 79772820,
+      "body" : "@talex There already was an answer giving the literal answer to the question. Would you want every answer posted to repeat that? I would strongly disagree.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 7612423,
+        "reputation" : 87409,
+        "user_id" : 5772882,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Anonymous",
+        "link" : "https://stackoverflow.com/users/5772882/anonymous"
+      },
+      "creation_date" : 1758713820,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140756431,
+      "post_id" : 79772820,
+      "body" : "BTW Optional does appear in the code - <code>findFirst()</code>.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 5998820,
+        "reputation" : 16284,
+        "user_id" : 4712734,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/f6e922a2cb7e2da59286f27b162aaca5?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "DuncG",
+        "link" : "https://stackoverflow.com/users/4712734/duncg"
+      },
+      "creation_date" : 1758704615,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140756226,
+      "post_id" : 79772820,
+      "body" : "@Holger apparently I was wrong <a href=\"https://stackoverflow.com/help/how-to-answer\">Make sure your answer provides that – <b>or at least a viable alternative</b>.</a> (emphasis mine).",
+      "score" : 3,
+      "owner" : {
+        "account_id" : 4497436,
+        "reputation" : 20796,
+        "user_id" : 3656904,
+        "user_type" : "registered",
+        "accept_rate" : 67,
+        "profile_image" : "https://www.gravatar.com/avatar/8bdbd1f89f8907e8e8b15ab88c084c65?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "talex",
+        "link" : "https://stackoverflow.com/users/3656904/talex"
+      },
+      "creation_date" : 1758698834,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140756219,
+      "post_id" : 79772820,
+      "body" : "@talex Let’s just stop here with the conclusion <a href=\"https://stackoverflow.com/questions/79772669/79772820?noredirect=1#comment140756179_79772820\">that we disagree</a> on what is the most important property of an answer.",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 3211603,
+        "reputation" : 301001,
+        "user_id" : 2711488,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+        "display_name" : "Holger",
+        "link" : "https://stackoverflow.com/users/2711488/holger"
+      },
+      "creation_date" : 1758698639,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140756203,
+      "post_id" : 79772820,
+      "body" : "@Holger yes. It make it not an answer at all.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 4497436,
+        "reputation" : 20796,
+        "user_id" : 3656904,
+        "user_type" : "registered",
+        "accept_rate" : 67,
+        "profile_image" : "https://www.gravatar.com/avatar/8bdbd1f89f8907e8e8b15ab88c084c65?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "talex",
+        "link" : "https://stackoverflow.com/users/3656904/talex"
+      },
+      "creation_date" : 1758698183,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140756201,
+      "post_id" : 79772820,
+      "body" : "@talex That would make it a better answer but not answering the question literally doesn’t make the answer unhelpful.",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 3211603,
+        "reputation" : 301001,
+        "user_id" : 2711488,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+        "display_name" : "Holger",
+        "link" : "https://stackoverflow.com/users/2711488/holger"
+      },
+      "creation_date" : 1758698132,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140756195,
+      "post_id" : 79772820,
+      "body" : "I have no doubts about performance difference. I have doubts that performance id criteria by which author rank solutions.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 4497436,
+        "reputation" : 20796,
+        "user_id" : 3656904,
+        "user_type" : "registered",
+        "accept_rate" : 67,
+        "profile_image" : "https://www.gravatar.com/avatar/8bdbd1f89f8907e8e8b15ab88c084c65?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "talex",
+        "link" : "https://stackoverflow.com/users/3656904/talex"
+      },
+      "creation_date" : 1758698063,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140756189,
+      "post_id" : 79772820,
+      "body" : "@Holger I&#39;m not against recommending alternative solution, but only if question is answered as it is first.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 4497436,
+        "reputation" : 20796,
+        "user_id" : 3656904,
+        "user_type" : "registered",
+        "accept_rate" : 67,
+        "profile_image" : "https://www.gravatar.com/avatar/8bdbd1f89f8907e8e8b15ab88c084c65?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "talex",
+        "link" : "https://stackoverflow.com/users/3656904/talex"
+      },
+      "creation_date" : 1758697946,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140756186,
+      "post_id" : 79772820,
+      "body" : "Providing an alternative solution isn’t bad in my opinion. But you may rethink the starting sentence. It’s not helpful.",
+      "score" : 3,
+      "owner" : {
+        "account_id" : 3211603,
+        "reputation" : 301001,
+        "user_id" : 2711488,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+        "display_name" : "Holger",
+        "link" : "https://stackoverflow.com/users/2711488/holger"
+      },
+      "creation_date" : 1758697817,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140756179,
+      "post_id" : 79772820,
+      "body" : "@talex Recommended read <a href=\"https://weblogs.asp.net/alex_papadimoulis/408925/\" rel=\"nofollow noreferrer\">Pounding A Nail: Old Shoe or Glass Bottle?</a>",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 3211603,
+        "reputation" : 301001,
+        "user_id" : 2711488,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+        "display_name" : "Holger",
+        "link" : "https://stackoverflow.com/users/2711488/holger"
+      },
+      "creation_date" : 1758697665,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140756153,
+      "post_id" : 79772820,
+      "body" : "That is not what stackowerflow is for. It is not a place where we discuss what what is best way to do something. It is for answering technical question.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 4497436,
+        "reputation" : 20796,
+        "user_id" : 3656904,
+        "user_type" : "registered",
+        "accept_rate" : 67,
+        "profile_image" : "https://www.gravatar.com/avatar/8bdbd1f89f8907e8e8b15ab88c084c65?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "talex",
+        "link" : "https://stackoverflow.com/users/3656904/talex"
+      },
+      "creation_date" : 1758696718,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140755407,
+      "post_id" : 79772820,
+      "body" : "@talex This is a <i>helpful</i> answer rather than a direct answer to the question as asked.",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 7612423,
+        "reputation" : 87409,
+        "user_id" : 5772882,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Anonymous",
+        "link" : "https://stackoverflow.com/users/5772882/anonymous"
+      },
+      "creation_date" : 1758654328,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140755127,
+      "post_id" : 79772820,
+      "body" : "You did not answered the question (it asked solution with stream) and brought your own highly questionable opinion.",
+      "score" : 3,
+      "owner" : {
+        "account_id" : 4497436,
+        "reputation" : 20796,
+        "user_id" : 3656904,
+        "user_type" : "registered",
+        "accept_rate" : 67,
+        "profile_image" : "https://www.gravatar.com/avatar/8bdbd1f89f8907e8e8b15ab88c084c65?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "talex",
+        "link" : "https://stackoverflow.com/users/3656904/talex"
+      },
+      "creation_date" : 1758645507,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79773005" : [ {
+      "comment_id" : 140756737,
+      "post_id" : 79773005,
+      "body" : "Does this guarantee to give <i>the first</i> food containing <code>ap</code> in case chocolate is not in the list? From the question: <i>Otherwise, I want the first item matching the pattern <code>.*ap.*</code>.</i>",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 7612423,
+        "reputation" : 87409,
+        "user_id" : 5772882,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Anonymous",
+        "link" : "https://stackoverflow.com/users/5772882/anonymous"
+      },
+      "creation_date" : 1758714188,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140755606,
+      "post_id" : 79773005,
+      "body" : "Before optimizing, however, you should first make it work correctly.  As presently written, it fails, producing &quot;apple&quot;, on the input &quot;chocolate&quot;, &quot;banana&quot;, &quot;apple&quot;, &quot;cheese&quot;.  And it fails, producing &quot;apricot&quot;, on &quot;cheese&quot;, &quot;banana&quot;, &quot;apple&quot;, &quot;apricot&quot;.  You might also consider that it doesn&#39;t satisfy the specifications of <code>Stream.reduce()</code>, which say that the first argument should be an identity of the accumulator function given as the second.",
+      "score" : 4,
+      "owner" : {
+        "account_id" : 2792262,
+        "reputation" : 190832,
+        "user_id" : 2402272,
+        "user_type" : "registered",
+        "accept_rate" : 85,
+        "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+        "display_name" : "John Bollinger",
+        "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+      },
+      "creation_date" : 1758663071,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140755590,
+      "post_id" : 79773005,
+      "body" : "But if you&#39;re looking for optimizations, you could add a <code>skip(1)</code> to your stream, since you&#39;re already bringing in the first element of the list by other means.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 2792262,
+        "reputation" : 190832,
+        "user_id" : 2402272,
+        "user_type" : "registered",
+        "accept_rate" : 85,
+        "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+        "display_name" : "John Bollinger",
+        "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+      },
+      "creation_date" : 1758662106,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140755569,
+      "post_id" : 79773005,
+      "body" : "Let&#39;s not jump too quickly to &quot;optimal&quot;.  Your solution unconditionally consumes all the available items, which is more work than is hypothetically needed if <code>&quot;chocolate&quot;</code> appears before the last element of the input, and it does a bunch of regex tests that aren&#39;t necessary if <code>&quot;chocolate&quot;</code> appears at all.  If the example in the question is typical of input size then it&#39;s probably not worth devoting much effort to seeking an optimal solution, and even if much larger inputs are to be accommodated, the best performing approach will be input dependent.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 2792262,
+        "reputation" : 190832,
+        "user_id" : 2402272,
+        "user_type" : "registered",
+        "accept_rate" : 85,
+        "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+        "display_name" : "John Bollinger",
+        "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+      },
+      "creation_date" : 1758660988,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

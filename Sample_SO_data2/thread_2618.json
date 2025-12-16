@@ -1,0 +1,175 @@
+{
+  "question" : {
+    "question_id" : 79610470,
+    "title" : "How to test a microservice architecture with a real database and real HTTP calls?",
+    "body" : "<p>I'm working on an app with microservices architecture and am trying to test the authentication service, which creates an invitation for the user. The problem appears when the code calls the UserController endpoint <code>/users/${id}</code> from the Authentication service side.</p>\n<p>I'm receiving the following error:</p>\n<blockquote>\n<p>Connection refused: getsockopt: localhost/127.0.0.1:8080\norg.springframework.web.reactive.function.client.WebClientRequestException: Connection refused: getsockopt: localhost/127.0.0.1:8080</p>\n</blockquote>\n<p>So my question is how can I make a test with a real database and a real server running?</p>\n<p>My Test:</p>\n<pre><code>\n@Testcontainers\n@AutoConfigureMockMvc\n@SpringBootTest\nclass AuthServiceTest {\n\n\n    @Container\n    @ServiceConnection\n    static PostgreSQLContainer&lt;?&gt; postgreSQLContainer = new PostgreSQLContainer&lt;&gt;(&quot;postgres:17&quot;)\n            .withDatabaseName(&quot;testdb&quot;)\n            .withUsername(&quot;postgres&quot;)\n            .withPassword(&quot;testpass&quot;);\n\n    @Autowired\n    private MockMvc mockMvc;\n    @Mock\n    private ApiClient apiClient;\n    @Autowired\n    private AuthService authService;\n\n    @Autowired\n    private UserService userService;\n\n    \n    @Test\n    void testCreateInvitation() throws Exception {\n        AdminUser u = TestUtils.dummyAdminUser();\n        User user = userService.createUser(DTOConverter.toCreateUserRequestDTO(u));\n        long id = user.getId();\n\n        mockMvc.perform(get(&quot;/users/{id}&quot;, id))\n                .andExpect(status().isOk());\n        authService.createInvitationForUserToJoin(user.getId());\n\n    }\n}\n</code></pre>\n",
+    "tags" : [ "java", "spring", "spring-boot" ],
+    "owner" : {
+      "account_id" : 21064198,
+      "reputation" : 584,
+      "user_id" : 15481917,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/5d4d388a7821c9d5402a7e7489731317?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Orl13",
+      "link" : "https://stackoverflow.com/users/15481917/orl13"
+    },
+    "is_answered" : false,
+    "view_count" : 99,
+    "answer_count" : 1,
+    "score" : 2,
+    "last_activity_date" : 1746766182,
+    "creation_date" : 1746619435,
+    "link" : "https://stackoverflow.com/questions/79610470/how-to-test-a-microservice-architecture-with-a-real-database-and-real-http-calls",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79613499,
+    "question_id" : 79610470,
+    "body" : "<p>Can you make controller class mocked instead of other? Unit testing on a real DB isn't a good idea. Just use controller public methods like if you are using API. I had a unit test like that:</p>\n<pre><code>@ExtendWith(MockitoExtension.class)\nclass TestLaunch {\n\n    @Mock\n    private ReposMineserver mineservers; \n\n    @Mock\n    private ReposTariff tariffs; \n    \n    @Mock\n    private ServiceMinecraftServerObserver observers; \n\n    @Mock\n    private ServiceHandlers handlers; \n\n    @InjectMocks\n    private RootController controller;\n    \n    \n    @Test\n    void launch_serverExists_shouldReturnOk() {\n        \n        Config.PATH_TO_SERVERS = &quot;test/&quot;;\n        Integer id = 2;\n        Mineserver mineserver = new Mineserver(); \n        mineserver.setId(id);\n        mineserver.setIdTariff(id);\n        \n        Tariff tariff = new Tariff();\n        tariff.setCpuThreads((short)2);\n        tariff.setHoursWorkMax(9999);\n        tariff.setMemoryLimit((long)9999);\n        tariff.setRam((short)4);\n        \n        lenient().when(handlers.get(2)).thenReturn(new MinecraftHandler(mineserver, tariff));\n        lenient().when(mineservers.findById(id)).thenReturn(Optional.of(mineserver));\n        lenient().when(tariffs.findById(id)).thenReturn(Optional.of(tariff));\n\n        // Test data files (emit minecraft)\n        File file = new File(&quot;test/server_2&quot;);\n        file.mkdirs();\n        file = new File(&quot;test/server_2/run.sh&quot;);\n        System.out.println(file.getAbsolutePath());\n        if (!file.exists()) {\n            try {         \n                file.createNewFile();\n                FileWriter f = new FileWriter(file);        \n                f.append(&quot;while true; do echo 123; done&quot;);\n                f.close();\n            } catch (IOException e) {\n                e.printStackTrace();\n            }\n        }\n        file = new File(&quot;test/server_2/server.properties&quot;);\n        System.out.println(file.getAbsolutePath());\n        if (!file.exists()) {\n            try {         \n                file.createNewFile();\n                FileWriter f = new FileWriter(file);        \n                f.append(&quot;max-players=2\\nserver-port=25565\\nquery.port=25565&quot;);\n                f.close();\n            } catch (IOException e) {\n                e.printStackTrace();\n            }\n        }\n        \n        ResponseEntity&lt;Void&gt; response = controller.launch(id);\n\n        assertEquals(HttpStatus.OK, response.getStatusCode());\n        try {\n            Thread.sleep(200);\n        } catch (InterruptedException e) {\n            // TODO Auto-generated catch block\n            e.printStackTrace();\n        }\n        \n        String errOutput = errContent.toString();\n        System.out.println(&quot;Captured error output: &quot; + errOutput);\n        \n        assertEquals(true, controller.is_alive(id).getBody());\n    }    \n    \n    \n    private final ByteArrayOutputStream errContent = new ByteArrayOutputStream();\n    private final PrintStream originalErr = System.err;\n\n    @BeforeEach\n    public void setUp() {\n        System.setErr(new PrintStream(errContent));\n    }\n\n    @AfterEach\n    public void restoreStreams() {\n        System.setErr(originalErr);\n    }\n}\n</code></pre>\n<p>Integration testing may be including http requests to a real server with database, but unit testing with a real db makes errors while &quot;maven clean install&quot;. All your data in test must be independent from the enviroment</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 41830325,
+      "reputation" : 36,
+      "user_id" : 30469051,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f065e9f24bfeb438d46bf2ff65ac13ce?s=256&d=identicon&r=PG",
+      "display_name" : "tankoman 228",
+      "link" : "https://stackoverflow.com/users/30469051/tankoman-228"
+    },
+    "creation_date" : 1746766182,
+    "last_activity_date" : 1746766182,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140411115,
+    "post_id" : 79610470,
+    "body" : "Try fitnesse!!!",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 449256,
+      "reputation" : 2163,
+      "user_id" : 843943,
+      "user_type" : "registered",
+      "accept_rate" : 75,
+      "profile_image" : "https://i.sstatic.net/1V5SP.jpg?s=256",
+      "display_name" : "Grim",
+      "link" : "https://stackoverflow.com/users/843943/grim"
+    },
+    "creation_date" : 1746797467,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140410102,
+    "post_id" : 79610470,
+    "body" : "I&#39;m sorry but by using a H2 you are not really testing your application that runs on a PostgreSQL. There is too much difference in behavior. You can still end up with issues after testing.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10164387,
+      "reputation" : 5204,
+      "user_id" : 7506820,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/JcASm.jpg?s=256",
+      "display_name" : "Nico Van Belle",
+      "link" : "https://stackoverflow.com/users/7506820/nico-van-belle"
+    },
+    "creation_date" : 1746775992,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140407809,
+    "post_id" : 79610470,
+    "body" : "You should stub your user endpoint, so that you can test the AuthService without any dependencies on other services running or being available. This might help: <a href=\"https://github.com/azagniotov/stubby4j\" rel=\"nofollow noreferrer\">github.com/azagniotov/stubby4j</a> Or use wiremock",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 13252051,
+      "reputation" : 1788,
+      "user_id" : 9569292,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-XdUIqdMkCWA/AAAAAAAAAAI/AAAAAAAAAAA/4252rscbv5M/s256-rj/photo.jpg",
+      "display_name" : "Thomas Timbul",
+      "link" : "https://stackoverflow.com/users/9569292/thomas-timbul"
+    },
+    "creation_date" : 1746711744,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140407087,
+    "post_id" : 79610470,
+    "body" : "@AniruddhParihar, sorry, I don&#39;t understand which mock data does h2 provide? Out of the box?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 18586978,
+      "reputation" : 3850,
+      "user_id" : 15000097,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/yFl4M.jpg?s=256",
+      "display_name" : "Georgii Lvov",
+      "link" : "https://stackoverflow.com/users/15000097/georgii-lvov"
+    },
+    "creation_date" : 1746698126,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140406872,
+    "post_id" : 79610470,
+    "body" : "@GeorgiiLvov: Because H2 will provide the mock data at runtime. by that way real user will not get affected and functionality will got tested.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 10927511,
+      "reputation" : 3218,
+      "user_id" : 8031784,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/ikcJL.png?s=256",
+      "display_name" : "Aniruddh Parihar",
+      "link" : "https://stackoverflow.com/users/8031784/aniruddh-parihar"
+    },
+    "creation_date" : 1746692879,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140406752,
+    "post_id" : 79610470,
+    "body" : "@AniruddhParihar why H2 Database, although OP uses PostgreSQLContainer? How it will solve the problem?",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 18586978,
+      "reputation" : 3850,
+      "user_id" : 15000097,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/yFl4M.jpg?s=256",
+      "display_name" : "Georgii Lvov",
+      "link" : "https://stackoverflow.com/users/15000097/georgii-lvov"
+    },
+    "creation_date" : 1746690378,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140405812,
+    "post_id" : 79610470,
+    "body" : "Why you are calling <code>authService.createInvitationForUserToJoin</code> in your test after calling <code>&#47;users&#47;{id}</code> endpoint? What does this method do?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 18586978,
+      "reputation" : 3850,
+      "user_id" : 15000097,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/yFl4M.jpg?s=256",
+      "display_name" : "Georgii Lvov",
+      "link" : "https://stackoverflow.com/users/15000097/georgii-lvov"
+    },
+    "creation_date" : 1746654629,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140404076,
+    "post_id" : 79610470,
+    "body" : "just make some mock data using H2 Database for testing.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 10927511,
+      "reputation" : 3218,
+      "user_id" : 8031784,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/ikcJL.png?s=256",
+      "display_name" : "Aniruddh Parihar",
+      "link" : "https://stackoverflow.com/users/8031784/aniruddh-parihar"
+    },
+    "creation_date" : 1746622410,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

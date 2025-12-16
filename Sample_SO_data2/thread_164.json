@@ -1,0 +1,78 @@
+{
+  "question" : {
+    "question_id" : 79834516,
+    "title" : "Spring WebClient takes too long to process the first request — subsequent calls fast",
+    "body" : "<p>I'm using Spring WebClient in my Java application to authenticate with Keycloak.\nThe issue I'm facing is:</p>\n<p>The first WebClient request takes a long time (5-9 seconds), but all subsequent requests are extremely fast.</p>\n<p>This slowdown happens consistently everyday when I try to access the application for the first time.</p>\n<p>Here’s my WebClient configuration:</p>\n<pre><code>@Configuration\npublic class WebClientConfig {\n    @Bean\n    public WebClient webClient() {\n        return WebClient.builder()\n                .codecs(configurer -&gt;\n                        configurer.defaultCodecs().maxInMemorySize(5 * 1024 * 1024) // 5MB limit\n                    )\n                .build();\n        }\n    }\n}\n</code></pre>\n<p>And here is the login method making the Keycloak token call:</p>\n<pre><code>@Override\npublic LoginResponseDto login(LoginRequestDto loginRequestDto) {\n    LinkedMultiValueMap&lt;String, String&gt; formData = getLoginFormDataRequest(loginRequestDto);\n    String uri = UriComponentsBuilder.fromUriString(keycloakProperties.serverUrl())\n                .pathSegment(&quot;realms&quot;, keycloakProperties.realm(), &quot;protocol&quot;, &quot;openid-connect&quot;, &quot;token&quot;)\n                .toUriString();\n\n    try {\n        String response = webClient.post()\n                .uri(uri)\n                .contentType(MediaType.APPLICATION_FORM_URLENCODED)\n                .bodyValue(formData)\n                .retrieve()\n                .bodyToMono(String.class)\n                .block();\n\n        JsonNode jsonNode = objectMapper.readTree(response);\n        return new LoginResponseDto(\n                jsonNode.get(&quot;token_type&quot;).asText(),\n                jsonNode.get(&quot;access_token&quot;).asText(),\n                jsonNode.get(&quot;refresh_token&quot;).asText(),\n                jsonNode.get(&quot;expires_in&quot;).asText(),\n                jsonNode.get(&quot;refresh_expires_in&quot;).asText()\n        );\n    } catch (WebClientResponseException e) {\n        log.error(&quot;Error in Keycloak login: {}&quot;, e.getMessage(), e);\n        if (e.getStatusCode() == HttpStatus.UNAUTHORIZED) {\n            throw new InvalidCredentialsException(&quot;Invalid username or password&quot;, projectUtil.getCurrentUtcTimestamp());\n        }\n        throw new KeycloakServiceException(&quot;Invalid password&quot;, projectUtil.getCurrentUtcTimestamp());\n        } catch (JsonProcessingException e) {\n            log.error(&quot;JsonProcessing error in Keycloak login: {}&quot;, e.getMessage(), e);\n            throw new KeycloakServiceException(&quot;JSON processing error: login&quot;, projectUtil.getCurrentUtcTimestamp());\n        }\n    }\n}\n</code></pre>\n<p>What I’ve observed:</p>\n<ul>\n<li><p>It only happens for the very first request after startup.</p>\n</li>\n<li><p>Could be related to connection pool initialization, DNS lookup, SSL handshake, or WebClient configuration.</p>\n</li>\n<li><p>Using block() — but I need blocking here since this method must return synchronously.</p>\n</li>\n</ul>\n<p>Why does the first WebClient request take significantly longer than subsequent ones, and how can I prevent or reduce this startup delay?</p>\n<p>Any insights, profiling tips, or config improvements would be very helpful.</p>\n",
+    "tags" : [ "java", "spring", "spring-boot", "webclient" ],
+    "owner" : {
+      "account_id" : 30536733,
+      "reputation" : 25,
+      "user_id" : 23403710,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/ACg8ocKQiMcxKUYDNnFfFmxLFDhws22tUgILF-CgoBIXSwVvqA=k-s256",
+      "display_name" : "Anish",
+      "link" : "https://stackoverflow.com/users/23403710/anish"
+    },
+    "is_answered" : false,
+    "view_count" : 86,
+    "answer_count" : 0,
+    "score" : 0,
+    "last_activity_date" : 1764621499,
+    "creation_date" : 1764578605,
+    "link" : "https://stackoverflow.com/questions/79834516/spring-webclient-takes-too-long-to-process-the-first-request-subsequent-calls",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140882883,
+    "post_id" : 79834516,
+    "body" : "I added profiling around each step, and the StopWatch output shows that the entire 14-second delay happens inside the first WebClient call:  Keycloak Login (14.07s) ----------------------- form-data      ~0s build-uri      ~0s webclient-call 14.07s  ← bottleneck json-parse     ~0s   The wrapper method confirms the same:  AES Login (14.07s) ------------------ decrypt        ~0s keycloak-login 14.07s   So the slowdown isn’t from decryption or JSON parsing — it’s entirely in the first outbound HTTP request.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 30536733,
+      "reputation" : 25,
+      "user_id" : 23403710,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/ACg8ocKQiMcxKUYDNnFfFmxLFDhws22tUgILF-CgoBIXSwVvqA=k-s256",
+      "display_name" : "Anish",
+      "link" : "https://stackoverflow.com/users/23403710/anish"
+    },
+    "creation_date" : 1764666558,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140882468,
+    "post_id" : 79834516,
+    "body" : "What’s the timing for the latter calls? Did you profile and time various parts or the code? Do you’ve metrics?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 446597,
+      "reputation" : 25249,
+      "user_id" : 839733,
+      "user_type" : "registered",
+      "accept_rate" : 69,
+      "profile_image" : "https://i.sstatic.net/2s6lO.jpg?s=256",
+      "display_name" : "Abhijit Sarkar",
+      "link" : "https://stackoverflow.com/users/839733/abhijit-sarkar"
+    },
+    "creation_date" : 1764640477,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140881050,
+    "post_id" : 79834516,
+    "body" : "Maybe just the API you are reaching out to is slow for the first request? Or, maybe they take a few seconds to mint a new token? You could try instrumenting the code with logs and seeing where the slowness is. Or, try hitting keycloak from Postman, and see if they are slow.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 1446452,
+      "reputation" : 4343,
+      "user_id" : 1364747,
+      "user_type" : "registered",
+      "accept_rate" : 69,
+      "profile_image" : "https://i.sstatic.net/dAdPj.png?s=256",
+      "display_name" : "Teddy",
+      "link" : "https://stackoverflow.com/users/1364747/teddy"
+    },
+    "creation_date" : 1764580838,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

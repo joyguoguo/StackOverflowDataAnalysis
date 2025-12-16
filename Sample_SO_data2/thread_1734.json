@@ -1,0 +1,81 @@
+{
+  "question" : {
+    "question_id" : 79683179,
+    "title" : "Reading BarCodes using front Camera with ML kit and CamerX",
+    "body" : "<p>I have a jave android App where i used ML kit and CameraX to read QR code using Front Camera , when i use back camera every things works fine but when i use front camera i faced some difficulties to read the QR and even if it success it give me wrong value .</p>\n<p>this is my code :</p>\n<pre><code>private void startCamera() {\n    BarcodeScannerOptions options =\n            new BarcodeScannerOptions.Builder()\n                    .setBarcodeFormats(\n                            Barcode.FORMAT_ALL_FORMATS\n                    )\n\n                    .build();\n\n      scanner = BarcodeScanning.getClient(options);\n\n    ListenableFuture&lt;ProcessCameraProvider&gt; cameraProviderFuture =\n            ProcessCameraProvider.getInstance(this);\n\n    cameraProviderFuture.addListener(() -&gt; {\n        try {\n            ProcessCameraProvider cameraProvider = cameraProviderFuture.get();\n\n            Preview preview = new Preview.Builder().build();\n            preview.setSurfaceProvider(previewView.getSurfaceProvider());\n\n            ImageAnalysis imageAnalysis =\n                    new ImageAnalysis.Builder()\n                            .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)\n                            .build();\n\n            imageAnalysis.setAnalyzer(ContextCompat.getMainExecutor(this), imageProxy -&gt; {\n                Image mediaImage = imageProxy.getImage();\n                if (mediaImage != null &amp;&amp; !isScanned) {\n\n                    InputImage image = InputImage.fromMediaImage(\n                            mediaImage,\n                            imageProxy.getImageInfo().getRotationDegrees());\n\n\n\n                    scanner.process(image)\n                            .addOnSuccessListener(barcodes -&gt; {\n                                if (!barcodes.isEmpty()) {\n                                    isScanned = true;\n                                    String rawValue = barcodes.get(0).getRawValue();\n                                    Log.d(&quot;MLKit&quot;, &quot;Scanned: &quot; + rawValue);\n                                    Toast.makeText(this, &quot;Scanned: &quot; + rawValue, Toast.LENGTH_SHORT).show();\n                                    scanner.close();\n                                    startActivity(new Intent(this, DirectionActivity.class));\n                                    finish();\n                                }\n                            })\n                            .addOnFailureListener(e -&gt; Log.e(&quot;MLKit&quot;, &quot;Scan failed: &quot; + e.getMessage()))\n                            .addOnCompleteListener(task -&gt; imageProxy.close());\n                } else {\n                    imageProxy.close();\n                }\n            });\n\n            CameraSelector cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA;\n\n            cameraProvider.unbindAll();\n            cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageAnalysis);\n\n        } catch (Exception e) {\n            Log.e(&quot;MLKit&quot;, &quot;Camera Init Failed&quot;, e);\n        }\n    }, ContextCompat.getMainExecutor(this));\n}\n</code></pre>\n",
+    "tags" : [ "java", "android", "android-camerax", "google-mlkit" ],
+    "owner" : {
+      "account_id" : 10332707,
+      "reputation" : 63,
+      "user_id" : 7621975,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f2308cdd92c70d018e6e982ecbb0c807?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "m.karman",
+      "link" : "https://stackoverflow.com/users/7621975/m-karman"
+    },
+    "is_answered" : true,
+    "view_count" : 80,
+    "closed_date" : 1751375858,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1751171182,
+    "creation_date" : 1751130058,
+    "link" : "https://stackoverflow.com/questions/79683179/reading-barcodes-using-front-camera-with-ml-kit-and-camerx",
+    "closed_reason" : "Not suitable for this site"
+  },
+  "answers" : [ {
+    "answer_id" : 79683493,
+    "question_id" : 79683179,
+    "body" : "<p>Use CameraSelector.DEFAULT_FRONT_CAMERA</p>\n<pre><code>CameraSelector cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA;\n</code></pre>\n<pre><code>CameraSelector cameraSelector = new CameraSelector.Builder()\n    .requireLensFacing(CameraSelector.LENS_FACING_FRONT)\n    .build();\n</code></pre>\n<h3>Handle image mirroring correctly</h3>\n<p>When using the <strong>front camera</strong>, ML Kit might interpret the mirrored image incorrectly unless we <strong>correct the orientation manually</strong>.</p>\n<p>Modify your code inside <code>setAnalyzer()</code> like this:</p>\n<pre><code>boolean isFrontCamera = cameraSelector.getLensFacing() == CameraSelector.LENS_FACING_FRONT;\n\nimageAnalysis.setAnalyzer(ContextCompat.getMainExecutor(this), imageProxy -&gt; {\n    Image mediaImage = imageProxy.getImage();\n    if (mediaImage != null &amp;&amp; !isScanned) {\n        int rotationDegrees = imageProxy.getImageInfo().getRotationDegrees();\n\n        // Mirror compensation for front camera\n        InputImage image = InputImage.fromMediaImage(\n                mediaImage,\n                isFrontCamera ? (360 - rotationDegrees) % 360 : rotationDegrees\n        );\n\n        scanner.process(image)\n                .addOnSuccessListener(barcodes -&gt; {\n                    if (!barcodes.isEmpty()) {\n                        isScanned = true;\n                        String rawValue = barcodes.get(0).getRawValue();\n                        Log.d(&quot;MLKit&quot;, &quot;Scanned: &quot; + rawValue);\n                        Toast.makeText(this, &quot;Scanned: &quot; + rawValue, Toast.LENGTH_SHORT).show();\n                        scanner.close();\n                        startActivity(new Intent(this, DirectionActivity.class));\n                        finish();\n                    }\n                })\n                .addOnFailureListener(e -&gt; Log.e(&quot;MLKit&quot;, &quot;Scan failed: &quot; + e.getMessage()))\n                .addOnCompleteListener(task -&gt; imageProxy.close());\n    } else {\n        imageProxy.close();\n    }\n});\n</code></pre>\n<p>Improve image quality for scanning</p>\n<p>Consider increasing the resolution of <code>ImageAnalysis</code>:</p>\n<pre><code>ImageAnalysis imageAnalysis = new ImageAnalysis.Builder()\n    .setTargetResolution(new Size(1280, 720)) // Or higher\n    .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)\n    .build();\n</code></pre>\n<p>Hope this gives you some hint, happy coding...</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 1709533,
+      "reputation" : 2221,
+      "user_id" : 1567855,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/VqBsq.jpg?s=256",
+      "display_name" : "Bashu",
+      "link" : "https://stackoverflow.com/users/1567855/bashu"
+    },
+    "creation_date" : 1751171182,
+    "last_activity_date" : 1751171182,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140549812,
+    "post_id" : 79683179,
+    "body" : "Please add to your post the  images of the actual QR code captured from the front camera which were decoded incorrectly. Be aware that certain 2D barcodes (not QR codes) can have higher error rates.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 111736,
+      "reputation" : 12346,
+      "user_id" : 295004,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/a29d6038e4dcb7fac98ef41c002975e1?s=256&d=identicon&r=PG",
+      "display_name" : "Morrison Chang",
+      "link" : "https://stackoverflow.com/users/295004/morrison-chang"
+    },
+    "creation_date" : 1751131156,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79683493" : [ {
+      "comment_id" : 140553315,
+      "post_id" : 79683493,
+      "body" : "thank you @Bashu this was helpful . works fine in mobile, but facing some issue with Robot camera still not able to read QR codes",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10332707,
+        "reputation" : 63,
+        "user_id" : 7621975,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/f2308cdd92c70d018e6e982ecbb0c807?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "m.karman",
+        "link" : "https://stackoverflow.com/users/7621975/m-karman"
+      },
+      "creation_date" : 1751291246,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

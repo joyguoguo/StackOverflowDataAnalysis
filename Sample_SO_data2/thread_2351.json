@@ -1,0 +1,113 @@
+{
+  "question" : {
+    "question_id" : 79631018,
+    "title" : "Cycle during Jackson serialization",
+    "body" : "<p>Suppose I have these entities:</p>\n<pre class=\"lang-java prettyprint-override\"><code>import jakarta.persistence.Entity;\nimport jakarta.persistence.GeneratedValue;\nimport jakarta.persistence.GenerationType;\nimport jakarta.persistence.Id;\nimport jakarta.persistence.OneToMany;\nimport jakarta.persistence.OneToOne;\nimport jakarta.persistence.Table;\nimport lombok.Getter;\nimport lombok.Setter;\n\n@Entity\n@Getter\n@Setter\n@Table(name = &quot;\\&quot;user\\&quot;&quot;)\npublic class User {\n    @Id\n    @GeneratedValue(strategy = GenerationType.IDENTITY)\n    private Long id;\n    private String name;\n    @OneToMany\n    private List&lt;EmailData&gt; emailData;\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>import jakarta.persistence.Column;\nimport jakarta.persistence.Entity;\nimport jakarta.persistence.GeneratedValue;\nimport jakarta.persistence.GenerationType;\nimport jakarta.persistence.Id;\nimport jakarta.persistence.ManyToOne;\nimport jakarta.persistence.Table;\nimport lombok.Getter;\nimport lombok.Setter;\n\n@Entity\n@Getter\n@Setter\n@Table(name = &quot;email_data&quot;)\npublic class EmailData {\n    @Id\n    @GeneratedValue(strategy = GenerationType.IDENTITY)\n    private Long id;\n    @ManyToOne\n    @JoinColumn(name = &quot;user_id&quot;)\n    private User user;\n    private String email;\n}\n</code></pre>\n<p>I also have a <code>PUT</code> endpoint that should return a user DTO. The DTO must contain emails. The DTO is serialized by Jackson into JSONs, as usual.</p>\n<p>How do I avoid a cycle between <code>UserDto</code> and <code>EmailData</code> when Jackson attempts to serialize it?</p>\n<p>I may create <code>EmailDataDto</code> for that specific purpose (in essence, <code>EmailData</code> without a link to <code>User</code>). Thus, <code>UserDto</code> would have a <code>List&lt;EmailDataDto&gt;</code> instead of <code>List&lt;EmailData&gt;</code>. However, imagine there are dozens of relations like that one. Would I have to create a similar DTO for each one? There must be a better way, I reckon.</p>\n<p>Here's what I tried:</p>\n<pre class=\"lang-java prettyprint-override\"><code>import com.example.pixel_user_api.data.entity.EmailData;\nimport com.example.pixel_user_api.data.entity.PhoneData;\nimport com.fasterxml.jackson.annotation.JsonManagedReference;\nimport lombok.Getter;\nimport lombok.Setter;\n\nimport java.util.List;\n\n@Getter\n@Setter\npublic class UserRequestDto {\n\n    private Long id;\n    private String name;\n    @JsonManagedReference\n    private List&lt;EmailData&gt; emailData;\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>// EmailData\n    @ManyToOne\n    @JoinColumn(name = &quot;user_id&quot;)\n    @JsonBackReference // added this\n    private User user;\n</code></pre>\n<p>Result DTO:</p>\n<pre class=\"lang-json prettyprint-override\"><code>{\n  &quot;id&quot;: 0,\n  &quot;name&quot;: &quot;string&quot;,\n  &quot;emailData&quot;: [\n    {\n      &quot;id&quot;: 0,\n      &quot;user&quot;: {\n        &quot;id&quot;: 0,\n        &quot;name&quot;: &quot;string&quot;,\n        &quot;emailData&quot;: [\n          &quot;string&quot;\n        ],\n      },\n      &quot;email&quot;: &quot;string&quot;\n    }\n  ]\n}\n</code></pre>\n<p>Emails &quot;datas&quot; still have references to users. I expected something like this – no serialization of back references.</p>\n<pre class=\"lang-json prettyprint-override\"><code>{\n  &quot;id&quot;: 0,\n  &quot;name&quot;: &quot;string&quot;,\n  &quot;emailData&quot;: [\n    {\n      &quot;id&quot;: 0,\n      &quot;email&quot;: &quot;string&quot;\n    }\n  ]\n}\n</code></pre>\n",
+    "tags" : [ "java", "jpa", "jackson" ],
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2683,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "is_answered" : false,
+    "view_count" : 50,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1747773316,
+    "creation_date" : 1747767784,
+    "link" : "https://stackoverflow.com/questions/79631018/cycle-during-jackson-serialization",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79631134,
+    "question_id" : 79631018,
+    "body" : "<p>You can use <code>@JsonIgnore</code></p>\n<p>If you try this:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Entity\n@Getter\n@Setter\n@Table(name = &quot;\\&quot;user\\&quot;&quot;)\npublic class User {\n    @Id\n    @GeneratedValue(strategy = GenerationType.IDENTITY)\n    private Long id;\n    private String name;\n    @OneToMany\n    private List&lt;EmailData&gt; emailData;\n}\n</code></pre>\n<p>Then add @JsonIgnore to the cyclical reference back to User so that it is not serialized</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Entity\n@Getter\n@Setter\n@Table(name = &quot;email_data&quot;)\npublic class EmailData {\n    @Id\n    @GeneratedValue(strategy = GenerationType.IDENTITY)\n    private Long id;\n    @ManyToOne\n    @JoinColumn(name = &quot;user_id&quot;)\n    @JsonIgnore\n    private User user;\n    private String email;\n}\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 42098058,
+      "reputation" : 1,
+      "user_id" : 30592796,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/7eeb4102ac70763567f19e7679f8aecb?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Bob",
+      "link" : "https://stackoverflow.com/users/30592796/bob"
+    },
+    "creation_date" : 1747773316,
+    "last_activity_date" : 1747773316,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140445331,
+    "post_id" : 79631018,
+    "body" : "For input/output, serialization/deserialization it&#39;s preferable to use DTOs, <b>not</b> entities. Precisely because you may need different data for different scenarios. This has been asked countless times.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 23783500,
+      "reputation" : 7109,
+      "user_id" : 17795888,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Xay1V.jpg?s=256",
+      "display_name" : "Chaosfire",
+      "link" : "https://stackoverflow.com/users/17795888/chaosfire"
+    },
+    "creation_date" : 1747823438,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140444006,
+    "post_id" : 79631018,
+    "body" : "@JsonIgnore should help",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 18586978,
+      "reputation" : 3850,
+      "user_id" : 15000097,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/yFl4M.jpg?s=256",
+      "display_name" : "Georgii Lvov",
+      "link" : "https://stackoverflow.com/users/15000097/georgii-lvov"
+    },
+    "creation_date" : 1747770219,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140443961,
+    "post_id" : 79631018,
+    "body" : "Related: <a href=\"https://stackoverflow.com/q/21745593/2402272\">Why jackson is serializing transient member also?</a>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2792262,
+      "reputation" : 190832,
+      "user_id" : 2402272,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+      "display_name" : "John Bollinger",
+      "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+    },
+    "creation_date" : 1747769124,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79631134" : [ {
+      "comment_id" : 140444801,
+      "post_id" : 79631134,
+      "body" : "The thing is it&#39;s global. I may need that reference in other scenarios",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10187542,
+        "reputation" : 2683,
+        "user_id" : 20692967,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+        "display_name" : "Sergey Zolotarev",
+        "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+      },
+      "creation_date" : 1747813256,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

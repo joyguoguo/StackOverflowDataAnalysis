@@ -1,0 +1,292 @@
+{
+  "question" : {
+    "question_id" : 79553363,
+    "title" : "Increased memory consumption due to String Constant Pool behavior after upgrading from Java 17 to Java 21",
+    "body" : "<p>While upgrading our project from Java 17 to Java 21, we noticed an increase in memory consumption. After dumping the heap and analyzing the differences, I found that there are thousands of empty strings stored in memory.</p>\n<p>I succeeded in reproducing the issue with the following code:</p>\n<pre><code>import java.lang.management.ManagementFactory;\nimport java.text.DecimalFormat;\n\npublic class DecimalFormating {\n    \n    static DecimalFormat decimalFormat = new DecimalFormat(&quot;#.##&quot;);\n    static DecimalFormat decimalFormat2 = new DecimalFormat();\n    \n    public static void main(String[] args) {\n        Runtime.getRuntime().addShutdownHook(new Thread(() -&gt; {\n            try {\n                String pid = ManagementFactory.getRuntimeMXBean().getName().split(&quot;@&quot;)[0];\n                Process p = Runtime.getRuntime().exec(&quot;D:\\\\JAVA\\\\jdk-17.0.2\\\\bin\\\\jmap.exe -dump:format=b,file=heapdump_string_decimal_17.hprof &quot; + pid);\n                p.waitFor();\n            } catch (Exception e) {\n                e.printStackTrace();\n            }\n        }));\n    }\n}\n</code></pre>\n<p>The following code is straightforward as it defines two instances of DecimalFormat, which in turn define multiple empty strings, as seen <a href=\"https://github.com/openjdk/jdk/blob/master/src/java.base/share/classes/java/text/DecimalFormat.java#L4266\" rel=\"noreferrer\">here</a> and <a href=\"https://github.com/openjdk/jdk/blob/master/src/java.base/share/classes/java/text/DecimalFormat.java#L4274\" rel=\"noreferrer\">here</a>. It then dumps the heap into a file.</p>\n<p>I compiled and ran the code with both Java 17.0.2 and Java 21.0.6, and here is what the memory looks like:</p>\n<ul>\n<li>For Java 17, you can see that all the strings that should be empty point to the same memory address, which is expected behavior due to the String Constant Pool:\n<a href=\"https://i.sstatic.net/6HVLO3CB.png\" rel=\"noreferrer\"><img src=\"https://i.sstatic.net/6HVLO3CB.png\" alt=\"JDK17_MEMORY_DUMP\" /></a></li>\n<li>For Java 21, each string has a different memory address, resulting in the empty string being defined six times and consuming six times more memory than in the previous Java:\n<a href=\"https://i.sstatic.net/owgw1JA4.png\" rel=\"noreferrer\"><img src=\"https://i.sstatic.net/owgw1JA4.png\" alt=\"enter image description here\" /></a></li>\n</ul>\n<p>Is this behavior normal? I can't find any mention of this kind of change in the release notes of Java between versions 18 and 21.</p>\n",
+    "tags" : [ "java", "string", "memory", "java-21", "string-pool" ],
+    "owner" : {
+      "account_id" : 19529032,
+      "reputation" : 165,
+      "user_id" : 14289259,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/09a727e39d4997db07e6c0850a45094a?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Voy",
+      "link" : "https://stackoverflow.com/users/14289259/voy"
+    },
+    "is_answered" : true,
+    "view_count" : 421,
+    "answer_count" : 2,
+    "score" : 12,
+    "last_activity_date" : 1751968301,
+    "creation_date" : 1743693881,
+    "link" : "https://stackoverflow.com/questions/79553363/increased-memory-consumption-due-to-string-constant-pool-behavior-after-upgradin",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79553550,
+    "question_id" : 79553363,
+    "body" : "<p>TL;DR: This will be fixed in Java 21.0.7(*), and has been fixed in Java 22.0.2 and Java 23 and later.</p>\n<p>The problem is that the initialization with empty string you link is not actually used, as those fields are overwritten with the result of <code>StringBuffer.toString()</code> (Java 17)/<code>StringBuilder.toString()</code> (Java 21) calls in the <code>applyPattern</code> method which is called from the <code>DecimalFormat</code> constructors. The problem is that the <code>toString()</code> method of <code>StringBuffer</code>/<code>StringBuilder</code> changed significantly with what is returned if the buffer is empty.</p>\n<p>In Java 17 (17.0.14) it does:</p>\n<pre><code>@Override\n@IntrinsicCandidate\npublic synchronized String toString() {\n    if (toStringCache == null) {\n        return toStringCache =\n                isLatin1() ? StringLatin1.newString(value, 0, count)\n                           : StringUTF16.newString(value, 0, count);\n    }\n    return new String(toStringCache);\n}\n</code></pre>\n<p>(Though oddly enough, if you'd called <code>toString()</code> twice without modification, it would return a new instance).</p>\n<p>This calls <code>StringLatin1.newString</code> for an empty buffer, which returns the same empty string each time:</p>\n<pre><code>public static String newString(byte[] val, int index, int len) {\n    if (len == 0) {\n        return &quot;&quot;;\n    }\n    return new String(Arrays.copyOfRange(val, index, index + len),\n                      LATIN1);\n}\n</code></pre>\n<p>In Java 21 (or at least, after Java 17), the implementation switched to <code>StringBuilder</code>, and in Java 21 (21.0.6) the <code>toString()</code> of <code>StringBuilder</code> does:</p>\n<pre><code>@Override\n@IntrinsicCandidate\npublic String toString() {\n    // Create a copy, don't share the array\n    return new String(this);\n}\n</code></pre>\n<p>Which returns a new instance each and every time (though I didn't check if there is an intrinsic, and if so if it might do something else).</p>\n<p>This was addressed in later Java versions. In Java 24 (24.0.0), <code>StringBuilder.toString()</code> does:</p>\n<pre><code>@Override\n@IntrinsicCandidate\npublic String toString() {\n    if (length() == 0) {\n        return &quot;&quot;;\n    }\n    // Create a copy, don't share the array\n    return new String(this, null);\n}\n</code></pre>\n<p>This is bug fix <a href=\"https://bugs.openjdk.org/browse/JDK-8325730\" rel=\"noreferrer\">JDK-8325730</a> for Java 23 and backported to Java 22.0.2, and Java 21.0.7(*) (which hasn't been released yet). This issues has triggered additional discussion, see <a href=\"https://bugs.openjdk.org/browse/JDK-8332282\" rel=\"noreferrer\">JDK-8332282</a> and <a href=\"https://bugs.openjdk.org/browse/JDK-8138614\" rel=\"noreferrer\">JDK-8138614</a>, as <a href=\"https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/lang/StringBuilder.html#toString()\" rel=\"noreferrer\"><code>StringBuilder.toString()</code></a> explicitly says:</p>\n<blockquote>\n<p>A new <code>String</code> object is allocated and initialized to contain the character sequence currently represented by this object.</p>\n</blockquote>\n<p>And the fix doesn't actually conform as it doesn't return a new instance for an empty string buffer. The documentation will change in Java 25 to no longer require a new instance.</p>\n<p>As far as I can tell from a quick look, before Java 15, the behaviour was similar to the Java 21 behaviour (returning new empty instances).</p>\n<p>For example, Java 8 (8.0.442) does this in <code>StringBuffer.toString()</code>:</p>\n<pre><code>@Override\npublic synchronized String toString() {\n    if (toStringCache == null) {\n        toStringCache = Arrays.copyOfRange(value, 0, count);\n    }\n    return new String(toStringCache, true);\n}\n</code></pre>\n<p>And while the Java 11 implementation of <code>StringBuffer.toString()</code> was the same as Java 17's, in Java 11 (11.0.26), <code>StringLatin1.newString</code> always returned a new copy:</p>\n<pre><code>public static String newString(byte[] val, int index, int len) {\n    return new String(Arrays.copyOfRange(val, index, index + len),\n                      LATIN1);\n}\n</code></pre>\n<hr />\n<p><sup>*: The backport issue <a href=\"https://bugs.openjdk.org/browse/JDK-8331299\" rel=\"noreferrer\">JDK-8331299</a> lists the fix version as 21.0.7-oracle, so I'm not sure if this fix will also land in OpenJDK, or only in the Oracle builds.</sup></p>\n",
+    "score" : 11,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 213468,
+      "reputation" : 110280,
+      "user_id" : 466862,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/d873f397779db38cd510d9ee5416fd43?s=256&d=identicon&r=PG",
+      "display_name" : "Mark Rotteveel",
+      "link" : "https://stackoverflow.com/users/466862/mark-rotteveel"
+    },
+    "creation_date" : 1743698796,
+    "last_activity_date" : 1743747859,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79553479,
+    "question_id" : 79553363,
+    "body" : "<p>I've also encountered this issue post Java 19. After analyzing the issue, I found that, starting from Java 19, the DecimalFormat class started using an internal CompactNumberFormat, even if you're not using compact formatting directly.</p>\n<p>Internally, CompactNumberFormat allocates a bunch of arrays for different formatting patterns, and most of these arrays get filled with empty strings as placeholders. These empty strings will stay around as long as your DecimalFormat instance lives, and if you're using static instances like in your example, they will essentially live for the lifetime of your application.</p>\n<p>In Java 17 and earlier, this behavior didn't exist, so the extra empty strings simply weren't allocated.</p>\n<p>To resolve this, avoid using static DecimalFormat unless absolutely needed.</p>\n<p>Instead of using:</p>\n<pre><code>static DecimalFormat df = new DecimalFormat(&quot;#.##&quot;);\n</code></pre>\n<p>change it to</p>\n<pre><code>DecimalFormat df = new DecimalFormat(&quot;#.##&quot;);\n</code></pre>\n<p>or even better:</p>\n<pre><code>NumberFormat nf = NumberFormat.getNumberInstance();\nnf.setMaximumFractionDigits(2);\n</code></pre>\n",
+    "score" : -2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 7645025,
+      "reputation" : 440,
+      "user_id" : 5795975,
+      "user_type" : "registered",
+      "profile_image" : "https://lh6.googleusercontent.com/-6KwPUS4RnyA/AAAAAAAAAAI/AAAAAAAAC8w/auZqreI45x0/s256-rj/photo.jpg",
+      "display_name" : "Vijay",
+      "link" : "https://stackoverflow.com/users/5795975/vijay"
+    },
+    "creation_date" : 1743696733,
+    "last_activity_date" : 1751968301,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140295904,
+    "post_id" : 79553363,
+    "body" : "and this <a href=\"https://bugs.java.com/bugdatabase/view_bug?bug_id=8325730\" rel=\"nofollow noreferrer\">bug report</a> marks the corresponding <a href=\"https://github.com/openjdk/jdk/commit/d2590c69b4efe5aa2b48b08070e0dbafb04ef202\" rel=\"nofollow noreferrer\">commit</a> - <code>StringBuilder.toString()</code> returns <code>&quot;&quot;</code> instead of a new <code>String</code> if its length is 0",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 31180,
+      "reputation" : 29752,
+      "user_id" : 85421,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/kKvXH.gif?s=256",
+      "display_name" : "user85421",
+      "link" : "https://stackoverflow.com/users/85421/user85421"
+    },
+    "creation_date" : 1743698786,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140295863,
+    "post_id" : 79553363,
+    "body" : "@MarkRotteveel is right. <a href=\"https://bugs.openjdk.org/browse/JDK-8332282\" rel=\"nofollow noreferrer\">This bug report</a> describes the behavior of <code>StringBuffer</code>/<code>StringBuilder</code>’s <code>toString()</code> method when empty with different Java versions. Note that the <code>applyPattern</code> method has been changed from <code>StringBuffer</code> to <code>StringBuilder</code> between these versions, but the behavior applies to both of them, so this has no effect.",
+    "score" : 5,
+    "owner" : {
+      "account_id" : 3211603,
+      "reputation" : 301001,
+      "user_id" : 2711488,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+      "display_name" : "Holger",
+      "link" : "https://stackoverflow.com/users/2711488/holger"
+    },
+    "creation_date" : 1743698209,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140295855,
+    "post_id" : 79553363,
+    "body" : "The problem is not about the literal initialization, but in the constructor of <code>DecimalFormat</code>, the <code>applyPattern</code> method is called, and that calls <code>toString()</code> on a <code>StringBuffer</code>, overwriting the initial values, and it looks somewhere the encoder used changed from returning the same empty string instance to returning unique empty string instances.",
+    "score" : 5,
+    "owner" : {
+      "account_id" : 213468,
+      "reputation" : 110280,
+      "user_id" : 466862,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/d873f397779db38cd510d9ee5416fd43?s=256&d=identicon&r=PG",
+      "display_name" : "Mark Rotteveel",
+      "link" : "https://stackoverflow.com/users/466862/mark-rotteveel"
+    },
+    "creation_date" : 1743698060,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140295807,
+    "post_id" : 79553363,
+    "body" : "I can reproduce it with OpenJDK 21, but not with 24 - so most probably an already corrected bug (maybe check the Java Bug Database, or release notes from versions after 21)",
+    "score" : 3,
+    "owner" : {
+      "account_id" : 31180,
+      "reputation" : 29752,
+      "user_id" : 85421,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/kKvXH.gif?s=256",
+      "display_name" : "user85421",
+      "link" : "https://stackoverflow.com/users/85421/user85421"
+    },
+    "creation_date" : 1743697365,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79553550" : [ {
+      "comment_id" : 140298037,
+      "post_id" : 79553550,
+      "body" : "@user85421 It no longer does, somewhere after Java 17; you were in part right, and I was a little careless about it in my initial answer (I&#39;ve now amended it).",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 213468,
+        "reputation" : 110280,
+        "user_id" : 466862,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/d873f397779db38cd510d9ee5416fd43?s=256&d=identicon&r=PG",
+        "display_name" : "Mark Rotteveel",
+        "link" : "https://stackoverflow.com/users/466862/mark-rotteveel"
+      },
+      "creation_date" : 1743750544,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140298032,
+      "post_id" : 79553550,
+      "body" : "sorry, I didn&#39;t realize that <code>DecimalFormat</code> was still using <code>StringBuffer</code>",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 31180,
+        "reputation" : 29752,
+        "user_id" : 85421,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/kKvXH.gif?s=256",
+        "display_name" : "user85421",
+        "link" : "https://stackoverflow.com/users/85421/user85421"
+      },
+      "creation_date" : 1743750484,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140297917,
+      "post_id" : 79553550,
+      "body" : "@user85421 Yes and no, it is <code>StringBuffer</code> in Java 17, and <code>StringBuilder</code> in Java 21, but they both have a similar implementation of <code>toString()</code>. I&#39;ll update my answer to reflect this.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 213468,
+        "reputation" : 110280,
+        "user_id" : 466862,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/d873f397779db38cd510d9ee5416fd43?s=256&d=identicon&r=PG",
+        "display_name" : "Mark Rotteveel",
+        "link" : "https://stackoverflow.com/users/466862/mark-rotteveel"
+      },
+      "creation_date" : 1743747462,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140296285,
+      "post_id" : 79553550,
+      "body" : "shouldn&#39;t it be <code>StringBuilder</code> instead of <code>StringBuffer</code>?",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 31180,
+        "reputation" : 29752,
+        "user_id" : 85421,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/kKvXH.gif?s=256",
+        "display_name" : "user85421",
+        "link" : "https://stackoverflow.com/users/85421/user85421"
+      },
+      "creation_date" : 1743704640,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79553479" : [ {
+      "comment_id" : 140297088,
+      "post_id" : 79553479,
+      "body" : "I don&#39;t think one <code>DecimalFormat</code> is causing them issues. Presumably they have a ton of them in their application and the <code>static</code> was only for the MCVE demo.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 195331,
+        "reputation" : 281049,
+        "user_id" : 438154,
+        "user_type" : "registered",
+        "accept_rate" : 98,
+        "profile_image" : "https://www.gravatar.com/avatar/4ec21df1e55febf8deb2e3b24b9cb39b?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Sotirios Delimanolis",
+        "link" : "https://stackoverflow.com/users/438154/sotirios-delimanolis"
+      },
+      "creation_date" : 1743719759,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140296020,
+      "post_id" : 79553479,
+      "body" : "@Mark Rotteveel, &quot;&quot; is same but the pattern object creation duplicates it, as Voyinno mentioned, if the above issue not specific to the decimal formatter, then yes its definitely issue can be in other areas.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 7645025,
+        "reputation" : 440,
+        "user_id" : 5795975,
+        "user_type" : "registered",
+        "profile_image" : "https://lh6.googleusercontent.com/-6KwPUS4RnyA/AAAAAAAAAAI/AAAAAAAAC8w/auZqreI45x0/s256-rj/photo.jpg",
+        "display_name" : "Vijay",
+        "link" : "https://stackoverflow.com/users/5795975/vijay"
+      },
+      "creation_date" : 1743700495,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140295984,
+      "post_id" : 79553479,
+      "body" : "@Vijay Those literal <code>&quot;&quot;</code> would still be one and the same objects, so that isn&#39;t the problem. See my answer for a more detailed investigation of the why. It has been fixed in Java 22.0.2 and Java 23 and higher, and will be fixed in Java 21.0.7 (not yet released)",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 213468,
+        "reputation" : 110280,
+        "user_id" : 466862,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/d873f397779db38cd510d9ee5416fd43?s=256&d=identicon&r=PG",
+        "display_name" : "Mark Rotteveel",
+        "link" : "https://stackoverflow.com/users/466862/mark-rotteveel"
+      },
+      "creation_date" : 1743700035,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140295882,
+      "post_id" : 79553479,
+      "body" : "The example I gave with DecimalFormat is only to illustrate the problem with a class from the JDK.  I first noticed this behavior with classes written in our project.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 19529032,
+        "reputation" : 165,
+        "user_id" : 14289259,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/09a727e39d4997db07e6c0850a45094a?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Voy",
+        "link" : "https://stackoverflow.com/users/14289259/voy"
+      },
+      "creation_date" : 1743698527,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140295874,
+      "post_id" : 79553479,
+      "body" : "@Mark Rotteveel,  In many locales, compactPatterns starts with empty strings like {&quot;&quot;, &quot;&quot;, &quot;&quot;, &quot;0K&quot;, ...}. During processCompactPatterns(), these empty strings get added into multiple internal maps inside Patterns objects. Since this happens for several counts and lists, it leads to thousands of empty string instances. The catch is, these aren&#39;t interned, so you end up with many distinct but logically empty strings in memory.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 7645025,
+        "reputation" : 440,
+        "user_id" : 5795975,
+        "user_type" : "registered",
+        "profile_image" : "https://lh6.googleusercontent.com/-6KwPUS4RnyA/AAAAAAAAAAI/AAAAAAAAC8w/auZqreI45x0/s256-rj/photo.jpg",
+        "display_name" : "Vijay",
+        "link" : "https://stackoverflow.com/users/5795975/vijay"
+      },
+      "creation_date" : 1743698373,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140295788,
+      "post_id" : 79553479,
+      "body" : "That doesn&#39;t change the fact that as far as I&#39;m aware all occurrences of the literal <code>&quot;&quot;</code> should be interned, and refer to the same string instance, while what the OP shows suggests it wasn&#39;t interned and each and every occurrence is its own instance.",
+      "score" : 4,
+      "owner" : {
+        "account_id" : 213468,
+        "reputation" : 110280,
+        "user_id" : 466862,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/d873f397779db38cd510d9ee5416fd43?s=256&d=identicon&r=PG",
+        "display_name" : "Mark Rotteveel",
+        "link" : "https://stackoverflow.com/users/466862/mark-rotteveel"
+      },
+      "creation_date" : 1743697009,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

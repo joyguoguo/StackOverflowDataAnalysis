@@ -1,0 +1,345 @@
+{
+  "question" : {
+    "question_id" : 79635296,
+    "title" : "issues with Java 20 URL -&gt; URI deprecation",
+    "body" : "<p>So, since JDK-8294241, we're supposed to use <code>new URI().toURL()</code>.</p>\n<p>The problem is that <code>new URI()</code> throws exceptions for not properly encoded URLs.</p>\n<p>This makes it extremely hard to use the new classes for deserialization, or any other way of parsing URLs which your application does not construct from scratch.</p>\n<p>For example, this URL cannot be constructed with URI: <code>https://google.com/search?q=with|pipe</code>.</p>\n<p>I understand that ideally a client or other system would not send such URLs, but the reality is different...</p>\n<p>This also creates cascade issues. For example how is jackson-databind, as a library, supposed to replace URL construction with <code>new URI().toURL()</code>. It's simply not a viable option.</p>\n<p>So, is there any solution here? <strong>In my opinion this should be built-in in Java.</strong> Something like <code>URI.parse(String url)</code> which properly parses any URL.</p>\n<p>For what its worth, I couldn't find any libraries that can parse Strings to URIs, except this one from Spring: <code>UriComponentsBuilder.fromUriString().build().toUri()</code>. This is using an officially provided regex, in <a href=\"https://datatracker.ietf.org/doc/html/rfc3986#appendix-B\" rel=\"nofollow noreferrer\">Appendix B from RFC 3986</a>. But of course it's not a universal solution, and also means that all libraries/frameworks will eventually have to duplicate this code...</p>\n<p>Seems like a huge oversight to me :shrug:</p>\n",
+    "tags" : [ "java" ],
+    "owner" : {
+      "account_id" : 259905,
+      "reputation" : 1645,
+      "user_id" : 543128,
+      "user_type" : "registered",
+      "accept_rate" : 71,
+      "profile_image" : "https://www.gravatar.com/avatar/a15ea9d85b1e7db5ab0d2f8dafca0a95?s=256&d=identicon&r=PG",
+      "display_name" : "Stefanos Kalantzis",
+      "link" : "https://stackoverflow.com/users/543128/stefanos-kalantzis"
+    },
+    "is_answered" : true,
+    "view_count" : 454,
+    "answer_count" : 2,
+    "score" : 2,
+    "last_activity_date" : 1758875432,
+    "creation_date" : 1747994630,
+    "link" : "https://stackoverflow.com/questions/79635296/issues-with-java-20-url-uri-deprecation",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79639708,
+    "question_id" : 79635296,
+    "body" : "<p>This is not hard to work around, but it is also non-obvious.</p>\n<pre class=\"lang-java prettyprint-override\"><code>final String technically_an_invalid_url = &quot;https://google.com/search?q=with|pipe&quot;;\nfinal URI uri = new URI(null, technically_an_invalid_url, null);\nfinal URL url = uri.toURL();\n\nfinal byte[] allBytes;\n\ntry (final InputStream inputStream = url.openStream())\n{\n\n    allBytes = inputStream.readAllBytes();\n\n}\n\n\nfinal String output = new String(allBytes);\n\nSystem.out.println(output);\n</code></pre>\n<p>To understand why this works, we need to look at the docs for the <code>URI</code> constructor -- <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/net/URI.html#%3Cinit%3E(java.lang.String,java.lang.String,java.lang.String)\" rel=\"nofollow noreferrer\">https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/net/URI.html#%3Cinit%3E(java.lang.String,java.lang.String,java.lang.String)</a></p>\n<p>If you <em><strong>only look at the parameter list</strong></em>, you might (understandably) be fooled into thinking that this constructor is only useful if you have <em><strong>PARTS</strong></em> of a url, but not if you have <em><strong>the whole</strong></em> url.</p>\n<p>But look closer at what the docs say.</p>\n<pre><code>A component may be left undefined by passing null.\n</code></pre>\n<p>So, we have the ability to exclude parameters? How does that work? To answer, we read further.</p>\n<pre><code>This constructor first builds a URI in string form using the given components as follows:\n\n1. Initially, the result string is empty.\n</code></pre>\n<p>Ok, so an empty <code>String</code>. Aka, <code>String rawUrl = &quot;&quot;;</code>.</p>\n<pre><code>2. If a scheme is given then it is appended to the result, followed by a colon character (':').\n</code></pre>\n<p>Ok, so <em><strong>IF</strong></em> we provide that first parameter, then this rule applies. But since we have the right to provide <code>null</code>, as mentioned above, this rule is skipped for my above example.</p>\n<pre><code>3. If a scheme-specific part is given then it is appended. Any character that is not a legal URI character is quoted.\n</code></pre>\n<p>Ok, this is the parameter that I DID provide. So, all this does is literally do a <code>String::concat</code> with the original value. Aka, <code>rawUrl = rawUrl + ssp;</code>.</p>\n<pre><code>4. Finally, if a fragment is given then a hash character ('#') is appended to the string, followed by the fragment. Any character that is not a legal URI character is quoted.\n</code></pre>\n<p>Ok, so <em><strong>IF</strong></em> we provide that third parameter, then this rule applies. But since we have the right to provide <code>null</code>, as mentioned above, this rule is skipped for my above example.</p>\n<hr />\n<p>At this point, I'd like to pause to highlight -- these guidelines above are purely about concatenation behaviour. This is basically the rules for constructing a <code>String</code>. It's important to highlight this, because I think there might be more significance being attributed to the class or constructor, when it's really just constructing a valid uri.</p>\n<p>Back to the point.</p>\n<hr />\n<p>Now, as for the WHY you were able to avoid getting caught? Look at point 3! Let's reread it.</p>\n<pre><code>3. If a scheme-specific part is given then it is appended. Any character that is not a legal URI character is quoted. \n</code></pre>\n<p><em><strong>Any character that is not a legal URI character is quoted.</strong></em></p>\n<p>That's all there is to it. The <code>new URI(String)</code> constructor and this <code>new URI(String, String, String)</code> all provide the exact same validations, but the <code>new URI(String, String, String)</code> constructor is nice enough to do a little of the cleanup for you, as listed in point 3 of the documentation.</p>\n<p>Now, one could argue that this is technically a misuse of the API. Personally, I say no, but even if it is, this constructor is so well specified that, as long as you watch out for deprecation notices in future JDK versions, you should be fine.</p>\n",
+    "score" : 3,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 14010051,
+      "reputation" : 260,
+      "user_id" : 10118965,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/61afd55894624ae8f6e4189b68db1f30?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "davidalayachew",
+      "link" : "https://stackoverflow.com/users/10118965/davidalayachew"
+    },
+    "creation_date" : 1748308031,
+    "last_activity_date" : 1748308031,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79775639,
+    "question_id" : 79635296,
+    "body" : "<p>Since Spring Web version 6.2 there is a UriComponentsBuilder method that supports lax parsing like browsers do. You can try something like:</p>\n<p><code>URI uri = UriComponentsBuilder.fromUriString(malformedUrl, ParserType.WHAT_WG).build().toUri();</code></p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 15756432,
+      "reputation" : 1,
+      "user_id" : 11369485,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/5487f91e92c227671bcac76d3f1aff7c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Jose L. Hernandez",
+      "link" : "https://stackoverflow.com/users/11369485/jose-l-hernandez"
+    },
+    "creation_date" : 1758875432,
+    "last_activity_date" : 1758875432,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140461067,
+    "post_id" : 79635296,
+    "body" : "I posted an answer. @Holger fact check me? I posted <a href=\"https://old.reddit.com/r/java/comments/1ktfsx2/java_20_url_uri_deprecation/mttducy/\" rel=\"nofollow noreferrer\">on Reddit</a> saying that this was your intent lol, so I don&#39;t want to misrepresent you lol.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 14010051,
+      "reputation" : 260,
+      "user_id" : 10118965,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/61afd55894624ae8f6e4189b68db1f30?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "davidalayachew",
+      "link" : "https://stackoverflow.com/users/10118965/davidalayachew"
+    },
+    "creation_date" : 1748308686,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140452563,
+    "post_id" : 79635296,
+    "body" : "Being sceptical, I <i>was</i> going to check the source code, but, on checking the Javadoc, I see <a href=\"https://docs.spring.io/spring-framework/docs/current/javadoc-api/org/springframework/web/util/UriComponentsBuilder.html#fromUriString(java.lang.String,org.springframework.web.util.UriComponentsBuilder.ParserType)\" rel=\"nofollow noreferrer\"><i>The presence of reserved characters can prevent correct parsing of the URI string.</i></a> so I&#39;m not sure that I need to",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 22124137,
+      "reputation" : 4244,
+      "user_id" : 16376827,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/1ImPw.png?s=256",
+      "display_name" : "g00se",
+      "link" : "https://stackoverflow.com/users/16376827/g00se"
+    },
+    "creation_date" : 1748001530,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140452552,
+    "post_id" : 79635296,
+    "body" : "@davidalayachew I see that this is somewhat working (almost working, because the fragment part of a given url ends up in the query part)... But I don&#39;t understand why, and the javadoc is very vague... Seems like it&#39;s abusing the intention of this constructor somehow?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 259905,
+      "reputation" : 1645,
+      "user_id" : 543128,
+      "user_type" : "registered",
+      "accept_rate" : 71,
+      "profile_image" : "https://www.gravatar.com/avatar/a15ea9d85b1e7db5ab0d2f8dafca0a95?s=256&d=identicon&r=PG",
+      "display_name" : "Stefanos Kalantzis",
+      "link" : "https://stackoverflow.com/users/543128/stefanos-kalantzis"
+    },
+    "creation_date" : 1748001307,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140452547,
+    "post_id" : 79635296,
+    "body" : "@g00se unless I&#39;m missing something, it&#39;s what Spring does with <code>UriComponentsBuilder.fromUriString().build().toUri()</code>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 259905,
+      "reputation" : 1645,
+      "user_id" : 543128,
+      "user_type" : "registered",
+      "accept_rate" : 71,
+      "profile_image" : "https://www.gravatar.com/avatar/a15ea9d85b1e7db5ab0d2f8dafca0a95?s=256&d=identicon&r=PG",
+      "display_name" : "Stefanos Kalantzis",
+      "link" : "https://stackoverflow.com/users/543128/stefanos-kalantzis"
+    },
+    "creation_date" : 1748001169,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140452501,
+    "post_id" : 79635296,
+    "body" : "<i>Something like URI.parse(String url) which properly parses any URL.</i> I don&#39;t get it. The only solution to your problem afaic is if you twist the words <i>properly parses</i> to mean &quot;discard, in an opaque way, parts of the input such that a valid <code>URI</code> can be constructed&quot;. That&#39;s not parsing ;)",
+    "score" : 3,
+    "owner" : {
+      "account_id" : 22124137,
+      "reputation" : 4244,
+      "user_id" : 16376827,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/1ImPw.png?s=256",
+      "display_name" : "g00se",
+      "link" : "https://stackoverflow.com/users/16376827/g00se"
+    },
+    "creation_date" : 1748000079,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140452431,
+    "post_id" : 79635296,
+    "body" : "@StefanosKalantzis I am discussing that exact case. I took your <code>String</code> url, and did this -- <code>System.out.println(new String(new URI(null, &quot;https:&#47;&#47;google.com&#47;search?q=with|pipe&quot;, null).toURL().openStream().readAllBytes()));</code>. Copy paste that and see if it works for you.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 14010051,
+      "reputation" : 260,
+      "user_id" : 10118965,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/61afd55894624ae8f6e4189b68db1f30?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "davidalayachew",
+      "link" : "https://stackoverflow.com/users/10118965/davidalayachew"
+    },
+    "creation_date" : 1747998994,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140452424,
+    "post_id" : 79635296,
+    "body" : "Bear in mind that <code>https:&#47;&#47;google.com&#47;search?q=with|pipe</code> is not a URL and is not a URI.  It is text that looks similar to a URI, but it is not a URI, and should not be treated as a URI.  If you are receiving invalid URIs from an external source, you can either inform that source that they sent invalid data (but it sounds like you don’t have that option), or you can write code that attempts to fix the broken input.",
+    "score" : 6,
+    "owner" : {
+      "account_id" : 2053598,
+      "reputation" : 44991,
+      "user_id" : 1831987,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/38b1c37530189ec4471a43a618e33f67?s=256&d=identicon&r=PG",
+      "display_name" : "VGR",
+      "link" : "https://stackoverflow.com/users/1831987/vgr"
+    },
+    "creation_date" : 1747998839,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140452422,
+    "post_id" : 79635296,
+    "body" : "@davidalayachew Yeah if you already have the individual components, then of course it&#39;s possible to construct a URI. I was hoping it&#39;s obvious by the jackson-databind example that I&#39;m discussing the case where you are given a URL as String, from someone else.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 259905,
+      "reputation" : 1645,
+      "user_id" : 543128,
+      "user_type" : "registered",
+      "accept_rate" : 71,
+      "profile_image" : "https://www.gravatar.com/avatar/a15ea9d85b1e7db5ab0d2f8dafca0a95?s=256&d=identicon&r=PG",
+      "display_name" : "Stefanos Kalantzis",
+      "link" : "https://stackoverflow.com/users/543128/stefanos-kalantzis"
+    },
+    "creation_date" : 1747998789,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140452379,
+    "post_id" : 79635296,
+    "body" : "@StefanosKalantzis I think Holger is telling you to use this constructor from <code>URI</code> -- <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/net/URI.html#%3Cinit%3E(java.lang.String,java.lang.String,java.lang.String)\" rel=\"nofollow noreferrer\">docs.oracle.com/en/java/javase/24/docs/api/java.base/java/ne&zwnj;&#8203;t/&hellip;</a> -- I tried it, and it successfully created the URI for me.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 14010051,
+      "reputation" : 260,
+      "user_id" : 10118965,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/61afd55894624ae8f6e4189b68db1f30?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "davidalayachew",
+      "link" : "https://stackoverflow.com/users/10118965/davidalayachew"
+    },
+    "creation_date" : 1747998124,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140452355,
+    "post_id" : 79635296,
+    "body" : "I don’t get you. What do you mean with “<code>, null</code> does not exist”?",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 3211603,
+      "reputation" : 301001,
+      "user_id" : 2711488,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+      "display_name" : "Holger",
+      "link" : "https://stackoverflow.com/users/2711488/holger"
+    },
+    "creation_date" : 1747997419,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140452331,
+    "post_id" : 79635296,
+    "body" : "@cyberbrain well, they are deprecated, which means they will probably get removed at some point? I know they are not marked &quot;for removal&quot;. So, yes the post is a bit premature",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 259905,
+      "reputation" : 1645,
+      "user_id" : 543128,
+      "user_type" : "registered",
+      "accept_rate" : 71,
+      "profile_image" : "https://www.gravatar.com/avatar/a15ea9d85b1e7db5ab0d2f8dafca0a95?s=256&d=identicon&r=PG",
+      "display_name" : "Stefanos Kalantzis",
+      "link" : "https://stackoverflow.com/users/543128/stefanos-kalantzis"
+    },
+    "creation_date" : 1747997038,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140452328,
+    "post_id" : 79635296,
+    "body" : "@Holger what&#39;s <code>, null</code>? It doesn&#39;t exist...",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 259905,
+      "reputation" : 1645,
+      "user_id" : 543128,
+      "user_type" : "registered",
+      "accept_rate" : 71,
+      "profile_image" : "https://www.gravatar.com/avatar/a15ea9d85b1e7db5ab0d2f8dafca0a95?s=256&d=identicon&r=PG",
+      "display_name" : "Stefanos Kalantzis",
+      "link" : "https://stackoverflow.com/users/543128/stefanos-kalantzis"
+    },
+    "creation_date" : 1747996962,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140452307,
+    "post_id" : 79635296,
+    "body" : "The problem is that the <code>URL</code> constructor does <i>not</i> process the input correctly, it just accepts it and leaves it unprocessed. If you want to process the input, use for example <code>new URI(null, &quot;https:&#47;&#47;google.com&#47;search?q=with|pipe&quot;, null)</code>",
+    "score" : 6,
+    "owner" : {
+      "account_id" : 3211603,
+      "reputation" : 301001,
+      "user_id" : 2711488,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+      "display_name" : "Holger",
+      "link" : "https://stackoverflow.com/users/2711488/holger"
+    },
+    "creation_date" : 1747996603,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140452305,
+    "post_id" : 79635296,
+    "body" : "I don&#39;t get your actual problem: The old constructors are still available, you will have to deal with the deprecated warnings, but is that really worse than dealing with &quot;invalid&quot; URIs (according to RFC 2396 &amp; RFC 2732)? Also the Javadoc of the URL class states that the constructors &quot;actual parsing/validation that is performed is implementation dependent&quot; - this seems to be a really bad idea for the wide-spread use of URLs in current applications.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3391382,
+      "reputation" : 5350,
+      "user_id" : 2846138,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/2sp68.png?s=256",
+      "display_name" : "cyberbrain",
+      "link" : "https://stackoverflow.com/users/2846138/cyberbrain"
+    },
+    "creation_date" : 1747996397,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140452272,
+    "post_id" : 79635296,
+    "body" : "<i>&quot;In my opinion this should be built-in in Java&quot;</i> Maybe so, but you have to work with what is available. if the original URL violates the grammar as specified in <a href=\"https://www.ietf.org/rfc/rfc2396.txt\" rel=\"nofollow noreferrer\">RFC 2396</a>, then it is up to the programmer to handle it.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 29555382,
+      "reputation" : 1005,
+      "user_id" : 22651151,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/HH5yW.jpg?s=256",
+      "display_name" : "OldBoy",
+      "link" : "https://stackoverflow.com/users/22651151/oldboy"
+    },
+    "creation_date" : 1747995924,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79639708" : [ {
+      "comment_id" : 140465302,
+      "post_id" : 79639708,
+      "body" : "You do not need to split off the scheme part as the constructor will do for you. But you have to identify the fragment part if there is one because you can not have the behavior of quoting special characters (to prevent their (mis)interpretation) and interpreting them (i.e. the fragment separator) at the same time. For an actually invalid URI, someone has to decide whether a character was supposed to be literal and needs to be quoted or was meant to have special semantics. Thankfully, you only have to do this one decision for the fragment as the heuristic works good enough for all other chars.",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 3211603,
+        "reputation" : 301001,
+        "user_id" : 2711488,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+        "display_name" : "Holger",
+        "link" : "https://stackoverflow.com/users/2711488/holger"
+      },
+      "creation_date" : 1748423228,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140461710,
+      "post_id" : 79639708,
+      "body" : "Thanks for the detailed answer and explanation. I have tried this and technically there is at least one issue that I discovered. If the input contains a fragment part, then the constructed URI will have a query field containing the fragment, and <code>null</code> as fragment field. This indicates that it&#39;s probably abusing the API. What worked for me is to parse the input and split the 3 parameters out (schema, ssp, fragment), then apply a percent-encode on the ssp part, and then construct the URI. This seems to work perfectly, but this is still a lot of extra guesswork that should be part of Java imho.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 259905,
+        "reputation" : 1645,
+        "user_id" : 543128,
+        "user_type" : "registered",
+        "accept_rate" : 71,
+        "profile_image" : "https://www.gravatar.com/avatar/a15ea9d85b1e7db5ab0d2f8dafca0a95?s=256&d=identicon&r=PG",
+        "display_name" : "Stefanos Kalantzis",
+        "link" : "https://stackoverflow.com/users/543128/stefanos-kalantzis"
+      },
+      "creation_date" : 1748333797,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

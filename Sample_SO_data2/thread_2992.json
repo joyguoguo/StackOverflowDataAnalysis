@@ -1,0 +1,195 @@
+{
+  "question" : {
+    "question_id" : 79582490,
+    "title" : "verify with mockito to verify log thrwoing error",
+    "body" : "<p>I have a very simple aop class</p>\n<pre class=\"lang-java prettyprint-override\"><code>// imports\n\n@Component\n@Aspect\n@Slf4j\nclass aopClass {\n    pubic void log(Joinpoint jp) {\n        log.info(&quot;hi {} and {}&quot;, jp.getsignature(), jp.getSourceLocation());\n    }\n}\n\n</code></pre>\n<p>Now this works, so i tried creating a test class for this.</p>\n<pre class=\"lang-java prettyprint-override\"><code>//imports\n\n@ExtendWith(MockitoExtension.class)\n@TestInstance(TestInstance.Lifecycle.PER_CLASS)\nclass MyTest {\n    @InjectMocks\n    aopClass aopClass1= new aopClass();\n\n    JoinPoint joinPoint;\n\n    private static final org.slf4j.Logger log = mock(org.slf4j.LoggerFactory.getLogger(MyTest.class).getClass());\n\n    @BeforeAll\n    void setup(){\n        joinPoint = mock(JoinPoint.class);\n        when(joinPoint.getSignature()).thenReturn(null);\n    }\n\n    @Test\n    void log() {\n        aopClass1.log(joinPoint);\n\n        verify(joinPoint, times(1)).getSignature();\n        verify(joinPoint, times(1)).getSourceLocation();\n        verify(log, times(1)).info(anyString()); // always throws error here?\n    }\n}\n</code></pre>\n<p>so when i run it  it keep's throwing me the error (error at bottom) saying there are no invocation for the log call, which is weird cause i can actually see the log in the console so it must be being called.</p>\n<p>I have tried using <code>@Mock</code> annotation and using <code>verify(log,times(1)).info(anyString(),any(),any());</code> but still no luck.</p>\n<p>the other 2 verify's are being called and that's working fine, only the log one throws the error.</p>\n<p>any help to resolve this?</p>\n<p>error:</p>\n<pre><code>Wanted but not invoked:\nlog.info(&lt;any string&gt;);\n-&gt; at ch.qos.logback.classic.Logger.info(Logger.java:584)\nActually, there were zero interactions with this mock.\n</code></pre>\n",
+    "tags" : [ "java", "logging", "mockito", "aop", "mockk-verify" ],
+    "owner" : {
+      "account_id" : 15069196,
+      "reputation" : 784,
+      "user_id" : 10875311,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/TLHjd.jpg?s=256",
+      "display_name" : "Akash Jain",
+      "link" : "https://stackoverflow.com/users/10875311/akash-jain"
+    },
+    "is_answered" : true,
+    "view_count" : 98,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1746708602,
+    "creation_date" : 1745072450,
+    "link" : "https://stackoverflow.com/questions/79582490/verify-with-mockito-to-verify-log-thrwoing-error",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79582712,
+    "question_id" : 79582490,
+    "body" : "<p>The logger in <code>aopClass</code> is a different object from the mocked logger in <code>MyTest</code>. Unless you can get Lombok to generate a settable logger you will not be able to mock the object.</p>\n<p>I've written something that allows testing of logging: <a href=\"https://robtimus.github.io/junit-support/extension/test-logger.html\" rel=\"nofollow noreferrer\">@TestLogger</a>. It's pretty closely tied to the logging implementation though, but it supports SLF4J through the binding implementation. For instance, using Logback:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@ExtendWith(MockitoExtension.class)\n@TestInstance(TestInstance.Lifecycle.PER_CLASS)\nclass MyTest {\n    @InjectMocks // this may not be needed, not sure, the class is still a component\n    aopClass aopClass1= new aopClass();\n\n    JoinPoint joinPoint;\n\n    @BeforeAll\n    void setup(){\n        joinPoint = mock(JoinPoint.class);\n        when(joinPoint.getSignature()).thenReturn(null);\n    }\n\n    @Test\n    void log(@TestLogger.ForClass(MyTest.class) LogbackLoggerContext loggerContext) {\n        LogCaptor&lt;ILoggingEvent&gt; logCaptor = loggerContext\n                // if the logging config doesn't already set the correct level:\n                .setLevel(Level.INFO)\n                // to suppress actual logging, optional\n                .removeAppenders();\n                // capture is the easiest way to get logged events\n                .capture();\n\n        aopClass1.log(joinPoint);\n\n        verify(joinPoint,times(1)).getSignature();\n        verify(joinPoint,times(1)).getSourceLocation();\n\n        List&lt;ILoggingEvent&gt; logged = logCaptor.logged();\n        assertThat(logged).hasSize(1);\n        ILoggingEvent event = logged.get(0);\n        assertThat(event.getLevel()).isEqualTo(Level.INFO);\n        assertThat(event.getFormattedMessage()).isEqualTo(&quot;hi null and null&quot;);\n    }\n}\n</code></pre>\n<p>If the logging implementation is java.util.logging, reload4j or Log4j2 with Log4j core you can replace the context with the correct type, but conceptually they're all the same.</p>\n<p>Dependency information can be found at <a href=\"https://robtimus.github.io/junit-support/dependency-info.html\" rel=\"nofollow noreferrer\">https://robtimus.github.io/junit-support/dependency-info.html</a>.</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 1211967,
+      "reputation" : 9964,
+      "user_id" : 1180351,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/pKB8y.png?s=256",
+      "display_name" : "Rob Spoor",
+      "link" : "https://stackoverflow.com/users/1180351/rob-spoor"
+    },
+    "creation_date" : 1745087741,
+    "last_activity_date" : 1745088406,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140350753,
+    "post_id" : 79582490,
+    "body" : "yes, right now doesn&#39;t seem to work @LukeWoodward",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 15069196,
+      "reputation" : 784,
+      "user_id" : 10875311,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/TLHjd.jpg?s=256",
+      "display_name" : "Akash Jain",
+      "link" : "https://stackoverflow.com/users/10875311/akash-jain"
+    },
+    "creation_date" : 1745079501,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140350746,
+    "post_id" : 79582490,
+    "body" : "Have you tried <code>verify(log,times(1)).info(anyString(),any(Object[].class));</code>?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 20338,
+      "reputation" : 65367,
+      "user_id" : 48503,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/672f798341250dd228b286738e8d6309?s=256&d=identicon&r=PG",
+      "display_name" : "Luke Woodward",
+      "link" : "https://stackoverflow.com/users/48503/luke-woodward"
+    },
+    "creation_date" : 1745079104,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140350740,
+    "post_id" : 79582490,
+    "body" : "noted, so is there a fix for this? (yes , i&#39;m bad at naming things, currently refactoring my code during naming)",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 15069196,
+      "reputation" : 784,
+      "user_id" : 10875311,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/TLHjd.jpg?s=256",
+      "display_name" : "Akash Jain",
+      "link" : "https://stackoverflow.com/users/10875311/akash-jain"
+    },
+    "creation_date" : 1745078951,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140350720,
+    "post_id" : 79582490,
+    "body" : "It doesn&#39;t help that everything is called <code>log</code> here! ;-)",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 447212,
+      "reputation" : 3900,
+      "user_id" : 840714,
+      "user_type" : "registered",
+      "accept_rate" : 62,
+      "profile_image" : "https://www.gravatar.com/avatar/b03266eb0b2d980e14d514943903e98f?s=256&d=identicon&r=PG",
+      "display_name" : "Druckles",
+      "link" : "https://stackoverflow.com/users/840714/druckles"
+    },
+    "creation_date" : 1745078553,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140350719,
+    "post_id" : 79582490,
+    "body" : "How does <code>log</code> (your mock) get into your <code>aopClass</code>? And where does <code>log</code> in your <code>aopClass</code> come from? They&#39;re not the same thing, and Lombok is hiding where the <code>log</code> in <code>aopClass</code> is coming from, so it&#39;s making it harder to see.",
+    "score" : 3,
+    "owner" : {
+      "account_id" : 447212,
+      "reputation" : 3900,
+      "user_id" : 840714,
+      "user_type" : "registered",
+      "accept_rate" : 62,
+      "profile_image" : "https://www.gravatar.com/avatar/b03266eb0b2d980e14d514943903e98f?s=256&d=identicon&r=PG",
+      "display_name" : "Druckles",
+      "link" : "https://stackoverflow.com/users/840714/druckles"
+    },
+    "creation_date" : 1745078538,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79582712" : [ {
+      "comment_id" : 140365368,
+      "post_id" : 79582712,
+      "body" : "I don&#39;t know which dependencies you have, and if you need to replace anything. Do you know what SLF4J is using for actual logging? That would be a dependency like <code>logback</code>, <code>slf4j-simple</code> (not supported...), <code>slf4j-reload4j</code>, <code>log4j-slf4j2-impl</code>, or something similar.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1211967,
+        "reputation" : 9964,
+        "user_id" : 1180351,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/pKB8y.png?s=256",
+        "display_name" : "Rob Spoor",
+        "link" : "https://stackoverflow.com/users/1180351/rob-spoor"
+      },
+      "creation_date" : 1745497984,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140364496,
+      "post_id" : 79582712,
+      "body" : "Which dependency are u asking me to replace?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 15069196,
+        "reputation" : 784,
+        "user_id" : 10875311,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/TLHjd.jpg?s=256",
+        "display_name" : "Akash Jain",
+        "link" : "https://stackoverflow.com/users/10875311/akash-jain"
+      },
+      "creation_date" : 1745485135,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140362812,
+      "post_id" : 79582712,
+      "body" : "@AkashJain which SLF4J binding do you have (for tests)? And does the logger context class you use match it? I used Logback in the example, but in your case it could be Log4J, reload4j or JDK. You could even have something that my library doesn&#39;t support like SLF4J&#39;s simple implementation. If that&#39;s the case you&#39;d need to replace that dependency, or you won&#39;t be able to use my library.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1211967,
+        "reputation" : 9964,
+        "user_id" : 1180351,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/pKB8y.png?s=256",
+        "display_name" : "Rob Spoor",
+        "link" : "https://stackoverflow.com/users/1180351/rob-spoor"
+      },
+      "creation_date" : 1745435519,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140362253,
+      "post_id" : 79582712,
+      "body" : "no luck got his error <code>Expected size: 1 but was: 0 in:</code>  for this <code>assertThat(logged).hasSize(1);</code>",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 15069196,
+        "reputation" : 784,
+        "user_id" : 10875311,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/TLHjd.jpg?s=256",
+        "display_name" : "Akash Jain",
+        "link" : "https://stackoverflow.com/users/10875311/akash-jain"
+      },
+      "creation_date" : 1745424221,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

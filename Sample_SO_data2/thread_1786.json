@@ -1,0 +1,211 @@
+{
+  "question" : {
+    "question_id" : 79678420,
+    "title" : "JDK21 Virtual Thread: Thread.sleep() causes subsequent LockSupport.parkNanos() to not block",
+    "body" : "<p><strong>Environment:</strong> Java 21+ (Virtual Threads)</p>\n<h2>Problem Description</h2>\n<p>When using virtual threads, calling <code>Thread.sleep()</code> before <code>LockSupport.parkNanos()</code> causes subsequent parking operations to return immediately without blocking. In the reproducer below:</p>\n<ol>\n<li>A <strong>virtual thread</strong> and a <strong>platform thread</strong> both attempt:\n<ul>\n<li>Two sequential <code>parkNanos(9_000_000_000)</code> calls (9 seconds each)</li>\n<li>Main thread unparks both threads every 1 second</li>\n</ul>\n</li>\n</ol>\n<p><strong>Expected Behavior:</strong><br />\nBoth threads should report ~2000 ms per iteration (each <code>parkNanos()</code> interrupted after ~1s, total 2s for two parks).</p>\n<p><strong>Actual Behavior:</strong></p>\n<ul>\n<li>✅ <strong>Platform thread:</strong> Correctly blocks (~2000 ms/iteration)</li>\n<li>❌ <strong>Virtual thread:</strong> Only blocks ~1000 ms/iteration - <em>both</em> <code>parkNanos()</code> calls return prematurely after initial <code>sleep()</code></li>\n</ul>\n<h2>Minimal Reproducer</h2>\n<pre class=\"lang-java prettyprint-override\"><code>public class Main {\n    public static void main(String[] args) {\n        Thread thread1 = Thread.startVirtualThread(() -&gt; {\n            while (true) {\n                try {\n                    Thread.sleep(10);\n                } catch (InterruptedException e) {\n                    e.printStackTrace();\n                }\n               //boolean a =  9_000_000_000L==9 * 1000 * 1000000L;\n                long startNanos_25_15 = System.nanoTime();\n                LockSupport.parkNanos(9 * 1000 * 1000000L);\n                LockSupport.parkNanos(9 * 1000 * 1000000L);\n                long endNanos_25_17 = System.nanoTime();\n                System.out.println(&quot;Virtual thread: &quot; +   ((endNanos_25_17 - startNanos_25_15) / 1000000.0));\n            }\n        });\n        Thread thread2 = new Thread(() -&gt; {\n                    while (true) {\n                        try {\n                            Thread.sleep(10);\n                        } catch (InterruptedException e) {\n                            e.printStackTrace();\n                        }\n                        long startNanos_25_15 = System.nanoTime();\n                        LockSupport.parkNanos(9 * 1000 * 1000000L);\n                        LockSupport.parkNanos(9 * 1000 * 1000000L);\n                        long endNanos_25_17 = System.nanoTime();\n                        System.out.println(&quot;Platform thread: &quot; +  ( (endNanos_25_17 - startNanos_25_15) / 1000000.0));\n                    }\n                }\n        );\n        thread2.start();\n        try {\n            Thread.sleep(1000);\n        } catch (InterruptedException e) {\n            throw new RuntimeException(e);\n        }\n        while (true){\n            LockSupport.unpark(thread1);\n            LockSupport.unpark(thread2);\n            try {\n                Thread.sleep(1000);\n\n            } catch (InterruptedException e) {\n                e.printStackTrace();\n            }\n        }\n    }\n}\n</code></pre>\n<h2>Output Snippet</h2>\n<pre><code>Virtual thread: 985.0724\nVirtual thread: 988.1296\nPlatform thread: 1988.9397\nVirtual thread: 988.9953\nPlatform thread: 1989.7579\nVirtual thread: 990.4098\nVirtual thread: 988.9639\nVirtual thread: 989.0095\nPlatform thread: 1991.151\nVirtual thread: 989.9759\nPlatform thread: 1990.103\nVirtual thread: 988.1343\nVirtual thread: 990.1048\nPlatform thread: 1991.1685\nVirtual thread: 989.0044\nVirtual thread: 989.0884\nPlatform thread: 1991.3585\nVirtual thread: 989.889\nVirtual thread: 988.7816\nVirtual thread: 990.0407\n</code></pre>\n",
+    "tags" : [ "java", "virtual-threads" ],
+    "owner" : {
+      "account_id" : 20775070,
+      "reputation" : 11,
+      "user_id" : 15256767,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/067a9be5b1114e07f56dfd4a91017c30?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "gg22g2",
+      "link" : "https://stackoverflow.com/users/15256767/gg22g2"
+    },
+    "is_answered" : true,
+    "view_count" : 169,
+    "closed_date" : 1750823770,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1750840298,
+    "creation_date" : 1750819415,
+    "link" : "https://stackoverflow.com/questions/79678420/jdk21-virtual-thread-thread-sleep-causes-subsequent-locksupport-parknanos-t",
+    "closed_reason" : "Needs details or clarity"
+  },
+  "answers" : [ {
+    "answer_id" : 79678453,
+    "question_id" : 79678420,
+    "body" : "<p>This's not a bug, but rather a consequence of the implementation. The virtual thread model unifies different types of blocking operations (like sleep, I/O, and park) under a single scheduling mechanism. A side effect of this unified model is that the wake-up signal from one type of blocking operation (sleep) can be observed by another (park).</p>\n<p>While this behavior is consistent, it's an implementation detail you should not rely on. Code that mixes <code>Thread.sleep</code> and <code>LockSupport.park</code> on virtual threads can be brittle. The simplest solution is to not mix these two primitives when you need precise control over parking. If your logic relies on the <code>LockSupport</code> permit system, use it exclusively for blocking and unblocking that thread.</p>\n<p>Better to use higher-level concurrency utilities, because in most real-world scenarios directly using <code>LockSupport</code> is a low-level operation. It's often better to use higher-level constructs from <code>java.util.concurrent</code> that manage these details for you and make your code's intent clearer:</p>\n<ul>\n<li><p><code>Semaphore</code></p>\n</li>\n<li><p><code>CountDownLatch</code> / <code>Phaser</code></p>\n</li>\n<li><p><code>BlockingQueue</code></p>\n</li>\n<li><p><code>ReentrantLock</code> and its <code>Condition</code> objects</p>\n</li>\n</ul>\n<p>These abstractions are designed to handle the underlying parking/unparking logic robustly, whether on platform or virtual threads, and will not exhibit these surprising side effects.</p>\n",
+    "score" : 2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 1207862,
+      "reputation" : 4210,
+      "user_id" : 1177031,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/79eaae35b3331731ecfb9e360bb8380b?s=256&d=identicon&r=PG",
+      "display_name" : "kapandron",
+      "link" : "https://stackoverflow.com/users/1177031/kapandron"
+    },
+    "creation_date" : 1750824061,
+    "last_activity_date" : 1750840298,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140635896,
+    "post_id" : 79678420,
+    "body" : "This is not a “Minimal Reproducer”. Why park for 9 seconds and have the main thread call <code>unpark</code> every second, instead of just parking for one second in the first place? Why are there two park operation instead of one? If the issue is that a park after sleep returns immediately, then a “Minimal Reproducer” would consist of exactly that, one park call after one sleep call. Keep it in a loop when you want to demonstrate that the behavior can be repeated but everything else is just noise.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 3211603,
+      "reputation" : 301001,
+      "user_id" : 2711488,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+      "display_name" : "Holger",
+      "link" : "https://stackoverflow.com/users/2711488/holger"
+    },
+    "creation_date" : 1754063083,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140540413,
+    "post_id" : 79678420,
+    "body" : "This question seems to have been generated or &quot;improved&quot; with help of ChatGPT or another AI. Please be aware that using LLMs or other AIs to generate content is <a href=\"https://meta.stackoverflow.com/questions/421831/temporary-policy-generative-ai-e-g-chatgpt-is-banned\">not allowed</a>.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 213468,
+      "reputation" : 110280,
+      "user_id" : 466862,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/d873f397779db38cd510d9ee5416fd43?s=256&d=identicon&r=PG",
+      "display_name" : "Mark Rotteveel",
+      "link" : "https://stackoverflow.com/users/466862/mark-rotteveel"
+    },
+    "creation_date" : 1750837922,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140540318,
+    "post_id" : 79678420,
+    "body" : "please refer to the <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/util/concurrent/locks/LockSupport.html\" rel=\"nofollow noreferrer\">documentation</a> of <code>LockSupport</code>: &quot;<i>These methods are designed to be used as tools for creating higher-level synchronization utilities, and are <b>not in themselves useful</b> for most concurrency control applications. The park method is designed for use only in constructions of the form:</i>&quot; (emphasis added, example not include in this comment)",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 31180,
+      "reputation" : 29752,
+      "user_id" : 85421,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/kKvXH.gif?s=256",
+      "display_name" : "user85421",
+      "link" : "https://stackoverflow.com/users/85421/user85421"
+    },
+    "creation_date" : 1750836172,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140540052,
+    "post_id" : 79678420,
+    "body" : "<a href=\"https://github.com/openjdk/jdk24u/blob/e5d351f2199e67ffb7ed7847e97ef41c72966fb5/src/java.base/share/classes/jdk/internal/access/JavaLangAccess.java#L583\" rel=\"nofollow noreferrer\">github.com/openjdk/jdk24u/blob/&hellip;</a> It parks upto that time for the virtual thread. And see the comments on <a href=\"https://github.com/openjdk/jdk24u/blob/e5d351f2199e67ffb7ed7847e97ef41c72966fb5/src/jdk.unsupported/share/classes/sun/misc/Unsafe.java#L1534\" rel=\"nofollow noreferrer\">github.com/openjdk/jdk24u/blob/&hellip;</a> Especially when the isAbsolute=false.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3739057,
+      "reputation" : 3961,
+      "user_id" : 3109248,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b1886caa659239ac9438e852ce12a222?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Khanna111",
+      "link" : "https://stackoverflow.com/users/3109248/khanna111"
+    },
+    "creation_date" : 1750827638,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140540019,
+    "post_id" : 79678420,
+    "body" : "<a href=\"https://github.com/openjdk/jdk24u/blob/29c6bf23fbc7a4ed9da490b053e0cc37796a891c/src/java.base/share/classes/java/util/concurrent/locks/LockSupport.java#L263\" rel=\"nofollow noreferrer\">github.com/openjdk/jdk24u/blob/&hellip;</a>  See the comments on the two branches - one for Virtual and one for platform. It is as spec&#39;d out",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3739057,
+      "reputation" : 3961,
+      "user_id" : 3109248,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b1886caa659239ac9438e852ce12a222?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Khanna111",
+      "link" : "https://stackoverflow.com/users/3109248/khanna111"
+    },
+    "creation_date" : 1750825368,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140539970,
+    "post_id" : 79678420,
+    "body" : "Are you asking for consensus on whether this is a bug? Because if you simply want to report the bug then Stack Overflow is the wrong place to do that. See <a href=\"https://bugreport.java.com/bugreport/\" rel=\"nofollow noreferrer\">bugreport.java.com/bugreport</a>",
+    "score" : 4,
+    "owner" : {
+      "account_id" : 8532578,
+      "reputation" : 49904,
+      "user_id" : 6395627,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Slaw",
+      "link" : "https://stackoverflow.com/users/6395627/slaw"
+    },
+    "creation_date" : 1750822439,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140539967,
+    "post_id" : 79678420,
+    "body" : "<code>LockSupport.parkNanos()</code> documents that it may return spuriously, so the behavior described does not seem inconsistent with the specs.  Same with all of <code>LockSupport</code>&#39;s <code>park</code> methods.",
+    "score" : 5,
+    "owner" : {
+      "account_id" : 2792262,
+      "reputation" : 190832,
+      "user_id" : 2402272,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+      "display_name" : "John Bollinger",
+      "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+    },
+    "creation_date" : 1750822139,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140539961,
+    "post_id" : 79678420,
+    "body" : "Is this post really a question? It reads like a bug report.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 36499544,
+      "reputation" : 706,
+      "user_id" : 27770843,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Jpiy4sl2.png?s=256",
+      "display_name" : "Nanigashi",
+      "link" : "https://stackoverflow.com/users/27770843/nanigashi"
+    },
+    "creation_date" : 1750821907,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140539958,
+    "post_id" : 79678420,
+    "body" : "Interesting, but you don&#39;t seem to have asked any question.",
+    "score" : 6,
+    "owner" : {
+      "account_id" : 2792262,
+      "reputation" : 190832,
+      "user_id" : 2402272,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+      "display_name" : "John Bollinger",
+      "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+    },
+    "creation_date" : 1750821859,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79678453" : [ {
+      "comment_id" : 140541719,
+      "post_id" : 79678453,
+      "body" : "Could you elaborate on your statement: &quot;the wake-up signal from one type of blocking operation (sleep) can be observed by another (park).&quot;? Under what circumstances/thread/code combination this may happen? Could you share your sources of information on that statement or bring some explanatory code, diagram, etc?",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 2745991,
+        "reputation" : 2794,
+        "user_id" : 2366397,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/24ee2b89e9791e936235b16af77ebda4?s=256&d=identicon&r=PG",
+        "display_name" : "igor.zh",
+        "link" : "https://stackoverflow.com/users/2366397/igor-zh"
+      },
+      "creation_date" : 1750864999,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

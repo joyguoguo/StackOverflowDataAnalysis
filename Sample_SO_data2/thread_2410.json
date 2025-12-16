@@ -1,0 +1,192 @@
+{
+  "question" : {
+    "question_id" : 79624582,
+    "title" : "When performing integration tests for Springboot app with RestTemplate, why are not all returned values set?",
+    "body" : "<p>I have a Springboot API that includes a model class <code>Payment</code>, a <code>@Service</code> class <code>PaymentService</code>, as well as a JPA repository, controller, and some utility classes. I have integration tests that mostly work using junit, h2 in-memory db, and <code>RestTemplate</code>. When I run the test to, for example, create a new payment, the <code>@Service</code> class runs, does the business logic, saves the new object in the in-memory database, sets a few more fields, and then returns the created  object.</p>\n<p>My test:</p>\n<pre><code>@SpringBootTest(webEnvironment=SpringBootTest.WebEnvironment.RANDOM_PORT)                                                                                                                                                                                      \n@FieldDefaults(level=AccessLevel.PRIVATE)                                                                                                                                                                                                                      \npublic class PaymentControllerCreateTest {                                                                                                                                                                                                                     \n                                                                                                                                                                                                                                                               \n        @LocalServerPort                                                                                                                                                                                                                                       \n        int port;                                                                                                                                                                                                                                              \n                                                                                                                                                                                                                                                               \n        String baseUrl = &quot;http://localhost&quot;;                                                                                                                                                                                                                   \n                                                                                                                                                                                                                                                               \n        static RestTemplate restTemplate = null;                                                                                                                                                                                                               \n                                                                                                                                                                                                                                                               \n        @BeforeAll                                                                                                                                                                                                                                             \n        public static void init() {                                                                                                                                                                                                                            \n                restTemplate = new RestTemplate();                                                                                                                                                                                                             \n                restTemplate.getMessageConverters().add(new MappingJackson2HttpMessageConverter());                                                                                                                                                            \n        }                                                                                                                                                                                                                                                      \n                                                                                                                                                                                                                                                               \n        @BeforeEach                                                                                                                                                                                                                                            \n        public void setup() {                                                                                                                                                                                                                                  \n                baseUrl += &quot;:&quot; + port + &quot;/payment&quot;;                                                                                                                                                                                                            \n        }                                                                                                                                                                                                                                                      \n                                                                                                                                                                                                                                                               \n        @Test                                                                                                                                                                                                                                                  \n        @Sql(statements=&quot;delete from payment_line_items&quot;, executionPhase=Sql.ExecutionPhase.AFTER_TEST_METHOD)                                                                                                                                                 \n        @Sql(statements=&quot;delete from payment&quot;, executionPhase=Sql.ExecutionPhase.AFTER_TEST_METHOD)                                                                                                                                                            \n        public void testCreateBasicPayment() throws Exception {                                                                                                                                                                                                \n            headers.setContentType(MediaType.APPLICATION_JSON);                                         \n            headers.set(&quot;Authorization&quot;, &quot;token&quot;);                                                      \n            HttpEntity&lt;Payment&gt; entity = new HttpEntity&lt;&gt;(payment, headers);                            \n            ResponseEntity&lt;Payment&gt; response = restTemplate.postForEntity(baseUrl, entity, Payment.class);                                                                                                          \n            assert response.getStatusCode().is2xxSuccessful();                                          \n            Payment created = response.getBody(); \n    \n            // these assertions pass, but amount and currency code are set in the POSTed object                                                      \n            assert created.getCardInfo() == null;                                                       \n            assert created.getAmount().compareTo(payment.getAmount()) == 0;                             \n            assert created.getCurrencyCode().equals(payment.getCurrencyCode());                         \n    \n            // these assertions fail, and the fields are either autogenerated or set in the service\n            assert created.getId() != null;\n            assert created.getTransId() != null;                                                                                                                                                                                                            \n        }\n}\n</code></pre>\n<p>Relevant bits of Payment class:</p>\n<pre><code>@Entity @Table(name=&quot;payment&quot;)                                                                              \n@JsonInclude(Include.NON_NULL)                                                                              \n@Data                                                                                                       \n@FieldDefaults(level=AccessLevel.PRIVATE)                                                                   \n@JsonIgnoreProperties({&quot;hibernateLazyInitializer&quot;, &quot;handler&quot;})                                              \npublic class Payment {\n\n        @Id                                                                                                 \n        @GeneratedValue                                                                                     \n        @JsonProperty(access=Access.READ_ONLY)                                                                                                                                                                 \n        UUID id;\n\n        @JsonProperty(access=Access.READ_ONLY)                                                              \n        String transId;\n\n        @NotNull\n        @JsonSerialize(using=BigDecimalSerializer.class)\n        BigDecimal amount;\n\n        @NotNull\n        String currencyCode;\n\n    ...\n\n}\n</code></pre>\n<p>Simplified <code>@Service</code> class:</p>\n<pre><code>@Service                                                                                                   \n@NoArgsConstructor                                                                                         \npublic class PaymentService {                                                                              \n                                                                                                                                              \n        @Autowired                                                                                         \n        PaymentRepository repository;                                                                                                                                                                                                    \n                                                                                                           \n        public Payment createPayment(Payment payment) {                                                                                                     \n                // do business logic, submit payment, etc.\n                payment.setTransId(tid);\n                payment.setCardInfo(null); // set payment info to null so it isn't included in response          \n                                                               \n                return repository.saveAndFlush(payment);\n        }\n}\n</code></pre>\n<p>I can verify that the code in the <code>@Service</code> class is running (via print statements and other ways related to the specific business logic). However, the returned object from <code>restTemplate.postForEntity()</code> is missing some fields, namely all those that are set by the <code>@Service</code> code and <code>@GeneratedValue</code> fields. Everything works as expected when running manual tests using curl. How can I get the correct object to be returned from the <code>restTemplate.postForEntity()</code>?</p>\n<p>MRE for the issue: <a href=\"https://github.com/honreir/SO-79624582-mre\" rel=\"nofollow noreferrer\">https://github.com/honreir/SO-79624582-mre</a></p>\n",
+    "tags" : [ "java", "spring-boot", "testing", "junit", "resttemplate" ],
+    "owner" : {
+      "account_id" : 42010562,
+      "reputation" : 23,
+      "user_id" : 30553141,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/416c732cee9b926e2e1fc7633dcf00da?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "user30553141",
+      "link" : "https://stackoverflow.com/users/30553141/user30553141"
+    },
+    "is_answered" : true,
+    "view_count" : 154,
+    "answer_count" : 1,
+    "score" : 2,
+    "last_activity_date" : 1747580225,
+    "creation_date" : 1747376227,
+    "link" : "https://stackoverflow.com/questions/79624582/when-performing-integration-tests-for-springboot-app-with-resttemplate-why-are",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79627388,
+    "question_id" : 79624582,
+    "body" : "<p>The issue is the use of <code>@JsonProperty(access = JsonProperty.Access.READ_ONLY)</code> on the <code>id</code> and <code>transId</code> fields in your <code>Payment</code> entity. This instructs Jackson to ignore these fields during deserialization, which includes deserializing the HTTP response body (<code>response.getBody()</code>) in your integration test using <code>RestTemplate</code>.</p>\n<p>To resolve this properly and avoid mixing persistence and API concerns, you should introduce DTOs in your code, like this:</p>\n<pre><code>@RestController\n@RequiredArgsConstructor\npublic class PaymentController {\n    \n    private final PaymentService service;\n\n    @PostMapping(value = &quot;/payment&quot;, \n            consumes = {&quot;application/json&quot;}, \n            produces = {&quot;application/json&quot;})\n    ResponseEntity&lt;?&gt; createPayment(@RequestBody @Valid PaymentRequest paymentRequest) throws Exception {\n        PaymentResponse paymentResponse = service.createPayment(paymentRequest);\n        return new ResponseEntity&lt;&gt;(paymentResponse, HttpStatus.CREATED);\n    }\n}\n</code></pre>\n<p>where:</p>\n<pre><code>// Excludes id and transId to prevent the client from sending them\npublic record PaymentRequest(@NotNull\n                             String currencyCode,\n                             @NotNull\n                             @JsonSerialize(using = BigDecimalSerializer.class)\n                             BigDecimal amount,\n                             CardInfo cardInfo) {\n}\n</code></pre>\n<pre><code>// Excludes cardInfo\npublic record PaymentResponse(UUID id,\n                         String transId,\n                         String currencyCode,\n                         BigDecimal amount,\n                         Instant timestamp ) {\n}\n</code></pre>\n<p>You also need to create and use in your service a <code>PaymentMapper</code> to map <code>PaymentRequest</code> to <code>Payment</code> entity and to map <code>Payment</code> entity to <code>PaymentResponse</code>.</p>\n<p>Alternative, if refactoring to use DTOs isn’t feasible at the moment, another approach is to assert on the raw JSON returned:</p>\n<pre><code>    @Test\n    @Sql(statements=&quot;delete from payment&quot;, executionPhase=Sql.ExecutionPhase.AFTER_TEST_METHOD)\n    void testCreateBasicPayment() throws Exception {\n        Payment payment = generatePayment();\n        HttpHeaders headers = generateHttpHeaders();\n\n        HttpEntity&lt;Payment&gt; entity = new HttpEntity&lt;&gt;(payment, headers);\n\n        ResponseEntity&lt;String&gt; response = restTemplate.postForEntity(baseUrl, entity, String.class);\n\n        assert response.getStatusCode().is2xxSuccessful();\n\n        /*\n         *{&quot;id&quot;:&quot;c4fb085f-73be-488e-8ba9-bd492f59b4cb&quot;,&quot;timestamp&quot;:&quot;2025-05-18T10:40:02.706665Z&quot;,\n         * &quot;transId&quot;:&quot;some ID&quot;,&quot;amount&quot;:1024.00,&quot;currencyCode&quot;:&quot;USD&quot;}\n         */\n        String responseBodyJson = response.getBody();\n\n        // assert json here like simple string or using some libraries like net.javacrumbs.json-unit assertj\n    }\n</code></pre>\n",
+    "score" : 2,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 18586978,
+      "reputation" : 3850,
+      "user_id" : 15000097,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/yFl4M.jpg?s=256",
+      "display_name" : "Georgii Lvov",
+      "link" : "https://stackoverflow.com/users/15000097/georgii-lvov"
+    },
+    "creation_date" : 1747565893,
+    "last_activity_date" : 1747580225,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140435945,
+    "post_id" : 79624582,
+    "body" : "I attached a link to a MRE on the main post. You will have to set the datasource variables in application.properties.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 42010562,
+      "reputation" : 23,
+      "user_id" : 30553141,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/416c732cee9b926e2e1fc7633dcf00da?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "user30553141",
+      "link" : "https://stackoverflow.com/users/30553141/user30553141"
+    },
+    "creation_date" : 1747521297,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140435790,
+    "post_id" : 79624582,
+    "body" : "I cannot reproduce your behaviour, so please provide the minimal reproducible example e.g. on GitHub if possible, in order to help you. PS: The only one suggestion without MRE is to use <code>TestRestTemplate</code> instead of <code>RestTemplate</code>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 18586978,
+      "reputation" : 3850,
+      "user_id" : 15000097,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/yFl4M.jpg?s=256",
+      "display_name" : "Georgii Lvov",
+      "link" : "https://stackoverflow.com/users/15000097/georgii-lvov"
+    },
+    "creation_date" : 1747514796,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140435662,
+    "post_id" : 79624582,
+    "body" : "Updated the original post to include the test class.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 42010562,
+      "reputation" : 23,
+      "user_id" : 30553141,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/416c732cee9b926e2e1fc7633dcf00da?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "user30553141",
+      "link" : "https://stackoverflow.com/users/30553141/user30553141"
+    },
+    "creation_date" : 1747509827,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140435645,
+    "post_id" : 79624582,
+    "body" : "pls share also your full test class",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 18586978,
+      "reputation" : 3850,
+      "user_id" : 15000097,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/yFl4M.jpg?s=256",
+      "display_name" : "Georgii Lvov",
+      "link" : "https://stackoverflow.com/users/15000097/georgii-lvov"
+    },
+    "creation_date" : 1747509001,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140435630,
+    "post_id" : 79624582,
+    "body" : "Same thing, the fields are still null.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 42010562,
+      "reputation" : 23,
+      "user_id" : 30553141,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/416c732cee9b926e2e1fc7633dcf00da?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "user30553141",
+      "link" : "https://stackoverflow.com/users/30553141/user30553141"
+    },
+    "creation_date" : 1747508247,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140435617,
+    "post_id" : 79624582,
+    "body" : "okay, could you add the <code>org.springframework.transaction.annotation.Transactional</code> annotation above the <code>createPayment </code> method and run the test",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 18586978,
+      "reputation" : 3850,
+      "user_id" : 15000097,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/yFl4M.jpg?s=256",
+      "display_name" : "Georgii Lvov",
+      "link" : "https://stackoverflow.com/users/15000097/georgii-lvov"
+    },
+    "creation_date" : 1747507367,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140435503,
+    "post_id" : 79624582,
+    "body" : "@GeorgiiLvov I can&#39;t post the whole code, but I added a simplified version. Again, there is no issue when testing the code manually with curl.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 42010562,
+      "reputation" : 23,
+      "user_id" : 30553141,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/416c732cee9b926e2e1fc7633dcf00da?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "user30553141",
+      "link" : "https://stackoverflow.com/users/30553141/user30553141"
+    },
+    "creation_date" : 1747502767,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140431869,
+    "post_id" : 79624582,
+    "body" : "Pls share your <code>PaymentService</code> as well",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 18586978,
+      "reputation" : 3850,
+      "user_id" : 15000097,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/yFl4M.jpg?s=256",
+      "display_name" : "Georgii Lvov",
+      "link" : "https://stackoverflow.com/users/15000097/georgii-lvov"
+    },
+    "creation_date" : 1747391827,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79627388" : [ {
+      "comment_id" : 140437259,
+      "post_id" : 79627388,
+      "body" : "Thanks, the <code>@JsonProperty(access = JsonProperty.Access.READ_ONLY)</code> is indeed the issue. Unfortunately I don&#39;t yet have enough reputation to upvote your answer.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 42010562,
+        "reputation" : 23,
+        "user_id" : 30553141,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/416c732cee9b926e2e1fc7633dcf00da?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "user30553141",
+        "link" : "https://stackoverflow.com/users/30553141/user30553141"
+      },
+      "creation_date" : 1747590756,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

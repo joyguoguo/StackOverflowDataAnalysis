@@ -1,0 +1,162 @@
+{
+  "question" : {
+    "question_id" : 79679982,
+    "title" : "Java FFM `Linker.Option.captureCallState` does not successfully capture `GetLastError` on Windows",
+    "body" : "<p>I'm trying to retrieve <a href=\"https://learn.microsoft.com/en-us/windows/win32/api/errhandlingapi/nf-errhandlingapi-getlasterror\" rel=\"noreferrer\"><code>GetLastError</code></a> code on <a href=\"https://learn.microsoft.com/en-us/windows/win32/api/libloaderapi/nf-libloaderapi-loadlibraryw\" rel=\"noreferrer\"><code>LoadLibraryW</code></a> failure via <a href=\"https://docs.oracle.com/en/java/javase/23/docs/api/java.base/java/lang/foreign/Linker.Option.html#captureCallState(java.lang.String...)\" rel=\"noreferrer\"><code>Linker.Option.captureCallState</code></a>. According to the documentation and <a href=\"https://bugs.openjdk.org/browse/JDK-8304953\" rel=\"noreferrer\">this issue on JDK Bug System</a>, <code>captureCallState</code> is the preferred way of retrieving such error codes.</p>\n<p>MWE here (requires Java 22+):</p>\n<pre class=\"lang-java prettyprint-override\"><code>import java.lang.foreign.*;\nimport java.lang.invoke.MethodHandle;\nimport java.lang.invoke.VarHandle;\n\npublic final class Drill {\n    public static void main(String[] args) throws Throwable {\n        System.loadLibrary(&quot;kernel32&quot;);\n\n        Linker nativeLinker = Linker.nativeLinker();\n        SymbolLookup stdlibLookup = nativeLinker.defaultLookup();\n        SymbolLookup loaderLookup = SymbolLookup.loaderLookup();\n\n        MemorySegment pfnLoadLibraryW = loaderLookup.find(&quot;LoadLibraryW&quot;)\n                .or(() -&gt; stdlibLookup.find(&quot;LoadLibraryW&quot;))\n                .orElse(MemorySegment.NULL);\n\n        if (pfnLoadLibraryW.equals(MemorySegment.NULL)) {\n            throw new RuntimeException(&quot;Failed to find LoadLibraryW symbol&quot;);\n        }\n\n        MethodHandle hLoadLibraryW = nativeLinker.downcallHandle(\n                pfnLoadLibraryW,\n                FunctionDescriptor.of(\n                        ValueLayout.ADDRESS, // returns HMODULE\n                        ValueLayout.ADDRESS.withTargetLayout(ValueLayout.JAVA_SHORT) // LPCWSTR lpLibFileName\n                ),\n                Linker.Option.captureCallState(&quot;GetLastError&quot;)\n        );\n\n        try (Arena arena = Arena.ofConfined()) {\n            char[] libName = &quot;nonexist&quot;.toCharArray();\n            MemorySegment lpLibName = arena.allocate(ValueLayout.JAVA_SHORT, libName.length + 1);\n            lpLibName.copyFrom(MemorySegment.ofArray(libName));\n\n            StructLayout captureStateLayout = Linker.Option.captureStateLayout();\n            MemorySegment capturedState = arena.allocate(captureStateLayout);\n\n            MemorySegment result = (MemorySegment) hLoadLibraryW.invokeExact(lpLibName, capturedState);\n            if (!result.equals(MemorySegment.NULL)) {\n                throw new RuntimeException(&quot;Why would you even do this?&quot;);\n            }\n\n            VarHandle vh = captureStateLayout.varHandle(MemoryLayout.PathElement.groupElement(&quot;GetLastError&quot;));\n            int lastError = (int) vh.get(capturedState, 0L);\n            System.out.println(&quot;GetLastError = &quot; + lastError);\n        }\n    }\n}\n</code></pre>\n<p>However, the captured <code>GetLastError</code> field is always <code>0</code>.</p>\n<p>I tested this with:</p>\n<ul>\n<li>Windows11 24H2 + Oracle OpenJDK 24</li>\n<li>Windows10 LTSC2019 + Oracle OpenJDK 22</li>\n<li>Windows10 LTSC2019 + Oracle OpenJDK 24</li>\n</ul>\n<p>Did I mistake the use case of <code>captureCallState</code>, or this is a deliberate design, or bug of JDK implementation?</p>\n",
+    "tags" : [ "java", "project-panama", "java-ffm", "java-22" ],
+    "owner" : {
+      "account_id" : 21186386,
+      "reputation" : 103,
+      "user_id" : 24241967,
+      "user_type" : "registered",
+      "profile_image" : "https://lh6.googleusercontent.com/-X43-0LskZnQ/AAAAAAAAAAI/AAAAAAAAAAA/AMZuuclUHaPg8jXy_wR6iqf8MSMrq7r2Og/s96-c/s256-rj/photo.jpg",
+      "display_name" : "Iceyey Chuiskell",
+      "link" : "https://stackoverflow.com/users/24241967/iceyey-chuiskell"
+    },
+    "is_answered" : true,
+    "view_count" : 431,
+    "answer_count" : 2,
+    "score" : 10,
+    "last_activity_date" : 1751522614,
+    "creation_date" : 1750918484,
+    "link" : "https://stackoverflow.com/questions/79679982/java-ffm-linker-option-capturecallstate-does-not-successfully-capture-getlast",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79680234,
+    "question_id" : 79679982,
+    "body" : "<p>The capture field is bound as first argument of the altered <code>MethodHandle hLoadLibraryW</code>, not the last so just adjust the invoke line to:</p>\n<pre><code>// capturedState is the first argument to hLoadLibraryW before the normal args:\nMemorySegment result = (MemorySegment) hLoadLibraryW.invokeExact(capturedState, lpLibName);\n\n// This would also work: bind the state variable as first arg:\n//  MemorySegment result = (MemorySegment) hLoadLibraryW.bindTo(capturedState).invokeExact(lpLibName);\n</code></pre>\n<p>With this change, you should see an error code as you expect:</p>\n<pre><code>GetLastError = 126\n</code></pre>\n<p>By the way, you can allocate the <code>LPCWSTR</code> in one line:</p>\n<pre><code>MemorySegment lpLibName = arena.allocateFrom(&quot;notexist&quot;, StandardCharsets.UTF_16LE);\n</code></pre>\n",
+    "score" : 10,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 5998820,
+      "reputation" : 16284,
+      "user_id" : 4712734,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f6e922a2cb7e2da59286f27b162aaca5?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "DuncG",
+      "link" : "https://stackoverflow.com/users/4712734/duncg"
+    },
+    "creation_date" : 1750929752,
+    "last_activity_date" : 1750930542,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79680845,
+    "question_id" : 79679982,
+    "body" : "<p>To complement <a href=\"https://stackoverflow.com/a/79680234/6395627\">the answer</a> by <a href=\"https://stackoverflow.com/users/4712734/duncg\">@DuncG</a>, the position of the &quot;capture state segment&quot; parameter is documented by <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/foreign/Linker.Option.html#captureCallState(java.lang.String...)\" rel=\"nofollow noreferrer\"><code>Linker.Option::captureCallState(String...)</code></a>:</p>\n<blockquote>\n<p>Execution state is captured by a downcall method handle on invocation, by writing it to a native segment provided by the user to the downcall method handle. For this purpose, a downcall method handle linked with this option will feature an additional <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/foreign/MemorySegment.html\" rel=\"nofollow noreferrer\"><code>MemorySegment</code></a> parameter directly following the target address, and optional <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/foreign/SegmentAllocator.html\" rel=\"nofollow noreferrer\"><code>SegmentAllocator</code></a> parameters. This parameter, the <em>capture state segment</em>, represents the native segment into which the captured state is written.</p>\n</blockquote>\n<p>A downcall <code>MethodHandle</code> would look something like the following Java method:</p>\n<pre><code>ReturnType invoke(\n    MemorySegment address, \n    SegmentAllocator allocator,\n    MemorySegment captureState,\n    Object... functionArguments) throws Throwable;\n</code></pre>\n<ul>\n<li><p>The <code>address</code> parameter is the <code>MemorySegment</code> pointing to the foreign function you want to call. This parameter is only required if you <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/foreign/Linker.html#downcallHandle(java.lang.foreign.FunctionDescriptor,java.lang.foreign.Linker.Option...)\" rel=\"nofollow noreferrer\">create the downcall handle <strong>without</strong> an address</a>. This is documented:</p>\n<blockquote>\n<p>The Java <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/invoke/MethodType.html\" rel=\"nofollow noreferrer\">method type</a> associated with the returned method handle is <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/foreign/FunctionDescriptor.html#toMethodType()\" rel=\"nofollow noreferrer\">derived</a> from the argument and return layouts in the function descriptor, but features an additional leading parameter of type <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/foreign/MemorySegment.html\" rel=\"nofollow noreferrer\"><code>MemorySegment</code></a>, from which the address of the target foreign function is derived.</p>\n</blockquote>\n<p>The parameter is implicit if you <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/foreign/Linker.html#downcallHandle(java.lang.foreign.MemorySegment,java.lang.foreign.FunctionDescriptor,java.lang.foreign.Linker.Option...)\" rel=\"nofollow noreferrer\">create the downcall handle <strong>with</strong> an address</a>. This is also documented:</p>\n<blockquote>\n<p>Calling this method is equivalent to the following code:</p>\n<pre class=\"lang-java prettyprint-override\"><code>linker.downcallHandle(function, options).bindTo(address);\n</code></pre>\n</blockquote>\n</li>\n<li><p>The <code>allocator</code> parameter is a <code>SegmentAllocator</code> used to allocate memory when the return type is a group layout. This is <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/foreign/Linker.html#downcallHandle(java.lang.foreign.FunctionDescriptor,java.lang.foreign.Linker.Option...)\" rel=\"nofollow noreferrer\">documented</a>:</p>\n<blockquote>\n<p>Moreover, if the function descriptor's return layout is a group layout, the resulting downcall method handle accepts an additional leading parameter of type <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/foreign/SegmentAllocator.html\" rel=\"nofollow noreferrer\"><code>SegmentAllocator</code></a>, which is used by the linker runtime to allocate the memory region associated with the struct returned by the downcall method handle.</p>\n</blockquote>\n<p>This parameter is omitted if the return type is not a group layout.</p>\n</li>\n<li><p>The <code>captureState</code> parameter is a <code>MemorySegment</code> allocated from the <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/foreign/Linker.Option.html#captureStateLayout()\" rel=\"nofollow noreferrer\">capture state layout</a>. The position of this parameter is documented (quoted earlier). The layout of the argument is also documented:</p>\n<blockquote>\n<p>The capture state segment must have size and alignment compatible with the layout returned by <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/foreign/Linker.Option.html#captureStateLayout()\" rel=\"nofollow noreferrer\"><code>captureStateLayout()</code></a>. This layout is a struct layout which has a named field for each captured value.</p>\n</blockquote>\n<p>This parameter is omitted if the downcall handle was not created with the &quot;capture call state&quot; option.</p>\n</li>\n<li><p>The <code>functionArguments</code> parameter is zero or more arguments passed to the native function and is defined by the <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/foreign/FunctionDescriptor.html\" rel=\"nofollow noreferrer\">function descriptor</a>. The actual type of each argument will be a primitive type or <code>MemorySegment</code>.</p>\n<p>Note this parameter is not really an <code>Object[]</code>, at least when the method handle is invoked with <code>invokeExact</code> or <code>invoke</code>. Think of it being &quot;expanded&quot; based on the method type of the handle. You have to <em>separately</em> pass the correct arguments of the correct type. Primitives are handled directly as appropriate. And if you use <code>invokeExact</code> then the <em>compile-time</em> argument types must match the parameter types <strong>exactly</strong>.</p>\n</li>\n<li><p>The <code>ReturnType</code> is defined by the <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/foreign/FunctionDescriptor.html\" rel=\"nofollow noreferrer\">function descriptor</a>. It may be <code>void</code>, a primitive type, or <code>MemorySegment</code>.</p>\n</li>\n</ul>\n<p>So, the <em>capture state segment</em> argument goes after the function address and/or allocator arguments if they are required to be passed, but before any of the function's arguments. If the function address and allocator arguments are implicit/omitted, then the <em>capture state segment</em> will be the first argument passed to the method handle.</p>\n",
+    "score" : 10,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 8532578,
+      "reputation" : 49904,
+      "user_id" : 6395627,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Slaw",
+      "link" : "https://stackoverflow.com/users/6395627/slaw"
+    },
+    "creation_date" : 1750954643,
+    "last_activity_date" : 1751041540,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140543750,
+    "post_id" : 79679982,
+    "body" : "It is unfortunate that the example of <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/foreign/Linker.Option.html#captureCallState(java.lang.String...)\" rel=\"nofollow noreferrer\">captureCallState</a> uses a void function. The state is the first argument.",
+    "score" : 6,
+    "owner" : {
+      "account_id" : 5998820,
+      "reputation" : 16284,
+      "user_id" : 4712734,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f6e922a2cb7e2da59286f27b162aaca5?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "DuncG",
+      "link" : "https://stackoverflow.com/users/4712734/duncg"
+    },
+    "creation_date" : 1750931230,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79680234" : [ {
+      "comment_id" : 140544491,
+      "post_id" : 79680234,
+      "body" : "Thank you, that was the lead I needed.  You are indeed correct:  <a href=\"https://github.com/openjdk/jdk/blob/master/src/java.base/share/classes/jdk/internal/foreign/abi/CapturableState.java\" rel=\"nofollow noreferrer\">github.com/openjdk/jdk/blob/master/src/java.base/share/class&zwnj;&#8203;es/&hellip;</a>",
+      "score" : 3,
+      "owner" : {
+        "account_id" : 2053598,
+        "reputation" : 44991,
+        "user_id" : 1831987,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/38b1c37530189ec4471a43a618e33f67?s=256&d=identicon&r=PG",
+        "display_name" : "VGR",
+        "link" : "https://stackoverflow.com/users/1831987/vgr"
+      },
+      "creation_date" : 1750946210,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140544472,
+      "post_id" : 79680234,
+      "body" : "The <code>CapturableState</code> has fields for errno, GetLastError and WSAGetLastError. The API you use determines which field you need to pass to both <code>Linker.Option.captureCallState(field)</code> to define the enhanced method handle, and also to read result via  <code>captureStateLayout.varHandle(MemoryLayout.PathElement.groupE&zwnj;&#8203;lement(field))</code>. So yes, I believe the programmer does need to know to use &quot;errno&quot; for non-Windows and also select between <code>GetLastError</code>/<code>WSAGetLastError</code>",
+      "score" : 4,
+      "owner" : {
+        "account_id" : 5998820,
+        "reputation" : 16284,
+        "user_id" : 4712734,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/f6e922a2cb7e2da59286f27b162aaca5?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "DuncG",
+        "link" : "https://stackoverflow.com/users/4712734/duncg"
+      },
+      "creation_date" : 1750945973,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140544336,
+      "post_id" : 79680234,
+      "body" : "How does captureCallState actually work?  Is the string argument a native function name, a native variable name, or a special “magic” value that Java’s foreign functionality will recognize on a per-platform basis?  Meaning, does a programmer have to just know that <code>&quot;GetLastError&quot;</code> is what works in Windows and <code>&quot;errno&quot;</code> is what works in Unix?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2053598,
+        "reputation" : 44991,
+        "user_id" : 1831987,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/38b1c37530189ec4471a43a618e33f67?s=256&d=identicon&r=PG",
+        "display_name" : "VGR",
+        "link" : "https://stackoverflow.com/users/1831987/vgr"
+      },
+      "creation_date" : 1750943903,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140543999,
+      "post_id" : 79680234,
+      "body" : "@VGR The original code does work for me (as renaming &quot;notexist&quot; to &quot;shell32&quot; does find a library), though I prefer the one liner.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 5998820,
+        "reputation" : 16284,
+        "user_id" : 4712734,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/f6e922a2cb7e2da59286f27b162aaca5?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "DuncG",
+        "link" : "https://stackoverflow.com/users/4712734/duncg"
+      },
+      "creation_date" : 1750936671,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140543955,
+      "post_id" : 79680234,
+      "body" : "I suspect your last line is not just a suggestion, but a necessity;  the code in the question is copying the string using UTF-16BE (which is what all Java <code>char</code> values are) instead of the UTF-16LE encoding that Windows requires.",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 2053598,
+        "reputation" : 44991,
+        "user_id" : 1831987,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/38b1c37530189ec4471a43a618e33f67?s=256&d=identicon&r=PG",
+        "display_name" : "VGR",
+        "link" : "https://stackoverflow.com/users/1831987/vgr"
+      },
+      "creation_date" : 1750936009,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

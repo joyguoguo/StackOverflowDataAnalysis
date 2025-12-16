@@ -1,0 +1,47 @@
+{
+  "question" : {
+    "question_id" : 79576518,
+    "title" : "How ro return netty http response from channel handler to execute method",
+    "body" : "<p>I'm trying to implement http client using netty library.\nBelow is the code that implements the NettyHttpClient.</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class NettyHttpClient {\n    private final EventLoopGroup group;\n\n    private final Bootstrap bootstrap;\n    private final URI uri;\n    private int port;\n\n    public NettyHttpClient(String url) throws Exception {\n        this.group = new MultiThreadIoEventLoopGroup(EpollIoHandler.newFactory());\n        uri = new URI(url);\n        String scheme = uri.getScheme() == null ? &quot;http&quot; : uri.getScheme();\n        // Configure the client\n        int port = uri.getPort();\n        if (port == -1) {\n            if (&quot;http&quot;.equalsIgnoreCase(scheme)) {\n                this.port = 80;\n            } else if (&quot;https&quot;.equalsIgnoreCase(scheme)) {\n                this.port = 443;\n            }\n        } else {\n            this.port = port;\n        }\n       this.bootstrap = new Bootstrap()\n                .group(group)\n                .channel(NioSocketChannel.class)\n                .option(ChannelOption.TCP_NODELAY, true)\n                .handler(new HttpChannelInitializer(&quot;https&quot;.equalsIgnoreCase(uri.getScheme()), uri.getHost(), this.port));\n    }\n\n    private  void executeRequest() {\n        try {\n            // Start the client\n            Channel channel = bootstrap.connect(uri.getHost(), this.port).sync().channel();\n\n            // Prepare the HTTP request\n            DefaultFullHttpRequest request;\n            if (content != null) {\n                request = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.GET,, uri.getRawPath(), content);\n                request.headers().set(HttpHeaderNames.CONTENT_LENGTH, content.readableBytes());\n                request.headers().set(HttpHeaderNames.CONTENT_TYPE, &quot;application/json&quot;);\n            } else {\n                request = new DefaultFullHttpRequest(HttpVersion.HTTP_1_1, HttpMethod.GET,, uri.getRawPath());\n            }\n\n            // Set headers\n            request.headers().set(HttpHeaderNames.HOST, uri.getHost());\n            request.headers().set(HttpHeaderNames.CONNECTION, HttpHeaderValues.CLOSE);\n            request.headers().set(HttpHeaderNames.ACCEPT_ENCODING, HttpHeaderValues.GZIP);\n\n            // Send the HTTP request\n            channel.writeAndFlush(request);\n        } catch (Exception e) {\n            throw new RuntimeException(e);\n        }\n    }\n\n    public void shutdown() {\n        group.shutdownGracefully();\n    }\n</code></pre>\n<p>Below is my Netty Http Channel Pipeline Setup -</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class HttpChannelInitializer  extends ChannelInitializer&lt;Channel&gt; {\n\n    private final SslContext sslContext;\n    private final boolean ssl;\n    private final String host;\n    private final int port;\n    private final CompletableFuture&lt;String&gt; responseFuture;\n\n    public HttpChannelInitializer(boolean ssl, String host, int port) {\n        this.sslContext = Main.sslContext;\n        this.ssl = ssl;\n        this.host = host;\n        this.port = port;\n        this.responseFuture = new CompletableFuture&lt;&gt;();\n    }\n\n    @Override\n    protected void initChannel(Channel ch) throws Exception {\n        ChannelPipeline p = ch.pipeline();\n        if (ssl) {\n            p.addLast(sslContext.newHandler(ch.alloc(), host, port));\n        }\n        p.addLast(new HttpClientCodec());\n        p.addLast(new HttpContentDecompressor());\n        p.addLast(new HttpObjectAggregator(1048576)); // Aggregate HTTP messages\n        p.addLast(new HttpResponseHandler(responseFuture));\n\n        // Wait for the server to close the connection\n        ch.closeFuture().addListener((ChannelFutureListener) future -&gt; {\n            if (!responseFuture.isDone()) {\n                responseFuture.completeExceptionally(new RuntimeException(&quot;Connection closed without response&quot;));\n            }\n        });\n    }\n}\n</code></pre>\n<p>Below is the HttpServerResponseHandler while handles the http response from the server-</p>\n<pre class=\"lang-java prettyprint-override\"><code>class HttpResponseHandler extends SimpleChannelInboundHandler&lt;FullHttpResponse&gt; {\n    private final CompletableFuture&lt;String&gt; responseFuture;\n\n    public HttpResponseHandler(CompletableFuture&lt;String&gt; responseFuture) {\n        this.responseFuture = responseFuture;\n    }\n\n    @Override\n    protected void channelRead0(ChannelHandlerContext ctx, FullHttpResponse response) {\n        String content = response.content().toString(CharsetUtil.UTF_8);\n        System.out.println(&quot;Response: &quot; + content);\n        responseFuture.complete(content);\n    }\n\n    @Override\n    public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause) {\n        responseFuture.completeExceptionally(cause);\n\n        ctx.close();\n    }\n}\n</code></pre>\n<p>Below is the main program to test -</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class Main {\n\n    public static SslContext sslContext = null;\n    static {\n        try {\n            sslContext = SslContextBuilder.forClient()\n                    .trustManager(InsecureTrustManagerFactory.INSTANCE)\n                    .build();\n        } catch (SSLException e) {\n            throw new RuntimeException(e);\n        }\n    }\n\n    public static void main(String[] args) throws Exception {\n\n        NettyHttpClient client = new NettyHttpClient(&quot;https://example.com&quot;);\n        try {\n            // Example GET request\n            client.executeRequest();\n\n            Thread.sleep(5000);\n        } finally {\n            client.shutdown();\n        }\n    }\n}\n</code></pre>\n<p>This code is printing the response in the HttpResponseHandler.channelRead0 function.\nI would like to return the result of http execution from HttpResponseHandler to execute function as CompleteableFuture.</p>\n<p>I tried to look for some examples but I couldn't find .</p>\n<p>Any idea how can I achieve this?</p>\n",
+    "tags" : [ "java", "netty", "netty4" ],
+    "owner" : {
+      "account_id" : 2994486,
+      "reputation" : 10587,
+      "user_id" : 2541276,
+      "user_type" : "registered",
+      "accept_rate" : 55,
+      "profile_image" : "https://graph.facebook.com/100001587714573/picture?type=large",
+      "display_name" : "user51",
+      "link" : "https://stackoverflow.com/users/2541276/user51"
+    },
+    "is_answered" : false,
+    "view_count" : 68,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1744800135,
+    "creation_date" : 1744784308,
+    "link" : "https://stackoverflow.com/questions/79576518/how-ro-return-netty-http-response-from-channel-handler-to-execute-method",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79576980,
+    "question_id" : 79576518,
+    "body" : "<p>To return the HTTP response from <code>HttpResponseHandler</code> to the <code>executeRequest</code> method as a <code>CompletableFuture</code>, you need to expose the <code>CompletableFuture</code> from <code>HttpChannelInitializer</code> and modify <code>executeRequest</code> to return it.</p>\n<p>1. <code>HttpChannelInitializer</code> - Add a getter for responseFuture</p>\n<p>2.<code>NettyHttpClient</code>- Store <code>HttpChannelInitializer</code> and update <code>executeRequest</code> to return the CompletableFuture</p>\n<p>3.<code>Main</code> - Update to handle the <code>CompletableFuture</code></p>\n<p>4. Adjust the timeout in responseFuture.get(5, TimeUnit.SECONDS) as needed.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 5214916,
+      "reputation" : 13,
+      "user_id" : 4170200,
+      "user_type" : "registered",
+      "profile_image" : "https://lh6.googleusercontent.com/-pECk1IzNJOw/AAAAAAAAAAI/AAAAAAAAAD0/65Ep8uHWicQ/s256-rj/photo.jpg",
+      "display_name" : "Annaram Ravinder",
+      "link" : "https://stackoverflow.com/users/4170200/annaram-ravinder"
+    },
+    "creation_date" : 1744800135,
+    "last_activity_date" : 1744800135,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : { }
+}

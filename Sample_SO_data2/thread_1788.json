@@ -1,0 +1,46 @@
+{
+  "question" : {
+    "question_id" : 79678123,
+    "title" : "How can I replace the generated OpenAPI spec in Swagger (JAX-RS + OpenApiResource) with a custom OpenAPI object?",
+    "body" : "<p>I'm using Swagger with Jersey (JAX-RS) to serve API documentation. I configure Swagger like this:</p>\n<pre><code>ResourceConfig swaggerResourceConfig = new ResourceConfig()\n    .packages(&quot;io.swagger.v3.jaxrs2.integration.resources&quot;)\n    .register(OpenApiResource.class)\n    .register(SwaggerSerializers.class)\n    .register(AcceptHeaderOpenApiResource.class)\n    .property(&quot;jersey.config.server.wadl.disableWadl&quot;, true);\n\nSwaggerConfiguration oasConfig = new SwaggerConfiguration()\n    .openApi(baseModel) // &lt;-- I would want to serve the modified object, but can't at this point\n    .prettyPrint(true)\n    .resourcePackages(Set.of(&quot;my.api.package&quot;));\n\nOpenApiContext openApiCtx = new JaxrsOpenApiContextBuilder()\n    .openApiConfiguration(oasConfig)\n    .buildContext(true);\n</code></pre>\n<p>I have many endpoints where the ApiResponse.description is never set, so Swagger-UI shows errors: <code>Structural error at {PATH} should have required property 'description' missingProperty: description</code>. I wrote a helper function that traverses the generated OpenAPI model and fills in empty descriptions, which I tested out and it works:</p>\n<pre><code>public OpenAPI patchMissingDescriptions(OpenAPI openAPI) {\n    if (openAPI.getPaths() != null) {\n        for (Entry&lt;String, PathItem&gt; entry : openAPI.getPaths().entrySet()) {\n            for (Operation operation : entry.getValue().readOperations()) {\n                if (operation.getResponses() != null) {\n                    for (Entry&lt;String, ApiResponse&gt; respEntry : operation.getResponses().entrySet()) {\n                        ApiResponse response = respEntry.getValue();\n                        if (response.getDescription() == null) {\n                            response.setDescription(&quot;some description&quot;);\n                        }\n                    }\n                }\n            }\n        }\n    }\n    return openAPI;\n}\n</code></pre>\n<p><strong>Problem:</strong></p>\n<ul>\n<li>I need to invoke p<code>atchMissingDescriptions()</code> after the <code>OpenAPI</code> model is built but before Jersey serves the JSON/YAML docs.</li>\n<li>Calling <code>read()</code> on the <code>OpenApiContext</code> to obtain the <code>OpenAPI</code> is prohibitively slow due to deep reflection so I can't use this.</li>\n</ul>\n<p><strong>What I'm looking for</strong></p>\n<ul>\n<li><p>An extension point in Swagger-Core or JAX-RS integration that lets me mutate the in-memory OpenAPI object exactly once, after it’s built but before it’s cached/serialized.</p>\n</li>\n<li><p>Or a recommended best practice / pattern for filling in default values, especially response descriptions without duplicating the scanning logic.</p>\n</li>\n</ul>\n<p><strong>what I've tried:</strong></p>\n<ul>\n<li>Manually calling ctx.read() each time but my app just freezes due to reflection</li>\n<li>ContainerResponseFilter on /openapi.json (runs after serialization).</li>\n</ul>\n",
+    "tags" : [ "java", "swagger", "jersey", "openapi", "swagger-ui" ],
+    "owner" : {
+      "account_id" : 15904078,
+      "reputation" : 53,
+      "user_id" : 11475748,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/0aa26c908c1da6cbf1d051a944008eba?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "dmn28",
+      "link" : "https://stackoverflow.com/users/11475748/dmn28"
+    },
+    "is_answered" : true,
+    "view_count" : 130,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1751365078,
+    "creation_date" : 1750793858,
+    "link" : "https://stackoverflow.com/questions/79678123/how-can-i-replace-the-generated-openapi-spec-in-swagger-jax-rs-openapiresourc",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79685891,
+    "question_id" : 79678123,
+    "body" : "<p>What I needed to do was:</p>\n<ul>\n<li>add a custom Reader class to my SwaggerConfiguration:</li>\n</ul>\n<pre><code>SwaggerConfiguration oasConfig = new SwaggerConfiguration()\n    .openApi(baseModel)\n    .readerClass(MyCustomReader.class.getName()) // &lt;- HERE\n    .prettyPrint(true)\n    .resourcePackages(Set.of(&quot;my.api.package&quot;));\n</code></pre>\n<ul>\n<li>implement the Reader class extending <code>io.swagger.v3.jaxrs2.Reader;</code> and overriding the <code>read</code> method</li>\n</ul>\n<pre><code>public class MyCustomReader extends Reader {\n\n  @Override\n  public OpenAPI read(Class&lt;?&gt; cls,\n                      String parentPath, \n                      String parentMethod, \n                      boolean isSubresource,\n                      RequestBody parentRequestBody, \n                      ApiResponses apiResponses,\n                      Set&lt;String&gt; parentTags,\n                      List&lt;Parameter&gt; parentParameters,\n                      Set&lt;Class&lt;?&gt;&gt; scannedResources)\n {\n    OpenAPI openAPI = super.read(cls, parentPath, parentMethod, isSubresource,                parentRequestBody, apiResponses,\n      parentTags, parentParameters, scannedResources);\n    return populateMissingDescriptions(openAPI);\n  }\n\n  public static OpenAPI populateMissingDescriptions(OpenAPI openAPI) {\n    if (openAPI.getPaths() != null) {\n      for (Entry&lt;String, PathItem&gt; entry : openAPI.getPaths().entrySet()) {\n        String path = entry.getKey();\n        PathItem pathItem = entry.getValue();\n        for (Operation operation : pathItem.readOperations()) {\n          if (operation.getResponses() != null) {\n            for (Entry&lt;String, ApiResponse&gt; e : operation.getResponses().entrySet()) {\n              String status = e.getKey();\n              ApiResponse response = e.getValue();\n              if (response.getDescription() == null) {\n                response.setDescription(&quot;&quot;);\n              }\n            }\n          }\n        }\n      }\n    }\n    return openAPI;\n  }\n}\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 15904078,
+      "reputation" : 53,
+      "user_id" : 11475748,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/0aa26c908c1da6cbf1d051a944008eba?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "dmn28",
+      "link" : "https://stackoverflow.com/users/11475748/dmn28"
+    },
+    "creation_date" : 1751365078,
+    "last_activity_date" : 1751365078,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : { }
+}

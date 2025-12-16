@@ -1,0 +1,101 @@
+{
+  "question" : {
+    "question_id" : 79740456,
+    "title" : "Simplified outer convex hull of a set of points using JTS",
+    "body" : "<p>I'd like to use <a href=\"https://github.com/locationtech/jts\" rel=\"nofollow noreferrer\">JTS</a> to calculate a simplified (fewer points) convex hull from a collection of points including inner and perimeter points, where the hull is allowed to be a bit larger in area in order to simplify, but must contain all of the points.  I think that <a href=\"https://locationtech.github.io/jts/javadoc/org/locationtech/jts/simplify/PolygonHullSimplifier.html#hullByAreaDelta-org.locationtech.jts.geom.Geometry-boolean-double-\" rel=\"nofollow noreferrer\">PolygonHullSimplifier.hullByAreaDelta</a> is designed for that.</p>\n<p>Code snippet here (same data as plots but in different units.) <a href=\"https://gist.github.com/joshgold22/11d39c85456271109b2421dd124be241\" rel=\"nofollow noreferrer\">https://gist.github.com/joshgold22/11d39c85456271109b2421dd124be241</a></p>\n<p>I tried creating a MultiPoint, calling convexHull() on it, and passing that to <code>PolygonHullSimplifier.hullByAreaDelta(hull, true /*outer*/, 0.1 /*areaDeltaRatio*/)</code></p>\n<p>There were two surprises for me.  First, convexHull didn't seem to return a convexHull, though it did remove many points.  Showing the original set and then the result of <code>convexHull()</code>:</p>\n<p><a href=\"https://i.sstatic.net/yk5N8yX0.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/yk5N8yX0.png\" alt=\"plot of all points\" /></a></p>\n<p><a href=\"https://i.sstatic.net/CbmmuAvr.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/CbmmuAvr.png\" alt=\"plot of convexHull result, but not convex\" /></a></p>\n<p>Second, no matter how I play with the <code>areaDeltaRatio</code>, the result of <code>hullByAreaDelta</code> was always identical to the basic (intermediate) convex hull Polygon.  (It did differ when I tried an inner hull.)</p>\n<p>I'll add one more picture, of a DouglasPeuckerSimplifier simplification, which does work, but which I understand would not be guaranteed to contain all of the original points.</p>\n<p>Can you help clarify what I'm misunderstanding and show me how to do this?</p>\n<p><a href=\"https://i.sstatic.net/vTO7PyNo.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/vTO7PyNo.png\" alt=\"Douglas Peucker simplification\" /></a></p>\n",
+    "tags" : [ "java", "geometry", "convex-hull", "jts" ],
+    "owner" : {
+      "account_id" : 178970,
+      "reputation" : 5385,
+      "user_id" : 411282,
+      "user_type" : "registered",
+      "accept_rate" : 67,
+      "profile_image" : "https://www.gravatar.com/avatar/14d0a8831828a8d4ffe2f78964cc0332?s=256&d=identicon&r=PG",
+      "display_name" : "Joshua Goldberg",
+      "link" : "https://stackoverflow.com/users/411282/joshua-goldberg"
+    },
+    "is_answered" : true,
+    "view_count" : 153,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1756377206,
+    "creation_date" : 1755642129,
+    "link" : "https://stackoverflow.com/questions/79740456/simplified-outer-convex-hull-of-a-set-of-points-using-jts",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79748944,
+    "question_id" : 79740456,
+    "body" : "<p><strong>What’s likely happening?</strong></p>\n<ul>\n<li><p>convexHull() on MultiPoint might return a GeometryCollection or a polygon with redundant points. JTS convexHull() should return the minimal convex polygon containing all points. But if your points are aligned or clustered, it might return a LineString or Point or a polygon with unnecessary collinear points, which can look “not strictly convex” or overly detailed. Also, when printing or plotting, the polygon might look strange if you don’t interpret the geometry correctly.</p>\n</li>\n<li><p>PolygonHullSimplifier.hullByAreaDelta only works on polygons, not on convex hulls of MultiPoints directly. hullByAreaDelta expects a polygon that can be simplified. But the polygon from convexHull() is already minimal in convex terms; it's hard to simplify a convex polygon further without breaking convexity. The method likely won't simplify a convex polygon further, so your area delta parameter has no effect.</p>\n</li>\n<li><p>You want a simplified convex hull with fewer points, allowing it to be slightly larger (outer hull). The convex hull itself is the minimum convex polygon enclosing points — it can’t be smaller, but it can be simplified to fewer vertices if you relax convexity or allow an outer approximation. PolygonHullSimplifier is not a convex hull simplifier but a polygon simplifier controlling area increase.</p>\n</li>\n</ul>\n<p><strong>What are your options?</strong></p>\n<ul>\n<li><p>Use a convex hull algorithm, then run a simplification like Douglas-Peucker, but this breaks convexity and may exclude points. You saw this and noted it breaks the “contain all points” rule.</p>\n</li>\n<li><p>Use an outer hull that is not strictly convex, allowing simplification but still containing all points. PolygonHullSimplifier.hullByAreaDelta can be used here, but you need to start from a polygon with some interior points and more complex shape (not just convex hull). For example, you might build an initial polygon around the points (like an alpha shape or concave hull) and then simplify outward.</p>\n</li>\n<li><p>Use a custom approach: build a convex hull and then reduce points greedily while ensuring convexity and containment. This is non-trivial and not directly supported by JTS.</p>\n</li>\n</ul>\n<p><strong>What might fix your code approach?</strong></p>\n<p>Make sure the input to hullByAreaDelta is a polygon with multiple points and some detail, not just a convex hull polygon</p>\n<p>If you want a simplified convex polygon enclosing all points, try this:</p>\n<p>Compute the convex hull polygon from your MultiPoint.</p>\n<p>Then try a polygon simplifier that preserves convexity or implement a heuristic:</p>\n<p>For example, attempt to remove vertices one by one, checking if the polygon remains convex and contains all points.</p>\n<p>Unfortunately, JTS does not have a built-in simplified convex hull with tolerance.</p>\n<p>Quick test you can do in JTS</p>\n<pre class=\"lang-java prettyprint-override\"><code>MultiPoint multiPoint = ... // your points\nGeometry convexHull = multiPoint.convexHull();\n\n// convexHull is a Polygon\nSystem.out.println(&quot;Hull points: &quot; + convexHull.getNumPoints());\n\n// Try simplifying with DouglasPeucker - might break containment\nGeometry simplified = DouglasPeuckerSimplifier.simplify(convexHull, tolerance);\n\n// Try hullByAreaDelta on the convex hull polygon (may not simplify)\nGeometry simplifiedByAreaDelta = PolygonHullSimplifier.hullByAreaDelta(convexHull, true, 0.1);\n\n// Print/plot and compare areas, number of points\nSystem.out.println(&quot;Original area: &quot; + convexHull.getArea());\nSystem.out.println(&quot;Simplified area: &quot; + simplified.getArea());\nSystem.out.println(&quot;Simplified by area delta area: &quot; + simplifiedByAreaDelta.getArea());\n</code></pre>\n<p>You will likely see no difference between convexHull and hullByAreaDelta output because convex polygons are minimal for convexity.</p>\n<p><strong>Summary</strong></p>\n<p>convexHull() returns the minimal convex polygon; it won’t simplify further or reduce points unless some are exactly collinear or duplicated.</p>\n<p>PolygonHullSimplifier.hullByAreaDelta simplifies polygons allowing area increase but won’t simplify the minimal convex polygon further.</p>\n<p>If you want a simplified hull that contains all points but is simpler than the convex hull, you need a polygon more complex than the convex hull (e.g., alpha shape), then simplify outward.</p>\n<p>Alternatively, create your own routine to reduce convex hull points under convexity and containment constraints.</p>\n",
+    "score" : 3,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 1096470,
+      "reputation" : 29424,
+      "user_id" : 1089967,
+      "user_type" : "registered",
+      "accept_rate" : 59,
+      "profile_image" : "https://www.gravatar.com/avatar/1f256b904ff621d678598d8fa49f86c5?s=256&d=identicon&r=PG",
+      "display_name" : "lance-java",
+      "link" : "https://stackoverflow.com/users/1089967/lance-java"
+    },
+    "creation_date" : 1756377206,
+    "last_activity_date" : 1756377206,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79748944" : [ {
+      "comment_id" : 140699250,
+      "post_id" : 79748944,
+      "body" : "An experiment with using PolygonHullSimplifier with concave hulls and alphas of the original MultiPoint didn&#39;t work as I expected.  Even with a large outer area ratio (1.5, which I believe means it can grow to 2.5 times the size)  it still had many points and did not grow detectably.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 178970,
+        "reputation" : 5385,
+        "user_id" : 411282,
+        "user_type" : "registered",
+        "accept_rate" : 67,
+        "profile_image" : "https://www.gravatar.com/avatar/14d0a8831828a8d4ffe2f78964cc0332?s=256&d=identicon&r=PG",
+        "display_name" : "Joshua Goldberg",
+        "link" : "https://stackoverflow.com/users/411282/joshua-goldberg"
+      },
+      "creation_date" : 1756398469,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140699046,
+      "post_id" : 79748944,
+      "body" : "For someone like myself it would be helpful if the docs for PolygonHullSimplifier clarified that it will not simplify a convex hull further, even given outer tolerance (though it will for inner)",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 178970,
+        "reputation" : 5385,
+        "user_id" : 411282,
+        "user_type" : "registered",
+        "accept_rate" : 67,
+        "profile_image" : "https://www.gravatar.com/avatar/14d0a8831828a8d4ffe2f78964cc0332?s=256&d=identicon&r=PG",
+        "display_name" : "Joshua Goldberg",
+        "link" : "https://stackoverflow.com/users/411282/joshua-goldberg"
+      },
+      "creation_date" : 1756394601,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140699035,
+      "post_id" : 79748944,
+      "body" : "Very helpful, thanks.  My solution for now has been to buffer the straight convex hull by &quot;delta&quot; and then run D-P or TopologyPreservingSimplifier with the same delta.  This seems to be maintaining the guarantee (containing the original points) though it may be overly conservative, or perhaps might be wrong in some cases I haven&#39;t tried.  Your comments also suggest I might be able to experiment with PolygonHullSimplifier if I start with something other than convex hull for the first step (alpha or concave).",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 178970,
+        "reputation" : 5385,
+        "user_id" : 411282,
+        "user_type" : "registered",
+        "accept_rate" : 67,
+        "profile_image" : "https://www.gravatar.com/avatar/14d0a8831828a8d4ffe2f78964cc0332?s=256&d=identicon&r=PG",
+        "display_name" : "Joshua Goldberg",
+        "link" : "https://stackoverflow.com/users/411282/joshua-goldberg"
+      },
+      "creation_date" : 1756394413,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

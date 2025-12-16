@@ -1,0 +1,176 @@
+{
+  "question" : {
+    "question_id" : 79789906,
+    "title" : "ExecutorService configuration with virtual threads",
+    "body" : "<p>In a service I have 2 executorServices for different tasks:</p>\n<ol>\n<li>get user transactions (50-100 threads, queue 300)</li>\n<li>get user family (10-50 threads, queue 100)</li>\n</ol>\n<p>It was easy to monitoring threads and adding resources and implement logic &quot;skip this task if queue is full&quot;.</p>\n<p>How this should be migrated to java 21? Is this logic &quot;skip this task if queue is full&quot; still can be implemented?</p>\n<p>Example:</p>\n<pre class=\"lang-java prettyprint-override\"><code>private ThreadPoolTaskExecutor getExecutor(AsyncProperties executorProperties, ContextDataDecorator contextDataDecorator) {\n    ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();\n    executor.setVirtualThreads(executorProperties.isVirtual());\n    executor.setTaskDecorator(contextDataDecorator);\n    executor.setCorePoolSize(executorProperties.getPoolSize());\n    executor.setMaxPoolSize(executorProperties.getPoolSize());\n    executor.setThreadNamePrefix(executorProperties.getThreadNamePrefix());\n    executor.setRejectedExecutionHandler((runnable, threadPoolExecutor) -&gt; log.warn(&quot;Task {} was skipped by executor {}&quot;, runnable, threadPoolExecutor));\n    if (executorProperties.hasQueueCapacity()) {\n        executor.setQueueCapacity(executorProperties.getQueueCapacity());\n    }\n    executor.initialize();\n    return executor;\n}\n</code></pre>\n<p>configs:</p>\n<pre class=\"lang-yaml prettyprint-override\"><code>transactions.executor:\n    pool-size: 100\n    thread-name-prefix: transactions-async-executor-\n    queue-capacity: 200\n    virtual: true\nfamily.executor:\n    pool-size: 50\n    queue-capacity: 100\n    thread-name-prefix: family-async-\n</code></pre>\n",
+    "tags" : [ "java", "java-21", "virtual-threads" ],
+    "owner" : {
+      "account_id" : 19687197,
+      "reputation" : 21,
+      "user_id" : 14412908,
+      "user_type" : "registered",
+      "profile_image" : "https://lh4.googleusercontent.com/-wAAsOmwO8Sg/AAAAAAAAAAI/AAAAAAAAAAA/AMZuuckpBfapVJPpJmtMFKESpij7lSsfsg/s256-rj/photo.jpg",
+      "display_name" : "Olga grts",
+      "link" : "https://stackoverflow.com/users/14412908/olga-grts"
+    },
+    "is_answered" : true,
+    "view_count" : 216,
+    "answer_count" : 1,
+    "score" : 3,
+    "last_activity_date" : 1760646186,
+    "creation_date" : 1760426126,
+    "link" : "https://stackoverflow.com/questions/79789906/executorservice-configuration-with-virtual-threads",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79792544,
+    "question_id" : 79789906,
+    "body" : "<p>The closest to Spring's <code>ThreadPoolTaskExecutor</code> (if <code>TaskExecutor</code> implementation is what really needed) is <code>org.springframework.core.task.SimpleAsyncTaskExecutor</code>:</p>\n<pre class=\"lang-java prettyprint-override\"><code>    SimpleAsyncTaskExecutor executor = new SimpleAsyncTaskExecutor();\n    executor.setVirtualThreads(true);\n    executor.setTaskDecorator(contextDataDecorator);\n    executor.setThreadNamePrefix(executorProperties.getThreadNamePrefix());\n    return executor;\n</code></pre>\n<p>As virtual threads are used, core and max pool sizes are not applicable - there is no thread poll per se, each task is executed on a dedicated throw-away virtual thread which terminates upon task completion. Queue is not applicable as well, and the execution cannot be rejected.</p>\n<p>It is assumed that the restrictions to <code>ThreadPoolTaskExecutor</code> pool sizes serve the purpose of preserving system resources, and are not the purpose of restricting simultaneous access to limited resources like JDBC Connections, what @Holger <a href=\"https://stackoverflow.com/questions/79789906/executorservice-configuration-with-virtual-threads#comment140794412_79789906\">discussed in his comment</a>. If this is a case then the above solution won't work, please then consult <a href=\"https://stackoverflow.com/questions/78836063\">Cannot limit the concurrency of servlet requests using Spring Boot virtual threads with Tomcat</a> SO thread, in particular a part which discusses a recommended way to use <code>Semaphore</code> in combination with Spring AOP.</p>\n<p>Finally, keep in mind that virtual threads are daemons, so graceful shutdown of tasks, running by them, is not supported out of the box. SO thread <a href=\"https://stackoverflow.com/questions/79457325\">Spring boot with java 21 virtual threads - is there a way to terminate gracefully?</a> discusses that.</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 2745991,
+      "reputation" : 2794,
+      "user_id" : 2366397,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/24ee2b89e9791e936235b16af77ebda4?s=256&d=identicon&r=PG",
+      "display_name" : "igor.zh",
+      "link" : "https://stackoverflow.com/users/2366397/igor-zh"
+    },
+    "creation_date" : 1760646186,
+    "last_activity_date" : 1760646186,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140805565,
+    "post_id" : 79789906,
+    "body" : "Olga, the chances of OOME with virtual threads are very slim as they are cheap and said  to be able to coexist in tens of thousands easily. However, if you are really afraid of OOME you could still use your <code>ThreadPoolTaskExecutor</code>, but configure its <code>ThreadPoolExecutor</code> with a custom, virtual thread-producing <code>ThreadFactory</code>. Do you want me to update my answer and include in it this solution? This will violate virtual thread rule to not to pool them, but ... you know your system best of all.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2745991,
+      "reputation" : 2794,
+      "user_id" : 2366397,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/24ee2b89e9791e936235b16af77ebda4?s=256&d=identicon&r=PG",
+      "display_name" : "igor.zh",
+      "link" : "https://stackoverflow.com/users/2366397/igor-zh"
+    },
+    "creation_date" : 1760928185,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140805455,
+    "post_id" : 79789906,
+    "body" : "@Olgagrts, that doesn&#39;t answer the question.  Why do you think virtual threads would be better than non virtual threads?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 465573,
+      "reputation" : 200423,
+      "user_id" : 869736,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/ae7bb06b9a23a4dd7eea69e853d47d12?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Louis Wasserman",
+      "link" : "https://stackoverflow.com/users/869736/louis-wasserman"
+    },
+    "creation_date" : 1760916676,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140805115,
+    "post_id" : 79789906,
+    "body" : "@LouisWasserman because this threadPools used for request to 3rd-party api. If i understand correctly, I can use SimpleAsyncTaskExecutor, but this can lead to OOM. In ThreadPoolTaskExecutor tasks can be skipped if queue is full, but in SimpleAsyncTaskExecutor - no",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 19687197,
+      "reputation" : 21,
+      "user_id" : 14412908,
+      "user_type" : "registered",
+      "profile_image" : "https://lh4.googleusercontent.com/-wAAsOmwO8Sg/AAAAAAAAAAI/AAAAAAAAAAA/AMZuuckpBfapVJPpJmtMFKESpij7lSsfsg/s256-rj/photo.jpg",
+      "display_name" : "Olga grts",
+      "link" : "https://stackoverflow.com/users/14412908/olga-grts"
+    },
+    "creation_date" : 1760894306,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140796202,
+    "post_id" : 79789906,
+    "body" : "What makes you think virtual threads offer any advantage for your use case?",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 465573,
+      "reputation" : 200423,
+      "user_id" : 869736,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/ae7bb06b9a23a4dd7eea69e853d47d12?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Louis Wasserman",
+      "link" : "https://stackoverflow.com/users/869736/louis-wasserman"
+    },
+    "creation_date" : 1760500118,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140794431,
+    "post_id" : 79789906,
+    "body" : "Why do you think you need to change anything when upgrading to Java 21? You are not required to use virtual threads, and if they don&#39;t fit your use-case, then don&#39;t use them, and continue doing what you&#39;re doing.",
+    "score" : 6,
+    "owner" : {
+      "account_id" : 213468,
+      "reputation" : 110280,
+      "user_id" : 466862,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/d873f397779db38cd510d9ee5416fd43?s=256&d=identicon&r=PG",
+      "display_name" : "Mark Rotteveel",
+      "link" : "https://stackoverflow.com/users/466862/mark-rotteveel"
+    },
+    "creation_date" : 1760432372,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140794412,
+    "post_id" : 79789906,
+    "body" : "If you keep using thread count as a mechanism for throttling the number of transactions there is little to gain from switching to virtual threads. Virtual threads allow a practically unlimited number of threads but that implies that you have to switch to a different mechanism of limiting the number of concurrent transactions.",
+    "score" : 8,
+    "owner" : {
+      "account_id" : 3211603,
+      "reputation" : 301001,
+      "user_id" : 2711488,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+      "display_name" : "Holger",
+      "link" : "https://stackoverflow.com/users/2711488/holger"
+    },
+    "creation_date" : 1760431670,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140794337,
+    "post_id" : 79789906,
+    "body" : "Added code. My question - is pool-size, queue-capacity are make sense for virtual thread executor? In debug I see executor service with 100 thread (i think this is os threads).",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 19687197,
+      "reputation" : 21,
+      "user_id" : 14412908,
+      "user_type" : "registered",
+      "profile_image" : "https://lh4.googleusercontent.com/-wAAsOmwO8Sg/AAAAAAAAAAI/AAAAAAAAAAA/AMZuuckpBfapVJPpJmtMFKESpij7lSsfsg/s256-rj/photo.jpg",
+      "display_name" : "Olga grts",
+      "link" : "https://stackoverflow.com/users/14412908/olga-grts"
+    },
+    "creation_date" : 1760429077,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140794326,
+    "post_id" : 79789906,
+    "body" : "Have you switched to virtual thread in your executors, and found that your old code doesn&#39;t work? Its not clear what you are asking - add <a href=\"https://stackoverflow.com/help/minimal-reproducible-example\">minimal reproducible example</a>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 5998820,
+      "reputation" : 16284,
+      "user_id" : 4712734,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f6e922a2cb7e2da59286f27b162aaca5?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "DuncG",
+      "link" : "https://stackoverflow.com/users/4712734/duncg"
+    },
+    "creation_date" : 1760428764,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

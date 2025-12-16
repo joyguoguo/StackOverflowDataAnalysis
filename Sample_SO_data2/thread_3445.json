@@ -1,0 +1,134 @@
+{
+  "question" : {
+    "question_id" : 79551092,
+    "title" : "How to implement unconstrained delegation?",
+    "body" : "<p>I try to implement unconstrained delegation in my spring boot application. Based on the <a href=\"https://www.notsoshant.io/blog/attacking-kerberos-unconstrained-delegation/\" rel=\"nofollow noreferrer\">article</a>:</p>\n<p><a href=\"https://i.sstatic.net/WxY1N86w.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/WxY1N86w.png\" alt=\"enter image description here\" /></a></p>\n<p>Client sends 2 tickets to the web server:\nTGT + TGS(service ticket)</p>\n<p>I've configured wireshark to check network traffic and I see the following:</p>\n<p><a href=\"https://i.sstatic.net/kECxXcMb.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/kECxXcMb.png\" alt=\"enter image description here\" /></a></p>\n<p>How many tickets are where ? How can I check ?</p>\n<p>In spring In debug I see the following:</p>\n<p><a href=\"https://i.sstatic.net/M6HDlwrp.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/M6HDlwrp.png\" alt=\"enter image description here\" /></a></p>\n<p>In AD service account is configure in that way:</p>\n<p><a href=\"https://i.sstatic.net/iHGK0fj8.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/iHGK0fj8.png\" alt=\"enter image description here\" /></a></p>\n<p>So my question are:</p>\n<ol>\n<li>How many tickers are in request ?</li>\n</ol>\n<p>if there are 2: please point me out to them. And how to accept them on server side ?</p>\n<p>if there is 1: How should I add one more ticket ?</p>\n<h2>UPDATE</h2>\n<p><a href=\"https://i.sstatic.net/nSAzQ89P.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/nSAzQ89P.png\" alt=\"enter image description here\" /></a></p>\n<p>klist result is:\n<a href=\"https://i.sstatic.net/gwWwC6XI.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/gwWwC6XI.png\" alt=\"enter image description here\" /></a></p>\n",
+    "tags" : [ "java", "active-directory", "kerberos", "kerberos-delegation", "spring-security-kerberos" ],
+    "owner" : {
+      "account_id" : 3163862,
+      "reputation" : 36864,
+      "user_id" : 2674303,
+      "user_type" : "registered",
+      "accept_rate" : 62,
+      "profile_image" : "https://www.gravatar.com/avatar/411d782b77899035a96abb71b64e062a?s=256&d=identicon&r=PG",
+      "display_name" : "gstackoverflow",
+      "link" : "https://stackoverflow.com/users/2674303/gstackoverflow"
+    },
+    "is_answered" : false,
+    "view_count" : 132,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1743618099,
+    "creation_date" : 1743611132,
+    "link" : "https://stackoverflow.com/questions/79551092/how-to-implement-unconstrained-delegation",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79551179,
+    "question_id" : 79551092,
+    "body" : "<blockquote>\n<p>How many tickets are where ? How can I check ?</p>\n</blockquote>\n<p>There is always one ticket (the service ticket) under <code>ap-req &gt; ticket</code>. It's sent in the clear, but always paired with a one-time authenticator that proves the client knows the session key.</p>\n<p>When delegation is enabled, the second ticket (delegated) is stored within the encrypted area of that authenticator, under <code>ap-req &gt; authenticator &gt; cipher &gt; authenticator &gt; cksum &gt; krb-cred</code>.</p>\n<blockquote>\n<p>How many tickers are in request ?</p>\n</blockquote>\n<p>Impossible to tell from the screenshot.</p>\n<blockquote>\n<p>if there are 2: please point me out to them. And how to accept them on server side ?</p>\n</blockquote>\n<p>It should be automatically stored as part of the server's (acceptor's) GSSContext. That seems to be happening <a href=\"https://github.com/zxiaofan/JDK/blob/19a6c71e52f3ecd74e4a66be5d0d552ce7175531/jdk-17/src/java.security.jgss/sun/security/jgss/krb5/InitialToken.java#L271\" rel=\"nofollow noreferrer\">here</a> and <a href=\"https://github.com/zxiaofan/JDK/blob/19a6c71e52f3ecd74e4a66be5d0d552ce7175531/jdk-17/src/java.security.jgss/sun/security/jgss/krb5/InitSecContextToken.java#L164-L171\" rel=\"nofollow noreferrer\">here</a>.</p>\n<blockquote>\n<p>if there is 1: How should I add one more ticket ?</p>\n</blockquote>\n<p>In HTTP, at least as far as I understand it, the <strong>client</strong> needs to perform delegation proactively (since only one step is possible for GSSAPI so the server can't request it).</p>\n<ol>\n<li><p>The client's <code>klist</code> needs to show a TGT that is <code>forwardable</code>.</p>\n<p>Also, the user principal needs to not have any KDC-side restrictions. For example, Domain Admins on Windows might have the &quot;This account is sensitive and cannot be delegated&quot; flag set on them.</p>\n</li>\n<li><p>If the HTTP service ticket happens to be cached in <code>klist</code>, then it <em>should</em> show the <code>ok_as_delegate</code> flag, corresponding to &quot;Trust this user for delegation[...]&quot;.</p>\n<p>Windows and some other clients require that flag (treating it as admin-set policy), other clients ignore that flag and always delegate if configured; e.g. a Java client could use requestDelegPolicy().</p>\n</li>\n<li><p>The HTTP client needs to be configured to do delegation.</p>\n<p>In Firefox, <code>network.negotiate-auth.delegation-uris</code> would be set to <code>https://</code> for example or to <code>.example.com</code> (or a combination) to make the browser initiate delegation. (Make sure you don't make the 'delegation' list too broad; it should only allow a few specific hosts.)</p>\n<p>With curl you would specify <code>curl --negotiate --delegation always</code> or <code>--delegation policy</code> (doesn't work for me on Windows, but does work on Linux).</p>\n<p>If you were making a custom HTTP client in Java, <em>I think</em> you would call <code>.requestCredDeleg(true)</code> on the GSSContext object before getting a token.</p>\n</li>\n</ol>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 20740,
+      "reputation" : 20159,
+      "user_id" : 49849,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/e10f1fb3760601f575b7b359d5618166?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "grawity",
+      "link" : "https://stackoverflow.com/users/49849/grawity"
+    },
+    "creation_date" : 1743614151,
+    "last_activity_date" : 1743614492,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79551179" : [ {
+      "comment_id" : 140319863,
+      "post_id" : 79551179,
+      "body" : "could you please answer ?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 3163862,
+        "reputation" : 36864,
+        "user_id" : 2674303,
+        "user_type" : "registered",
+        "accept_rate" : 62,
+        "profile_image" : "https://www.gravatar.com/avatar/411d782b77899035a96abb71b64e062a?s=256&d=identicon&r=PG",
+        "display_name" : "gstackoverflow",
+        "link" : "https://stackoverflow.com/users/2674303/gstackoverflow"
+      },
+      "creation_date" : 1744280430,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140293949,
+      "post_id" : 79551179,
+      "body" : "Could you please provide any document/specification that seconf ticket should be in: <code>ap-req &gt; authenticator &gt; cipher &gt; authenticator &gt; cksum &gt; krb-cred</code>",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 3163862,
+        "reputation" : 36864,
+        "user_id" : 2674303,
+        "user_type" : "registered",
+        "accept_rate" : 62,
+        "profile_image" : "https://www.gravatar.com/avatar/411d782b77899035a96abb71b64e062a?s=256&d=identicon&r=PG",
+        "display_name" : "gstackoverflow",
+        "link" : "https://stackoverflow.com/users/2674303/gstackoverflow"
+      },
+      "creation_date" : 1743672868,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140291599,
+      "post_id" : 79551179,
+      "body" : "client klist is added to the topic. Do I have TGT ticket and service ticket where ?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 3163862,
+        "reputation" : 36864,
+        "user_id" : 2674303,
+        "user_type" : "registered",
+        "accept_rate" : 62,
+        "profile_image" : "https://www.gravatar.com/avatar/411d782b77899035a96abb71b64e062a?s=256&d=identicon&r=PG",
+        "display_name" : "gstackoverflow",
+        "link" : "https://stackoverflow.com/users/2674303/gstackoverflow"
+      },
+      "creation_date" : 1743616638,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140291577,
+      "post_id" : 79551179,
+      "body" : "<code>If you were making a custom HTTP client in Java, I think you would call .requestCredDeleg(true) on the GSSContext object before getting a token.</code>  What a reason for ?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 3163862,
+        "reputation" : 36864,
+        "user_id" : 2674303,
+        "user_type" : "registered",
+        "accept_rate" : 62,
+        "profile_image" : "https://www.gravatar.com/avatar/411d782b77899035a96abb71b64e062a?s=256&d=identicon&r=PG",
+        "display_name" : "gstackoverflow",
+        "link" : "https://stackoverflow.com/users/2674303/gstackoverflow"
+      },
+      "creation_date" : 1743616324,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140291545,
+      "post_id" : 79551179,
+      "body" : "I&#39;ve updared the topic(added more detailed screenshot). Looks lie I have no  <code>krb-cred</code> under <code>ap-req &gt; authenticator &gt; cipher &gt; authenticator &gt; cksum &gt;</code>. Does it mean that delegation is not configured properly ?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 3163862,
+        "reputation" : 36864,
+        "user_id" : 2674303,
+        "user_type" : "registered",
+        "accept_rate" : 62,
+        "profile_image" : "https://www.gravatar.com/avatar/411d782b77899035a96abb71b64e062a?s=256&d=identicon&r=PG",
+        "display_name" : "gstackoverflow",
+        "link" : "https://stackoverflow.com/users/2674303/gstackoverflow"
+      },
+      "creation_date" : 1743615838,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

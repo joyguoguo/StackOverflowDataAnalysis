@@ -1,0 +1,198 @@
+{
+  "question" : {
+    "question_id" : 79564962,
+    "title" : "Hibernate: a separate scheduled repeated thread that updates the entity then saves it, data inconsistent, detached",
+    "body" : "<p>I have an entity, say, <code>Dog</code>:</p>\n<pre><code>@Entity\npublic class Dog {\n  private Long id;\n  \n  @OneToMany(cascade = CascadeType.ALL, fetch = FetchType.EAGER)\n  @JoinColumn(name = &quot;dog_id&quot;, referecedColumnName = &quot;id&quot;)\n  private Set&lt;Bark&gt; barks;\n}\n</code></pre>\n<p>and</p>\n<pre><code>@Entity\npublic class Bark {\n  private Long id;\n  private Long time;\n}\n</code></pre>\n<p>It's a unidirectional relationship.</p>\n<p>I have a controller that triggers barks:</p>\n<pre><code>@PostMapping(&quot;start_barks&quot;)\npublic void starBarks(@RequestParam(name = &quot;dog_id&quot;) Long id) {\n  this.dogService.startBarks(id);\n} \n</code></pre>\n<p>and in the service:</p>\n<pre><code>public void startBarks(long dogId) {\n  Dog dog = this.dogRepository.findById(dogId);\n  this.barkManager.start(dog);\n}\n</code></pre>\n<p>in the <code>BarkManager</code>:</p>\n<pre><code>@Component\npublic class BarkManager {\n  @Autowired\n  private DogRepository dogRepository;\n     \n private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(50);\n\n  public void start(Dog dog)  {\n    scheduler.scheduleAtFixedRate(() -&gt; {\n       executeBark(dog);\n    }, 10, 5, TimeUnit.SECONDS);\n  }\n\n  private void executeBark(Dog dog)  {\n    Bark bark = new Bark(System.currentTimeMillis());\n    dog.getBarks().add(bark);\n    \n    // so that the barks are saved\n    Dog savedDog = this.dogRepository.save();\n  }\n}\n</code></pre>\n<p>So the problem I'm encountering is that the <code>Bark</code> objects inside the <code>dog</code> that's being used in the repeated <code>executeBark</code> method are all detached. And while I can get the reference to the attached entity <code>savedDog</code>, how would I pass it to the next iteration of the <code>executeBark</code>, if it has already been scheduled by the <code>start</code> method?</p>\n<p>I could pass just the <code>Long dogId</code> to the <code>executeBark</code> and <code>dogRepository.findById(dogId)</code> each time, but it doesn't seem very efficient.</p>\n<p>What would be the better solution for this problem?</p>\n<p><strong>EDIT</strong>:</p>\n<p>To address some of the comments. The <code>Bark</code> objects <strong>are persisted</strong>.\nThe <code>savedDog</code> contains the persisted <code>Bark</code> objects that each contain an <code>ID</code> which I can see in debugger.</p>\n<p>What's happening every 5 seconds, when <code>executeBark</code> is run:</p>\n<pre><code>1. executeBark, dog.id = 1, dog.barks.size = 1:\n   new Bark(1) is added and saved in the db. \n\nDb has:\nBark(id=1, time = 1, dog_id = 1)\n\n2. new Bark(2) is added, dog.barks.size = 2, db now has:\n\nBark(id=1, time = 1, dog_id = null)\nBark(id=2, time = 1, dog_id = 1)\nBark(id=3, time = 2, dog_id = 1)\n\n3. new Bark(3) is added, dog.barks.size = 3, db now has:\n\nBark(id=1, time = 1, dog_id = null)\nBark(id=2, time = 1, dog_id = null)\nBark(id=3, time = 2, dog_id = null)\nBark(id=4, time = 1, dog_id = 1)\nBark(id=5, time = 2, dog_id = 1)\nBark(id=6, time = 3, dog_id = 1)\n</code></pre>\n<p>As can be seen, what's happening is that each iteration treats <code>dog.barks</code> as brand new entities that are not associated with anything in the database. The reason for that is that I don't know  how to pass the attached <code>Dog</code> entity between scheduled calls to <code>executeBark</code>.</p>\n<p>As a possible solution I see unidirectional <code>@ManyToOne</code> - so each iteration of the method would create <code>new Bark</code>, set its <code>dog</code> reference to the original <code>Dog</code> and use <code>barkRepository</code> to persist it. Because there is no <code>Set</code> to need to pass between method calls, it should work fine.</p>\n<p>Bidirectional approach would have the same problem as unidirectional <code>@OneToMany</code> - the need to ensure <code>dog.barks</code> contains attached <code>Bark</code> entities rather than POJOs with <code>null</code> IDs - <a href=\"https://vladmihalcea.com/jpa-hibernate-synchronize-bidirectional-entity-associations/\" rel=\"nofollow noreferrer\">because of the need to synchronize both sides of the relationship</a>:</p>\n<blockquote>\n<p>And, in the context of Hibernate, only synchronized bidirectional associations are guaranteed to be persisted properly in the database. Even if you observe on a specific Hibernate version that it works even when the association is out of sync, it’s not guaranteed that it will work if you upgrade to a newer version of Hibernate.</p>\n</blockquote>\n",
+    "tags" : [ "java", "multithreading", "hibernate", "spring-data-jpa" ],
+    "owner" : {
+      "account_id" : 6099767,
+      "reputation" : 5261,
+      "user_id" : 4759176,
+      "user_type" : "registered",
+      "accept_rate" : 74,
+      "profile_image" : "https://i.sstatic.net/0U1e5.jpg?s=256",
+      "display_name" : "parsecer",
+      "link" : "https://stackoverflow.com/users/4759176/parsecer"
+    },
+    "is_answered" : false,
+    "view_count" : 39,
+    "answer_count" : 0,
+    "score" : 0,
+    "last_activity_date" : 1744240112,
+    "creation_date" : 1744219276,
+    "link" : "https://stackoverflow.com/questions/79564962/hibernate-a-separate-scheduled-repeated-thread-that-updates-the-entity-then-sav",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140318282,
+    "post_id" : 79564962,
+    "body" : "<code>but it sounds more likely that your Barks are not being persisted</code> They are persisted. See edit to the post",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 6099767,
+      "reputation" : 5261,
+      "user_id" : 4759176,
+      "user_type" : "registered",
+      "accept_rate" : 74,
+      "profile_image" : "https://i.sstatic.net/0U1e5.jpg?s=256",
+      "display_name" : "parsecer",
+      "link" : "https://stackoverflow.com/users/4759176/parsecer"
+    },
+    "creation_date" : 1744238934,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140318249,
+    "post_id" : 79564962,
+    "body" : "The code I provided is very basic and it should be obvious what&#39;s happening. The persisted entity returned by the <code>save</code> method - <code>savedDog</code> contains all correct persisted <code>Bark</code>. But that information is lost, because each iteration of <code>executeBark</code> deals with unattached POJO Barks",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 6099767,
+      "reputation" : 5261,
+      "user_id" : 4759176,
+      "user_type" : "registered",
+      "accept_rate" : 74,
+      "profile_image" : "https://i.sstatic.net/0U1e5.jpg?s=256",
+      "display_name" : "parsecer",
+      "link" : "https://stackoverflow.com/users/4759176/parsecer"
+    },
+    "creation_date" : 1744238412,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140318074,
+    "post_id" : 79564962,
+    "body" : "If you have <code>Bark</code> entities that have no IDs then they are not detached.  They are &quot;new&quot;, a.k.a. &quot;transient&quot;.  And if they correspond to persistent entities in the sense you seem to be describing then something is very wrong, because when a new entity is persisted, the persistence provider is responsible for setting its persistent ID.  That very entity object transitions to the &quot;managed&quot; (a.k.a &quot;persistent&quot;) state.  I can&#39;t tell you what&#39;s actually happening in your application, but it sounds more likely that your <code>Bark</code>s are not being persisted at all than that their IDs are not getting set.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2792262,
+      "reputation" : 190832,
+      "user_id" : 2402272,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+      "display_name" : "John Bollinger",
+      "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+    },
+    "creation_date" : 1744234393,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140318059,
+    "post_id" : 79564962,
+    "body" : "I confused myself with the how bidirectional one-to-many / many-to-one relationships need to be managed.  For such relationships, you do need to manage them on the owning (many) side; it is not sufficient to add child entities on the &quot;one&quot; side.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2792262,
+      "reputation" : 190832,
+      "user_id" : 2402272,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+      "display_name" : "John Bollinger",
+      "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+    },
+    "creation_date" : 1744233901,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140318052,
+    "post_id" : 79564962,
+    "body" : "I see your point about having <code>ManyToOne</code> or bidirectional instead and I might change it tbh. But it won&#39;t help with this particular problem - say I have bidirectional relationship. I&#39;d need to keep it synchronized on the <code>One</code> side - so I&#39;d still have that outdated <code>Dog</code> entity and its <code>Set</code> would contain unattached <code>Bark</code> objects - their IDs would be null",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 6099767,
+      "reputation" : 5261,
+      "user_id" : 4759176,
+      "user_type" : "registered",
+      "accept_rate" : 74,
+      "profile_image" : "https://i.sstatic.net/0U1e5.jpg?s=256",
+      "display_name" : "parsecer",
+      "link" : "https://stackoverflow.com/users/4759176/parsecer"
+    },
+    "creation_date" : 1744233533,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140318050,
+    "post_id" : 79564962,
+    "body" : "Unidirectional <code>OneToMany</code> is a thing <a href=\"https://www.baeldung.com/spring-jpa-unidirectional-one-to-many-and-cascading-delete\" rel=\"nofollow noreferrer\">baeldung.com/&hellip;</a>. It works.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 6099767,
+      "reputation" : 5261,
+      "user_id" : 4759176,
+      "user_type" : "registered",
+      "accept_rate" : 74,
+      "profile_image" : "https://i.sstatic.net/0U1e5.jpg?s=256",
+      "display_name" : "parsecer",
+      "link" : "https://stackoverflow.com/users/4759176/parsecer"
+    },
+    "creation_date" : 1744233478,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140318035,
+    "post_id" : 79564962,
+    "body" : "@JohnBollinger What do you mean? I can persist <code>Bark</code> objects by doing <code>dogRepository.save()</code>, they are saved and the dog&#39;s <code>FK</code> is put in the join column. The problem here is that even though the old barks have been saved, when the <code>save</code> method is later called again, those Bark objects are treated as brand-new because they lack ID and Hibernate doesn&#39;t know they&#39;ve been saved before",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 6099767,
+      "reputation" : 5261,
+      "user_id" : 4759176,
+      "user_type" : "registered",
+      "accept_rate" : 74,
+      "profile_image" : "https://i.sstatic.net/0U1e5.jpg?s=256",
+      "display_name" : "parsecer",
+      "link" : "https://stackoverflow.com/users/4759176/parsecer"
+    },
+    "creation_date" : 1744233018,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140318029,
+    "post_id" : 79564962,
+    "body" : "@Vijay wouldn&#39;t it be very inefficient? As it would query the database every 5 seconds?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 6099767,
+      "reputation" : 5261,
+      "user_id" : 4759176,
+      "user_type" : "registered",
+      "accept_rate" : 74,
+      "profile_image" : "https://i.sstatic.net/0U1e5.jpg?s=256",
+      "display_name" : "parsecer",
+      "link" : "https://stackoverflow.com/users/4759176/parsecer"
+    },
+    "creation_date" : 1744232912,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140317924,
+    "post_id" : 79564962,
+    "body" : "A <code>@OneToMany</code> has to be owned by the &quot;many&quot; side. If it is not mapped on that side then there is no way to persist modifications to it via the entities.  That limits the usefulness of unidirectional <code>@OneToMany</code> relationships.  Is there a reason not to just make the relationship bidirectional?  Then you would provide for the relationship to be persisted by assigning the <code>Dog</code> to each of its <code>Bark</code>s before saving it.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2792262,
+      "reputation" : 190832,
+      "user_id" : 2402272,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+      "display_name" : "John Bollinger",
+      "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+    },
+    "creation_date" : 1744230645,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140317341,
+    "post_id" : 79564962,
+    "body" : "Why dont you pass dogId instead of dog to  &quot;this.barkManager.start(dog); &quot;and do the lookup and other operations  at &quot;private void executeBark(Long dogId)&quot; , because in the above scenario you are passing the managed entity dog to new thread (scheduler) and it can be detached depending on the transactional propogation.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 7645025,
+      "reputation" : 440,
+      "user_id" : 5795975,
+      "user_type" : "registered",
+      "profile_image" : "https://lh6.googleusercontent.com/-6KwPUS4RnyA/AAAAAAAAAAI/AAAAAAAAC8w/auZqreI45x0/s256-rj/photo.jpg",
+      "display_name" : "Vijay",
+      "link" : "https://stackoverflow.com/users/5795975/vijay"
+    },
+    "creation_date" : 1744220654,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

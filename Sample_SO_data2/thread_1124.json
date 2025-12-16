@@ -1,0 +1,153 @@
+{
+  "question" : {
+    "question_id" : 79744924,
+    "title" : "CompletableFuture: like anyOf() but return a new CompletableFuture that is completed when any of the given CompletableFutures return not null",
+    "body" : "<p>I have multiple <code>CompletableFuture</code></p>\n<pre class=\"lang-java prettyprint-override\"><code>CompletableFuture&lt;String&gt; comp1 = CompletableFuture.supplyAsync(() -&gt; ...);\nCompletableFuture&lt;String&gt; comp2 = CompletableFuture.supplyAsync(() -&gt; ...);\n...\nCompletableFuture&lt;String&gt; compN = CompletableFuture.supplyAsync(() -&gt; ...);\n</code></pre>\n<p>I need something like</p>\n<pre class=\"lang-java prettyprint-override\"><code>CompletableFuture&lt;Object&gt; firstResult = CompletableFuture.anyOf(comp1, comp2, ..., compN);\n</code></pre>\n<p>but this returns the result from the first one that completes.</p>\n<p>I want to have something that returns <strong>the first non-null result from the first one that completes</strong>. Is it possible?</p>\n",
+    "tags" : [ "java", "concurrency", "completable-future" ],
+    "owner" : {
+      "account_id" : 633896,
+      "reputation" : 3731,
+      "user_id" : 399637,
+      "user_type" : "registered",
+      "accept_rate" : 90,
+      "profile_image" : "https://www.gravatar.com/avatar/6705252eb01e85ae9c218d3eb9549dca?s=256&d=identicon&r=PG",
+      "display_name" : "res1",
+      "link" : "https://stackoverflow.com/users/399637/res1"
+    },
+    "is_answered" : true,
+    "view_count" : 159,
+    "answer_count" : 2,
+    "score" : 4,
+    "last_activity_date" : 1757690660,
+    "creation_date" : 1756043967,
+    "link" : "https://stackoverflow.com/questions/79744924/completablefuture-like-anyof-but-return-a-new-completablefuture-that-is-compl",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79745078,
+    "question_id" : 79744924,
+    "body" : "<p>There is no helper function in <code>CompletableFuture</code> that returns <strong>first future to complete with a non-null value</strong>.</p>\n<p>You can implement your own:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public static &lt;T&gt; CompletableFuture&lt;T&gt; anyNotNull(Collection&lt;CompletableFuture&lt;? extends T&gt;&gt; cfs) {\n    var cfsCopy = new ArrayList&lt;&gt;(cfs);\n\n    if (cfsCopy.isEmpty()) {\n        return CompletableFuture.failedFuture(new NoSuchElementException(&quot;No futures provided&quot;));\n    }\n\n    var result = new CompletableFuture&lt;T&gt;();\n    var remaining = new AtomicInteger(cfsCopy.size());\n\n    for (CompletableFuture&lt;? extends T&gt; cf : cfsCopy) {\n        cf.whenComplete((v, ex) -&gt; {\n            if (Objects.nonNull(v)) {\n                result.complete(v);\n                return;\n            }\n            if (remaining.decrementAndGet() == 0) {\n                result.completeExceptionally(new NoSuchElementException(&quot;No future completed with a non-null value&quot;));\n            }\n        });\n    }\n\n    return result;\n}\n</code></pre>\n<p>Few notes about the code:</p>\n<ul>\n<li>make a copy of the input collection to avoid issues if the caller mutates the list of passed futures</li>\n<li>return a failed future if:\n<ul>\n<li>the collection is empty</li>\n<li>all futures complete with null or exceptionally</li>\n</ul>\n</li>\n</ul>\n<p>Possible changes of the code that could make sense. Some of them are inspired by implementation of <code>CompletableFuture.anyOf</code>:</p>\n<ul>\n<li>check for already completed futures with non-null results before attaching callbacks via <code>whenComplete</code></li>\n<li>cancel remaining futures once an acceptable result is found</li>\n<li>accept <code>varargs</code> instead of a <code>Collection</code> parameter</li>\n<li>log exceptions from futures that complete exceptionally instead of ignoring them</li>\n</ul>\n",
+    "score" : 4,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 10320634,
+      "reputation" : 3398,
+      "user_id" : 7613649,
+      "user_type" : "registered",
+      "accept_rate" : 25,
+      "profile_image" : "https://www.gravatar.com/avatar/c95137fce225c304ac42743da3816d6c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Geba",
+      "link" : "https://stackoverflow.com/users/7613649/geba"
+    },
+    "creation_date" : 1756059228,
+    "last_activity_date" : 1757690660,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79746816,
+    "question_id" : 79744924,
+    "body" : "<p>I'd do</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class Futures {\n    public static &lt;T&gt; CompletableFuture&lt;T&gt; firstMatching(\n            Predicate&lt;T&gt; predicate,\n            CompletableFuture&lt;T&gt;... futures) \n    {\n        CompletableFuture&lt;T&gt; result = new CompletableFuture&lt;&gt;();\n        AtomicReference&lt;Throwable&gt; firstException = new AtomicReference&lt;&gt;();\n        AtomicBoolean completed = new AtomicBoolean(false);\n        AtomicInteger remaining = new AtomicInteger(futures.length);\n        for (CompletableFuture&lt;T&gt; future : futures) {\n            future.whenComplete((value, ex) -&gt; {\n                boolean isLast = remaining.decrementAndGet() == 0;\n                if (ex != null) {\n                   firstException.compareAndSet(null, ex);\n                }\n                if (ex == null &amp;&amp; predicate.test(value)) {\n                   if (completed.compareAndSet(false, true)) {\n                      result.complete(value);\n                   }\n                } else if (isLast) {\n                   Throwable resultEx = firstException.get() == null \n                      ? new Exception(&quot;All futures completed but no matches&quot;) \n                      : firstException.get();\n                   result.completeExceptionally(resultEx);\n                }\n            });\n        }\n\n        return result;\n    }\n}\n</code></pre>\n<p>Then you could do</p>\n<pre class=\"lang-java prettyprint-override\"><code>CompletableFuture firstResult = Futures.firstMatching(Objects::nonNull, comp1, comp2, compN);\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 1096470,
+      "reputation" : 29424,
+      "user_id" : 1089967,
+      "user_type" : "registered",
+      "accept_rate" : 59,
+      "profile_image" : "https://www.gravatar.com/avatar/1f256b904ff621d678598d8fa49f86c5?s=256&d=identicon&r=PG",
+      "display_name" : "lance-java",
+      "link" : "https://stackoverflow.com/users/1089967/lance-java"
+    },
+    "creation_date" : 1756210164,
+    "last_activity_date" : 1756217838,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140688610,
+    "post_id" : 79744924,
+    "body" : "The idea was to make these future promises fulfill only if the result is not null and wait for any such promises rather than all promises.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 194308,
+      "reputation" : 80530,
+      "user_id" : 436560,
+      "user_type" : "registered",
+      "accept_rate" : 87,
+      "profile_image" : "https://i.sstatic.net/2GESV.jpg?s=256",
+      "display_name" : "Lajos Arpad",
+      "link" : "https://stackoverflow.com/users/436560/lajos-arpad"
+    },
+    "creation_date" : 1756046676,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140688607,
+    "post_id" : 79744924,
+    "body" : "the problem is that I am using <code>anyOf</code>, I can simply use <code>allOf</code> and then check the result of the various compN but it&#39;s not so efficient like <code>anyOf</code>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 633896,
+      "reputation" : 3731,
+      "user_id" : 399637,
+      "user_type" : "registered",
+      "accept_rate" : 90,
+      "profile_image" : "https://www.gravatar.com/avatar/6705252eb01e85ae9c218d3eb9549dca?s=256&d=identicon&r=PG",
+      "display_name" : "res1",
+      "link" : "https://stackoverflow.com/users/399637/res1"
+    },
+    "creation_date" : 1756046606,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140688596,
+    "post_id" : 79744924,
+    "body" : "Can you complete that future on the condition that it&#39;s not null?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 194308,
+      "reputation" : 80530,
+      "user_id" : 436560,
+      "user_type" : "registered",
+      "accept_rate" : 87,
+      "profile_image" : "https://i.sstatic.net/2GESV.jpg?s=256",
+      "display_name" : "Lajos Arpad",
+      "link" : "https://stackoverflow.com/users/436560/lajos-arpad"
+    },
+    "creation_date" : 1756045935,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79745078" : [ {
+      "comment_id" : 140731984,
+      "post_id" : 79745078,
+      "body" : "@Holger You are right. <code>result.complete(v);</code> does not override the value if it is set. I edited the answer. Thank you",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10320634,
+        "reputation" : 3398,
+        "user_id" : 7613649,
+        "user_type" : "registered",
+        "accept_rate" : 25,
+        "profile_image" : "https://www.gravatar.com/avatar/c95137fce225c304ac42743da3816d6c?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Geba",
+        "link" : "https://stackoverflow.com/users/7613649/geba"
+      },
+      "creation_date" : 1757690672,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140731792,
+      "post_id" : 79745078,
+      "body" : "The <code>if (result.isDone()) return;</code> check is unnecessary. The completion calls won’t do anything if the future is already completed.",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 3211603,
+        "reputation" : 301001,
+        "user_id" : 2711488,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+        "display_name" : "Holger",
+        "link" : "https://stackoverflow.com/users/2711488/holger"
+      },
+      "creation_date" : 1757685470,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

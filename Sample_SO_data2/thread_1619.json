@@ -1,0 +1,243 @@
+{
+  "question" : {
+    "question_id" : 79693769,
+    "title" : "My classes getters and setters are now prefix-less. But Spark isn&#39;t able to use their objects correctly, as if get and set prefixes were mandatory",
+    "body" : "<p>For convenience, I'm switching my business classes to a style where getters and setters methods do not have <code>get</code> and <code>set</code> prefixes anymore. By the way, I'm also making setters chainable (fluid). For example:</p>\n<p>With <code>private NatureJuridiqueGroupement natureJuridique;</code> an <code>enum</code> member,</p>\n<pre class=\"lang-java prettyprint-override\"><code>public NatureJuridiqueGroupement getNatureJuridique() {\n   return this.natureJuridique;\n}\n\npublic void setNatureJuridique(NatureJuridiqueGroupement natureJuridique) {\n   this.natureJuridique = natureJuridique;\n}\n</code></pre>\n<p>is becoming:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public NatureJuridiqueGroupement natureJuridique() {\n   return this.natureJuridique;\n}\n\n@SuppressWarnings(&quot;unchecked&quot;)\npublic SELF natureJuridique(NatureJuridiqueGroupement natureJuridique) {\n   this.natureJuridique = natureJuridique;\n   return (SELF)this;\n}\n</code></pre>\n<p>The problem now, is that if I have an object <code>Groupement</code> having for members:</p>\n<p><code>interdepartemental</code>, <code>zoneDeMontagne</code>, <code>gestionDesEaux</code>, <code>natureJuridique</code>, <code>fiscalitePropre</code>, <code>siren</code> where I have for them these getters methods:</p>\n<p><code>interdepartemental()</code>, <code>zoneDeMontagne()</code>, <code>gestionDesEaux()</code>,<br />\n<code>natureJuridique()</code>, <code>getNatureJuridique()</code><br />\n<code>isFiscalitePropre()</code></p>\n<p>and that I run on my Spark <code>3.5.6</code> a:</p>\n<pre class=\"lang-java prettyprint-override\"><code>Dataset&lt;Groupement&gt; perimetres = myBuildingMethod(..my parameters..);\nperimetres.show(2000, false);\n</code></pre>\n<p>it returns what is shown below, ignoring (not detecting) the prefix-less getters.<br />\n(and therefore setters too, if they are prefix-less. Here my code is working because my <code>Groupement</code> object is created by the <code>Encoder</code> by a constructor, and not a bunch of setter call)</p>\n<div class=\"s-table-container\"><table class=\"s-table\">\n<thead>\n<tr>\n<th>fiscalitePropre</th>\n<th>natureJuridique</th>\n<th>siren</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>false</td>\n<td>SYNDICAT_MIXTE_FERME</td>\n<td>200004000</td>\n</tr>\n<tr>\n<td>false</td>\n<td>SYNDICAT_MIXTE_FERME</td>\n<td>200004000</td>\n</tr>\n<tr>\n<td>true</td>\n<td>COMMUNAUTE_AGGLOMERATION</td>\n<td>200010700</td>\n</tr>\n<tr>\n<td>true</td>\n<td>COMMUNAUTE_AGGLOMERATION</td>\n<td>200010700</td>\n</tr>\n</tbody>\n</table></div>\n<p>Is there a way to make Spark detecting these getters and setters methods (automatically, like it did until now), or am I doomed to put my old getters and setters back?</p>\n",
+    "tags" : [ "java", "apache-spark", "getter-setter" ],
+    "owner" : {
+      "account_id" : 3366819,
+      "reputation" : 3591,
+      "user_id" : 2827181,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/WJK16.jpg?s=256",
+      "display_name" : "Marc Le Bihan",
+      "link" : "https://stackoverflow.com/users/2827181/marc-le-bihan"
+    },
+    "is_answered" : true,
+    "view_count" : 91,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1751958094,
+    "creation_date" : 1751957259,
+    "link" : "https://stackoverflow.com/questions/79693769/my-classes-getters-and-setters-are-now-prefix-less-but-spark-isnt-able-to-use",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79693786,
+    "question_id" : 79693769,
+    "body" : "<p>Spark uses JavaBeans reflection to inspect POJOs, so it requires <code>getX()</code>/<code>isX()</code> for getters and <code>setX(Type)</code> for setters.</p>\n<p>By removing the <code>get</code>/<code>set</code> prefixes and using overloaded methods for fluent setters, your methods no longer adhere to JavaBeans conventions, so Spark is unable to detect them when inferring the schema.</p>\n<p>I know this may sound anti-pattern, but what you can do is to keep your getter and setter and set them as deprecated, purely for compatibility with Spark.</p>\n<pre><code>@Deprecated \npublic NatureJuridiqueGroupement getNatureJuridique() \n{\n    return natureJuridique;\n}\n</code></pre>\n<p>You can now use <code>natureJuridique()</code> internally and in tests. Spark doesn't care about deprecation, so using <code>@Deprecated</code> works in this context not because Spark uses it, but because Java (and tools like Spark) still recognize the method as a valid getter due to its signature.</p>\n<hr />\n<p>The other option would be to stick with your actual code, but to add the getter and setters just for Spark:</p>\n<pre><code>public NatureJuridiqueGroupement natureJuridique() \n{\n    return this.natureJuridique;\n}\n\npublic SELF natureJuridique(NatureJuridiqueGroupement val) \n{\n    this.natureJuridique = val;\n    return (SELF)this;\n}\n\n// Spark only:\npublic NatureJuridiqueGroupement getNatureJuridique() {\n    return this.natureJuridique;\n}\n</code></pre>\n",
+    "score" : 5,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 2465829,
+      "reputation" : 13627,
+      "user_id" : 2148953,
+      "user_type" : "registered",
+      "accept_rate" : 96,
+      "profile_image" : "https://i.sstatic.net/DVHoP84E.jpg?s=256",
+      "display_name" : "aran",
+      "link" : "https://stackoverflow.com/users/2148953/aran"
+    },
+    "creation_date" : 1751957987,
+    "last_activity_date" : 1751958094,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140575526,
+    "post_id" : 79693769,
+    "body" : "@VGR But Java evolves and chainable setters (fluid) are appearing, accompanied by getters and setters that haven&#39;t <code>get</code> and <code>set</code> prefixes. Many are using them now. It&#39;s not to be refused. But it appears that is must be selected cautiously, being aware of the troubles it can cause.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3366819,
+      "reputation" : 3591,
+      "user_id" : 2827181,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/WJK16.jpg?s=256",
+      "display_name" : "Marc Le Bihan",
+      "link" : "https://stackoverflow.com/users/2827181/marc-le-bihan"
+    },
+    "creation_date" : 1752030319,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140575120,
+    "post_id" : 79693769,
+    "body" : "The getters and setters are actually a pattern defined by the <a href=\"https://download.oracle.com/otndocs/jcp/7224-javabeans-1.01-fr-spec-oth-JSpec/\" rel=\"nofollow noreferrer\">JavaBeans specification</a>.  It is an actual written standard.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2053598,
+      "reputation" : 44991,
+      "user_id" : 1831987,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/38b1c37530189ec4471a43a618e33f67?s=256&d=identicon&r=PG",
+      "display_name" : "VGR",
+      "link" : "https://stackoverflow.com/users/1831987/vgr"
+    },
+    "creation_date" : 1752010584,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140573945,
+    "post_id" : 79693769,
+    "body" : "@PeterAdrian Not really in my case. While used inside datasets to build a final request, objects are immutable, yes. But when the time comes, the caller (the user of these objects) asks for them with a <code>collectList()</code> method and uses the <code>Groupement</code> objects the way he is willing to. And he might change their values. If you have a <code>Watch</code> or a <code>Car</code> object, you might be willing to change the minutes or turn the wheel without recreating the <code>Watch</code> or the <code>Car</code> each time. Java <code>record</code> are here because <b>sometimes</b> you want your business objects to be immutable. But it&#39;s not always the case.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3366819,
+      "reputation" : 3591,
+      "user_id" : 2827181,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/WJK16.jpg?s=256",
+      "display_name" : "Marc Le Bihan",
+      "link" : "https://stackoverflow.com/users/2827181/marc-le-bihan"
+    },
+    "creation_date" : 1751983474,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140573520,
+    "post_id" : 79693769,
+    "body" : "@MarcLeBihan, the fact that you change the state after construction is an issue bigger than the get/set methods. Ideally, in dataframes you should have immutability, because if you change the state, then things like caching, checkpointing might have side effects. Using an immutable objects does not mean that you can&#39;t edit them, just that the editing will result in a new object that would fix the side effects issue you might encounter in your transformers. Use them like <code>MyRecord r = MyRecord.builder().field(&quot;x&quot;).build(); r.toBuilder().field(&quot;y&quot;).build()</code>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1601399,
+      "reputation" : 638,
+      "user_id" : 1482356,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/d6160b6e40d230fa92c6da8072b2f7e5?s=256&d=identicon&r=PG",
+      "display_name" : "Peter Adrian",
+      "link" : "https://stackoverflow.com/users/1482356/peter-adrian"
+    },
+    "creation_date" : 1751976241,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140572960,
+    "post_id" : 79693769,
+    "body" : "@SpaceTrucker But I can reject your advice, whatever. Switching might lead to some instabilities, if other API are also relying on getters and setters prefixes. I might consider going entirely backward.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3366819,
+      "reputation" : 3591,
+      "user_id" : 2827181,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/WJK16.jpg?s=256",
+      "display_name" : "Marc Le Bihan",
+      "link" : "https://stackoverflow.com/users/2827181/marc-le-bihan"
+    },
+    "creation_date" : 1751965400,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140572774,
+    "post_id" : 79693769,
+    "body" : "@SpaceTrucker This style that allows business objects to be built in a builder way is common now. See how much classes are working that way, today. Spark, for instance: <code>DataFrameReader dfr = this.session.read().format(&quot;csv&quot;).option(&quot;header&quot;, &quot;true&quot;).option(&quot;quote&quot;, &quot;\\&quot;&quot;).option(&quot;escape&quot;, &quot;\\&quot;&quot;).option(&quot;dec&quot;, &quot;,&quot;).option(&quot;sep&quot;, &quot;\\t&quot;).option(&quot;encoding&quot;, &quot;ISO-8859-1&quot;);</code> where <code>option(...)</code> is returning the <code>DataFrameReader</code> being built. And I may add that Java records are promoting the prefix-less style for getters.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3366819,
+      "reputation" : 3591,
+      "user_id" : 2827181,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/WJK16.jpg?s=256",
+      "display_name" : "Marc Le Bihan",
+      "link" : "https://stackoverflow.com/users/2827181/marc-le-bihan"
+    },
+    "creation_date" : 1751961036,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140572757,
+    "post_id" : 79693769,
+    "body" : "What you need to realize is that for convenients sake you have given up adhering to a standard. That is probably never going to be convenient in the long run.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 1580843,
+      "reputation" : 13706,
+      "user_id" : 1466267,
+      "user_type" : "registered",
+      "accept_rate" : 91,
+      "profile_image" : "https://www.gravatar.com/avatar/c47d1f7544a8c4a1bb7a41d511f53604?s=256&d=identicon&r=PG",
+      "display_name" : "SpaceTrucker",
+      "link" : "https://stackoverflow.com/users/1466267/spacetrucker"
+    },
+    "creation_date" : 1751960559,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140572663,
+    "post_id" : 79693769,
+    "body" : "@PeterAdrian my business objects aren&#39;t immutable. At their construction time, they can be created through a constructor with all the attributes, or by a empty constructor and few setter call only. At any time, their content can be changed by their user after that.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3366819,
+      "reputation" : 3591,
+      "user_id" : 2827181,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/WJK16.jpg?s=256",
+      "display_name" : "Marc Le Bihan",
+      "link" : "https://stackoverflow.com/users/2827181/marc-le-bihan"
+    },
+    "creation_date" : 1751958018,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140572648,
+    "post_id" : 79693769,
+    "body" : "I&#39;m pretty sure you can use records for this, so the getters come embedded. Also, you can use lombok builder annotation to generate builders for your records.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1601399,
+      "reputation" : 638,
+      "user_id" : 1482356,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/d6160b6e40d230fa92c6da8072b2f7e5?s=256&d=identicon&r=PG",
+      "display_name" : "Peter Adrian",
+      "link" : "https://stackoverflow.com/users/1482356/peter-adrian"
+    },
+    "creation_date" : 1751957717,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79693786" : [ {
+      "comment_id" : 140574232,
+      "post_id" : 79693786,
+      "body" : "Maybe I&#39;m missing something, I don&#39;t see the problem of maintaining the <i>get</i> and <i>set</i> (moreover, they make it easy for even a fool like me to understand what they do), and on the other side, duplicated code, deprecated code that is not, mmmm, I imagine a future maintainer trying to understand....",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10843443,
+        "reputation" : 924,
+        "user_id" : 20882864,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+        "display_name" : "Marce Puente",
+        "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+      },
+      "creation_date" : 1751988658,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140572683,
+      "post_id" : 79693786,
+      "body" : "@MarcLeBihan From what I know, I believe right now is your only option. I may be incorrect thou",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2465829,
+        "reputation" : 13627,
+        "user_id" : 2148953,
+        "user_type" : "registered",
+        "accept_rate" : 96,
+        "profile_image" : "https://i.sstatic.net/DVHoP84E.jpg?s=256",
+        "display_name" : "aran",
+        "link" : "https://stackoverflow.com/users/2148953/aran"
+      },
+      "creation_date" : 1751958355,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140572668,
+      "post_id" : 79693786,
+      "body" : "Yes, I&#39;m fearing having to do that, for a workaround.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 3366819,
+        "reputation" : 3591,
+        "user_id" : 2827181,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/WJK16.jpg?s=256",
+        "display_name" : "Marc Le Bihan",
+        "link" : "https://stackoverflow.com/users/2827181/marc-le-bihan"
+      },
+      "creation_date" : 1751958087,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

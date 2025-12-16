@@ -1,0 +1,82 @@
+{
+  "question" : {
+    "question_id" : 79675323,
+    "title" : "Construct @ConfigurationProperties programmatically",
+    "body" : "<p>I need to load a pretty complex object from application properties. The problem is, that I have to operate inside an <code>ApplicationListener&lt;ApplicationPreparedEvent&gt;</code>, aka the application is not fully loaded yet. So I guess, any annotation based approach is off reach.</p>\n<p>Is there a way to get the same functionality in a programmatic way? I have access to the ConfigurableEnvironment and all the properties are already loaded.</p>\n<p>What I tried so far:</p>\n<ul>\n<li>Iterate all ConfigurableEnvironment::getPropertySources</li>\n<li>Filter the ones that are instance of EnumerablePropertySource</li>\n<li>collect all their properties and write them into a String</li>\n<li>Use Jackson's <code>JavaPropsMapper</code> to convert this string to my model</li>\n</ul>\n<p>Super hacky. It kinda works, except one detail: arrays coming from different PropertySources get &quot;merged&quot; instead of the expected behaviour, where the array with the higher precedence completely overrides the lower precedence ones. I need this to work as expected since I have profile-specific application-xxx.yaml files that are expected to override the default arrays from application.yaml. The expected array-overriding behaviour is described here: <a href=\"https://stackoverflow.com/questions/41170316/combine-list-from-multiple-spring-boot-yaml-files/41409743#41409743\">Combine list from multiple spring-boot YAML files</a></p>\n<p>So, seems like my hacky solution implements some @ConfiruationProperties features, but not others. Feels like I am reinventing the wheel, and doing so badly.</p>\n<p>Is there a solution where I get the proper functionality of @ConfigurationProperties in my ApplicationListener?</p>\n",
+    "tags" : [ "java", "spring-boot", "configurationproperties" ],
+    "owner" : {
+      "account_id" : 10066191,
+      "reputation" : 1255,
+      "user_id" : 7441319,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/9PaOi.jpg?s=256",
+      "display_name" : "Alkis Mavridis",
+      "link" : "https://stackoverflow.com/users/7441319/alkis-mavridis"
+    },
+    "is_answered" : true,
+    "view_count" : 207,
+    "answer_count" : 2,
+    "score" : 2,
+    "last_activity_date" : 1750677747,
+    "creation_date" : 1750614346,
+    "link" : "https://stackoverflow.com/questions/79675323/construct-configurationproperties-programmatically",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79675467,
+    "question_id" : 79675323,
+    "body" : "<p>Spring Boot exposes <code>org.springframework.boot.context.properties.bind.Binder</code>, which you can use like this:</p>\n<pre class=\"lang-java prettyprint-override\"><code>import org.springframework.boot.context.event.ApplicationPreparedEvent;\nimport org.springframework.boot.context.properties.bind.Binder;\nimport org.springframework.boot.context.properties.source.ConfigurationPropertySources;\nimport org.springframework.context.ApplicationListener;\nimport org.springframework.core.env.ConfigurableEnvironment;\n\npublic class MyApplicationPreparedListener implements ApplicationListener&lt;ApplicationPreparedEvent&gt; {\n\n    @Override\n    public void onApplicationEvent(ApplicationPreparedEvent event) {\n        ConfigurableEnvironment env = event.getApplicationContext().getEnvironment();\n        Binder binder = new Binder(ConfigurationPropertySources.get(env));\n\n        MyComplexConfig config = binder.bind(&quot;my.config&quot;, MyComplexConfig.class)\n                .orElseThrow(() -&gt; new IllegalStateException(&quot;Could not bind config&quot;));\n\n        System.out.println(&quot;Loaded config:&quot;);\n        System.out.println(&quot;  name: &quot; + config.getName());\n        System.out.println(&quot;  servers: &quot; + config.getServers());\n        System.out.println(&quot;  timeout: &quot; + config.getNested().getTimeout());\n        System.out.println(&quot;  labels: &quot; + config.getNested().getLabels());\n    }\n}\n</code></pre>\n<p>Lets take a configuration properties file and two YAMLs like this:</p>\n<pre class=\"lang-java prettyprint-override\"><code>import lombok.Getter;\nimport lombok.Setter;\n\nimport java.util.List;\nimport java.util.Map;\n\n@Getter\n@Setter\npublic class MyComplexConfig {\n    private String name;\n    private List&lt;String&gt; servers;\n    private NestedConfig nested;\n\n    @Getter\n    @Setter\n    public static class NestedConfig {\n        private int timeout;\n        private Map&lt;String, String&gt; labels;\n    }\n}\n</code></pre>\n<p>application.yaml</p>\n<pre class=\"lang-yaml prettyprint-override\"><code>my:\n  config:\n    name: DefaultConfig\n    servers:\n      - default1.server.com\n      - default2.server.com\n    nested:\n      timeout: 30\n      labels:\n        env: prod\n        region: us-east\n</code></pre>\n<p>application-dev.yaml</p>\n<pre class=\"lang-yaml prettyprint-override\"><code>my:\n  config:\n    name: DevConfig\n    servers:\n      - dev1.server.local\n    nested:\n      timeout: 10\n      labels:\n        env: dev\n        debug: true\n</code></pre>\n<p>SpringBootApplication class:</p>\n<pre class=\"lang-java prettyprint-override\"><code>import com.example.MyApplicationPreparedListener;\nimport org.springframework.boot.autoconfigure.SpringBootApplication;\nimport org.springframework.boot.builder.SpringApplicationBuilder;\n\n@SpringBootApplication\npublic class ExampleApplication {\n\n    public static void main(String[] args) {\n        new SpringApplicationBuilder(ExampleApplication.class)\n                .profiles(&quot;dev&quot;) // remove it to run with default profile\n                .listeners(new MyApplicationPreparedListener()) \n                .run(args);\n    }\n}\n\n</code></pre>\n<p>Output for <strong>default</strong> profile:</p>\n<pre class=\"lang-none prettyprint-override\"><code>Loaded config:\n  name: DefaultConfig\n  servers: [default1.server.com, default2.server.com]\n  timeout: 30\n  labels: {env=prod, region=us-east}\n</code></pre>\n<p>Output for <strong>dev</strong> profile:</p>\n<pre class=\"lang-none prettyprint-override\"><code>Loaded config:\n  name: DevConfig\n  servers: [dev1.server.local]\n  timeout: 10\n  labels: {env=dev, debug=true, region=us-east}\n</code></pre>\n",
+    "score" : 5,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 18586978,
+      "reputation" : 3850,
+      "user_id" : 15000097,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/yFl4M.jpg?s=256",
+      "display_name" : "Georgii Lvov",
+      "link" : "https://stackoverflow.com/users/15000097/georgii-lvov"
+    },
+    "creation_date" : 1750628028,
+    "last_activity_date" : 1750677747,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79675354,
+    "question_id" : 79675323,
+    "body" : "<p>At that point the Environment would be ready to use, even if beans are not created yet.</p>\n<p>So you can inject the <code>Environment</code> into your class, then execute the old <code>environment.getProperty(&quot;my.property&quot;)</code> method.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 1601399,
+      "reputation" : 638,
+      "user_id" : 1482356,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/d6160b6e40d230fa92c6da8072b2f7e5?s=256&d=identicon&r=PG",
+      "display_name" : "Peter Adrian",
+      "link" : "https://stackoverflow.com/users/1482356/peter-adrian"
+    },
+    "creation_date" : 1750616824,
+    "last_activity_date" : 1750616824,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79675354" : [ {
+      "comment_id" : 140533576,
+      "post_id" : 79675354,
+      "body" : "getProperty() works but unfortunately is not what I need. As said, I need an analogue to ConfigurationProperties since I am working with complex, deeply nested objects (including arrays of objects). And if I am not missing something, getProperty only serves simple “leaf” values. Working in such low level is possible, but kind of a horror.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10066191,
+        "reputation" : 1255,
+        "user_id" : 7441319,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/9PaOi.jpg?s=256",
+        "display_name" : "Alkis Mavridis",
+        "link" : "https://stackoverflow.com/users/7441319/alkis-mavridis"
+      },
+      "creation_date" : 1750623973,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

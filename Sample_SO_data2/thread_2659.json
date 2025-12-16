@@ -1,0 +1,189 @@
+{
+  "question" : {
+    "question_id" : 79608191,
+    "title" : "How can I show images in Angular from MySQL?",
+    "body" : "<p>I'm doing the frontend and backend of a shop, to save the images of every product I have a blob column in the product table (don't know if it's the best option, but don't know another one better), the boss tell me to do an external app to add the image to every product directly to the db.</p>\n<pre class=\"lang-java prettyprint-override\"><code>private void addImage() {\n    String selected = tableView.getSelectionModel().getSelectedItem().getDescripcion();\n    System.out.println(&quot;Intentando añadir imagen al artículo: &quot; + selected);\n    if (selected == null) {\n        showAlert(&quot;Error&quot;, &quot;Seleccione un artículo primero para añadir una imagen.&quot;);\n        return;\n    }\n\n    try {\n        PreparedStatement pstmt = connection.prepareStatement(&quot;SELECT Imagen FROM articulos WHERE Descripción = ?&quot;);\n        pstmt.setString(1, selected);\n        ResultSet rs = pstmt.executeQuery();\n        if (rs.next() &amp;&amp; rs.getString(&quot;Imagen&quot;) != null) {\n            showAlert(&quot;Error&quot;, &quot;El artículo ya tiene una imagen. Use el botón 'Actualizar' para cambiarla.&quot;);\n            return;\n        }\n\n        FileChooser fileChooser = new FileChooser();\n        fileChooser.getExtensionFilters().add(\n            new FileChooser.ExtensionFilter(&quot;Images&quot;, &quot;*.png&quot;, &quot;*.jpg&quot;, &quot;*.jpeg&quot;)\n        );\n        File file = fileChooser.showOpenDialog(null);\n\n        if (file != null) {\n            String base64Image = convertImageToBytes(file);\n            if (base64Image != null) {\n                pstmt = connection.prepareStatement(&quot;UPDATE articulos SET Imagen = ? WHERE Descripción = ?&quot;);\n                pstmt.setString(1, base64Image);\n                pstmt.setString(2, selected);\n                pstmt.executeUpdate();\n                System.out.println(&quot;Imagen añadida correctamente al artículo: &quot; + selected);\n                displayImage(selected);\n            } else {\n                showAlert(&quot;Error&quot;, &quot;Error al convertir la imagen&quot;);\n            }\n        }\n    } catch (SQLException e) {\n        System.out.println(&quot;Error al añadir imagen: &quot; + e.getMessage());\n        showAlert(&quot;Error&quot;, &quot;Error al añadir imagen: &quot; + e.getMessage());\n    }\n}\n\n</code></pre>\n<pre><code>private String convertImageToBytes(File imageFile){\n    byte[] imageBytes = null;\n    try(ByteArrayOutputStream baos = new ByteArrayOutputStream(); FileInputStream fis = new FileInputStream(imageFile)) {\n        byte[] buffer = new byte[1024];\n        int bytesRead;\n        while ((bytesRead = fis.read(buffer)) != -1) {\n            baos.write(buffer, 0, bytesRead);\n        }\n        imageBytes = baos.toByteArray();\n        return Base64.getEncoder().encodeToString(imageBytes);\n    } catch (IOException e) {\n        e.printStackTrace();\n        return null;\n    }\n}\n\n</code></pre>\n<p>In the app you just select a product from the db an select an img from your pc, here I don't have a problem the image, it saves succesfully and even shows itself if you click in the same product again, in the Spring Boot controller I get the product with its image:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@GetMapping(&quot;/ofertas&quot;)\npublic ResponseEntity&lt;List&lt;ArticuloDTO&gt;&gt; getArticulosEnOferta() {\n    List&lt;Articulo&gt; articulos = ArticuloService.obtenerArticulosEnOferta();\n\n    List&lt;ArticuloDTO&gt; articulosDTO = articulos.stream().map(a -&gt; new ArticuloDTO(\n            a.getId_articulo(),\n            a.getNombre(),\n            a.getPrecio_medio(),\n            a.isRebajado(),\n            a.getPrecioRebajado(),\n            a.getImagen() != null ? Base64.getEncoder().encodeToString(a.getImagen()) : null\n    )).collect(Collectors.toList());\n\n    return ResponseEntity.ok(articulosDTO);\n}\n\n</code></pre>\n<p>but when I'm trying to show that pic in angular, I get an error, normally a loop where the page trying to process the image, all the time I'm getting a lot of errors in the console log every second:</p>\n<pre class=\"lang-none prettyprint-override\"><code>\n\ncontacto.component.ts:88 Image failed to load: \nEvent {isTrusted: true, type: 'error', target: img.full-page-image, currentTarget: img.full-page-image, eventPhase: 2, …}\nonImageError    @   contacto.component.ts:88\nContactoComponent_div_3_Template_img_error_1_listener   @   contacto.component.html:14\nZone - HTMLImageElement.addEventListener:error      \nContactoComponent_div_3_Template    @   contacto.component.html:14\nContactoComponent_Template  @   contacto.component.html:10\nXMLHttpRequest.send     \nloadProduct @   contacto.component.ts:40\nngOnInit    @   contacto.component.ts:35\nPromise.then        \n4429    @   main.ts:12\n__webpack_exec__    @   main.ts:34\n(anonymous) @   main.ts:34\n(anonymous) @   main.ts:34\n(anonymous) @   main.js:2\n\n</code></pre>\n<p>I added some logs to see if I get the blob column from the db, and yes I get it, so the problem should be when angular is trying to process the img.</p>\n<pre class=\"lang-java prettyprint-override\"><code>cargarProductosEnOferta() {\n    this.isLoading = true;\n    this.error = null;\n\n    this.productService.getProductosEnOferta().subscribe({\n        next: (productos) =&gt; {\n            console.log('Productos cargados:', productos.length);\n            this.productosEnOferta = productos;\n\n            productos.forEach((producto, index) =&gt; {\n                console.log(`Producto ${index + 1}:`, {\n                    id: producto.id_articulo,\n                    nombre: producto.nombre,\n                    descripcion: producto.descripcion,\n                    precio_medio: producto.precio_medio,\n                    rebajado: producto.rebajado,\n                    precioRebajado: producto.precioRebajado,\n                    imagen: producto.imagen ? {\n                        tipo: typeof producto.imagen,\n                        longitud: producto.imagen.length,\n                        muestra: typeof producto.imagen === 'string' \n                            ? producto.imagen.substring(0, 50) + '...' \n                            : 'byte array'\n                    } : 'sin imagen'\n                });\n            });\n\n            if (productos.length &gt; 0) {\n                console.log('Estructura completa del primer producto:', JSON.stringify(productos[0], null, 2));\n            }\n\n            this.isLoading = false;\n        },\n        error: (error) =&gt; {\n            console.error('Error loading products:', error);\n            this.error = 'Error al cargar los productos';\n            this.isLoading = false;\n        }\n    });\n}\n\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>sanitizeBase64Image(imageData: string): SafeUrl {\n    if (!imageData) {\n        return this.sanitizer.bypassSecurityTrustUrl('assets/default-product.jpg');\n    }\n\n    try {\n        return this.sanitizer.bypassSecurityTrustUrl(imageData);\n    } catch (error) {\n        console.error('Error processing image:', error);\n        return this.sanitizer.bypassSecurityTrustUrl('assets/default-product.jpg');\n    }\n}\n\n</code></pre>\n<pre class=\"lang-html prettyprint-override\"><code>&lt;div class=&quot;ofertas-gallery&quot; *ngIf=&quot;!isLoading &amp;&amp; !error&quot; \n     [style.gridTemplateColumns]=&quot;'repeat(' + calcularColumnas(productosEnOferta.length) + ', 1fr)'&quot;&gt;\n    &lt;div class=&quot;oferta-card&quot; *ngFor=&quot;let producto of productosEnOferta&quot;&gt;\n        &lt;div class=&quot;oferta-imagen&quot;&gt;\n            &lt;img [src]=&quot;sanitizeBase64Image(producto.imagen)&quot; \n                 [alt]=&quot;producto.nombre&quot;\n                 class=&quot;product-image&quot;&gt;\n            &lt;div class=&quot;oferta-badge&quot; *ngIf=&quot;producto.rebajado&quot;&gt;\n                -{{calcularPorcentajeDescuento(producto)}}%\n            &lt;/div&gt;\n        &lt;/div&gt;\n        &lt;div class=&quot;oferta-info&quot;&gt;\n            &lt;h3&gt;{{producto.nombre}}&lt;/h3&gt;\n            &lt;div class=&quot;oferta-precios&quot;&gt;\n                &lt;span class=&quot;precio-original&quot;&gt;{{producto.precio_medio}}€&lt;/span&gt;\n                &lt;span class=&quot;precio-oferta&quot; *ngIf=&quot;producto.rebajado&quot;&gt;\n                    {{producto.precioRebajado}}€\n                &lt;/span&gt;\n            &lt;/div&gt;\n            &lt;button class=&quot;btn-agregar-carrito&quot; (click)=&quot;agregarAlCarrito(producto)&quot;&gt;\n                &lt;i class=&quot;fas fa-shopping-cart&quot;&gt;&lt;/i&gt;\n                Añadir al carrito\n            &lt;/button&gt;\n        &lt;/div&gt;\n    &lt;/div&gt;\n&lt;/div&gt;\n\n</code></pre>\n<p>Probably I'm just blind and the error is obvious, but I really don't see it.</p>\n<p>Added some logs to see if I get correctly the img from the db this is an example of a product I get:</p>\n<pre class=\"lang-none prettyprint-override\"><code>Estructura completa del primer producto: {\n  &quot;id_articulo&quot;: 1, //id from the product \n  &quot;nombre&quot;: &quot;ADAPTADOR USB WIFFI 1200 MBPS NAN0&quot;, // name of the product\n  &quot;precio_medio&quot;: 12.86, //Price\n  &quot;rebajado&quot;: true, //In sale \n  &quot;precioRebajado&quot;: 10, //Sale price\n  &quot;imagen&quot;:  &quot;data:image/jpeg;base64,LzlqLzRBQVFTa1pKUmdBQkFRQUFBUUFCQUFELzJ3QkRBQU1DQWdJQ0FnTUNBZ0lEQXdNREJBWUVCQVFFQkFnR0JnVUdDUWdLQ2drSUNRa0tEQThNQ2dzT0N3a0pEUkVORGc4UUVCRVFDZ3dTRXhJUUV3OFFFQkQvMndCREFRTURBd1FEQkFnRUJBZ1FDd2tMRUJBUUVCQVFFQkFRRUJB......... //The img chain,and yes its longer than this if anyone ask it\n</code></pre>\n",
+    "tags" : [ "javascript", "java", "angular", "spring-boot" ],
+    "owner" : {
+      "account_id" : 41809247,
+      "reputation" : 21,
+      "user_id" : 30458922,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/a37c213b41e7d8e2cd31fb02e04cd4c9?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "CrismaiX",
+      "link" : "https://stackoverflow.com/users/30458922/crismaix"
+    },
+    "is_answered" : true,
+    "view_count" : 146,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1746600501,
+    "creation_date" : 1746516697,
+    "link" : "https://stackoverflow.com/questions/79608191/how-can-i-show-images-in-angular-from-mysql",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79609054,
+    "question_id" : 79608191,
+    "body" : "<p>The external app already encodes to img to bytes but in the backend I created the variable image like a <code>byte[]</code> instead of a <code>String</code> this made that the image chain were encoding again. The solution was refactor the variable image to a String and in the frontend get sanitize the img to get his mime type with this function:</p>\n<pre class=\"lang-js prettyprint-override\"><code>sanitizeBase64Image(imageData: string): string {\n    if (!imageData) {\n      return 'assets/default-product.jpg'; \n    }\n  \n    const mimeType = imageData.startsWith('iVBOR') ? 'image/png' : \n                     imageData.startsWith('/9j/') ? 'image/jpeg' : \n                     //Add more conditions for other image types if needed\n                     'image/octet-stream';  \n  \n    return `data:${mimeType};base64,${imageData}`; \n  \n}\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 41809247,
+      "reputation" : 21,
+      "user_id" : 30458922,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/a37c213b41e7d8e2cd31fb02e04cd4c9?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "CrismaiX",
+      "link" : "https://stackoverflow.com/users/30458922/crismaix"
+    },
+    "creation_date" : 1746546382,
+    "last_activity_date" : 1746600501,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140404198,
+    "post_id" : 79608191,
+    "body" : "Instead Using the Base64 in MySQL you should use the protected folder to store images as file and put the path on MySQL. And by that path you can easily download the images in Angular.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10927511,
+      "reputation" : 3218,
+      "user_id" : 8031784,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/ikcJL.png?s=256",
+      "display_name" : "Aniruddh Parihar",
+      "link" : "https://stackoverflow.com/users/8031784/aniruddh-parihar"
+    },
+    "creation_date" : 1746623665,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140400943,
+    "post_id" : 79608191,
+    "body" : "did this test and the image show succesfully:  &lt;!DOCTYPE html&gt;   &lt;img id=&quot;image&quot; alt=&quot;Imagen base64&quot; style=&quot;max-width: 300px; border: 1px solid #ccc;&quot; /&gt;    &lt;script&gt;     const base64Image = &quot;data:image/jpeg;base64,/9j/4AAQS......./*More of the chain */     document.getElementById(&#39;image&#39;).src = base64Image;   &lt;/script&gt;  &lt;/body&gt; &lt;/html&gt;",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 41809247,
+      "reputation" : 21,
+      "user_id" : 30458922,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/a37c213b41e7d8e2cd31fb02e04cd4c9?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "CrismaiX",
+      "link" : "https://stackoverflow.com/users/30458922/crismaix"
+    },
+    "creation_date" : 1746544102,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140399661,
+    "post_id" : 79608191,
+    "body" : "If you have in the &quot;variable&quot; producto.imagen some like <code>data:image&#47;png;base64,iVBORw0KGgoAAAANSUhEUg....</code> or <code>assets&#47;default-product.jpg</code>, the only is use <code>&lt;img [src]=&quot;product.imagen&quot;&gt;</code>, you needn&#39;t use <code>sanitizer.bypassSecurityTrustUrl</code>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 11689409,
+      "reputation" : 58928,
+      "user_id" : 8558186,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/5b802ad698aff4c1297296f989a72b53?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Eliseo",
+      "link" : "https://stackoverflow.com/users/8558186/eliseo"
+    },
+    "creation_date" : 1746524718,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140399575,
+    "post_id" : 79608191,
+    "body" : "@CrismaiX Then you&#39;ll have to test every component in isolation with known-working data. First check whether the tool is writing the correct data to the database (i.e., extract it manually once inserted and check it with a known-working decoding), then once you know this is working check whether <code>&#47;ofertas</code> is returning the data correctly and, again, check it with a working decoder. If all of this works than the problem is likely on the frontend.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 45213,
+      "reputation" : 27280,
+      "user_id" : 133203,
+      "user_type" : "registered",
+      "accept_rate" : 97,
+      "profile_image" : "https://i.sstatic.net/Fp3hB.jpg?s=256",
+      "display_name" : "Federico klez Culloca",
+      "link" : "https://stackoverflow.com/users/133203/federico-klez-culloca"
+    },
+    "creation_date" : 1746522769,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140399572,
+    "post_id" : 79608191,
+    "body" : "Can you create and provide a <a href=\"https://stackoverflow.com/help/minimal-reproducible-example\">minimal reproducible example</a> without Angular, the database and the backend?",
+    "score" : 0,
+    "owner" : {
+      "user_type" : "does_not_exist",
+      "display_name" : "user16540390"
+    },
+    "creation_date" : 1746522725,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140399462,
+    "post_id" : 79608191,
+    "body" : "At the beginning it was like u say but saw that maybe the encode wasnt working well in the external app for img so tried it again in the controller, still i have put it again like u say but nothing changed in the page or the console",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 41809247,
+      "reputation" : 21,
+      "user_id" : 30458922,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/a37c213b41e7d8e2cd31fb02e04cd4c9?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "CrismaiX",
+      "link" : "https://stackoverflow.com/users/30458922/crismaix"
+    },
+    "creation_date" : 1746520691,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140399411,
+    "post_id" : 79608191,
+    "body" : "In other words this <code>a.getImagen() != null ? Base64.getEncoder().encodeToString(a.getImagen()) : null</code> should likely be simply <code>a.getImagenen()</code>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 45213,
+      "reputation" : 27280,
+      "user_id" : 133203,
+      "user_type" : "registered",
+      "accept_rate" : 97,
+      "profile_image" : "https://i.sstatic.net/Fp3hB.jpg?s=256",
+      "display_name" : "Federico klez Culloca",
+      "link" : "https://stackoverflow.com/users/133203/federico-klez-culloca"
+    },
+    "creation_date" : 1746519771,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140399407,
+    "post_id" : 79608191,
+    "body" : "Now that I look, you&#39;re encoding the image to base64 when writing to the database, then when you call <code>&#47;ofertas</code> you re-encode it. In fact, if I decode that piece of string you have at the end of the post I get something that looks suspiciously like a base64-encoded string, and only if I re-decode it I get something that looks like jpeg data.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 45213,
+      "reputation" : 27280,
+      "user_id" : 133203,
+      "user_type" : "registered",
+      "accept_rate" : 97,
+      "profile_image" : "https://i.sstatic.net/Fp3hB.jpg?s=256",
+      "display_name" : "Federico klez Culloca",
+      "link" : "https://stackoverflow.com/users/133203/federico-klez-culloca"
+    },
+    "creation_date" : 1746519730,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140399325,
+    "post_id" : 79608191,
+    "body" : "Hello and welcome. &quot;i get an error&quot;, &quot;getting a lot of errors in the console log every second&quot;: you should please <a href=\"https://stackoverflow.com/posts/79608191/edit\">edit</a> your question to include those errors, otherwise we can just throw guesses here.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 45213,
+      "reputation" : 27280,
+      "user_id" : 133203,
+      "user_type" : "registered",
+      "accept_rate" : 97,
+      "profile_image" : "https://i.sstatic.net/Fp3hB.jpg?s=256",
+      "display_name" : "Federico klez Culloca",
+      "link" : "https://stackoverflow.com/users/133203/federico-klez-culloca"
+    },
+    "creation_date" : 1746518027,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

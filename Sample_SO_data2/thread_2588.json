@@ -1,0 +1,169 @@
+{
+  "question" : {
+    "question_id" : 79612727,
+    "title" : "Can Spring Data JPA Entity Manager createQuery() return an interface?",
+    "body" : "<p>I am trying to return an interface from a call to <code>createQuery()</code>.  It fails when trying to create the query with</p>\n<blockquote>\n<p>org.hibernate.query.QueryTypeMismatchException: Result type 'DcListInterface' cannot be used to package the selected expressions</p>\n</blockquote>\n<p>The same query works when defined with <code>@Query</code> on a JPA repository, so I know the interface matches the query.</p>\n<p>Can <code>EntityManager</code>'s <code>createQuery()</code> return a proxy of the interface or is this functionality that is available only on a repository that extends one of the JPA repositories?</p>\n<p>JPA based repo:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public interface DcRepository extends JpaRepository&lt;DcMotor, Long&gt; {\n@Query(&quot;select dc.id, dc.manufacturer from DcMotor dc &quot;)\nList&lt;DcListInterface&gt; testQuery();\n}\n</code></pre>\n<p>Successful test using JPA repository</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Test\nvoid givenRepository_whenTest_thenSuccess() {\n    assertThat(dcRepository).isNotNull();\n    List&lt;DcListInterface&gt; dcListInterface = dcRepository.testQuery();\n    assertThat(dcListInterface).isNotNull();\n}\n</code></pre>\n<p>Failing test using the <code>EntityManger</code> directly without JPA repository</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Test\n@Transactional(readOnly = true)\nvoid test() {\n    TypedQuery&lt;DcListInterface&gt; query = em.createQuery(&quot;select dc.id, dc.manufacturer from DcMotor dc &quot;, DcListInterface.class);\n// org.hibernate.query.QueryTypeMismatchException thrown on above line.\n    List&lt;DcListInterface&gt; result = query.getResultList();\n    assertThat(result).isNotNull();\n}\n</code></pre>\n",
+    "tags" : [ "java", "spring-data-jpa" ],
+    "owner" : {
+      "account_id" : 1740073,
+      "reputation" : 1665,
+      "user_id" : 1591729,
+      "user_type" : "registered",
+      "accept_rate" : 93,
+      "profile_image" : "https://www.gravatar.com/avatar/aefa758ae16f9a593316b9565edbf560?s=256&d=identicon&r=PG",
+      "display_name" : "Timothy Vogel",
+      "link" : "https://stackoverflow.com/users/1591729/timothy-vogel"
+    },
+    "is_answered" : true,
+    "view_count" : 78,
+    "answer_count" : 2,
+    "score" : 1,
+    "last_activity_date" : 1746735922,
+    "creation_date" : 1746718063,
+    "link" : "https://stackoverflow.com/questions/79612727/can-spring-data-jpa-entity-manager-createquery-return-an-interface",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79613113,
+    "question_id" : 79612727,
+    "body" : "<blockquote>\n<p>Can Spring Data JPA Entity Manager createQuery() return an interface?</p>\n</blockquote>\n<p>Trivially, yes.  <a href=\"https://docs.oracle.com/javaee/7/api/javax/persistence/EntityManager.html#createQuery-java.lang.String-java.lang.Class-\" rel=\"nofollow noreferrer\"><code>&lt;T&gt;EntityManager.createQuery(String, Class&lt;T&gt;)</code></a> returns <code>TypedQuery&lt;T&gt;</code>, and <a href=\"https://docs.oracle.com/javaee/7/api/javax/persistence/TypedQuery.html\" rel=\"nofollow noreferrer\"><code>TypedQuery</code></a> is an interface.</p>\n<p>I think you actually meant to ask whether <em>the method's type argument</em> can be an interface type.  Also yes.  The API docs already linked require of the type argument only that the result type of the query be assignable to it.</p>\n<p>But, per the docs,</p>\n<ul>\n<li><strong>the query's select list must consist of a single item</strong>, and</li>\n<li>that item's type must be assignable to the chosen type</li>\n</ul>\n<p>Your query has two items in its select list, so it is not suitable for the <code>createQuery()</code> method invoked by your example code.</p>\n<p>It's not clear what <code>DcListInterface</code> is supposed to represent.  If you mean it to be a list of all the results then that's just not how the API works.  But if you mean it to correspond to each individual result, and if <code>com.my.DcList</code> is a concrete class that implements that interface and has a suitable constructor, then this would work:</p>\n<pre><code>TypedQuery&lt;DcListInterface&gt; query = em.createQuery(\n    &quot;select new com.my.DcList(dc.id, dc.manufacturer) from DcMotor dc&quot;,\n    DcListInterface.class);\n</code></pre>\n<p>But given the need to use a constructor expression to convert your multiple individual entity properties into a single item, you cannot get away without providing and a concrete class for the elements and naming it in the query.</p>\n",
+    "score" : 2,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 2792262,
+      "reputation" : 190832,
+      "user_id" : 2402272,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+      "display_name" : "John Bollinger",
+      "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+    },
+    "creation_date" : 1746735605,
+    "last_activity_date" : 1746735922,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79613100,
+    "question_id" : 79612727,
+    "body" : "<p>I had to read a bit of documentation before answering this, I'll keep it clear and simple:</p>\n<p><strong>The Core Issue:</strong></p>\n<p>- Spring Data JPA <strong>automatically generates proxy objects</strong> for interfaces in repository queries.</p>\n<p>- <code>EntityManager.createQuery()</code> <strong>does not support proxies for interfaces</strong>, leading to the <code>QueryTypeMismatchException</code>  Exception.</p>\n<p><strong>Why is this?</strong></p>\n<p>When using: <code>EntityManager.createQuery()</code> , Hibernate expects the result type to be an entity or a concrete class(DTO). Since in your case, <code>DcListInterface</code> is an interface, Hibernate can't create it, leading to that error.</p>\n<p>On the other hand, Spring Data JPA <strong>supports interface-based projections</strong>, meaning you can define a repository method, like the one in you question.</p>\n<p><strong>Suggestions:</strong></p>\n<ol>\n<li>If you want to use: EntityManager.createQuery(), set a DTO instead of an interface if the change won't affect your code logic. Here is a basic example:</li>\n</ol>\n<pre><code>\npublic class DcListDTO {\n    private Long id;\n    private String manufacturer;\n\n    public DcListDTO(Long id, String manufacturer) {\n        this.id = id;\n        this.manufacturer = manufacturer;\n    }\n\n    // Getters and setters\n}\n</code></pre>\n<p>2. Stick to Spring Data JPA Repository: this way, interface-based projections are handled automatically, so it is a valid approach for what you are trying to achieve.</p>\n<p>To summarize, Spring Data JPA supports interface-based projections, while Hibernate’s EntityManager.createQuery() does not, as it requires a concrete class. If you need interface-based projections, stick to Spring Data JPA repository methods, or switch to a DTO when using EntityManager.createQuery().</p>\n<p>Here is an interesting documentation about JPA Query Methods: <a href=\"https://docs.spring.io/spring-data/jpa/reference/jpa/query-methods.html\" rel=\"nofollow noreferrer\">https://docs.spring.io/spring-data/jpa/reference/jpa/query-methods.html</a>. I haven't read much of it, but it seems like it covers different ways to create queries in Spring Data JPA.</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 38890247,
+      "reputation" : 156,
+      "user_id" : 29003408,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/LhjH9Wyd.jpg?s=256",
+      "display_name" : "Andrei Greblă",
+      "link" : "https://stackoverflow.com/users/29003408/andrei-grebl%c4%83"
+    },
+    "creation_date" : 1746734847,
+    "last_activity_date" : 1746735573,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140408585,
+    "post_id" : 79612727,
+    "body" : "Added comment where exception was thrown",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1740073,
+      "reputation" : 1665,
+      "user_id" : 1591729,
+      "user_type" : "registered",
+      "accept_rate" : 93,
+      "profile_image" : "https://www.gravatar.com/avatar/aefa758ae16f9a593316b9565edbf560?s=256&d=identicon&r=PG",
+      "display_name" : "Timothy Vogel",
+      "link" : "https://stackoverflow.com/users/1591729/timothy-vogel"
+    },
+    "creation_date" : 1746725522,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79613100" : [ {
+      "comment_id" : 140409154,
+      "post_id" : 79613100,
+      "body" : "Appreciate the research you did and providing confirmation that the &quot;magic&quot; for interfaces happens in Spring JPA.  Unfortunately the full code is way more involved and doesn&#39;t lend itself to standard JPA repository without the use of Criteria API and that is too convoluted to use.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 1740073,
+        "reputation" : 1665,
+        "user_id" : 1591729,
+        "user_type" : "registered",
+        "accept_rate" : 93,
+        "profile_image" : "https://www.gravatar.com/avatar/aefa758ae16f9a593316b9565edbf560?s=256&d=identicon&r=PG",
+        "display_name" : "Timothy Vogel",
+        "link" : "https://stackoverflow.com/users/1591729/timothy-vogel"
+      },
+      "creation_date" : 1746737994,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79613113" : [ {
+      "comment_id" : 140409139,
+      "post_id" : 79613113,
+      "body" : "@JohnBollinger Thanks for the quick, clear answer.  The objective was to NOT use a concrete class with fully qualified package name which as you confirmed can&#39;t be done.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1740073,
+        "reputation" : 1665,
+        "user_id" : 1591729,
+        "user_type" : "registered",
+        "accept_rate" : 93,
+        "profile_image" : "https://www.gravatar.com/avatar/aefa758ae16f9a593316b9565edbf560?s=256&d=identicon&r=PG",
+        "display_name" : "Timothy Vogel",
+        "link" : "https://stackoverflow.com/users/1591729/timothy-vogel"
+      },
+      "creation_date" : 1746737763,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140409068,
+      "post_id" : 79613113,
+      "body" : "You might do that, but it is impossible to not observe your simple style of answering questions, it makes me feel like you&#39;ve leaned about the topic your whole life, and that&#39;s the reason this deserves more than my upvote.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 38890247,
+        "reputation" : 156,
+        "user_id" : 29003408,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/LhjH9Wyd.jpg?s=256",
+        "display_name" : "Andrei Greblă",
+        "link" : "https://stackoverflow.com/users/29003408/andrei-grebl%c4%83"
+      },
+      "creation_date" : 1746736145,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140409060,
+      "post_id" : 79613113,
+      "body" : "Thank you, @GreblaAndrei.  But don&#39;t let me fool you: although I accept the &quot;experienced programmer&quot; designation, I, too, usually read before answering.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 2792262,
+        "reputation" : 190832,
+        "user_id" : 2402272,
+        "user_type" : "registered",
+        "accept_rate" : 85,
+        "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+        "display_name" : "John Bollinger",
+        "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+      },
+      "creation_date" : 1746736043,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140409056,
+      "post_id" : 79613113,
+      "body" : "Hey! I have seen you around a couple of times! I must say I admire the simple way you answer to questions. I can clearly see the difference between someone like me, who had to read before answering this, and you, an experienced programmer in the field.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 38890247,
+        "reputation" : 156,
+        "user_id" : 29003408,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/LhjH9Wyd.jpg?s=256",
+        "display_name" : "Andrei Greblă",
+        "link" : "https://stackoverflow.com/users/29003408/andrei-grebl%c4%83"
+      },
+      "creation_date" : 1746735897,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

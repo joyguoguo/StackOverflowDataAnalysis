@@ -1,0 +1,80 @@
+{
+  "question" : {
+    "question_id" : 79592146,
+    "title" : "Behavior of Retry in Spring Batch with JdbcCursorItemReader after lost connection",
+    "body" : "<p>I have some problem.</p>\n<p>I need transfer really big amount of data from oracle DB to some other DB.\nBut in my results always some data is missed.\nI have easy query just get two columns from some table.\nData could change in source DB during loading - but I assume thanks to MCC or MVCC cursor works on data (snapshoot) from the moment of query (one doubt what I have is UNDO_RETENTION time which is only 15 minutes)  - firstly I just add condition where relay on data boundary and null, but I abandoned this additional conditions.</p>\n<p>I'm using &quot;JdbcCursorItemReader&quot;. I have retry pattern and &quot;RetryListener&quot; where I suppose to log any problem which could trigger Retry. I have log level info and use &quot;log.error&quot; in listener.\nI catch all Exception - to not fail job and see what is reason my problem.\nBut I never see any problem  at all.</p>\n<p>I also checked target DB still has storage place.</p>\n<p>My questions is: When Spring boot does retry using &quot;JdbcCursorItemReader&quot; it does sql query again ? Because generally it does only one time, but if need retry because let say connection has been interpreted, then it does it one more time ?</p>\n<p>Belongs I pasted my code:</p>\n<p>public class Configuration{</p>\n<pre><code>public final String READ_TEAM_TO_DATE_SQL = &quot;select t.id, t.group from teams&quot;;\n\npublic final String WRITE_TEAM_SQL = &quot;INSERT INTO \\&quot;teams\\&quot; (\\&quot;id\\&quot;, \\&quot;group\\&quot;) VALUES (:id, :group)&quot;;\n\n\n@Autowired\n@Qualifier(&quot;dataSource&quot;)\nprivate DataSource postgresqlDatasource;\n\n@Autowired\n@Qualifier(&quot;oracleDataSource&quot;)\nprivate DataSource oracleDataSource;\n\n@Autowired\nprivate JobRepository jobRepository;\n\n@Autowired\nprivate PlatformTransactionManager transactionManager;\n\n\n@Bean\npublic Flow getTeamsFlow() {\n\n    return new FlowBuilder&lt;SimpleFlow&gt;(&quot;getTeams&quot;)\n            .start(getTeamsStep())\n            .on(&quot;COMPLETED&quot;).end()\n            .on(&quot;FAILED&quot;).fail()\n            .build();\n}\n\n\n@Bean\npublic Step getTeamsStep() {\n    return new StepBuilder(&quot;getTeamsStep&quot;, jobRepository)\n            .&lt;Team, Team&gt;chunk(50_000, transactionManager)\n            .faultTolerant()\n            .retry(ConnectException.class)\n            .retry(SocketTimeoutException.class)\n            .retry(SQLTransientConnectionException.class)\n            .retry(SQLTransientException.class)\n            .retry(SQLTimeoutException.class)\n            .retry(SQLRecoverableException.class)\n            .retryLimit(10)\n            .listener(new ItemWriteListener&lt;&gt;() {\n                @Override\n                public void onWriteError(Exception ex, Chunk&lt;? extends Team&gt; items) {\n                     log.error(&quot;Error during writing team  - chunk level: {} &quot;,\n                             items.getItems().stream().map(Team::toString)\n                                     .collect(Collectors.joining(&quot;|&quot;)));\n                     log.error(&quot;Error during writing team - chunk level - exception: &quot;, ex);\n\n                    ItemWriteListener.super.onWriteError(ex, items);\n                }\n            })\n            .listener(new ItemReadListener&lt;&gt;() {\n                @Override\n                public void onReadError(Exception ex) {\n                    log.error(&quot;Error during reading team  - chunk level - exception: &quot;, ex);\n\n                    ItemReadListener.super.onReadError(ex);\n                }\n            })\n            .listener(new RetryListener() {\n                @Override\n                public &lt;T, E extends Throwable&gt; void close(RetryContext context, RetryCallback&lt;T, E&gt; callback, Throwable throwable) {\n                    log.error(&quot;Occurred error during last retry: &quot;, throwable);\n\n                    RetryListener.super.close(context, callback, throwable);\n                }\n\n                @Override\n                public &lt;T, E extends Throwable&gt; void onError(RetryContext context, RetryCallback&lt;T, E&gt; callback, Throwable throwable) {\n                    log.error(&quot;Occurred error during retry: &quot;, throwable);\n                    RetryListener.super.onError(context, callback, throwable);\n                }\n            })\n            .reader(getTeamReader())\n            .writer(getTeamWriter())\n            .build();\n}\n\n@Bean\n@StepScope\npublic JdbcCursorItemReader&lt;Team&gt; getTeamReader() {\n\n    JdbcCursorItemReader&lt;Team&gt; reader = new JdbcCursorItemReader&lt;&gt;();\n    reader.setSql(READ_TEAM_TO_DATE_SQL);\n    reader.setDataSource(oracleDataSource);\n    reader.setRowMapper((ResultSet rs, int rowNum) -&gt; Team.builder()\n            .id(rs.getString(&quot;id&quot;))\n            .group(rs.getString(&quot;group&quot;))\n            .build());\n\n    return reader;\n}\n\n@Bean\npublic JdbcBatchItemWriter&lt;Team&gt; getTeamWriter() {\n    JdbcBatchItemWriter&lt;Team&gt; writer = new JdbcBatchItemWriter&lt;&gt;();\n    writer.setDataSource(postgresqlDatasource);\n    writer.setSql(WRITE_TEAM_SQL);\n    writer.setItemSqlParameterSourceProvider(new BeanPropertyItemSqlParameterSourceProvider&lt;&gt;());\n\n    return writer;\n}\n\n@Bean\npublic SimpleAsyncTaskExecutor taskExecutor() {\n    return new SimpleAsyncTaskExecutor();\n}\n</code></pre>\n<p>}</p>\n",
+    "tags" : [ "java", "spring", "spring-boot", "spring-batch", "spring-retry" ],
+    "owner" : {
+      "account_id" : 4587976,
+      "reputation" : 141,
+      "user_id" : 3722099,
+      "user_type" : "registered",
+      "accept_rate" : 33,
+      "profile_image" : "https://www.gravatar.com/avatar/635478b4ee070d99924b47dcb7c6842c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "RafalQA",
+      "link" : "https://stackoverflow.com/users/3722099/rafalqa"
+    },
+    "is_answered" : true,
+    "view_count" : 115,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1745828420,
+    "creation_date" : 1745570536,
+    "link" : "https://stackoverflow.com/questions/79592146/behavior-of-retry-in-spring-batch-with-jdbccursoritemreader-after-lost-connectio",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79596041,
+    "question_id" : 79592146,
+    "body" : "<blockquote>\n<p>Data could change in source DB during loading</p>\n</blockquote>\n<p>Batch processing in general is about fixed datasets, and Spring Batch in particular requires an immutable input to identify job instances correctly. If the datasource is changing while the job is running, unexpected behaviour may happen.</p>\n",
+    "score" : 2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 6482932,
+      "reputation" : 32103,
+      "user_id" : 5019386,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/18b9001fd20c1e089d19f4a1e994bcdc?s=256&d=identicon&r=PG",
+      "display_name" : "Mahmoud Ben Hassine",
+      "link" : "https://stackoverflow.com/users/5019386/mahmoud-ben-hassine"
+    },
+    "creation_date" : 1745828420,
+    "last_activity_date" : 1745828420,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140368552,
+    "post_id" : 79592146,
+    "body" : "@M.Deinum I just added code. Thank for help.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 4587976,
+      "reputation" : 141,
+      "user_id" : 3722099,
+      "user_type" : "registered",
+      "accept_rate" : 33,
+      "profile_image" : "https://www.gravatar.com/avatar/635478b4ee070d99924b47dcb7c6842c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "RafalQA",
+      "link" : "https://stackoverflow.com/users/3722099/rafalqa"
+    },
+    "creation_date" : 1745574751,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140368335,
+    "post_id" : 79592146,
+    "body" : "Please add some code and configuration to your question. Only describing the code doesn&#39;t really help.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126826,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1745570667,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

@@ -1,0 +1,208 @@
+{
+  "question" : {
+    "question_id" : 79671503,
+    "title" : "Bean validation vs Dynamic queries",
+    "body" : "<p>I found that parameter validation and dynamic query construction share very similar code structures.</p>\n<p>For example, given a simple class:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class User {\n    private String name;\n    private Integer age;\n\n    // getters and setters\n}\n</code></pre>\n<p>Validation Code (Manual)</p>\n<pre><code>public void validate(User user) {\n    if (user.getName() == null || user.getName().isBlank()) {\n        throw new IllegalArgumentException(&quot;name can not be empty&quot;);\n    }\n    if (user.getAge() == null) {\n        throw new IllegalArgumentException(&quot;age can not be empty&quot;);\n    }\n    if (user.getAge() &lt; 18 || user.getAge() &gt; 60) {\n        throw new IllegalArgumentException(&quot;age should be between 18 and 60&quot;);\n    }\n\n    // business logic\n}\n</code></pre>\n<p>And the dynamic query code looks like:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public static String buildWhere(UserQuery query, List&lt;Object&gt; argList) {\n    StringJoiner where = new StringJoiner(&quot; AND &quot;, &quot; WHERE &quot;, &quot; &quot;);\n    where.setEmptyValue(&quot; &quot;);\n\n    if (query.getName() != null &amp;&amp; !query.getName().isBlank()) {\n        where.add(&quot;name LIKE ?&quot;);\n        argList.add(query.getName());\n    }\n\n    if (query.getAge() != null) {\n        where.add(&quot;age = ?&quot;);\n        argList.add(query.getAge());\n    }\n\n    return where.toString();\n}\n</code></pre>\n<p>It looks similar to use Specification:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public List&lt;User&gt; query(User query) {\n    Specification&lt;User&gt; spec = (root, cq, cb) -&gt; {\n        List&lt;Predicate&gt; predicates = new ArrayList&lt;&gt;();\n        if (query.getName() != null &amp;&amp; !query.getNameLike().isBlank()) {\n            predicates.add(cb.like(root.get(&quot;name&quot;), &quot; % &quot; + query.getName() + &quot; % &quot;));\n        }\n        if (query.getAge() != null) {\n            predicates.add(cb.eq(root.get(&quot;age&quot;), query.getAge()));\n        }\n        //...\n        return cb.and(predicates.toArray(new Predicate[0]));\n    };\n    return userRepository.findAll(spec);\n}\n</code></pre>\n<p>The validation code can easily be replaced with a declarative validation framework like <a href=\"https://jakarta.ee/specifications/bean-validation/\" rel=\"nofollow noreferrer\"><em>Jakarta Validation</em></a> (formerly <em>Bean Validation</em>):</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class User {\n    @NotBlank\n    private String name;\n\n    @NotNull\n    @Range(min = 18, max = 60)\n    private Integer age;\n\n    // getters and setters\n}\n</code></pre>\n<p>So, is there a similar solution for dynamic query generation to map the condition by annotations like:</p>\n<pre><code>public class UserQuery {\n    @Condition(&quot;name LIKE ?)\n    private String name;\n\n    @Condition(&quot;age = ?&quot;)\n    private Integer age;\n}\n</code></pre>\n",
+    "tags" : [ "java", "validation", "orm", "dynamicquery" ],
+    "owner" : {
+      "account_id" : 1169336,
+      "reputation" : 21,
+      "user_id" : 1146848,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/5327037325f18648036ec7f257afd825?s=256&d=identicon&r=PG",
+      "display_name" : "ForbY",
+      "link" : "https://stackoverflow.com/users/1146848/forby"
+    },
+    "is_answered" : false,
+    "view_count" : 70,
+    "answer_count" : 1,
+    "score" : 2,
+    "last_activity_date" : 1750513189,
+    "creation_date" : 1750305590,
+    "link" : "https://stackoverflow.com/questions/79671503/bean-validation-vs-dynamic-queries",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79674472,
+    "question_id" : 79671503,
+    "body" : "<p>It's better if I explain here:</p>\n<p>Lets say you have an entity:</p>\n<pre><code>@Data\n@Entity\npublic class UserDetails {\n    @Id\n    private String id;\n    private String firstName;\n    private String lastName;\n    private Integer age;\n}\n</code></pre>\n<p>the repository:</p>\n<pre><code>@Repository\npublic interface UserRepository extends CrudRepository&lt;UserDetails, String&gt; {\n\n    @Query(&quot;SELECT u FROM UserDetails u WHERE &quot; +\n            &quot;(:firstName is null or u.firstName = :firstName) and &quot; +\n            &quot;(:lastName is null or u.lastName = :lastName) and &quot; +\n            &quot;(:ageFrom is null or u.age &gt;= :ageFrom) and &quot; +\n            &quot;(:ageTo is null or u.age &lt;= :ageTo)&quot;)\n    Stream&lt;UserDetails&gt; findUsersBy(\n            @Param(&quot;firstName&quot;) String firstName,\n            @Param(&quot;lastName&quot;) String lastName,\n            @Param(&quot;ageFrom&quot;) Integer ageFrom,\n            @Param(&quot;ageTo&quot;) Integer ageTo,\n            Pageable pageable);\n}\n</code></pre>\n<p>the service:</p>\n<pre><code>@Service\n@RequiredArgsConstructor\npublic class SearchUserService {\n    private final EntityManager em;\n\n    public Stream&lt;UserDetails&gt; searchUser(String firstName, String lastName, Integer fromAge, Integer toAge, Integer page) {\n        CriteriaBuilder builder = em.getCriteriaBuilder();\n        CriteriaQuery&lt;UserDetails&gt; query = builder.createQuery(UserDetails.class);\n\n        List&lt;Predicate&gt; predicates = new ArrayList&lt;&gt;();\n        Root&lt;UserDetails&gt; root = query.from(UserDetails.class);\n\n        if (firstName != null &amp;&amp; !firstName.isEmpty()) {\n            predicates.add(builder.equal(root.get(&quot;firstName&quot;), firstName));\n        }\n        if (lastName != null &amp;&amp; !lastName.isEmpty()) {\n            predicates.add(builder.equal(root.get(&quot;lastName&quot;), lastName));\n        }\n        if (fromAge != null) {\n            predicates.add(builder.greaterThanOrEqualTo(root.get(&quot;age&quot;), fromAge));\n        }\n        if (toAge != null) {\n            predicates.add(builder.lessThanOrEqualTo(root.get(&quot;age&quot;), toAge));\n        }\n        query.where(predicates.toArray(Predicate[]::new));\n        return em.createQuery(query.select(root))\n                .getResultStream();\n    }\n}\n</code></pre>\n<p>and an endpoint:</p>\n<pre><code>@RestController\n@RequestMapping(&quot;/users/search&quot;)\n@RequiredArgsConstructor\npublic class UserSearch {\n\n    private static final int ITEMS_PER_PAGE = 20;\n\n    private final UserRepository userRepository;\n\n    private final SearchUserService searchUserService;\n\n    @PostMapping(&quot;/with-query-builder&quot;)\n    public UserSearchResult searchUserWithQueryBuilder(@RequestBody SearchCriteria searchCriteria) {\n        if(searchCriteria.firstName == null\n                &amp;&amp; searchCriteria.lastName == null\n                &amp;&amp; searchCriteria.fromAge == null\n                &amp;&amp; searchCriteria.toAge == null) {\n            throw new IllegalArgumentException(&quot;At least one filter must be provided&quot;);\n        }\n        try (Stream&lt;UserDetails&gt; users = searchUserService.searchUser(\n                searchCriteria.firstName(),\n                searchCriteria.lastName(),\n                searchCriteria.fromAge(),\n                searchCriteria.toAge(),\n                ofNullable(searchCriteria.page()).orElse(0))) {\n            return new UserSearchResult(users\n                    .map(UserItem::of)\n                    .toList());\n        }\n    }\n\n    @PostMapping(value = &quot;/with-query&quot;, produces = MediaType.APPLICATION_JSON_VALUE)\n    @Transactional\n    public UserSearchResult searchUserWithCustomQuery(@RequestBody SearchCriteria searchCriteria) {\n        if(searchCriteria.firstName == null\n                &amp;&amp; searchCriteria.lastName == null\n                &amp;&amp; searchCriteria.fromAge == null\n                &amp;&amp; searchCriteria.toAge == null) {\n            throw new IllegalArgumentException(&quot;At least one filter must be provided&quot;);\n        }\n        try (Stream&lt;UserDetails&gt; users = userRepository.findUsersBy(\n                searchCriteria.firstName(),\n                searchCriteria.lastName(),\n                searchCriteria.fromAge(),\n                searchCriteria.toAge(),\n                ofNullable(searchCriteria.page())\n                        .map(__ -&gt; PageRequest.of(__, ITEMS_PER_PAGE))\n                        .orElseGet(() -&gt; PageRequest.of(0, ITEMS_PER_PAGE)))) {\n            return new UserSearchResult(users\n                    .map(UserItem::of)\n                    .toList());\n        }\n    }\n\n    public record SearchCriteria(String firstName, String lastName, Integer fromAge, Integer toAge, Integer page) {\n    }\n\n    public record UserSearchResult(List&lt;UserItem&gt; users) {\n    }\n\n    public record UserItem(String id, String firstName, String lastName, Integer age) {\n        public static UserItem of(UserDetails user) {\n            return new UserItem(\n                    user.getId(),\n                    user.getFirstName(),\n                    user.getLastName(),\n                    user.getAge()\n            );\n        }\n    }\n}\n</code></pre>\n<p>I've added both approaches here:</p>\n<ul>\n<li><p>use query</p>\n</li>\n<li><p>use query builder</p>\n</li>\n</ul>\n<p><strong>When using the query:</strong></p>\n<ul>\n<li><p>you will need just the repository and the endpoint and that's about it. Less code required.</p>\n</li>\n<li><p>you can use native query if you want, in a pretty simple manner</p>\n</li>\n<li><p>less prepared query objects to cache</p>\n</li>\n</ul>\n<p><strong>When using query builder:</strong></p>\n<ul>\n<li><p>you need to write the query yourself and write code which can become harder to read</p>\n</li>\n<li><p>for complex queries, it is hard to read and know how the query looks in the end.</p>\n</li>\n<li><p>the query is more optimal, as there are less predicates to handle, even if the DB can also optimize it.</p>\n</li>\n</ul>\n<p>It's your decision how you want to do it in the end. My preference is with the sql, but that's subjective opinion.</p>\n<p>Hope my explanation helps you.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 1601399,
+      "reputation" : 638,
+      "user_id" : 1482356,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/d6160b6e40d230fa92c6da8072b2f7e5?s=256&d=identicon&r=PG",
+      "display_name" : "Peter Adrian",
+      "link" : "https://stackoverflow.com/users/1482356/peter-adrian"
+    },
+    "creation_date" : 1750513189,
+    "last_activity_date" : 1750513189,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140530914,
+    "post_id" : 79671503,
+    "body" : "@PeterAdrian, <code>@Query</code> is still a string-based solution and doesn&#39;t support dynamic queries well. I used to use Specification for dynamic queries, It shares the same if structures (see the updated code).",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1169336,
+      "reputation" : 21,
+      "user_id" : 1146848,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/5327037325f18648036ec7f257afd825?s=256&d=identicon&r=PG",
+      "display_name" : "ForbY",
+      "link" : "https://stackoverflow.com/users/1146848/forby"
+    },
+    "creation_date" : 1750475915,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140530218,
+    "post_id" : 79671503,
+    "body" : "For custom queries, using @Query annotation and write the query the way you need it. Or write a default method in the repository and use some java logic to determine what method you need to call. These solutions are better than an object oriented query builder, because the code is cleaner and more easy to read.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1601399,
+      "reputation" : 638,
+      "user_id" : 1482356,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/d6160b6e40d230fa92c6da8072b2f7e5?s=256&d=identicon&r=PG",
+      "display_name" : "Peter Adrian",
+      "link" : "https://stackoverflow.com/users/1482356/peter-adrian"
+    },
+    "creation_date" : 1750437874,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140530029,
+    "post_id" : 79671503,
+    "body" : "@PeterAdrian Yes, my mistake, it&#39;s findByName(String name). But what I mean is it cannot produce all combinations of the conditions in one findBy method, I have to define  findByName, findByAge, findByNameAndAge for different combinations.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1169336,
+      "reputation" : 21,
+      "user_id" : 1146848,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/5327037325f18648036ec7f257afd825?s=256&d=identicon&r=PG",
+      "display_name" : "ForbY",
+      "link" : "https://stackoverflow.com/users/1146848/forby"
+    },
+    "creation_date" : 1750433893,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140529157,
+    "post_id" : 79671503,
+    "body" : "My bad, I should read better. No there isn&#39;t that is what the Criteria API in JPA is for. For very simple cases you might get away with an <code>Example</code> object to create a where clause, but that will only work for basic cases.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126826,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1750414662,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140528780,
+    "post_id" : 79671503,
+    "body" : "It would be findByName(String name); I can give you a complete answer if you want more details about this approach.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1601399,
+      "reputation" : 638,
+      "user_id" : 1482356,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/d6160b6e40d230fa92c6da8072b2f7e5?s=256&d=identicon&r=PG",
+      "display_name" : "Peter Adrian",
+      "link" : "https://stackoverflow.com/users/1482356/peter-adrian"
+    },
+    "creation_date" : 1750405125,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140528547,
+    "post_id" : 79671503,
+    "body" : "@PeterAdrian No, invoking <code>findByNameAndAge(&quot;Roy&quot;, null)</code> will execute <code>... where u1_0.name=? and u1_0.age is null</code> instead of <code>... where u1_0.name=?</code>. I have to define another <code>findByNameAndAge(String name)</code> for this case.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1169336,
+      "reputation" : 21,
+      "user_id" : 1146848,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/5327037325f18648036ec7f257afd825?s=256&d=identicon&r=PG",
+      "display_name" : "ForbY",
+      "link" : "https://stackoverflow.com/users/1146848/forby"
+    },
+    "creation_date" : 1750397584,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140527927,
+    "post_id" : 79671503,
+    "body" : "You can use Spring data repositories and create a method like <code>findByNameAndAge(String name, Integer age);</code> and you are done.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1601399,
+      "reputation" : 638,
+      "user_id" : 1482356,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/d6160b6e40d230fa92c6da8072b2f7e5?s=256&d=identicon&r=PG",
+      "display_name" : "Peter Adrian",
+      "link" : "https://stackoverflow.com/users/1482356/peter-adrian"
+    },
+    "creation_date" : 1750365236,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140527183,
+    "post_id" : 79671503,
+    "body" : "@M.Deinum <code>@DynamicInsert</code> and <code>@DynamicUpdate</code> are used to insert or update non-null fields in an entity, while my question is about building dynamic WHERE clauses.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1169336,
+      "reputation" : 21,
+      "user_id" : 1146848,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/5327037325f18648036ec7f257afd825?s=256&d=identicon&r=PG",
+      "display_name" : "ForbY",
+      "link" : "https://stackoverflow.com/users/1146848/forby"
+    },
+    "creation_date" : 1750346833,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140525724,
+    "post_id" : 79671503,
+    "body" : "Depends on the ORM framework, with hibernate you can simply add <code>@DynamicUpdate</code> and <code>@DynamicInsert</code>. Not sure about others but you probably have to roll your own.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126826,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1750314782,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79674472" : [ {
+      "comment_id" : 140532415,
+      "post_id" : 79674472,
+      "body" : "Thanks, Peter, I understand your answer.  1. With \\@Query we just move the null-parameter check from the method to SQL string. If we add one query parameter, we need to modify 1) SearchCriteria, 2) searchUserWithCustomQuery, 3) findUsersBy and the SQL in \\@Query. Same situation with query builder. 2. It becomes difficult when I try to add a subquery condition with a variable-length parameter to the native query.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1169336,
+        "reputation" : 21,
+        "user_id" : 1146848,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/5327037325f18648036ec7f257afd825?s=256&d=identicon&r=PG",
+        "display_name" : "ForbY",
+        "link" : "https://stackoverflow.com/users/1146848/forby"
+      },
+      "creation_date" : 1750563569,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

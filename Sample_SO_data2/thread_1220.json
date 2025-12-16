@@ -1,0 +1,348 @@
+{
+  "question" : {
+    "question_id" : 79734319,
+    "title" : "Can `Stream.allMatch()` call the predicate multiple times for the same element?",
+    "body" : "<p>I'm trying to implement a short-circuited processing for an external input of <code>java.util.Stream</code> (think <code>Stream.forEach()</code> but with short-circuiting). I do not care about order of the elements, but if processing is not short-circuited, their identity and count are important.  I've already got a solution based on a <code>Stream.spliterator()</code> and a <code>while</code> loop, however it is not parallelized and is hard to read.\nI've got an unreliable hint to use <code>allMatch()</code> to short-circuit the operation instead. The resulting code could then look like:</p>\n<pre><code>&lt;T&gt; void process(Stream&lt;T&gt; input) {\n  input.allMatch(element -&gt; {\n    if (isCancelled) {\n      return false;\n    }\n    send(element); // Should receive all elements in any order exactly once unless cancelled\n    return true;\n  });\n}\n</code></pre>\n<p>Will <code>allMatch()</code> ever apply it's predicate argument to the same element multiple times?</p>\n<p>I see that following test does not fail on my machine, can I rely on this behavior?</p>\n<pre><code>    @Test\n    public void anyMatch() {\n        AtomicLong count = new AtomicLong(0); \n        IntStream.range(0, Integer.MAX_VALUE).parallel().mapToObj(ignored -&gt; new Object()) .allMatch(i -&gt; {\n            count.incrementAndGet(); // verify that no objects are processed more than once\n            return true;\n        });\n        Assert.assertEquals(count.get(), Integer.MAX_VALUE);\n    }\n</code></pre>\n<p>IMO, given the nature of underlying <code>Spliterator.trySplit()</code> this is a reliable approach, but I'd like to get a confirmation and prognosis somehow.</p>\n<p>For the reference, the actual processing I'm trying to simplify is\n<a href=\"https://github.com/basilevs/jstackfilter/blob/586d09d9125c26e1bab58050c98a7443f92f1240/core/core/src/main/java/org/basilevs/jstackfilter/PushSpliterator.java#L40\" rel=\"nofollow noreferrer\"><code>PushSpliterator.parallel()</code></a></p>\n",
+    "tags" : [ "java", "parallel-processing", "java-stream", "short-circuiting" ],
+    "owner" : {
+      "account_id" : 43022,
+      "reputation" : 24624,
+      "user_id" : 125562,
+      "user_type" : "registered",
+      "accept_rate" : 64,
+      "profile_image" : "https://i.sstatic.net/SdIqA.png?s=256",
+      "display_name" : "Basilevs",
+      "link" : "https://stackoverflow.com/users/125562/basilevs"
+    },
+    "is_answered" : true,
+    "view_count" : 191,
+    "answer_count" : 1,
+    "score" : 2,
+    "last_activity_date" : 1757535780,
+    "creation_date" : 1755090684,
+    "link" : "https://stackoverflow.com/questions/79734319/can-stream-allmatch-call-the-predicate-multiple-times-for-the-same-element",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79734349,
+    "question_id" : 79734319,
+    "body" : "<p>Yes.</p>\n<p>No.</p>\n<p>It depends.</p>\n<h2>The spec.</h2>\n<p>Stream is a <em>spec</em>. What you're asking about is <em>behaviour</em>. The problem with that is: If the spec does not <em>guarantee</em> a certain behaviour, then if you write code that relies on this behaviour, any java update, or even a different java implementation, may break your app, and <strong>it is your fault</strong>. Filing a bug report will get the bug report denied as WONTFIX/WORKS_AS_INTENDED, and correctly so.</p>\n<p>In other words, then, the rule is simple. You follow the spec. In other words, <em>you have asked the wrong question</em>.</p>\n<p>Let's look at the <a href=\"https://docs.oracle.com/javase/8/docs/api/java/util/stream/Stream.html#allMatch-java.util.function.Predicate-\" rel=\"nofollow noreferrer\">spec</a> (specifically the 'parameters' section of <code>allmatch</code>):</p>\n<blockquote>\n<p>predicate - a non-interfering, stateless predicate to apply to elements of this stream</p>\n</blockquote>\n<p>So, your question is immaterial. It must not matter. Clearly you want it to matter, and therefore the answer is <strong>Yes</strong>, you need to write code assuming that the predicate is invoked multiple times for the same object.</p>\n<p><a href=\"https://xkcd.com/1172/\" rel=\"nofollow noreferrer\"><img src=\"https://imgs.xkcd.com/comics/workflow_2x.png\" alt=\"XKCD\" /></a></p>\n<h2>The current implementation</h2>\n<p>No, never. All implementations I know of <strong>as of today</strong> wouldn't do it, but, writing code that relies on this needs a whole page full of HERE BE DRAGONS, DANGERZONE!! style commentary and a bevy of tests that must be run every time you switch hardware or JVM implementation and even then you don't actually have a guarantee (with this multicore stuff, it tends to be non-deterministic: Any given run behaves differently because it depends on sequencing of threads which the JVM explicitly makes no guarantees about, and it is real easy to write code that is broken and nevertheless runs correctly every single time, forever, on the specific hardware/JVM-impl combo you are testing it on, today, but next week when you give the big demo it breaks).</p>\n<p>TL;DR: You're using streams wrong. if you want to shove side effects in your stream ops, don't use streams.</p>\n",
+    "score" : 7,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 401843,
+      "reputation" : 107206,
+      "user_id" : 768644,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+      "display_name" : "rzwitserloot",
+      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+    },
+    "creation_date" : 1755092333,
+    "last_activity_date" : 1757535780,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140853790,
+    "post_id" : 79734319,
+    "body" : "<a href=\"https://www.youtube.com/watch?v=fgQQIV3B-uo&amp;t=1475s\" rel=\"nofollow noreferrer\">Jos&#233; Paumard makes the same error as me in his Gatherer&#39;s video tutorial</a>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 43022,
+      "reputation" : 24624,
+      "user_id" : 125562,
+      "user_type" : "registered",
+      "accept_rate" : 64,
+      "profile_image" : "https://i.sstatic.net/SdIqA.png?s=256",
+      "display_name" : "Basilevs",
+      "link" : "https://stackoverflow.com/users/125562/basilevs"
+    },
+    "creation_date" : 1763110173,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140726199,
+    "post_id" : 79734319,
+    "body" : "@Basilevs that’s why it’s a comment and not an answer. The constraints were not specified but I already thought that there might be some preventing this as a solution.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 3211603,
+      "reputation" : 301001,
+      "user_id" : 2711488,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+      "display_name" : "Holger",
+      "link" : "https://stackoverflow.com/users/2711488/holger"
+    },
+    "creation_date" : 1757493633,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140724973,
+    "post_id" : 79734319,
+    "body" : "@Holger to be clear, in my situation (parallel processing per element), if I were targering Java 25, your suggestion is the answer. It just does not fit the question.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 43022,
+      "reputation" : 24624,
+      "user_id" : 125562,
+      "user_type" : "registered",
+      "accept_rate" : 64,
+      "profile_image" : "https://i.sstatic.net/SdIqA.png?s=256",
+      "display_name" : "Basilevs",
+      "link" : "https://stackoverflow.com/users/125562/basilevs"
+    },
+    "creation_date" : 1757435243,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140724947,
+    "post_id" : 79734319,
+    "body" : "@Holger thanks, yes gatherers are powerful, but this particular question was about cancellation (external state in Stream operations). The PushSpliterator itself was created because there were no Gatherers in target  Java 21.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 43022,
+      "reputation" : 24624,
+      "user_id" : 125562,
+      "user_type" : "registered",
+      "accept_rate" : 64,
+      "profile_image" : "https://i.sstatic.net/SdIqA.png?s=256",
+      "display_name" : "Basilevs",
+      "link" : "https://stackoverflow.com/users/125562/basilevs"
+    },
+    "creation_date" : 1757434496,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140724936,
+    "post_id" : 79734319,
+    "body" : "I’ve read the documentation comment of your <code>PushSpliterator</code> and it says that the parallel stream’s policy is not what you want but per-element concurrency, as that gatherer does, is more likely what you need for your specific use case. By the way, the parallel processing of <code>Files.lines(…)</code> has been improved dramatically but there are some prerequisites to get that benefit.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 3211603,
+      "reputation" : 301001,
+      "user_id" : 2711488,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+      "display_name" : "Holger",
+      "link" : "https://stackoverflow.com/users/2711488/holger"
+    },
+    "creation_date" : 1757434302,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140724918,
+    "post_id" : 79734319,
+    "body" : "The mapping itself does not affect short-circuiting. This gatherer simply allows an operation with per-element concurrency, which seems to be your goal. You then achieve short-circuiting by chaining a short-circuiting terminal operation, as usual. The documentation even states: “<i>In progress tasks will be attempted to be cancelled, on a best-effort basis, in situations where the downstream no longer wants to receive any more elements.</i>”. So if the terminal operation says it doesn’t need more elements, it will even try to interrupt still ongoing, now unneeded operations.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 3211603,
+      "reputation" : 301001,
+      "user_id" : 2711488,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+      "display_name" : "Holger",
+      "link" : "https://stackoverflow.com/users/2711488/holger"
+    },
+    "creation_date" : 1757433832,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140724797,
+    "post_id" : 79734319,
+    "body" : "@Holger could you elaborate? I do not see how mapping can be used for short-circuiting.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 43022,
+      "reputation" : 24624,
+      "user_id" : 125562,
+      "user_type" : "registered",
+      "accept_rate" : 64,
+      "profile_image" : "https://i.sstatic.net/SdIqA.png?s=256",
+      "display_name" : "Basilevs",
+      "link" : "https://stackoverflow.com/users/125562/basilevs"
+    },
+    "creation_date" : 1757430257,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140724631,
+    "post_id" : 79734319,
+    "body" : "You probably want to use <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/util/stream/Gatherers.html#mapConcurrent(int,java.util.function.Function)\" rel=\"nofollow noreferrer\"><code>Gatherers.mapConcurrent(…)</code></a> instead.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 3211603,
+      "reputation" : 301001,
+      "user_id" : 2711488,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+      "display_name" : "Holger",
+      "link" : "https://stackoverflow.com/users/2711488/holger"
+    },
+    "creation_date" : 1757426082,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140663726,
+    "post_id" : 79734319,
+    "body" : "@Sweeper according to your comment to an answer, a check for <code>isCancelled</code> is not stateful in case when cancellation never happens.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 43022,
+      "reputation" : 24624,
+      "user_id" : 125562,
+      "user_type" : "registered",
+      "accept_rate" : 64,
+      "profile_image" : "https://i.sstatic.net/SdIqA.png?s=256",
+      "display_name" : "Basilevs",
+      "link" : "https://stackoverflow.com/users/125562/basilevs"
+    },
+    "creation_date" : 1755112716,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140662849,
+    "post_id" : 79734319,
+    "body" : "Okay, so you are doing stateful things (<code>isCancelled</code>) in a stream. See rzwitserloot&#39;s answer for why that is a bad idea.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 6651855,
+      "reputation" : 292280,
+      "user_id" : 5133585,
+      "user_type" : "registered",
+      "accept_rate" : 96,
+      "profile_image" : "https://i.sstatic.net/dfqcw.png?s=256",
+      "display_name" : "Sweeper",
+      "link" : "https://stackoverflow.com/users/5133585/sweeper"
+    },
+    "creation_date" : 1755093181,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79734349" : [ {
+      "comment_id" : 140665604,
+      "post_id" : 79734349,
+      "body" : "@Basilevs Basilevs, It sounds like we&#39;re still on the distraction and not on the pertinent point. Do the docs indicate that they guarantee the predicate will be invoked, guaranteed, exactly 0 or 1 times for each element in the stream? I am pretty sure the docs don&#39;t say that explicitly and don&#39;t insinuate it either. My point is: If they do not do that, then the best answer to OPs question is &#39;yes, stream allMatch can call the predicate multiple times; at least, you should write your code assuming it can even if currently it never would&#39;.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 401843,
+        "reputation" : 107206,
+        "user_id" : 768644,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+        "display_name" : "rzwitserloot",
+        "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+      },
+      "creation_date" : 1755180751,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140664542,
+      "post_id" : 79734349,
+      "body" : "@rzwitserloot the documentation explicitly defines stateless in a way that conflicts with you understanding",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 43022,
+        "reputation" : 24624,
+        "user_id" : 125562,
+        "user_type" : "registered",
+        "accept_rate" : 64,
+        "profile_image" : "https://i.sstatic.net/SdIqA.png?s=256",
+        "display_name" : "Basilevs",
+        "link" : "https://stackoverflow.com/users/125562/basilevs"
+      },
+      "creation_date" : 1755154539,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140664080,
+      "post_id" : 79734349,
+      "body" : "The fact that the text of the spec I quoted talks about &#39;stateless&#39; does not mean it&#39;s now useful to debate what that word means and whether changing an <code>AtomicLong</code> is stateless or not. It&#39;s <i>what it implies</i>. The fact that the docs say the param &#39;should be stateless&#39; <i>implies</i> that the kind of guarantee that OP wants is definitely not given by the spec.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 401843,
+        "reputation" : 107206,
+        "user_id" : 768644,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+        "display_name" : "rzwitserloot",
+        "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+      },
+      "creation_date" : 1755127374,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140664079,
+      "post_id" : 79734349,
+      "body" : "This discussion is immaterial. The spec does not guarantee what OP needs guaranteed and <i>therefore it is incorrect to write a program that relies on the behaviour</i>, and that is true <b>even if</b> currently the behaviour is not just &#39;reliably observed&#39;, but via a check of the source, can be guaranteed. Because <i>the spec</i> does not make this guarantee and therefore a future version may change things.",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 401843,
+        "reputation" : 107206,
+        "user_id" : 768644,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+        "display_name" : "rzwitserloot",
+        "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+      },
+      "creation_date" : 1755127306,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140663573,
+      "post_id" : 79734349,
+      "body" : "@Sweeper, docs are a good argument. But this would invalidate this answer, do you still consider it correct?",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 43022,
+        "reputation" : 24624,
+        "user_id" : 125562,
+        "user_type" : "registered",
+        "accept_rate" : 64,
+        "profile_image" : "https://i.sstatic.net/SdIqA.png?s=256",
+        "display_name" : "Basilevs",
+        "link" : "https://stackoverflow.com/users/125562/basilevs"
+      },
+      "creation_date" : 1755108157,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140663057,
+      "post_id" : 79734349,
+      "body" : "@Basilevs From the <a href=\"https://docs.oracle.com/en/java/javase/22/docs/api/java.base/java/util/stream/package-summary.html#Statelessness\" rel=\"nofollow noreferrer\">docs</a>: &quot;A stateful lambda (or other object implementing the appropriate functional interface) is one whose result depends on any state which might change during the execution of the stream pipeline.&quot; The <b><i>result</i></b> (always <code>true</code>) of the lambda does not depend on external state, so it is stateless.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 6651855,
+        "reputation" : 292280,
+        "user_id" : 5133585,
+        "user_type" : "registered",
+        "accept_rate" : 96,
+        "profile_image" : "https://i.sstatic.net/dfqcw.png?s=256",
+        "display_name" : "Sweeper",
+        "link" : "https://stackoverflow.com/users/5133585/sweeper"
+      },
+      "creation_date" : 1755096655,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140662902,
+      "post_id" : 79734349,
+      "body" : "@Sweeper atomic long is a state though. Stateless requirement requires no side-effects whatsoever.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 43022,
+        "reputation" : 24624,
+        "user_id" : 125562,
+        "user_type" : "registered",
+        "accept_rate" : 64,
+        "profile_image" : "https://i.sstatic.net/SdIqA.png?s=256",
+        "display_name" : "Basilevs",
+        "link" : "https://stackoverflow.com/users/125562/basilevs"
+      },
+      "creation_date" : 1755094140,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140662881,
+      "post_id" : 79734349,
+      "body" : "I think it might be worth pointing out what exactly violates the requirements of the <code>predicate</code> parameter. It is the use of <code>isCancelled</code>, which makes the lambda not stateless. Simply incrementing an atomic long and always returning true would still be stateless, but with side effects, of course.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 6651855,
+        "reputation" : 292280,
+        "user_id" : 5133585,
+        "user_type" : "registered",
+        "accept_rate" : 96,
+        "profile_image" : "https://i.sstatic.net/dfqcw.png?s=256",
+        "display_name" : "Sweeper",
+        "link" : "https://stackoverflow.com/users/5133585/sweeper"
+      },
+      "creation_date" : 1755093702,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

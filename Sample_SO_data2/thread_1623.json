@@ -1,0 +1,174 @@
+{
+  "question" : {
+    "question_id" : 79692998,
+    "title" : "TLS 1.3 unexpected server socket close connection",
+    "body" : "<p>i have the following code which works correctly in TLS 1.2 but fails in TLS 1.3 (in windows platform, linux this doesn't happen, in fact if you place the server end on windows, and client on linux it would fail, but not vice versa)</p>\n<p>it just opens a socket sends some data and then closes it.\nbut doing so in TLS 1.3 causes it to fail on the server side on socket close exception.\nif i understand correctly this is somehow related to different implementation of TLS 1.3, where connection can be closed on either side, and they even included a system property that should make it work as it did, but that doesn't work either.\nthis is the most basic implementation there is, so i'm not sure exactly how it will ever work?  i mean there should be a way for a client to do just that, send data once and close the socket.</p>\n<pre><code>java.net.SocketException: An established connection was aborted by the software in your host machine\n    at java.base/sun.nio.ch.NioSocketImpl.implRead(NioSocketImpl.java:330)\n    at java.base/sun.nio.ch.NioSocketImpl.read(NioSocketImpl.java:355)\n    at java.base/sun.nio.ch.NioSocketImpl$1.read(NioSocketImpl.java:808)\n    at java.base/java.net.Socket$SocketInputStream.read(Socket.java:966)\n    at java.base/sun.security.ssl.SSLSocketInputRecord.read(SSLSocketInputRecord.java:484)\n    at java.base/sun.security.ssl.SSLSocketInputRecord.readHeader(SSLSocketInputRecord.java:478)\n    at java.base/sun.security.ssl.SSLSocketInputRecord.bytesInCompletePacket(SSLSocketInputRecord.java:70)\n    at java.base/sun.security.ssl.SSLSocketImpl.readApplicationRecord(SSLSocketImpl.java:1465)\n    at java.base/sun.security.ssl.SSLSocketImpl$AppInputStream.read(SSLSocketImpl.java:1069)\n    at java.base/java.io.ObjectInputStream$PeekInputStream.read(ObjectInputStream.java:2897)\n    at java.base/java.io.ObjectInputStream$PeekInputStream.readFully(ObjectInputStream.java:2913)\n    at java.base/java.io.ObjectInputStream$BlockDataInputStream.readShort(ObjectInputStream.java:3410)\n    at java.base/java.io.ObjectInputStream.readStreamHeader(ObjectInputStream.java:954)\n    at java.base/java.io.ObjectInputStream.&lt;init&gt;(ObjectInputStream.java:392)\n    at TestChallenge/scratch.OO.lambda$main$0(OO.java:36)\n    at java.base/java.util.concurrent.Executors$RunnableAdapter.call(Executors.java:539)\n    at java.base/java.util.concurrent.FutureTask.run$$$capture(FutureTask.java:264)\n    at java.base/java.util.concurrent.FutureTask.run(FutureTask.java)\n    at --- Async.Stack.Trace --- (captured by IntelliJ IDEA debugger)\n    at java.base/java.util.concurrent.FutureTask.&lt;init&gt;(FutureTask.java:151)\n    at java.base/java.util.concurrent.ScheduledThreadPoolExecutor$ScheduledFutureTask.&lt;init&gt;(ScheduledThreadPoolExecutor.java:215)\n    at java.base/java.util.concurrent.ScheduledThreadPoolExecutor.schedule(ScheduledThreadPoolExecutor.java:561)\n    at java.base/java.util.concurrent.ScheduledThreadPoolExecutor.execute(ScheduledThreadPoolExecutor.java:705)\n    at TestChallenge/scratch.OO.main(OO.java:30)\n</code></pre>\n<pre><code>public class OO {\n    \n    public static void main(String[] args) throws Exception {\n\n        enum STATE {\n            CURR\n        }\n        final SSLContext sslContext = getSslContext();\n        final ServerSocketFactory serverSocketFactory = sslContext.getServerSocketFactory();\n\n        final SSLServerSocket serverSocket = (SSLServerSocket) serverSocketFactory.createServerSocket(1888);\n        final ScheduledExecutorService scheduledExecutorService = Executors.newScheduledThreadPool(20);\n        scheduledExecutorService.execute(() -&gt; {\n            while (!serverSocket.isClosed()) {\n                try {\n                    final SSLSocket socket = (SSLSocket) serverSocket.accept();\n                    try {\n                        try(final InputStream inputStream = socket.getInputStream()){\n                            final ObjectInputStream objectInputStream = new ObjectInputStream(inputStream);\n                            final Object o = objectInputStream.readObject();\n                            System.out.println(o);\n                        }\n                    } catch (IOException e) {\n                        e.printStackTrace();\n                    }\n                    //   socket.setSoLinger(true,10);\n\n                } catch (Exception e) {\n                    e.printStackTrace();\n                }\n            }\n        });\n\n\n        final javax.net.SocketFactory socketFactory = sslContext.getSocketFactory();\n        scheduledExecutorService.scheduleWithFixedDelay(() -&gt; {\n            try {\n\n                try (final SSLSocket socket = (SSLSocket) socketFactory.createSocket(&quot;127.0.0.1&quot;, 1888)) {\n                    //                socket.setSoLinger(true,10);\n                    socket.startHandshake();\n                    final OutputStream outputStream = socket.getOutputStream();\n                    try (final ObjectOutputStream oo = new ObjectOutputStream(socket.getOutputStream())) {\n                        oo.writeObject(STATE.CURR);\n                        outputStream.flush();\n                    }\n                }\n            } catch (IOException e) {\n                e.printStackTrace();\n            }\n        }, 0, 1, TimeUnit.SECONDS);\n\n        new CountDownLatch(1).await();\n    }\n\n    @NotNull\n    public static SSLContext getSslContext() throws KeyStoreException, IOException, NoSuchAlgorithmException, CertificateException, UnrecoverableKeyException, KeyManagementException {\n        final KeyStore keyStore = KeyStore.getInstance(&quot;pkcs12&quot;);\n        final String s1 =&quot;MIIKZAIBAzCCCg4GCSqGSIb3DQEHAaCCCf8Eggn7MIIJ9zCCBa4GCSqGSIb3DQEHAaCCBZ8EggWbMIIFlzCCBZMGCyqGSIb3DQEMCgECoIIFQDCCBTwwZgYJKoZIhvcNAQUNMFkwOAYJKoZIhvcNAQUMMCsEFBCnlxptM/N5OqAPpFkoEY3r+0QWAgInEAIBIDAMBggqhkiG9w0CCQUAMB0GCWCGSAFlAwQBKgQQG/RKlEAGPpW5betwGewIlwSCBNAeNZ9REZgWvKz5X+CeV6fhqHitJ//P7vNAs4iJVZc4611iMZi3F/8MKFJhEKLmlWFn3dUwaWjTIlIJaKqGEBjduokc9V5aA6hFXcHdCDiZq7TN+CspYqrS/4yRknXODQ2Li4aT42DTyCca44bv9O5C6Z/ozf0ZO/YYLUoY1GOZXgrnm1UeCGHJKHD45n9hJ6BkVcwPPbEV3grqebUTdJah1phtZG2wyVQigROBub2uikNkyptYHoFW6Xam2hqb6m19CTMHMuB5Pmq5zpnEhCI93DUPsf8VL35Fdpm+SB9vhC4AU9uhlOtIoB/avQN7snI/2zzQd5+W0VSqa6panFjYiaVNFUa022vjF7kVxtE7cmmnkJjJwx0Mqnj57IyYscHCMUBp2Ndo7vVtugndOwmnG2UZNNar/RjIQ9T9x6fXjxPMExi8liZMqQhrQ4Sbzqgk6WEZ6dHJwh+vrakznZTtkM7q485axNAX0tBUucD6T6BrB6+XbtIiZ/+8qdK4E0goJRYzLG8fbjdHkYUSxeAIqtz8OZxW3Ar96/7u/LMaoRoE3YO9xh3Wd+OT62nl3zQM5aEwj0mKHtSzaHCXqCIBBcz2hp60/wS7k4De69BBSQWYP9oJaBTk8ApFtnkLnY/VamoFn/ESf7i+2I/sbp/npPZ/0JWhqdpoCl8O6E7eoIEcbPN55xmeDdbVEdTZ1lSOnVMsFCdJm55uosx2zdDl2xVJyWuZsR6NmPnVSeE96HR9+NBhW5LUOCisAUo6zpwrmRZt99ydOwSRI08D76SlSxorK88FiZEn6LbJnpFyMCl6ixzrm8Ag7UK4GPNO1xQ+G59/pq3TM1OEQehpBSCXKX393KJQOa0hbs2aS7NcwrjhwnctDnipghgBeuv8giUSNrQDkmDffkOeWtwCLaj9OHKma3VAeXwIF6ULYmOCtWhCwZjxCZCrMTj8Oh4FM7eSbo7WskIJwjcAac+AXiJZiP04/xfWG/E+RY6b2LZyKJ0sOlYF0v+bbStDFvZKilp4UJKoSRfKzZkphczEXKhs0eZXQQeEAfOEn+4Bg8eqJ4eMtOBBKuwsI9qN1N7MEKowhuAc4zKA5gTRMOv2nq5eZVOQjpqqC6EjcBLZWYBMEOdXXjHo73ZTAYX76Cq5qNrz+ZoVmbchFdzkLSe4K05ffHGmBeOq+14gmgtlisSOelpRSqm8yz+3bsyhUoLsRJ4QQGZ/iy/FX+cqsCRxZlik8h9PraPL5ij+nHp6/YeUiKesPdL0lYSalil9X45lsSkYOQOV63I0dOP51GhegPNvarNmRd7baLVjk38RmBqSHp7iuEt/+V3gQNuuHI9+gT7n3m702GZgvtoiv24x7IFV32sjO9/UQiHU5JQN9OODyylWgFDlwi1VGv04kIQz8iR48MEiauhDA6ONHJY4SMjAo0KPJoA7q+6qE9wEikzpXtA05gNXFCx1e41nl8gHGSVfl0OhERrcx0i0wC/SAu1LMkGZuZPmrp1npRGtVHHgqgkD3IKBJTzav2jt5r4L5AdGDduPrR/Bf10dJudIEo0O9M/DARbJ9uNFNbZcjFk7FEM0GovvvBZa86BeMLcF6KJWQ0fd7exlSNAXb0mIM9hP7c0dGqd98JHh1r391ZeosTFAMBsGCSqGSIb3DQEJFDEOHgwAcwBlAHIAdgBlAHIwIQYJKoZIhvcNAQkVMRQEElRpbWUgMTc1MTg5NzQyOTYzNDCCBEEGCSqGSIb3DQEHBqCCBDIwggQuAgEAMIIEJwYJKoZIhvcNAQcBMGYGCSqGSIb3DQEFDTBZMDgGCSqGSIb3DQEFDDArBBSmY1hrcRWNncaW0/8guemvmxFmJAICJxACASAwDAYIKoZIhvcNAgkFADAdBglghkgBZQMEASoEEL/VTR39zcQY9a5YSAhsrruAggOw3yiHTqysKSjj3ijl/H621YyXIxj1MGye7ZYxcTBV4SNfTVt+XzN0zWKzTqpITz2wz5buWFtqH896bMwCteQzWVzvsBMJJ6c7S4z0JZRyumfwm0FY42eDx5ObKxO3QxAk+C8eGuLotqXLAntbjoX+tMpXVzQb4MgZ2wa3wjz37ZDpBBAineakM3FI3DwDLfqYW5IVhBjfZFxRguzIGteZNUWsBUBWxkt34YSORnNBiiUtqAlU6K1SPvaojXYHHqmS5qNG6NQOACZoeMcFqgy6yY//Uh505XU82sJDzcCMJkvTvhic8iSKIgXsQzV9m1r1AsRheweMLEXCH6yUW+G2108oClDCxPwsD4QK8QRcGbIfKp+FDg6f4d6gChPrimSwvpN+Ufwipxf/5+vcRfTG+xp5kU2Md5Yh3TtItxfxqZWvW8QF1HojyHLPbNDxaHM8Kr0C71/gXA7SKm3pSgXT+vbZGUCPw1s8+s5SOBSPdjkFWpzo9wDptpWKY1Q0tsBFnu7NnCJzGuYcp2LIH/0B1jumRvFnRBjtdbdJ8dSlBdWS8FkYi8Q2nQ4MY7WLAXfeBXLg0b9tifWq6yYrBHU1Jl93i7DCz447Nt5m9rV6NXKBWB8F0TO9MkufZ7JzrB5jHfKlRgtT9VRu+hYeTtNU9LqOGCCC++AZ0+/yPHGcHerH7RAx08qzZFf+AeojKC/nFN1hFbRBuXWG8EYrFlqsEJEwfs0gqEMrT3nEj6Cm960Ohe31O9MQDsvrj++GVJ6qHjt19BOoNrr/8H7S3hUZcDOeLSwqA4ZXK0/mlI86UqccVWH9rivpKS8MR4jbVOU7uMqvuHY+tTkLazhfmRSXTzqnwxC4bYxHOSMkcXgOMVyvhEc/EJTj5qz+7uRWsY1koY+10HDDgfKKBdL8gAKjTECeDxGjxfhzX0YcjCL5dJPmrgFTNgkX50Byy8HNrcQbv9gPLqdK1aNil7jP37DQuE0wT+apuNZ3mMBK2BybgAuMU60sBrPttnR+40isjDk5SmlCYcybYfsniQUkzD5onkeGaM6EmSsqecu0eCU9u2I00RB+6Adt0QW2jamorDFkIXgJhEbPnCFvM2PVaxZsQjJjW9epSYT28neI1YbBJmopUucWH6fNJpRzRNpaaiZj3ikjpXPR+A2FyvPni4OG4msfX3anxafvbOFVmbdSMbgXEsCCB4hhJUyJawVOm7ghluCnGZEv6TAvR68Y3awi3UCoXLMdWNKk/gm1rxX/F7MwTTAxMA0GCWCGSAFlAwQCAQUABCCc2JJy7S1mfMQneJJTmvPE2/LuiNeMv7DeQE/YDncLMQQUb6aXsTU8mdD1bBLHAQVu34YDRvACAicQ&quot;;//\n        final byte[] decode = Base64.getDecoder().decode(s1.getBytes());\n        try (final InputStream inputStream = new ByteArrayInputStream(decode)) {///Files.newInputStream(path)\n            keyStore.load(inputStream, &quot;&quot;.toCharArray());\n        }\n\n        final KeyManagerFactory kmf = KeyManagerFactory.getInstance(&quot;SunX509&quot;);\n        kmf.init(keyStore, &quot;&quot;.toCharArray());\n        final KeyManager[] keyManagers = kmf.getKeyManagers();\n        final TrustManagerFactory tmf = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());\n        tmf.init(keyStore);\n        final TrustManager[] trustManagers = tmf.getTrustManagers();\n        String s = &quot;TLSv1.3&quot;;\n          //   s = &quot;TLSv1.2&quot;;\n        ///s=&quot;TLS&quot;;\n\n        final SSLContext sslContext = SSLContext.getInstance(s);\n\n        sslContext.init(keyManagers, trustManagers, new SecureRandom());\n        return sslContext;\n    }\n}\n</code></pre>\n",
+    "tags" : [ "java", "sockets", "tcp", "tls1.2", "tls1.3" ],
+    "owner" : {
+      "account_id" : 4290713,
+      "reputation" : 51,
+      "user_id" : 3507175,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/dbbd0f9494a744bb8c585bb934b8affb?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "emaayan",
+      "link" : "https://stackoverflow.com/users/3507175/emaayan"
+    },
+    "is_answered" : false,
+    "view_count" : 107,
+    "answer_count" : 0,
+    "score" : 2,
+    "last_activity_date" : 1752090665,
+    "creation_date" : 1751898250,
+    "link" : "https://stackoverflow.com/questions/79692998/tls-1-3-unexpected-server-socket-close-connection",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140577289,
+    "post_id" : 79692998,
+    "body" : "Post your details as edits to the Question rather than Comments.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 322981,
+      "reputation" : 347089,
+      "user_id" : 642706,
+      "user_type" : "registered",
+      "accept_rate" : 58,
+      "profile_image" : "https://i.sstatic.net/ZWEI3.jpg?s=256",
+      "display_name" : "Basil Bourque",
+      "link" : "https://stackoverflow.com/users/642706/basil-bourque"
+    },
+    "creation_date" : 1752074226,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140576042,
+    "post_id" : 79692998,
+    "body" : "btw it turns out, the issue seems to be happening only in windows. if you try having a client in linux and a windows server, you get problems, but not vice versa",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 4290713,
+      "reputation" : 51,
+      "user_id" : 3507175,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/dbbd0f9494a744bb8c585bb934b8affb?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "emaayan",
+      "link" : "https://stackoverflow.com/users/3507175/emaayan"
+    },
+    "creation_date" : 1752048436,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140575719,
+    "post_id" : 79692998,
+    "body" : "yea, instead of a delay, you can also do read operation that will hold the client till the server closes the outputstream , then the read returns -1  , i&#39;m assuming that closing the output stream, also causes a connection close , all this relates to this issue, but my problem is that the link there should be no backward compatibility problems ,<a href=\"https://bugs.openjdk.org/browse/JDK-8208526\" rel=\"nofollow noreferrer\">bugs.openjdk.org/browse/JDK-8208526</a>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 4290713,
+      "reputation" : 51,
+      "user_id" : 3507175,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/dbbd0f9494a744bb8c585bb934b8affb?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "emaayan",
+      "link" : "https://stackoverflow.com/users/3507175/emaayan"
+    },
+    "creation_date" : 1752040978,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140574664,
+    "post_id" : 79692998,
+    "body" : "Also, adding a delay (tried for 1 and 2 seconds) after <code>outputStream.flush();</code> (and inside the nested <code>try</code>) also seems to solve the issue. This may be related to the order of closing the streams (at least that&#39;s my only bet so far), because delaying the client from closing, also seems to solve the issue.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 9059972,
+      "reputation" : 3471,
+      "user_id" : 6746785,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/3zi2O.png?s=256",
+      "display_name" : "gthanop",
+      "link" : "https://stackoverflow.com/users/6746785/gthanop"
+    },
+    "creation_date" : 1752000152,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140574659,
+    "post_id" : 79692998,
+    "body" : "I can reproduce the problem with the given code. After some tests though, almost by accident, I figured that when sending some data (a single byte) from the server back to the client (ie utilizing both connection ways) never reproduced the problem. I have no clue why this happens. It all started with tests about the closing order of the streams, inspired by the <b>API Note</b> of <a href=\"https://docs.oracle.com/en/java/javase/17/docs/api/java.base/javax/net/ssl/SSLSocket.html\" rel=\"nofollow noreferrer\">the docs</a> which may help. I am just saying all of this in case it guides someone more experienced to solve the problem.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 9059972,
+      "reputation" : 3471,
+      "user_id" : 6746785,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/3zi2O.png?s=256",
+      "display_name" : "gthanop",
+      "link" : "https://stackoverflow.com/users/6746785/gthanop"
+    },
+    "creation_date" : 1752000057,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140574433,
+    "post_id" : 79692998,
+    "body" : "neither, this is a raw java serialization, but it can happen with just byte arrays, that&#39;s why i&#39;ve attached the source, you could run it as it is  and see it fail.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 4290713,
+      "reputation" : 51,
+      "user_id" : 3507175,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/dbbd0f9494a744bb8c585bb934b8affb?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "emaayan",
+      "link" : "https://stackoverflow.com/users/3507175/emaayan"
+    },
+    "creation_date" : 1751994339,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140574115,
+    "post_id" : 79692998,
+    "body" : "In both cases, http 1.1 or Http/2 is used at runtime?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 30416556,
+      "reputation" : 422,
+      "user_id" : 23309143,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/ACg8ocIO8RJEp3HfOZeQwzK80OiMbtgPIBMG95j1x20zK9C3=k-s256",
+      "display_name" : "ErkinD39",
+      "link" : "https://stackoverflow.com/users/23309143/erkind39"
+    },
+    "creation_date" : 1751986598,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140572657,
+    "post_id" : 79692998,
+    "body" : "java coretto 17.0.15.6.1, but i&#39;ve tried with other builds, microsoft java , java 11, later versions of java 8 (that supported TLS 1.3) same behavior.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 4290713,
+      "reputation" : 51,
+      "user_id" : 3507175,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/dbbd0f9494a744bb8c585bb934b8affb?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "emaayan",
+      "link" : "https://stackoverflow.com/users/3507175/emaayan"
+    },
+    "creation_date" : 1751957972,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140572306,
+    "post_id" : 79692998,
+    "body" : "What is the (full) Java version / release number on the client and server sides?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 47283,
+      "reputation" : 723470,
+      "user_id" : 139985,
+      "user_type" : "registered",
+      "accept_rate" : 69,
+      "profile_image" : "https://www.gravatar.com/avatar/147c5a9cc1feec049c50da791ac7d144?s=256&d=identicon&r=PG",
+      "display_name" : "Stephen C",
+      "link" : "https://stackoverflow.com/users/139985/stephen-c"
+    },
+    "creation_date" : 1751940691,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

@@ -1,0 +1,96 @@
+{
+  "question" : {
+    "question_id" : 79620779,
+    "title" : "Should a Spring WebFlux controller return a Mono&lt;T&gt; or the unwrapped T?",
+    "body" : "<p>I'm building a reactive API using Spring WebFlux and Project Reactor. In my controller layer, I currently return a <code>Mono&lt;MyResponseDto&gt;</code> like this:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@GetMapping(&quot;/example&quot;)\npublic Mono&lt;MyResponseDto&gt; getExample() {\n    return myService.getData(); // returns Mono&lt;MyResponseDto&gt;\n}\n</code></pre>\n<p>But, I heard it's better not to return <code>Mono&lt;T&gt;</code> from the controller, and instead unwrap it in the service layer, and return a normal <code>T</code> as JSON.</p>\n<p>My question is:</p>\n<p>Is it considered best practice to return <code>Mono&lt;T&gt;</code> from the controller in a reactive application?</p>\n<p>Or, should I block it and return the raw object (T)?</p>\n<p>I'm trying to follow best practices for non-blocking I/O and clean architecture. I’d appreciate any explanation on what’s correct and why.</p>\n",
+    "tags" : [ "java", "spring", "spring-webflux", "project-reactor" ],
+    "owner" : {
+      "account_id" : 23020749,
+      "reputation" : 386,
+      "user_id" : 17141839,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/d066d494644fddc809ba4fb596afaf50?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "iwritecomeinmymind",
+      "link" : "https://stackoverflow.com/users/17141839/iwritecomeinmymind"
+    },
+    "is_answered" : false,
+    "view_count" : 292,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1747266872,
+    "creation_date" : 1747200625,
+    "link" : "https://stackoverflow.com/questions/79620779/should-a-spring-webflux-controller-return-a-monot-or-the-unwrapped-t",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79622425,
+    "question_id" : 79620779,
+    "body" : "<p>So, @TevinS is correct but overlooking an important point.</p>\n<pre><code>@Component\npublic class ExampleHandler {\n  public Mono&lt;ServerResponse&gt; getExample()(ServerRequest request)    {\n    return ServerResponse.ok().contentType(MediaType.APPLICATION_JSON)\n      .body(BodyInserters.fromValue(myService.getData()));\n  }\n}\n</code></pre>\n<p>The issue is what does <code>myService.getData()</code> do? If it queries the database or another rest service, or really anything at all, then the problem is that it will run during the construction of the pipeline instead of during execution. In other words, it will run before the <code>Mono</code> is returned to the client, not after the client gets the <code>Mono</code> and executes it.</p>\n<p>So,  do this.</p>\n<pre><code>// this is properly reactive\n@GetMapping(&quot;/example&quot;)\npublic Mono&lt;ServerResponse&gt; getExample() {\n    return ServerResponse.ok().body(getData(), String.class);\n}\n\n// BodyInserters.fromValue will block until service executes\n// Which is non reactive\n@GetMapping(&quot;/example&quot;)\npublic Mono&lt;ServerResponse&gt; getExample2() {\n    return ServerResponse.ok().body(BodyInserters.fromValue(getData()));\n}\n\n// Sevice should return non blocking Mono as well.\nMono&lt;String&gt; getData() {\n    return Mono.just(&quot;hello&quot;);\n}\n</code></pre>\n<p>The first method of <code>body</code> takes a publisher,</p>\n<pre><code>/**\n * Set the body from the given {@code Publisher}. Shortcut for\n * {@link #body(BodyInserter)} with a\n * {@linkplain BodyInserters#fromPublisher Publisher inserter}.\n * @param publisher the {@code Publisher} to write to the response\n * @param elementClass the type of elements published\n * @param &lt;T&gt; the type of the elements contained in the publisher\n * @param &lt;P&gt; the type of the {@code Publisher}\n * @return the built response\n */\n&lt;T, P extends Publisher&lt;T&gt;&gt; Mono&lt;ServerResponse&gt; body(P publisher, Class&lt;T&gt; elementClass);\n</code></pre>\n<p>The second does not.</p>\n<pre><code>/**\n * Set the body of the response to the given {@code BodyInserter} and return it.\n * @param inserter the {@code BodyInserter} that writes to the response\n * @return the built response\n */\nMono&lt;ServerResponse&gt; body(BodyInserter&lt;?, ? super ServerHttpResponse&gt; inserter);\n</code></pre>\n<p>More typically there is a parameter is some sort passed in, in which case, something like this</p>\n<pre><code>// this is properly reactive\n@GetMapping(&quot;/example&quot;)\npublic Mono&lt;ServerResponse&gt; getExample(ServerRequest request) {\n    Mono&lt;String&gt; result = Mono.just(request.pathVariable(&quot;id&quot;))\n            .flatMap(id -&gt; getData(Long.parseLong(id)));\n    return ServerResponse.ok().body(result, String.class);\n}\n\n// Sevice should return non-blocking Mono as well.\nMono&lt;String&gt; getData(Long id) {\n    return Mono.just(&quot;hello &quot; + id.toString());\n}\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 4688171,
+      "reputation" : 11621,
+      "user_id" : 3795036,
+      "user_type" : "registered",
+      "accept_rate" : 88,
+      "profile_image" : "https://i.sstatic.net/eM2E2.png?s=256",
+      "display_name" : "K.Nicholas",
+      "link" : "https://stackoverflow.com/users/3795036/k-nicholas"
+    },
+    "creation_date" : 1747266232,
+    "last_activity_date" : 1747266872,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140423807,
+    "post_id" : 79620779,
+    "body" : "Why would it be better? The <code>Mono</code> will be handled by Spring including the unwrapping, you could even return a <code>Mono&lt;ResponseEntity&lt;MyResponse&gt;&gt;</code> if you need more control. Returning a <code>Mono</code>, plain object or a <code>ResponseEnttiy</code> are equally fine. If you are using reactive stuff then you should return a reactive type.",
+    "score" : 3,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126826,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1747204562,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140423733,
+    "post_id" : 79620779,
+    "body" : "Actually, my question was not about blocking.Is it a good practice to write it in the return part of the method in the controller layer? I wanted to use it in the service layer and send only the object itself to the controller layer to write better rest api.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 23020749,
+      "reputation" : 386,
+      "user_id" : 17141839,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/d066d494644fddc809ba4fb596afaf50?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "iwritecomeinmymind",
+      "link" : "https://stackoverflow.com/users/17141839/iwritecomeinmymind"
+    },
+    "creation_date" : 1747202360,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140423707,
+    "post_id" : 79620779,
+    "body" : "Where have you heard this? (best to include a reference to to this claim) If you block, you are no longer reactive. What would the advantage of unwrapping be?",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 39208,
+      "reputation" : 269427,
+      "user_id" : 112968,
+      "user_type" : "registered",
+      "accept_rate" : 68,
+      "profile_image" : "https://i.sstatic.net/zHTaT.png?s=256",
+      "display_name" : "knittl",
+      "link" : "https://stackoverflow.com/users/112968/knittl"
+    },
+    "creation_date" : 1747201398,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

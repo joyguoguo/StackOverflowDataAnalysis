@@ -1,0 +1,226 @@
+{
+  "question" : {
+    "question_id" : 79746875,
+    "title" : "Standardize/normalize HTML character escapes in Java",
+    "body" : "<p>I'm trying to compare HTML fragments that have been processed by two different systems, to check that the results are equivalent, in particular regarding character escapes. I need a version of the fragment that's still parseable and displayable, but whose character escapes are in a canonical/standardize form (whichever form that may be).</p>\n<p>For instance, I would like <code>&amp;#x00C0;</code>, <code>&amp;#xC0;</code>, <code>&amp;#192;</code> and <code>&amp;Agrave;</code>, which are all escapes of the same character (À), to be replaced with the same escape (whichever).</p>\n<h2>What I tested and found</h2>\n<p>I have access to apache.commons.text, in which I found NumericEntityUnescaper, which does the job of matching the numeric escapes for StringEscapeUtils.unescapeHtml4, unfortunately what it returns is the unescaped character. But what I want is still an escaped character, only a standard escape, and if I pass the fully-unescaped string to StringEscapeUtils.escapeHtml4, the function has no way to tell a newly-unescaped <code>&lt;</code> (which should be re-escaped) from a HTML tag that shouldn't be escaped at all.</p>\n<h2>Edit</h2>\n<p>As one answer correctly pointed out, just unescaping the character escapes is enough to perform equality checks. However, that doesn't fit my purpose since HTML code that has been unescaped is not safely parseable anymore, not if there was a <code>&amp;gt;</code> lying around for instance. I rephrased the question to be more precise about that.</p>\n",
+    "tags" : [ "java", "html", "escaping", "html-escape-characters" ],
+    "owner" : {
+      "account_id" : 12553495,
+      "reputation" : 153,
+      "user_id" : 9134146,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/wOyqL.jpg?s=256",
+      "display_name" : "Gouvernathor",
+      "link" : "https://stackoverflow.com/users/9134146/gouvernathor"
+    },
+    "is_answered" : false,
+    "view_count" : 115,
+    "answer_count" : 2,
+    "score" : 0,
+    "last_activity_date" : 1756248867,
+    "creation_date" : 1756213868,
+    "link" : "https://stackoverflow.com/questions/79746875/standardize-normalize-html-character-escapes-in-java",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79746876,
+    "question_id" : 79746875,
+    "body" : "<p>I managed to make this, using other public stuff from apache.commons.text. But if an off-the-shelf solution exists, I would probably accept it as a better answer.</p>\n<p>What it does is to test whether the unescaper matches anything, and only in that case, to re-escape the result. That way, since a normal <code>&lt;p&gt;</code> doesn't trigger the unescaper, the escaper doesn't process it.</p>\n<pre class=\"lang-java prettyprint-override\"><code>import org.apache.commons.text.StringEscapeUtils;\nimport org.apache.commons.text.translate.CharSequenceTranslator;\n\nimport java.io.IOException;\nimport java.io.StringWriter;\nimport java.io.Writer;\n\npublic class HtmlEscapesNormalizer extends CharSequenceTranslator {\n    private static final CharSequenceTranslator htmlUnescaper = StringEscapeUtils.UNESCAPE_HTML4;\n    private static final CharSequenceTranslator htmlEscaper = StringEscapeUtils.ESCAPE_HTML4;\n\n    @Override\n    public int translate(CharSequence charSequence, int i, Writer writer) throws IOException {\n        StringWriter tempWriter = new StringWriter();\n        final int nCodePoints = htmlUnescaper.translate(charSequence, i, tempWriter);\n        if (nCodePoints &gt; 0) {\n            htmlEscaper.translate(tempWriter.toString(), 0, writer);\n            return nCodePoints;\n        }\n        return 0;\n    }\n}\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 12553495,
+      "reputation" : 153,
+      "user_id" : 9134146,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/wOyqL.jpg?s=256",
+      "display_name" : "Gouvernathor",
+      "link" : "https://stackoverflow.com/users/9134146/gouvernathor"
+    },
+    "creation_date" : 1756213868,
+    "last_activity_date" : 1756213868,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79747279,
+    "question_id" : 79746875,
+    "body" : "<p>Comparing the whole unescaped fragment should be enough to handle most cases (unless there's something missing on the question or missed by me). Fixing broken entities is another issue besides comparing fragments.</p>\n<pre><code>jshell --class-path commons-lang3-3.18.0.jar:commons-text-1.14.0.jar \n|  Welcome to JShell -- Version 17.0.16\n|  For an introduction type: /help intro\n\njshell&gt; import org.apache.commons.text.StringEscapeUtils;\n\njshell&gt; String s1 = StringEscapeUtils.unescapeHtml4(&quot;&lt;p&gt;Some &amp;#x00C0; symbol&lt;/p&gt;&quot;);\ns1 ==&gt; &quot;&lt;p&gt;Some À symbol&lt;/p&gt;&quot;\n\njshell&gt; String s2 = StringEscapeUtils.unescapeHtml4(&quot;&lt;p&gt;Some &amp;#xC0; symbol&lt;/p&gt;&quot;);\ns2 ==&gt; &quot;&lt;p&gt;Some À symbol&lt;/p&gt;&quot;\n\njshell&gt; String s3 = StringEscapeUtils.unescapeHtml4(&quot;&lt;p&gt;Some &amp;#192; symbol&lt;/p&gt;&quot;);\ns3 ==&gt; &quot;&lt;p&gt;Some À symbol&lt;/p&gt;&quot;\n\njshell&gt; String s4 = StringEscapeUtils.unescapeHtml4(&quot;&lt;p&gt;Some &amp;Agrave; symbol&lt;/p&gt;&quot;);\ns4 ==&gt; &quot;&lt;p&gt;Some À symbol&lt;/p&gt;&quot;\n\njshell&gt; s1.equals(s2) &amp;&amp; s2.equals(s3) &amp;&amp; s3.equals(s4);\n$18 ==&gt; true\n</code></pre>\n<p>From the <a href=\"https://commons.apache.org/proper/commons-text/apidocs/org/apache/commons/text/StringEscapeUtils.html#unescapeHtml4(java.lang.String)\" rel=\"nofollow noreferrer\">Javadocs</a></p>\n<blockquote>\n<p>If an entity is unrecognized, it is left alone, and inserted verbatim into the result string.</p>\n</blockquote>\n<p>A parser will normalized fragments representations keeping reserved escapes as is.</p>\n<pre><code>package local.jaxb;\n\nimport java.util.ArrayList;\nimport java.util.List;\n\nimport org.jsoup.Jsoup;\nimport org.jsoup.nodes.Document;\n\npublic class HtmlTestJsoup {\n\n    // https://stackoverflow.com/questions/79746875/standardize-normalize-html-character-escapes-in-java/79747279#79747279\n\n    public static void main(String[] args) throws Exception {\n        String[] entities = { &quot;&amp;#x00C0;&quot;, &quot;&amp;#xC0;&quot;, &quot;&amp;#192;&quot;, &quot;&amp;Agrave;&quot; };\n        List&lt;String&gt; frags = new ArrayList&lt;&gt;();\n        List&lt;String&gt; parsed = new ArrayList&lt;&gt;();\n\n        for (String ent : entities) {\n            String s1 = &quot;&lt;p&gt;Some %s symbol. 5 &amp;gt; 3&lt;/p&gt;&quot;;\n            frags.add(String.format(s1, ent));\n        }\n\n        for (String f : frags) {\n            Document doc = Jsoup.parse(f);\n\n            String xmlString = doc.body().html();\n            parsed.add(xmlString);\n            System.out.println(xmlString);\n        }\n        System.out.println(parsed.get(0).equals(parsed.get(1)) \n                &amp;&amp; parsed.get(1).equals(parsed.get(2))\n                &amp;&amp; parsed.get(2).equals(parsed.get(3)));\n    }\n}\n</code></pre>\n<p>Output</p>\n<pre class=\"lang-none prettyprint-override\"><code>&lt;p&gt;Some À symbol 5 &amp;gt; 3&lt;/p&gt;\n&lt;p&gt;Some À symbol 5 &amp;gt; 3&lt;/p&gt;\n&lt;p&gt;Some À symbol 5 &amp;gt; 3&lt;/p&gt;\n&lt;p&gt;Some À symbol 5 &amp;gt; 3&lt;/p&gt;\ntrue\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 3377022,
+      "reputation" : 14393,
+      "user_id" : 2834978,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/ff9af10001f37bc0de566ca2caf2f558?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "LMC",
+      "link" : "https://stackoverflow.com/users/2834978/lmc"
+    },
+    "creation_date" : 1756238526,
+    "last_activity_date" : 1756248867,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140694166,
+    "post_id" : 79746875,
+    "body" : "@LMC I know they are all acceptable. My question is about standardizing data for comparison. &quot;&lt;p&gt;&amp;#00C0;&quot; is not equal to &quot;&lt;p&gt;&amp;Agrave;&quot; in any language.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 12553495,
+      "reputation" : 153,
+      "user_id" : 9134146,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/wOyqL.jpg?s=256",
+      "display_name" : "Gouvernathor",
+      "link" : "https://stackoverflow.com/users/9134146/gouvernathor"
+    },
+    "creation_date" : 1756236212,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140693906,
+    "post_id" : 79746875,
+    "body" : "Those are all acceptable equivalents. The only need is to fix the broken one <code>&amp;#x00C0</code>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3377022,
+      "reputation" : 14393,
+      "user_id" : 2834978,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/ff9af10001f37bc0de566ca2caf2f558?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "LMC",
+      "link" : "https://stackoverflow.com/users/2834978/lmc"
+    },
+    "creation_date" : 1756229429,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140693845,
+    "post_id" : 79746875,
+    "body" : "Parsing HTML is hard.  That’s why it’s best to let an HTML parsing library handle it.  (For example:  you accounted for character entities, but did you also account for the possibility of embedded markup, including comments?)  A parsing library will give you the text as <code>&quot;&#192;&quot;</code> every time.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2053598,
+      "reputation" : 44991,
+      "user_id" : 1831987,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/38b1c37530189ec4471a43a618e33f67?s=256&d=identicon&r=PG",
+      "display_name" : "VGR",
+      "link" : "https://stackoverflow.com/users/1831987/vgr"
+    },
+    "creation_date" : 1756227725,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79747279" : [ {
+      "comment_id" : 140695202,
+      "post_id" : 79747279,
+      "body" : "Yeah, but a full parse-serialize is even heavier computation. I&#39;d stick with my initial solution, which I expect is far quicker.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 12553495,
+        "reputation" : 153,
+        "user_id" : 9134146,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/wOyqL.jpg?s=256",
+        "display_name" : "Gouvernathor",
+        "link" : "https://stackoverflow.com/users/9134146/gouvernathor"
+      },
+      "creation_date" : 1756280964,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140694475,
+      "post_id" : 79747279,
+      "body" : "As suggested by @VGR, the parser gives the same representation for equivalent entities. Added some code about this.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 3377022,
+        "reputation" : 14393,
+        "user_id" : 2834978,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/ff9af10001f37bc0de566ca2caf2f558?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "LMC",
+        "link" : "https://stackoverflow.com/users/2834978/lmc"
+      },
+      "creation_date" : 1756245523,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140694419,
+      "post_id" : 79747279,
+      "body" : "I&#39;m not sure what you mean. <code>&lt;br&#47;&gt;&amp;Agrave;</code> and <code>&lt;br&#47;&gt;&#192;</code> are both correct and parseable, sure, but while <code>&lt;br&#47;&gt;&amp;gt;</code> is correct, <code>&lt;br&#47;&gt;&gt;</code> is not. You can&#39;t pass just any unescaped fragment to parsers. And no, normalizing per se is not necessary for parsing, what I would like is a standard transformation that I would do just once (not every time I check for equality) and still allow me to parse.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 12553495,
+        "reputation" : 153,
+        "user_id" : 9134146,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/wOyqL.jpg?s=256",
+        "display_name" : "Gouvernathor",
+        "link" : "https://stackoverflow.com/users/9134146/gouvernathor"
+      },
+      "creation_date" : 1756243398,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140694414,
+      "post_id" : 79747279,
+      "body" : "A good question to answer is if normalizing is really needed for parsing. Parsers probably get the same representation of 2 equal fragments.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 3377022,
+        "reputation" : 14393,
+        "user_id" : 2834978,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/ff9af10001f37bc0de566ca2caf2f558?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "LMC",
+        "link" : "https://stackoverflow.com/users/2834978/lmc"
+      },
+      "creation_date" : 1756243187,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140694405,
+      "post_id" : 79747279,
+      "body" : "no of course, as far as equality goes you are right. I&#39;m saying that it&#39;s not a way to &quot;normalize html character escapes&quot; as the title says, since we&#39;re just getting rid of them, so it wouldn&#39;t be a viable way to transform and save HTML fragments that can be both compared as strings and parsed/displayed. With unescape-only, you&#39;re either computing the value at each equality check, or losing the ability to parse it afterwards.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 12553495,
+        "reputation" : 153,
+        "user_id" : 9134146,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/wOyqL.jpg?s=256",
+        "display_name" : "Gouvernathor",
+        "link" : "https://stackoverflow.com/users/9134146/gouvernathor"
+      },
+      "creation_date" : 1756242930,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140694393,
+      "post_id" : 79747279,
+      "body" : "@Gouvernathor unescaping to test equality should be done without changing the original I think, keeping the fragment as is for parsing. If fragments are equal then they should be equally parseable.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 3377022,
+        "reputation" : 14393,
+        "user_id" : 2834978,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/ff9af10001f37bc0de566ca2caf2f558?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "LMC",
+        "link" : "https://stackoverflow.com/users/2834978/lmc"
+      },
+      "creation_date" : 1756242735,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140694384,
+      "post_id" : 79747279,
+      "body" : "Hmm, interesting, I didn&#39;t see it that way. As I phrased the question (but not its title), unescaping is indeed enough to make comparisons and test equality. However it does generate a fragment that may not be parseable : &#192; is no issue, but if you have &amp;gt; for instance, you end up with &lt; characters that will break html parsing.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 12553495,
+        "reputation" : 153,
+        "user_id" : 9134146,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/wOyqL.jpg?s=256",
+        "display_name" : "Gouvernathor",
+        "link" : "https://stackoverflow.com/users/9134146/gouvernathor"
+      },
+      "creation_date" : 1756242231,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

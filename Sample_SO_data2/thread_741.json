@@ -1,0 +1,220 @@
+{
+  "question" : {
+    "question_id" : 79780060,
+    "title" : "Deserialize a JSON property to a string/numeric/boolean type with Jackson",
+    "body" : "<p>Given this JSON</p>\n<pre class=\"lang-json prettyprint-override\"><code>{\n  &quot;rejectedValue&quot;: &quot;rejected&quot;\n}\n</code></pre>\n<p>I'm trying to use Jackson to deserialize this to an instance of</p>\n<pre><code>public record MyClass(Object rejectedValue) {\n}\n</code></pre>\n<p>(In reality, the JSON and Java record have other properties, but I've omitted them because they're not relevant to the question)</p>\n<p>The <code>rejectedValue</code> JSON property will always be one of the following:</p>\n<ul>\n<li>string</li>\n<li>number</li>\n<li>boolean</li>\n<li>null</li>\n</ul>\n<p>So if the JSON property is not null the runtime-type of the corresponding Java object property should be one of</p>\n<ul>\n<li>String</li>\n<li>A subclass of Number (Integer, Double, etc)</li>\n<li>Boolean</li>\n</ul>\n<p>My attempt at writing a Jackson deserializer is below. I'm using a Jackson release candidate version, specifically v3.0.0-rc9.</p>\n<pre class=\"lang-java prettyprint-override\"><code>import tools.jackson.databind.ValueDeserializer;\nimport tools.jackson.databind.JsonNode;\n\npublic class MyClassDeserializer extends ValueDeserializer&lt;MyClass&gt; {\n\n    @Override\n    public MyClass deserialize(JsonParser parser, DeserializationContext ctx) throws JacksonException {\n        JsonNode jsonRoot = parser.readValueAsTree();\n        JsonNode rejectedValue = jsonRoot.get(&quot;rejectedValue&quot;);\n        Object convertedValue = toSimpleValue(rejectedValue);\n        return new MyClass(convertedValue);\n    }\n\n    private Object toSimpleValue(JsonNode node) {\n        return switch (node.getNodeType()) {\n            case NULL, MISSING -&gt; null;\n            case BOOLEAN -&gt; node.asBoolean();\n            case NUMBER -&gt; node.isInt() ? node.asInt() : node.isLong() ? node.asLong() : node.asDouble();\n            default -&gt; node.asString();\n        };\n    }  \n}\n</code></pre>\n<p>Although this works, the code is pretty unpleasant. I suspect there must be a more concise/elegant way to achieve the same result?</p>\n",
+    "tags" : [ "java", "json", "jackson" ],
+    "owner" : {
+      "account_id" : 1921,
+      "reputation" : 187582,
+      "user_id" : 2648,
+      "user_type" : "registered",
+      "accept_rate" : 52,
+      "profile_image" : "https://www.gravatar.com/avatar/8b2d39a59a961ef26440e9c1453d1939?s=256&d=identicon&r=PG",
+      "display_name" : "D&#243;nal",
+      "link" : "https://stackoverflow.com/users/2648/d%c3%b3nal"
+    },
+    "is_answered" : true,
+    "view_count" : 486,
+    "answer_count" : 3,
+    "score" : 1,
+    "last_activity_date" : 1760346616,
+    "creation_date" : 1759322714,
+    "link" : "https://stackoverflow.com/questions/79780060/deserialize-a-json-property-to-a-string-numeric-boolean-type-with-jackson",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79785912,
+    "question_id" : 79780060,
+    "body" : "<p>As I understand from the question and some comments:</p>\n<ol>\n<li>Jackson 3 has to be used (e.g. <code>tools.jackson.core:jackson-core:3.0.0-rc9</code>)</li>\n<li>A custom deserializer is required because there's additional logic that isn't shown</li>\n<li><code>rejectedValue</code> must be a string, number, boolean, or null (I guess it means that we should attempt to deserialize other types as string)</li>\n</ol>\n<p>Based on these requirements I'd suggest only simplifying <code>toSimpleValue</code></p>\n<ol>\n<li>Use <code>ctx.readTreeAsValue(node, Object.class)</code> to handle both boolean and numeric</li>\n<li>Use <code>node.asString()</code> to handle null and string.<br />\nNote: it fails for arrays or objects (maps) as your original solution.</li>\n<li>Since there are only 2 cases, a ternary operator is enough</li>\n</ol>\n<pre class=\"lang-java prettyprint-override\"><code>private Object toSimpleValue(JsonNode node, DeserializationContext ctx) {  \n    return node.isBoolean() || node.isNumber() ?  \n        ctx.readTreeAsValue(node, Object.class) :  \n        node.asString();  \n}\n</code></pre>\n<p>Few notes:</p>\n<ul>\n<li><code>node.numberValue()</code> handles all numerics.<br />\nIt could replace <code>node.isInt() ? node.asInt()...</code></li>\n<li>If it is ok to deserialize <code>rejectedValue</code> as an array or a map, <br />\nthen <code>ctx.readTreeAsValue(node, Object.class)</code> could be used for all node types.</li>\n<li>Your original solution mentions <code>MISSING</code>, but it does not handle missing value. <br />\nYou can add: <code>if (node == null) return null</code></li>\n</ul>\n",
+    "score" : 3,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 10320634,
+      "reputation" : 3398,
+      "user_id" : 7613649,
+      "user_type" : "registered",
+      "accept_rate" : 25,
+      "profile_image" : "https://www.gravatar.com/avatar/c95137fce225c304ac42743da3816d6c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Geba",
+      "link" : "https://stackoverflow.com/users/7613649/geba"
+    },
+    "creation_date" : 1759965395,
+    "last_activity_date" : 1760023941,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79785800,
+    "question_id" : 79780060,
+    "body" : "<p>This works fine for me with JDK 17 and Jackson 2.12.7:</p>\n<pre><code>import com.fasterxml.jackson.core.JsonProcessingException;\nimport com.fasterxml.jackson.databind.ObjectMapper;\n\nclass Test\n{\n    public static record MyClass(Object rejectedValue)\n    {\n    }\n\n    public static void test(String json) throws JsonProcessingException\n    {\n        ObjectMapper mapper = new ObjectMapper();\n        MyClass obj = mapper.readValue(json, MyClass.class);\n        if(obj.rejectedValue!=null)\n            System.out.println(obj.rejectedValue.getClass().getSimpleName() + &quot; &quot; + obj.rejectedValue);\n        else\n            System.out.println(&quot;null&quot;);\n    }\n\n    public static void main(String[] args) throws JsonProcessingException\n    {\n        test(&quot;{\\&quot;rejectedValue\\&quot;: \\&quot;rejected\\&quot;}&quot;);\n        test(&quot;{\\&quot;rejectedValue\\&quot;: 1.0}&quot;);\n        test(&quot;{\\&quot;rejectedValue\\&quot;: 1}&quot;);\n        test(&quot;{\\&quot;rejectedValue\\&quot;: true}&quot;);\n        test(&quot;{}&quot;);\n    }\n}\n</code></pre>\n<p>Output:</p>\n<pre class=\"lang-none prettyprint-override\"><code>String rejected\nDouble 1.0\nInteger 1\nBoolean true\nnull\n</code></pre>\n",
+    "score" : 2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 17592368,
+      "reputation" : 19777,
+      "user_id" : 12763954,
+      "user_type" : "registered",
+      "profile_image" : "https://lh6.googleusercontent.com/-uYTsiw1bQ_o/AAAAAAAAAAI/AAAAAAAAAAA/ACHi3rev-nenZRronqGEJxeFQWww3ShBnQ/s256-rj/photo.jpg",
+      "display_name" : "Olivier",
+      "link" : "https://stackoverflow.com/users/12763954/olivier"
+    },
+    "creation_date" : 1759951382,
+    "last_activity_date" : 1759951382,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79789096,
+    "question_id" : 79780060,
+    "body" : "<pre><code>public MyClass deserialize(JsonParser parser, DeserializationContext ctx) throws JacksonException\n{\n    JsonNode root = parser.readValueAsTree();\n    JsonNode rejectedValueNode = root.get(&quot;rejectedValue&quot;);\n\n    Object value = null;\n    if (rejectedValueNode != null &amp;&amp; !rejectedValueNode.isNull()) {\n       // NEW: use DeserializationContext to read the node directly\n       value = ctx.readTreeAsValue(rejectedValueNode, Object.class);\n    }\n\n    return new MyClass(value);\n\n}\n</code></pre>\n<p>If <code>&quot;rejectedValue&quot;</code> exists and is not null, it uses <code>DeserializationContext.readTreeAsValue()</code> to deserialize it into an <code>Object</code>.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 26137201,
+      "reputation" : 333,
+      "user_id" : 19827057,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/eAPUxDRv.jpg?s=256",
+      "display_name" : "mariya cherian",
+      "link" : "https://stackoverflow.com/users/19827057/mariya-cherian"
+    },
+    "creation_date" : 1760346616,
+    "last_activity_date" : 1760346616,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140793164,
+    "post_id" : 79780060,
+    "body" : "If you want to allow <b>only</b> types you listed then I&#39;d suggest to rephrase the question as &#39;Deserialize a JSON property to <b>only</b> string/numeric/boolean/null type with Jackson&#39;",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10320634,
+      "reputation" : 3398,
+      "user_id" : 7613649,
+      "user_type" : "registered",
+      "accept_rate" : 25,
+      "profile_image" : "https://www.gravatar.com/avatar/c95137fce225c304ac42743da3816d6c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Geba",
+      "link" : "https://stackoverflow.com/users/7613649/geba"
+    },
+    "creation_date" : 1760368369,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140793163,
+    "post_id" : 79780060,
+    "body" : "Several answers suggest using <code>readTreeAsValue</code>, which is a good approach if you&#39;re ok deserializing any type of <code>rejectedValue</code> including arrays or objects (maps).    But if your goal is to <b>fail deserialization</b> when <code>rejectedValue</code> is an array or object, as your original solution does, then always using <code>readTreeAsValue</code> doesn&#39;t meet your requirements.  Could you clarify how you’d like to handle cases where <code>rejectedValue</code> is an array or map?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10320634,
+      "reputation" : 3398,
+      "user_id" : 7613649,
+      "user_type" : "registered",
+      "accept_rate" : 25,
+      "profile_image" : "https://www.gravatar.com/avatar/c95137fce225c304ac42743da3816d6c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Geba",
+      "link" : "https://stackoverflow.com/users/7613649/geba"
+    },
+    "creation_date" : 1760368352,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140786419,
+    "post_id" : 79780060,
+    "body" : "How exactly are you doing the actual deserialization? I am using <code>2.19.2</code> and what you want is supported out of the box, it should work for <code>3.x</code> as well.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 23783500,
+      "reputation" : 7109,
+      "user_id" : 17795888,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Xay1V.jpg?s=256",
+      "display_name" : "Chaosfire",
+      "link" : "https://stackoverflow.com/users/17795888/chaosfire"
+    },
+    "creation_date" : 1760017078,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140772139,
+    "post_id" : 79780060,
+    "body" : "<a href=\"https://www.baeldung.com/jackson-annotations#5-jsondeserialize\" rel=\"nofollow noreferrer\">This</a> should help.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 8909811,
+      "reputation" : 2861,
+      "user_id" : 6650475,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/fe85994d05ad7aaaa1c47d638b37bc45?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Andrew S",
+      "link" : "https://stackoverflow.com/users/6650475/andrew-s"
+    },
+    "creation_date" : 1759354993,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140771549,
+    "post_id" : 79780060,
+    "body" : "@Holger I agree there&#39;s probably a much simpler way, but I&#39;ve been unable to find it",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1921,
+      "reputation" : 187582,
+      "user_id" : 2648,
+      "user_type" : "registered",
+      "accept_rate" : 52,
+      "profile_image" : "https://www.gravatar.com/avatar/8b2d39a59a961ef26440e9c1453d1939?s=256&d=identicon&r=PG",
+      "display_name" : "D&#243;nal",
+      "link" : "https://stackoverflow.com/users/2648/d%c3%b3nal"
+    },
+    "creation_date" : 1759334029,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140771388,
+    "post_id" : 79780060,
+    "body" : "I would be surprised if there’s no built-in facility to do exactly that, including creating an instance of the record class.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 3211603,
+      "reputation" : 301001,
+      "user_id" : 2711488,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+      "display_name" : "Holger",
+      "link" : "https://stackoverflow.com/users/2711488/holger"
+    },
+    "creation_date" : 1759330194,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79785800" : [ {
+      "comment_id" : 140797231,
+      "post_id" : 79785800,
+      "body" : "I&#39;m using Jackson v3",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1921,
+        "reputation" : 187582,
+        "user_id" : 2648,
+        "user_type" : "registered",
+        "accept_rate" : 52,
+        "profile_image" : "https://www.gravatar.com/avatar/8b2d39a59a961ef26440e9c1453d1939?s=256&d=identicon&r=PG",
+        "display_name" : "D&#243;nal",
+        "link" : "https://stackoverflow.com/users/2648/d%c3%b3nal"
+      },
+      "creation_date" : 1760535208,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79785912" : [ {
+      "comment_id" : 140797236,
+      "post_id" : 79785912,
+      "body" : "This is a big improvement on my ugly switch expression, thanks!",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 1921,
+        "reputation" : 187582,
+        "user_id" : 2648,
+        "user_type" : "registered",
+        "accept_rate" : 52,
+        "profile_image" : "https://www.gravatar.com/avatar/8b2d39a59a961ef26440e9c1453d1939?s=256&d=identicon&r=PG",
+        "display_name" : "D&#243;nal",
+        "link" : "https://stackoverflow.com/users/2648/d%c3%b3nal"
+      },
+      "creation_date" : 1760535292,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

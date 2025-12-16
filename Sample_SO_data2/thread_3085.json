@@ -1,0 +1,147 @@
+{
+  "question" : {
+    "question_id" : 79575030,
+    "title" : "Why does System.nanoTime() accumulate error over the day?",
+    "body" : "<p>I'm trying to measure the latency between my Java publisher and an (industry standard) Cpp message broker.</p>\n<p>The broker records the time it receives each message, and for the Java publisher I'm using the following code to get microsecond-accurate timestamps (which is stamped onto the outgoing message):</p>\n<pre><code>    private static final long NANOTIME_OFFSET;\n\n    static {\n        Instant instant = Instant.now();      // Get absolute time\n        long nanoTime = System.nanoTime();    // Get relative time\n\n        // Offset to convert from relative to absolute time\n        NANOTIME_OFFSET = TimeUnit.SECONDS.toNanos(instant.getEpochSecond()) + instant.getNano() - nanoTime;\n    }\n\n    public static long currentTimeNanos() {\n        return System.nanoTime() + NANOTIME_OFFSET;\n    }\n</code></pre>\n<p>However, I'm noticing the measured latency between publisher and broker creep up over the course of the day and doesn't come back down until I restart my Java publisher.</p>\n<p>The latency starts off at &lt;&lt;1ms, and suddenly jumps to 500ms. Further jumps take it closer to the 1sec mark, which is hard to believe since both processes reside on the same machine.</p>\n<p><a href=\"https://i.sstatic.net/r7V55GkZ.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/r7V55GkZ.png\" alt=\"enter image description here\" /></a></p>\n<p>Profiling with VisualVM indicates there's no resource issue in my Java process, and packet capture with Wireshark confirms the issue is with the timestamps produced by <code>currentTimeNanos()</code>.</p>\n<p><strong>So why does <code>System.nanoTime()</code> lose accuracy over the day?</strong></p>\n<p>I guess the correct thing to do is to always use <code>Instant.now()</code>, but it's a heavier call than <code>System.nanoTime()</code> (generates a new <code>Instance</code> object every time), so would add more of an overhead especially with a high volume of messages.</p>\n<p>Edit: I'd also add I went with a <code>nanoTime()</code>-based clock since <code>Instance.now()</code> only yielded millisecond precision on my machine</p>\n",
+    "tags" : [ "java", "time", "nanotime", "current-time" ],
+    "owner" : {
+      "account_id" : 1856144,
+      "reputation" : 10346,
+      "user_id" : 1681681,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/626b7e8b46910cd41920bf22d35d119e?s=256&d=identicon&r=PG",
+      "display_name" : "mchen",
+      "link" : "https://stackoverflow.com/users/1681681/mchen"
+    },
+    "is_answered" : true,
+    "view_count" : 183,
+    "answer_count" : 1,
+    "score" : 2,
+    "last_activity_date" : 1744751418,
+    "creation_date" : 1744716522,
+    "link" : "https://stackoverflow.com/questions/79575030/why-does-system-nanotime-accumulate-error-over-the-day",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79575461,
+    "question_id" : 79575030,
+    "body" : "<h2>Never mix <code>System.nanoTime</code> with <code>Instant.now</code></h2>\n<p>The <a href=\"https://github.com/openjdk/jdk/blob/master/src/java.base/share/classes/java/lang/System.java\" rel=\"nofollow noreferrer\">OpenJDK source code</a> shows the <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/System.html#nanoTime()\" rel=\"nofollow noreferrer\"><code>System.nanoTime</code></a> implementation as:</p>\n<pre class=\"lang-java prettyprint-override\"><code>    @IntrinsicCandidate\n    public static native long nanoTime();\n</code></pre>\n<p>That means the method is implemented as native code.</p>\n<p>Without digging further, we know that <code>nanoTime</code> does not use the same source as <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/time/Instant.html#now()\" rel=\"nofollow noreferrer\"><code>Instant.now</code></a>. The <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/time/Instant.html\" rel=\"nofollow noreferrer\"><code>Instant</code></a> class uses the date-time clock of the host OS. On conventional computer hardware (laptops, desktops, common servers) the date-time clock of the host OS resolves to microseconds at best, not nanoseconds. So the <code>nanoTime</code> feature must use another source for tracking elapsed nanos.</p>\n<p>The CPU is the likely source. Modern CPUs have a regular “heartbeat” that keeps them running, timing their calculations. For example a 3 GHz CPU has three billion heartbeats per second. I imagine the <code>nanoTime</code> native code taps into this heartbeat for its count of elapsed nanoseconds.</p>\n<p>The point here is that these two sources of time are completely separate and distinct.</p>\n<ul>\n<li>The <strong>date-time clock of the host OS</strong> tracks date and time. In conventional computer hardware, this clock drifts. The drift is huge with respect to nanoseconds. The host OS frequently updates this clock after consulting with a time server, either locally or over the Internet. As the host OS corrects the inevitable drift, you will see the value of <code>Instant.now</code> jump, forward or backward(!). The jump may be minuscule or may be major, depending on (a) how long since the last drift-correction, and (b) the drifting tendency of your particular computer’s clock. (Another issue is the accuracy of your time server.†)</li>\n<li>The <strong>CPU cycle clock</strong> knows nothing about calendars and wall-clock time. This clock is only useful to us for tracking nanoseconds elapsed between two events happening close in time.</li>\n</ul>\n<p>You have mixed these two separate time sources with your code:</p>\n<pre><code>NANOTIME_OFFSET = TimeUnit.SECONDS.toNanos(instant.getEpochSecond()) + instant.getNano() - nanoTime;\n</code></pre>\n<p>The <code>Instant</code> class is a moving target, repeatedly being updated at any moment, jumping ahead or jumping backward. So your <code>NANOTIME_OFFSET</code> is naïve and invalid.</p>\n<ul>\n<li><em>Naïve</em> in that you assume a solidity and reliability to the date-time clock of the host OS that does not exist.</li>\n<li><em>Invalid</em> in that the two sources of time do not track together. As the Javadoc for <code>nanoTime</code> says: \uD83D\uDC49\uD83C\uDFFD <em>”This method can only be used to measure elapsed time and is not related to any other notion of system or wall-clock time.”</em></li>\n</ul>\n<hr />\n<p>For the sake of completeness, I’ll mention that <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/System.html#currentTimeMillis()\" rel=\"nofollow noreferrer\"><code>System.currentTimeMillis</code></a> (now <a href=\"https://en.m.wikipedia.org/wiki/Legacy_system\" rel=\"nofollow noreferrer\">legacy</a>) is supplanted by <code>Instant.now</code>. Both use the the date-time clock of the host OS. Neither should be mixed with <code>System.nanoTime</code>.</p>\n<hr />\n<p>† Nowadays, you can buy an atomic clock for much money (though perhaps less than you expect). A recent topic on YouTube is roll-your-own super-accurate very-cheap time servers based on capturing the current moment as broadcast by satellite navigation (<a href=\"https://en.wikipedia.org/wiki/Global_Positioning_System\" rel=\"nofollow noreferrer\">GPS</a>, etc.), then served by inexpensive computers such as Raspberry Pi. To go down this time-geek rabbit hole, you might start with the <a href=\"https://www.youtube.com/@JeffGeerling\" rel=\"nofollow noreferrer\"><em>Jeff Geerling</em></a> channels.</p>\n",
+    "score" : 3,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 322981,
+      "reputation" : 347089,
+      "user_id" : 642706,
+      "user_type" : "registered",
+      "accept_rate" : 58,
+      "profile_image" : "https://i.sstatic.net/ZWEI3.jpg?s=256",
+      "display_name" : "Basil Bourque",
+      "link" : "https://stackoverflow.com/users/642706/basil-bourque"
+    },
+    "creation_date" : 1744728501,
+    "last_activity_date" : 1744750573,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140338325,
+    "post_id" : 79575030,
+    "body" : "<i>related</i> <a href=\"https://stackoverflow.com/q/32408323/85421\">Is System.nanoTime() still unreliable for long intervals?</a> ?!",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 31180,
+      "reputation" : 29752,
+      "user_id" : 85421,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/kKvXH.gif?s=256",
+      "display_name" : "user85421",
+      "link" : "https://stackoverflow.com/users/85421/user85421"
+    },
+    "creation_date" : 1744745417,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140336821,
+    "post_id" : 79575030,
+    "body" : "You don&#39;t say what your hardware and OS platform is, or what your Java version is.  But it sounds like <code>nanoTime</code> is simply returning the value of a hardware clock that is not particularly accurate, and that may also be being &quot;time warped&quot; by the OS to keep system time in sync with network time.  You should use <code>Instant.now()</code> if you need to compare your Java-generated timestamps with timestamps from another system (that syncs with network time).   FWIW, typical modern computers&#39; clocks drift significantly if the clock is not synced.  That&#39;s why we have <code>NTP</code>, <code>ntpd</code> and <code>chrony</code>.",
+    "score" : 3,
+    "owner" : {
+      "account_id" : 47283,
+      "reputation" : 723470,
+      "user_id" : 139985,
+      "user_type" : "registered",
+      "accept_rate" : 69,
+      "profile_image" : "https://www.gravatar.com/avatar/147c5a9cc1feec049c50da791ac7d144?s=256&d=identicon&r=PG",
+      "display_name" : "Stephen C",
+      "link" : "https://stackoverflow.com/users/139985/stephen-c"
+    },
+    "creation_date" : 1744721357,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140336544,
+    "post_id" : 79575030,
+    "body" : "This means your choice to go with <code>System.nanoTime()</code> is based on a lie. This is one (small) aspect of the myriads of ways &quot;premature optimization is a really stupid idea&quot; is so important to keep in mind. Because easily deduced performance conclusions as well as &#39;received wisdom&#39; is, almost always, completely incorrect. Performance is much more complex than that. As Deinum said, nanoTime is not meant for the job you&#39;re doing. It&#39;s meant for tracking relative time between 2 events that occur very close together in time, once you start saying &quot;hour&quot;, you&#39;re not using the right tool.",
+    "score" : 4,
+    "owner" : {
+      "account_id" : 401843,
+      "reputation" : 107206,
+      "user_id" : 768644,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+      "display_name" : "rzwitserloot",
+      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+    },
+    "creation_date" : 1744717510,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140336537,
+    "post_id" : 79575030,
+    "body" : "@mchen I think you&#39;re labouring under some misconceptions. Your  concern is that <code>Instant.now()</code> is &#39;heavier&#39; because it &#39;makes a new Object&#39;. That kind of thinking has ceased to be accurate about 20 years ago. Making objects costs effectively nothing, and if that&#39;s your worry, <code>System.currentTimeMillis()</code> does the same thing. However, <b>that is a system call</b> and those take time. A <i>lot</i> of time. Millions of times heavier than &#39;making an object&#39; (which says something about how light making an object is). So, <code>System.cTM</code> (and therefore Instant.now) is &#39;heavy&#39;, but not because of that.",
+    "score" : 5,
+    "owner" : {
+      "account_id" : 401843,
+      "reputation" : 107206,
+      "user_id" : 768644,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+      "display_name" : "rzwitserloot",
+      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+    },
+    "creation_date" : 1744717391,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140336514,
+    "post_id" : 79575030,
+    "body" : "Check <a href=\"https://docs.oracle.com/javase/8/docs/api/java/lang/System.html#nanoTime--\" rel=\"nofollow noreferrer\">the javadoc</a>. While it gives nano second precision, it doesn&#39;t mean it gives nano second accuracy (due the the frequency of refreshing). Depending on your OS (Linux, Windows, Mac) things might differ.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126826,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1744717074,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79575461" : [ {
+      "comment_id" : 140338057,
+      "post_id" : 79575461,
+      "body" : "Put a finger down if you remember when commodity motherboards had real quartz clocks that kept time and not CMOS oscillators that drift several seconds per day and assume you can correct with the internet?",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 131213,
+        "reputation" : 48144,
+        "user_id" : 331052,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/67b69133382af2ecefb5470e210151d6?s=256&d=identicon&r=PG",
+        "display_name" : "Affe",
+        "link" : "https://stackoverflow.com/users/331052/affe"
+      },
+      "creation_date" : 1744739780,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

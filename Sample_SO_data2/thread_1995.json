@@ -1,0 +1,160 @@
+{
+  "question" : {
+    "question_id" : 79660173,
+    "title" : "Why I am not able to get exact matches when I perform template-matching?",
+    "body" : "<p>I am performing a simple template matching but for the life of me I still not able to find out why I am not getting correct matches.\nI've tried without converting to grayscale and to remove the alpha channel from the template but sadly it did not help. I've also tried with a scale invariant approach but did not help either.</p>\n<p>This is the template:\n<a href=\"https://i.sstatic.net/ARnsmZ8J.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/ARnsmZ8J.png\" alt=\"enter image description here\" /></a></p>\n<p>And this is the image:\n<a href=\"https://i.sstatic.net/LRzpywtd.jpg\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/LRzpywtd.jpg\" alt=\"enter image description here\" /></a></p>\n<p>And this what I am doing:</p>\n<pre><code>public static boolean isIconPresent(String largeImagePath, String iconPath, double threshold) {\n        // Load images\n        Mat largeImageColor = Imgcodecs.imread(largeImagePath);\n        Mat iconColor = Imgcodecs.imread(iconPath);\n\n        if (largeImageColor.empty() || iconColor.empty()) {\n            throw new IllegalArgumentException(&quot;Could not load images.&quot;);\n        }\n\n        // Convert to grayscale (optional)\n        Mat largeImage = new Mat();\n        Mat icon = new Mat();\n        Imgproc.cvtColor(largeImageColor, largeImage, Imgproc.COLOR_BGR2GRAY);\n        Imgproc.cvtColor(iconColor, icon, Imgproc.COLOR_BGR2GRAY);\n\n        // Result matrix\n        int resultCols = largeImage.cols() - icon.cols() + 1;\n        int resultRows = largeImage.rows() - icon.rows() + 1;\n        Mat result = new Mat(resultRows, resultCols, CvType.CV_32FC1);\n\n        // Template matching\n        Imgproc.matchTemplate(largeImage, icon, result, Imgproc.TM_CCOEFF_NORMED);\n\n        // Get match location\n        Core.MinMaxLocResult mmr = Core.minMaxLoc(result);\n        Point matchLoc = mmr.maxLoc;\n        double maxVal = mmr.maxVal;\n\n        System.out.println(&quot;Match confidence: &quot; + maxVal);\n\n        return maxVal &gt;= threshold;\n    }\n</code></pre>\n",
+    "tags" : [ "java", "opencv", "object-detection", "template-matching", "game-automation" ],
+    "owner" : {
+      "account_id" : 13354497,
+      "reputation" : 962,
+      "user_id" : 15007032,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/857eda54cdf7e2ceacf5fa1d0489c596?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "zaxunobi",
+      "link" : "https://stackoverflow.com/users/15007032/zaxunobi"
+    },
+    "is_answered" : true,
+    "view_count" : 124,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1749627093,
+    "creation_date" : 1749548211,
+    "link" : "https://stackoverflow.com/questions/79660173/why-i-am-not-able-to-get-exact-matches-when-i-perform-template-matching",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79660345,
+    "question_id" : 79660173,
+    "body" : "<h3>Template scale</h3>\n<p>Make sure to scale your template to the expected size first. Otherwise the matching will never work or you need a scale-invariant matching method such a <a href=\"https://stackoverflow.com/questions/51202984/find-rotational-degree-of-an-object-by-two-dimensional-cross-correlation/51203815#51203815\">Fourier-Mellin</a> transform. I eyeballed the icon size to 170x170 pixels.</p>\n<h3>Implementation problems</h3>\n<p>There are two major problems with your code:</p>\n<ol>\n<li>You are using the wrong transform to grayscale. It should be <code>COLOR_BGRA2GRAY</code> in <code>Imgproc.cvtColor(iconColor, icon, Imgproc.COLOR_BGR2GRAY);</code> such that the alpha channel is taken into account or you have to restrict your matrix to the first three channels prior to conversion.</li>\n</ol>\n<pre class=\"lang-none prettyprint-override\"><code>Match confidence: 0.9356115460395813\n</code></pre>\n<ol start=\"2\">\n<li>The problem upon matching is your border/the transparent region around the template. First of all, normalized cross-correlation, <code>Imgproc.TM_CCORR_NORMED</code>, is the better choice for matching your data. Additionally, <code>Imgproc.TM_CCORR_NORMED</code> supports using masked-matching. You can create a mask using the alpha-channel of your icon: Set the mask to 255 where <code>alpha &gt; 0</code> and 0 elsewhere.</li>\n</ol>\n<pre class=\"lang-none prettyprint-override\"><code>Match confidence: 0.9811655879020691\n</code></pre>\n<p><a href=\"https://i.sstatic.net/bjalaNUr.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/bjalaNUr.png\" alt=\"icon\" /></a> <a href=\"https://i.sstatic.net/DEExPd4E.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/DEExPd4E.png\" alt=\"generated mask\" /></a></p>\n<p><a href=\"https://i.sstatic.net/8DEubQTK.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/8DEubQTK.png\" alt=\"matching result\" /></a></p>\n<h3>Extension: Dynamic scaling</h3>\n<p>Using a dynamic scaling, it is also possible to use the original icon size and match each scaled resolution. With 2.0..4.0 in 0.2 steps normalized cross-correlation finds the correct four positions with highest confidence (<code>threshold = 0.98</code>):</p>\n<pre class=\"lang-none prettyprint-override\"><code>Match 0: Location: (670, 1284), Confidence: 0.99, Icon shape: (154, 154)\nMatch 1: Location: (776, 1468), Confidence: 0.99, Icon shape: (154, 154)\nMatch 2: Location: (564, 1101), Confidence: 0.99, Icon shape: (154, 154)\nMatch 3: Location: (882, 1652), Confidence: 0.99, Icon shape: (154, 154)\n</code></pre>\n<p><a href=\"https://i.sstatic.net/matcBsDs.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/matcBsDs.png\" alt=\"Matching score for scale 154x154\" /></a></p>\n<p><a href=\"https://i.sstatic.net/ThmGF2Jj.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/ThmGF2Jj.png\" alt=\"Resulting locations for scale 154x154\" /></a></p>\n",
+    "score" : 3,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 10501177,
+      "reputation" : 2035,
+      "user_id" : 10192256,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/7XkQ5.jpg?s=256",
+      "display_name" : "Andr&#233;",
+      "link" : "https://stackoverflow.com/users/10192256/andr%c3%a9"
+    },
+    "creation_date" : 1749554998,
+    "last_activity_date" : 1749627093,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140506350,
+    "post_id" : 79660173,
+    "body" : "to be clear, <code>TM_SQDIFF*</code> should work best with this, since there are no lighting changes to these &quot;sprites&quot;/billboards.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3072614,
+      "reputation" : 16444,
+      "user_id" : 2602877,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/c76ea7b35660e77624550130276c61d3?s=256&d=identicon&r=PG",
+      "display_name" : "Christoph Rackwitz",
+      "link" : "https://stackoverflow.com/users/2602877/christoph-rackwitz"
+    },
+    "creation_date" : 1749661761,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140503516,
+    "post_id" : 79660173,
+    "body" : "it&#39;s always the same problem. bad choice of <code>TM_*</code>. that is vital, and more important than all the other considerations. -- and <b>YES</b>, the template has a scale that&#39;s different from the instances in the haystack. fix that and it&#39;ll work.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3072614,
+      "reputation" : 16444,
+      "user_id" : 2602877,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/c76ea7b35660e77624550130276c61d3?s=256&d=identicon&r=PG",
+      "display_name" : "Christoph Rackwitz",
+      "link" : "https://stackoverflow.com/users/2602877/christoph-rackwitz"
+    },
+    "creation_date" : 1749581648,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79660345" : [ {
+      "comment_id" : 140507431,
+      "post_id" : 79660345,
+      "body" : "Would you be so kind to share the full code? With Dynamic scaling even though I am able to detect the icons for the provided image, I am not able for other images. Furthermore, I don&#39;t 0.99 for each recognised icon like you.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 13354497,
+        "reputation" : 962,
+        "user_id" : 15007032,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/857eda54cdf7e2ceacf5fa1d0489c596?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "zaxunobi",
+        "link" : "https://stackoverflow.com/users/15007032/zaxunobi"
+      },
+      "creation_date" : 1749705453,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140504602,
+      "post_id" : 79660345,
+      "body" : "Dynamic scaling is not a problem here. I used 2.0 .. 4.0 in 0.2 steps as scale factor and it would return the correct 4 locations with 0.99 confidence.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10501177,
+        "reputation" : 2035,
+        "user_id" : 10192256,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/7XkQ5.jpg?s=256",
+        "display_name" : "Andr&#233;",
+        "link" : "https://stackoverflow.com/users/10192256/andr%c3%a9"
+      },
+      "creation_date" : 1749626534,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140502585,
+      "post_id" : 79660345,
+      "body" : "Yes, please, as otherwise I would need to dynamically scale the template. I would much appreciate it.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 13354497,
+        "reputation" : 962,
+        "user_id" : 15007032,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/857eda54cdf7e2ceacf5fa1d0489c596?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "zaxunobi",
+        "link" : "https://stackoverflow.com/users/15007032/zaxunobi"
+      },
+      "creation_date" : 1749563398,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140502547,
+      "post_id" : 79660345,
+      "body" : "I chose a rather blunt way of opening your large image in an image viewer, dragging a rectangle around the target structure and eyeballing it to ~170x170 pixels. Even if you do not get the size perfectly the template matching will still work reasonably. If you need scale invariance I can plug it into my Fourier-Mellin code and check whether this template/image combination works well.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10501177,
+        "reputation" : 2035,
+        "user_id" : 10192256,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/7XkQ5.jpg?s=256",
+        "display_name" : "Andr&#233;",
+        "link" : "https://stackoverflow.com/users/10192256/andr%c3%a9"
+      },
+      "creation_date" : 1749562743,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140502495,
+      "post_id" : 79660345,
+      "body" : "Thanks! I haven&#39;t still tried using masked-matching however I am still failing to get correct matches. How did you scale the template accordingly? Or did you use Fourier-Mellin transform?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 13354497,
+        "reputation" : 962,
+        "user_id" : 15007032,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/857eda54cdf7e2ceacf5fa1d0489c596?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "zaxunobi",
+        "link" : "https://stackoverflow.com/users/15007032/zaxunobi"
+      },
+      "creation_date" : 1749561596,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

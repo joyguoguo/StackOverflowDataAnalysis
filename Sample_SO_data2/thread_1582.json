@@ -1,0 +1,96 @@
+{
+  "question" : {
+    "question_id" : 79696666,
+    "title" : "Parquet schema for Map type changes after spark2 to 3 migration",
+    "body" : "<p>We are migrating from spark 2 to 3 in our workflows and one issue we notice is that the parquet files are having schema mismatch for MapType. Here's a simple example to illustrate the case</p>\n<pre><code>        SparkSession sparkSession = SparkSession\n                .builder()\n                .master(&quot;local[*]&quot;)\n                .config(&quot;spark.sql.parquet.writeLegacyFormat&quot;, true)\n                .getOrCreate();\n\n        //Create struct\n        StructType schema = DataTypes.createStructType(new StructField[]{\n                DataTypes.createStructField(&quot;id&quot;, DataTypes.IntegerType, true),\n                DataTypes.createStructField(&quot;my_map_data&quot;, DataTypes.createMapType(DataTypes.StringType, DataTypes.StringType, Boolean.TRUE), true)\n        });\n\n        //Create sample data\n        List&lt;Row&gt; listRows = new ArrayList&lt;&gt;();\n        listRows.add(RowFactory.create(1, new HashMap&lt;String, String&gt;() {{\n            put(&quot;key&quot;, &quot;value&quot;);\n        }}));\n\n        //Create dataset\n        Dataset&lt;Row&gt; dataset = sparkSession.createDataFrame(listRows, schema);\n\n        //Write to parquet\n        dataset\n                .write()\n                .mode(SaveMode.Overwrite)\n                .parquet(&quot;spark_all_legacy_write_enabled&quot;);\n</code></pre>\n<p>We run the above code with spark 2.4 and then in 3.5. The schema for Map type in spark 2.4 is</p>\n<pre><code>############ Column(key) ############\nname: key\npath: my_map_data.map.key\n\n############ Column(value) ############\nname: value\npath: my_map_data.map.value\n</code></pre>\n<p>But in 3.5, it's</p>\n<pre><code>############ Column(key) ############\nname: key\npath: my_map_data.key_value.key\n\n############ Column(value) ############\nname: value\npath: my_map_data.key_value.value\n</code></pre>\n<p>In spark 2.4, the schema has &quot;map&quot; but in 3.5, the schema has &quot;key_value&quot;. This is causing our schema to mismatch. Is there a way we can resolve it? I am not able to find any help on this</p>\n<p>Edit : Schema for both spark versions is same</p>\n<pre><code>root\n |-- id: integer (nullable = true)\n |-- my_map_data: map (nullable = true)\n |    |-- key: string\n |    |-- value: string (valueContainsNull = true)\n</code></pre>\n",
+    "tags" : [ "java", "apache-spark", "parquet" ],
+    "owner" : {
+      "account_id" : 9942478,
+      "reputation" : 305,
+      "user_id" : 7358562,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/c62529b214fedd81ca99a292d7d7cb22?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Anshul Dubey",
+      "link" : "https://stackoverflow.com/users/7358562/anshul-dubey"
+    },
+    "is_answered" : true,
+    "view_count" : 82,
+    "answer_count" : 2,
+    "score" : 4,
+    "last_activity_date" : 1754196360,
+    "creation_date" : 1752132900,
+    "link" : "https://stackoverflow.com/questions/79696666/parquet-schema-for-map-type-changes-after-spark2-to-3-migration",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79699065,
+    "question_id" : 79696666,
+    "body" : "<p>From my testing, it seems that setting writeLegacyFormat to true in spark 2.4.8 will write the parquet with the <code>my_map_data.map.value</code> schema path, whereas setting it to false will set the schema path to <code>my_map_data.key_value.value</code>.</p>\n<p>On the other hand, spark 3.5.6 will set the schema path to <code>my_map_data.key_value.value</code> regardless of what is set for writeLegacyFormat. I couldn't find the reason for this mentioned in the spark docs or release notes, but I believe this could have been done to comply with parquet formatting standards. From the <a href=\"https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#maps\" rel=\"nofollow noreferrer\">parquet-format docs</a>:</p>\n<blockquote>\n<p>It is required that the repeated group of key-value pairs is named <code>key_value</code> and that its fields are named <code>key</code> and <code>value</code></p>\n</blockquote>\n<p>From the following line, looks like a different convention may have been allowed in older parquet formats:</p>\n<blockquote>\n<p>However, these names may not be used in existing data and should not be enforced as errors when reading</p>\n</blockquote>\n<p>You might be able to get around this by rewriting the data with writeLegacyFormat set to false in spark 2.4.8</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 42663105,
+      "reputation" : 136,
+      "user_id" : 30862045,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/c120a7c781131cf4222c875753af491a?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "jwong",
+      "link" : "https://stackoverflow.com/users/30862045/jwong"
+    },
+    "creation_date" : 1752302337,
+    "last_activity_date" : 1752302337,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79723779,
+    "question_id" : 79696666,
+    "body" : "<p>We faced similar issue while upgrading to dataproc 2.2 image version.</p>\n<p>We used to load  <code>DataUnitFunction</code> case class which has key and value string type.</p>\n<p>We had to change the structure as shown below to fix the issue.</p>\n<pre><code>case class DataUnitFunction(key: String, value: String)\n\ncase class Functions\n(\n  fun_temporal: String,\n  fun_regional: String,\n//  fun_temporal_unit: Seq[DataUnitFunction] = Seq.empty,\n//  fun_regional_unit: Seq[DataUnitFunction] = Seq.empty\n  fun_temporal_unit: Option[Map[String,String]] = None,\n  fun_regional_unit: Option[Map[String,String]] = None\n\n)\n\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 14282353,
+      "reputation" : 4749,
+      "user_id" : 10316689,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/1b827bad33c801593045ce37649c7341?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Vikrant Singh Rana",
+      "link" : "https://stackoverflow.com/users/10316689/vikrant-singh-rana"
+    },
+    "creation_date" : 1754196360,
+    "last_activity_date" : 1754196360,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140582130,
+    "post_id" : 79696666,
+    "body" : "Hi @jwong, the schema is same for both. I will edit the post with the schema",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 9942478,
+      "reputation" : 305,
+      "user_id" : 7358562,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/c62529b214fedd81ca99a292d7d7cb22?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Anshul Dubey",
+      "link" : "https://stackoverflow.com/users/7358562/anshul-dubey"
+    },
+    "creation_date" : 1752231424,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140581528,
+    "post_id" : 79696666,
+    "body" : "Can you add the output of printSchema() just prior to writing the parquet files? If the schema is exactly the same, the issue might be related to differences in how the map type is being encoded to parquet between 2.4 and 3.5, but that ideally should already be handled by writeLegacyFormat=true",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 42663105,
+      "reputation" : 136,
+      "user_id" : 30862045,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/c120a7c781131cf4222c875753af491a?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "jwong",
+      "link" : "https://stackoverflow.com/users/30862045/jwong"
+    },
+    "creation_date" : 1752214090,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

@@ -1,0 +1,266 @@
+{
+  "question" : {
+    "question_id" : 79634284,
+    "title" : "Rust invoke Java server via Maven on Windows without &quot;Terminate batch job&quot; message when stopped",
+    "body" : "<p>I'm writing a CLI in Rust, and I want it to work on Windows or Linux. I want it to invoke Maven in order to run a Java program. I already have this working in a Bash script that I can invoke via Git Bash; it looks like this:</p>\n<pre class=\"lang-bash prettyprint-override\"><code>execMainClass=${args[1]}\nexecArgs=(&quot;${args[@]:2}&quot;)\nmvn exec:java -Dexec.mainClass=&quot;$execMainClass&quot; -Dexec.args=&quot;${execArgs[*]@Q}&quot; \\\n    -Dexec.cleanupDaemonThreads=false --quiet\n</code></pre>\n<p>The Java program in turn starts up a local server, which I have to stop using <code>Ctrl+C</code>. Once I do that, control exits immediately back to Git Bash. I merely want to reproduce all this in Rust, and from what I'm reading, nothing should be better than Rust to implement a CLI that interacts with the system.</p>\n<p>So let's ignore the arguments to the Java program for a minute, and just try to implement this on Windows. Here's what the documentation tells me to use:</p>\n<pre class=\"lang-rs prettyprint-override\"><code>return std::process::Command::new(&quot;cmd&quot;)\n    .args([&quot;/C&quot;, &quot;mvn&quot;, &quot;exec:java&quot;])\n    .arg(format!(&quot;-Dexec.mainClass={main_class}&quot;))\n    .args([&quot;-Dexec.cleanupDaemonThreads=false&quot;, &quot;--quiet&quot;])\n    .status();\n</code></pre>\n<p>When I run my Rust CLI, it indeed invokes Maven, which then runs my Java program, which starts up a local server! However when I hit <code>Ctrl+C</code> to stop the local server, I get the following message:</p>\n<blockquote>\n<p><code>Terminate batch job (Y/N)?</code></p>\n</blockquote>\n<p>Nope. Don't want that. I thought maybe that it was coming from Rust invoking <code>cmd</code> somehow. So I tried invoking Maven directly in the Rust CLI:</p>\n<pre class=\"lang-rs prettyprint-override\"><code>return std::process::Command::new(&quot;mvn&quot;)\n    .args([&quot;exec:java&quot;])\n    .arg(format!(&quot;-Dexec.mainClass={main_class}&quot;))\n    .args([&quot;-Dexec.cleanupDaemonThreads=false&quot;, &quot;--quiet&quot;])\n    .status();\n</code></pre>\n<p>Unfortunately, when running this both in Git Bash and in PowerShell, it results in:</p>\n<blockquote>\n<p><code>Error: program not found</code></p>\n</blockquote>\n<p>That comes from my error-handling code elsewhere in the CLI:</p>\n<pre class=\"lang-rs prettyprint-override\"><code>Err(e) =&gt; {\n    eprintln!(&quot;Error: {}&quot;, e);\n    std::process::exit(exitcode::SOFTWARE);\n}\n</code></pre>\n<p>However based upon the comments here, I realized that Git Bash finds <code>mvn</code> on the path, but PowerShell finds the <code>mvn.cmd</code> file on the path instead. Since Rust is sidestepping Git Bash altogether, I changed to directly invoking <code>mvn.cmd</code>:</p>\n<pre class=\"lang-rs prettyprint-override\"><code>return std::process::Command::new(&quot;mvn.cmd&quot;)\n    .args([&quot;exec:java&quot;])\n    .arg(format!(&quot;-Dexec.mainClass={main_class}&quot;))\n    .args([&quot;-Dexec.cleanupDaemonThreads=false&quot;, &quot;--quiet&quot;])\n    .status();\n</code></pre>\n<p>This now runs Maven both in Git Bash and in PowerShell. But after hitting <code>Ctrl+C</code> in the Java program, I still get:</p>\n<blockquote>\n<p><code>Terminate batch job (Y/N)?</code></p>\n</blockquote>\n<p>Even worse, in PowerShell this puts the shell into some weird state where it erratically responds to keystrokes and hangs. <em>This happens whether I use <code>cmd /C mvn …</code> or <code>mvn.cmd …</code>.</em></p>\n<p>Git Bash obviously can call <code>mvn.cmd</code> and exit with <code>Ctrl+C</code> without getting <code>Terminate batch job (Y/N)?</code>. What trick do I need to pull to accomplish this in Rust?</p>\n",
+    "tags" : [ "java", "windows", "maven", "rust", "process" ],
+    "owner" : {
+      "account_id" : 184786,
+      "reputation" : 22254,
+      "user_id" : 421049,
+      "user_type" : "registered",
+      "accept_rate" : 50,
+      "profile_image" : "https://www.gravatar.com/avatar/4b9b843fe8e233b2f70e0f2a8e7db4e8?s=256&d=identicon&r=PG",
+      "display_name" : "Garret Wilson",
+      "link" : "https://stackoverflow.com/users/421049/garret-wilson"
+    },
+    "is_answered" : false,
+    "view_count" : 153,
+    "answer_count" : 2,
+    "score" : 1,
+    "last_activity_date" : 1748189271,
+    "creation_date" : 1747936414,
+    "link" : "https://stackoverflow.com/questions/79634284/rust-invoke-java-server-via-maven-on-windows-without-terminate-batch-job-messa",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79634448,
+    "question_id" : 79634284,
+    "body" : "<p>I am not into Rust so guessing somewhat. But If I replaced Rust with another Java application that...</p>\n<p>...spawns a new process running Maven to run your Java application that then starts a server and waits for Ctrl-C...</p>\n<p>I will call this Java applcation 'Rust'. So I run Rust from a shell. This shell has a terminal. And while Rust is running, I can see the output (stdout, stderr) of Rust. Now it will start Maven. I can see that output, including the text emitted from the local server. So obviously Maven's stdout/stderr is redirected to Rust's stdout/stderr. But does that also apply for stdin?</p>\n<p>Find out where your keypress is going, then you can find out how it gets processed and likely define how it should be processed.</p>\n<p>My guess is that ctrl-c is evaluated by Rust, hence it terminates and even takes it's shell with it. Instead of the standard handler, try to make Rust process Ctrl-C in a way to terminate the child process Maven but then keep running. Therefore I'd take a look at</p>\n<ul>\n<li><p><a href=\"https://docs.rs/ctrlc/latest/ctrlc/\" rel=\"nofollow noreferrer\">https://docs.rs/ctrlc/latest/ctrlc/</a></p>\n</li>\n<li><p><a href=\"https://rust-cli.github.io/book/in-depth/signals.html\" rel=\"nofollow noreferrer\">https://rust-cli.github.io/book/in-depth/signals.html</a></p>\n</li>\n</ul>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 5289146,
+      "reputation" : 9940,
+      "user_id" : 4222206,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/416696430ab23f397a5dbeda73e72896?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "queeg",
+      "link" : "https://stackoverflow.com/users/4222206/queeg"
+    },
+    "creation_date" : 1747943399,
+    "last_activity_date" : 1747943399,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79637844,
+    "question_id" : 79634284,
+    "body" : "<p>The <a href=\"https://learn.microsoft.com/en-us/windows/console/handlerroutine\" rel=\"nofollow noreferrer\">control signal</a> set off by <kbd>Ctrl</kbd> + <kbd>C</kbd> is indeed caught by a <code>cmd.exe</code> instance launched when running <code>mvn.cmd</code>.</p>\n<pre class=\"lang-none prettyprint-override\"><code>Process tree when PowerShell is launched with its own GUI:\n\nconhost.exe\n└─ powershell.exe\n   └─ rust_program.exe\n      └─ cmd.exe /C mvn.cmd [...]\n         └─ java.exe [...]\n        ↑\n   Control signal is propagated down from conhost.exe and caught by cmd.exe\n</code></pre>\n<p>One way to avoid this would be to launch <code>java.exe</code> with the right arguments directly, but it's very hard to maintain. But don't worry! There is a better way:</p>\n<h2>Catch <kbd>Ctrl</kbd> + <kbd>C</kbd> in the Rust code</h2>\n<p>The native <a href=\"https://doc.rust-lang.org/std/process/struct.Child.html#method.wait\" rel=\"nofollow noreferrer\"><code>Child::wait</code></a> and <a href=\"https://doc.rust-lang.org/std/process/struct.Child.html#method.kill\" rel=\"nofollow noreferrer\"><code>Child::kill</code></a> functions in the standard library both take <code>&amp;mut</code> references, which means they can't be used at the same time. The <a href=\"https://docs.rs/shared_child/latest/shared_child/\" rel=\"nofollow noreferrer\"><code>shared_child</code></a> crate was created just for this purpose!</p>\n<p>The <a href=\"https://docs.rs/ctrlc/latest/ctrlc/\" rel=\"nofollow noreferrer\"><code>ctrlc</code></a> crate can be used to catch the signal set off by <kbd>Ctrl</kbd> + <kbd>C</kbd>. Its signal handler can only take <code>'static</code> and <code>Send</code> references (basically meaning it can't take references to a value made in a function), but we can use an <a href=\"https://doc.rust-lang.org/stable/std/sync/struct.Arc.html\" rel=\"nofollow noreferrer\"><code>Arc</code></a> to share the <code>SharedChild</code> across the <code>Send + 'static</code> boundary.</p>\n<pre class=\"lang-rs prettyprint-override\"><code>use std::{\n    process::{Command, ExitStatus},\n    sync::Arc,\n};\nuse shared_child::SharedChild;\n\nfn run_maven(main_class: &amp;str) -&gt; std::io::Result&lt;ExitStatus&gt; {\n    let mut command = Command::new(&quot;mvn.cmd&quot;)\n        .args(&amp;[\n            &quot;exec:java&quot;,\n            &amp;format!(&quot;-Dexec.mainClass={main_class}&quot;),\n            &quot;-Dexec.cleanupDaemonThreads=false&quot;,\n            &quot;--quiet&quot;\n        ]);\n\n    // Spawn the child process and wrap it in an Arc\n    let child = Arc::new(SharedChild::spawn(&amp;mut command)?);\n\n    // Clone the Arc so it can be moved into the Ctrl+C handler's closure\n    let child_clone = Arc::clone(&amp;child);\n\n    // Set the Ctrl+C handler to kill the child process when triggered\n    ctrlc::set_handler(move || {\n        eprintln!(&quot;\\nCtrl-C pressed! Killing Maven&quot;);\n        let _ = child_clone.kill();\n    })\n    .expect(&quot;Failed to set Ctrl-C handler&quot;);\n\n    // Wait for the child to finish and return exit status\n    child.wait()\n}\n</code></pre>\n<p>Related: <a href=\"https://stackoverflow.com/a/78189047/30626125\">https://stackoverflow.com/a/78189047/30626125</a></p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 42172476,
+      "reputation" : 143,
+      "user_id" : 30626125,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/c40715c037c39798ba9810949fd5a989?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "axka",
+      "link" : "https://stackoverflow.com/users/30626125/axka"
+    },
+    "creation_date" : 1748189271,
+    "last_activity_date" : 1748189271,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140458770,
+    "post_id" : 79634284,
+    "body" : "Related: <a href=\"https://stackoverflow.com/questions/1234571/how-can-i-suppress-the-terminate-batch-job-in-cmd-exe\" title=\"how can i suppress the terminate batch job in cmd exe\">stackoverflow.com/questions/1234571/&hellip;</a>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 17592368,
+      "reputation" : 19777,
+      "user_id" : 12763954,
+      "user_type" : "registered",
+      "profile_image" : "https://lh6.googleusercontent.com/-uYTsiw1bQ_o/AAAAAAAAAAI/AAAAAAAAAAA/ACHi3rev-nenZRronqGEJxeFQWww3ShBnQ/s256-rj/photo.jpg",
+      "display_name" : "Olivier",
+      "link" : "https://stackoverflow.com/users/12763954/olivier"
+    },
+    "creation_date" : 1748246901,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140457228,
+    "post_id" : 79634284,
+    "body" : "Jmb, I do not get this message if I run <code>mvn.cmd …</code> from Git Bash, yet I get this message if I run <code>mvn.cmd …</code> from Rust.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 184786,
+      "reputation" : 22254,
+      "user_id" : 421049,
+      "user_type" : "registered",
+      "accept_rate" : 50,
+      "profile_image" : "https://www.gravatar.com/avatar/4b9b843fe8e233b2f70e0f2a8e7db4e8?s=256&d=identicon&r=PG",
+      "display_name" : "Garret Wilson",
+      "link" : "https://stackoverflow.com/users/421049/garret-wilson"
+    },
+    "creation_date" : 1748183682,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140451687,
+    "post_id" : 79634284,
+    "body" : "Note that the issue has nothing to do with Rust, this is how Windows and <code>cmd.exe</code> process batch files. If you run <code>cmd &#47;C maven …</code> manually from a powershell console, then hit <code>Ctrl-C</code> to stop your Java program, you should see the same <code>Terminate batch job (Y&#47;N)</code> message.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 7046236,
+      "reputation" : 24167,
+      "user_id" : 5397009,
+      "user_type" : "registered",
+      "accept_rate" : 89,
+      "profile_image" : "https://www.gravatar.com/avatar/f5375d31b94fde966c1818e12a1b8120?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Jmb",
+      "link" : "https://stackoverflow.com/users/5397009/jmb"
+    },
+    "creation_date" : 1747984098,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140450779,
+    "post_id" : 79634284,
+    "body" : "&quot;Maven is usually started on Windows using a mvn.cmd file. Just don&#39;t use it and start the Apache Maven jar file directly using the <code>java -jar ..</code>&quot; Which JAR file are you referring to? Wouldn&#39;t I have to set up a complicated classpath just to get Maven to run—essentially rewriting <code>mvn.cmd</code> in Rust? Why can&#39;t I just call <code>mvn.cmd</code> like Git Bash does and have it work the same?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 184786,
+      "reputation" : 22254,
+      "user_id" : 421049,
+      "user_type" : "registered",
+      "accept_rate" : 50,
+      "profile_image" : "https://www.gravatar.com/avatar/4b9b843fe8e233b2f70e0f2a8e7db4e8?s=256&d=identicon&r=PG",
+      "display_name" : "Garret Wilson",
+      "link" : "https://stackoverflow.com/users/421049/garret-wilson"
+    },
+    "creation_date" : 1747945235,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140450768,
+    "post_id" : 79634284,
+    "body" : "&quot;Wondering why you need Maven at all? Why not start Java directly?&quot; Because in this Maven project the Java app has many dependencies (and transitive dependencies) and requires a complicated classpath setup. Using Maven with <code>exec:java</code> is a quick way to invoke the Java app in the Maven project, letting Maven set up the class path to match that configured in the project.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 184786,
+      "reputation" : 22254,
+      "user_id" : 421049,
+      "user_type" : "registered",
+      "accept_rate" : 50,
+      "profile_image" : "https://www.gravatar.com/avatar/4b9b843fe8e233b2f70e0f2a8e7db4e8?s=256&d=identicon&r=PG",
+      "display_name" : "Garret Wilson",
+      "link" : "https://stackoverflow.com/users/421049/garret-wilson"
+    },
+    "creation_date" : 1747944857,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140450765,
+    "post_id" : 79634284,
+    "body" : "&quot;In Windows you are probably executing mvn.cmd is a CMD file ie a Windows batch file.&quot; Sort of; I updated the question. Although Git Bash was apparently running <code>mvn</code>, PowerShell was running <code>mvn.cmd</code>, a batch file as you mentioned. But updating the code to call <code>mvn.cmd</code> from Rust still results in <code>Terminate batch job (Y&#47;N)</code>. I updated the question with this information.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 184786,
+      "reputation" : 22254,
+      "user_id" : 421049,
+      "user_type" : "registered",
+      "accept_rate" : 50,
+      "profile_image" : "https://www.gravatar.com/avatar/4b9b843fe8e233b2f70e0f2a8e7db4e8?s=256&d=identicon&r=PG",
+      "display_name" : "Garret Wilson",
+      "link" : "https://stackoverflow.com/users/421049/garret-wilson"
+    },
+    "creation_date" : 1747944743,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140450665,
+    "post_id" : 79634284,
+    "body" : "Wondering why you need Maven at all? Why not start Java directly?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 5289146,
+      "reputation" : 9940,
+      "user_id" : 4222206,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/416696430ab23f397a5dbeda73e72896?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "queeg",
+      "link" : "https://stackoverflow.com/users/4222206/queeg"
+    },
+    "creation_date" : 1747942617,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140450641,
+    "post_id" : 79634284,
+    "body" : "Maven is usually started on Windows using a mvn.cmd file. Just don&#39;t use it and start the Apache Maven jar file directly using the <code>java -jar ..</code>.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 50585,
+      "reputation" : 43469,
+      "user_id" : 150978,
+      "user_type" : "registered",
+      "accept_rate" : 78,
+      "profile_image" : "https://www.gravatar.com/avatar/feadc214792e2581c3c750140e3eb2c7?s=256&d=identicon&r=PG",
+      "display_name" : "Robert",
+      "link" : "https://stackoverflow.com/users/150978/robert"
+    },
+    "creation_date" : 1747942261,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140450450,
+    "post_id" : 79634284,
+    "body" : "In Windows you are probably executing <code>mvn.cmd</code> is a CMD file ie a Windows batch file.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 372682,
+      "reputation" : 26512,
+      "user_id" : 721855,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/vZiox.png?s=256",
+      "display_name" : "aled",
+      "link" : "https://stackoverflow.com/users/721855/aled"
+    },
+    "creation_date" : 1747938334,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140450436,
+    "post_id" : 79634284,
+    "body" : "side note: no need to split up the arguments into multiple calls, <code>args([&quot;foo&quot;, &amp;format!(&quot;bar&quot;), &quot;baz&quot;])</code> does work.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 198222,
+      "reputation" : 29997,
+      "user_id" : 442760,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2ea7ede8c3311c6390186fdf862e0c75?s=256&d=identicon&r=PG",
+      "display_name" : "cafce25",
+      "link" : "https://stackoverflow.com/users/442760/cafce25"
+    },
+    "creation_date" : 1747938024,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140450420,
+    "post_id" : 79634284,
+    "body" : "Is the directory with the <code>mvn</code> executable in <code>PATH</code>? Does using <code>mvn.exe</code> instead help?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 198222,
+      "reputation" : 29997,
+      "user_id" : 442760,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2ea7ede8c3311c6390186fdf862e0c75?s=256&d=identicon&r=PG",
+      "display_name" : "cafce25",
+      "link" : "https://stackoverflow.com/users/442760/cafce25"
+    },
+    "creation_date" : 1747937746,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79637844" : [ {
+      "comment_id" : 140475828,
+      "post_id" : 79637844,
+      "body" : "I haven&#39;t had time to try this yet, but I&#39;m awarding this answer the bounty to reward the work, before the bounty expires.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 184786,
+        "reputation" : 22254,
+        "user_id" : 421049,
+        "user_type" : "registered",
+        "accept_rate" : 50,
+        "profile_image" : "https://www.gravatar.com/avatar/4b9b843fe8e233b2f70e0f2a8e7db4e8?s=256&d=identicon&r=PG",
+        "display_name" : "Garret Wilson",
+        "link" : "https://stackoverflow.com/users/421049/garret-wilson"
+      },
+      "creation_date" : 1748727554,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

@@ -1,0 +1,96 @@
+{
+  "question" : {
+    "question_id" : 79726898,
+    "title" : "Proton-J2 AMQP 1.0 Receiver that filters messages?",
+    "body" : "<p>I'm investigating writing a systems integration using AMQP and looking to copy some common system integration patterns used with JMS based APIs. That includes a message-consumer that filters messages from an incoming queue based on some expression.</p>\n<p>I see that RabbitMQ implements server-side message filtering using AMQP 1.0 Filter Expressions as of version 4.1 and the SwiftMQ Java API seems to allow filtering on the Consumer, however the Proton-J2 API seems a lot more modern than the SwiftMQ API so I'd prefer to use that over SwiftMQ.</p>\n<p>But I cannot find a way yet to filter messages on a Receiver in Proton-J2?</p>\n<p>Is there such a feature that I haven't found yet, or is such a feature in the works?</p>\n<p>What would it take to add such a feature to the library?</p>\n",
+    "tags" : [ "java", "filter", "amqp", "qpid", "qpid-proton" ],
+    "owner" : {
+      "account_id" : 15267,
+      "reputation" : 417,
+      "user_id" : 3588231,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/300639c04ce3fe0bfb004920b58ca04d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Tim van der Leeuw",
+      "link" : "https://stackoverflow.com/users/3588231/tim-van-der-leeuw"
+    },
+    "is_answered" : true,
+    "view_count" : 82,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1754681897,
+    "creation_date" : 1754461753,
+    "link" : "https://stackoverflow.com/questions/79726898/proton-j2-amqp-1-0-receiver-that-filters-messages",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79727343,
+    "question_id" : 79726898,
+    "body" : "<p>Refer to the AMQP <a href=\"https://docs.oasis-open.org/amqp/core/v1.0/os/amqp-core-messaging-v1.0-os.html#doc-idp326640\" rel=\"nofollow noreferrer\">specification</a> to learn a bit about the filtering in AMQP.  The basic idea is that the client sends a set of filters in a Map where each value is a Described type whose descriptor identifies that format and function of the filter string.</p>\n<p>The Receiver create can take a ReceiverOptions instance where you can define the filters to send to the remote. Because of the way the specification defines filters you must provide a more elaborate description of the filter than a simple JMS selector string and you must ensure the remote honors the filter designation you provide. You would likely want to create some helper utilities specific to the remote peer and the filters it uses to make configuring the filters easier for your client code.</p>\n<p>Below is a basic example of creating a JMS style selector that would work with a broker that supports the JMS filter descriptor code, this would work with brokers like ActiveMQ Artemis or ActiveMQ Classic, unknown to me if this work with RabbitMQ or not.</p>\n<pre><code>  import org.apache.qpid.protonj2.types.DescribedType;\n\n  private class AmqpJmsSelectorType implements DescribedType {\n\n      private final String selector;\n\n      public AmqpJmsSelectorType(String selector) {\n          this.selector = selector;\n      }\n\n      @Override\n      public Object getDescriptor() {\n          return UnsignedLong.valueOf(0x0000468C00000004L);\n      }\n\n      @Override\n      public Object getDescribed() {\n          return this.selector;\n      }\n\n      @Override\n      public String toString() {\n          return &quot;AmqpJmsSelectorType{&quot; + selector + &quot;}&quot;;\n      }\n  }\n\n  final DescribedType clientJmsSelector = new AmqpJmsSelectorType(&quot;myProperty=42&quot;);\n  final Map&lt;String, Object&gt; filters = new HashMap&lt;&gt;();\n  filters.put(&quot;jms-selector&quot;, clientJmsSelector);\n\n  Client container = Client.create();\n  Connection connection = container.connect(&quot;localhost&quot;, 5672);\n  Session session = connection.openSession();\n  ReceiverOptions receiverOptions = new ReceiverOptions();\n    \n  receiverOptions.sourceOptions().filters(filters);\n            \n  Receiver receiver = session.openReceiver(&quot;test-queue&quot;, receiverOptions);\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 157630,
+      "reputation" : 18561,
+      "user_id" : 375722,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/04770ed0ecf1e91e322484f66c9726ba?s=256&d=identicon&r=PG",
+      "display_name" : "Tim Bish",
+      "link" : "https://stackoverflow.com/users/375722/tim-bish"
+    },
+    "creation_date" : 1754486533,
+    "last_activity_date" : 1754504991,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79727343" : [ {
+      "comment_id" : 140650116,
+      "post_id" : 79727343,
+      "body" : "I saw the commit in Git, thanks!",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 15267,
+        "reputation" : 417,
+        "user_id" : 3588231,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/300639c04ce3fe0bfb004920b58ca04d?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Tim van der Leeuw",
+        "link" : "https://stackoverflow.com/users/3588231/tim-van-der-leeuw"
+      },
+      "creation_date" : 1754594685,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140649975,
+      "post_id" : 79727343,
+      "body" : "@TimvanderLeeuw I&#39;ve added a new API in SourceOptions to make this a bit easier, you can check it out from the issue tracker. <a href=\"https://issues.apache.org/jira/browse/PROTON-2902\" rel=\"nofollow noreferrer\">issues.apache.org/jira/browse/PROTON-2902</a>",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 157630,
+        "reputation" : 18561,
+        "user_id" : 375722,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/04770ed0ecf1e91e322484f66c9726ba?s=256&d=identicon&r=PG",
+        "display_name" : "Tim Bish",
+        "link" : "https://stackoverflow.com/users/375722/tim-bish"
+      },
+      "creation_date" : 1754590582,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140647301,
+      "post_id" : 79727343,
+      "body" : "Hi Tim,    Thanks very much for this answer. I had overlooked the <code>filters()</code> in the <code>sourceOptions()</code>, it was not clear to me where to look!    I did understand from my earlier research that not all AMQP 1.0 servers implement filtering and that they can all implement this in their own way, it just was not yet clear to me how to pass any filters to the API.    Your answer should help me a lot!",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 15267,
+        "reputation" : 417,
+        "user_id" : 3588231,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/300639c04ce3fe0bfb004920b58ca04d?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Tim van der Leeuw",
+        "link" : "https://stackoverflow.com/users/3588231/tim-van-der-leeuw"
+      },
+      "creation_date" : 1754509104,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

@@ -1,0 +1,145 @@
+{
+  "question" : {
+    "question_id" : 79841611,
+    "title" : "Java Map.computeIfAbsent consuming high memory",
+    "body" : "<p>I had written a method to update a <code>HashMap</code>, provided an <code>int</code> id value (ex: client id) as key, the method would check if the key is available in the map, if not it would create an entry and associate a new <code>ArrayList</code> for the key. If available, then it would return the existing list. Initially, I wrote the method using <code>map.containsKey</code> combined with <code>map.put</code>.</p>\n<pre><code>if(map.containsKey(id)) {\n    return map.get(id);\n} else {\n    List&lt;CustomObject&gt; list = new ArrayList&lt;&gt;();\n    map.put(id, list);\n    return list;\n}\n</code></pre>\n<p>The above was working fine, later I thought of refactoring it to use <code>computeIfAbsent</code> which would do the above same thing.\nHence I changed the method as</p>\n<pre><code>return map.computeIfAbsent(id, ArrayList::new);\n</code></pre>\n<p>Even though I expected it to work, I encountered an unexpected heap memory consumption during performance testing. Any idea why the new code is consuming a lot of heap memory.</p>\n",
+    "tags" : [ "java", "java-8", "heap-memory", "profiling", "method-reference" ],
+    "owner" : {
+      "account_id" : 10595663,
+      "reputation" : 5182,
+      "user_id" : 7804477,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/jMY74.jpg?s=256",
+      "display_name" : "Gautham M",
+      "link" : "https://stackoverflow.com/users/7804477/gautham-m"
+    },
+    "is_answered" : true,
+    "view_count" : 200,
+    "closed_date" : 1765296111,
+    "answer_count" : 1,
+    "score" : 6,
+    "last_activity_date" : 1765712354,
+    "creation_date" : 1765264017,
+    "link" : "https://stackoverflow.com/questions/79841611/java-map-computeifabsent-consuming-high-memory",
+    "closed_reason" : "Duplicate"
+  },
+  "answers" : [ {
+    "answer_id" : 79841612,
+    "question_id" : 79841611,
+    "body" : "<p>When I profiled code, I could see a huge amount of map elements being created, which wasn't expected. On further analysis, I identified that the issue was with the usage of the method reference - to create a new <code>ArrayList</code>.</p>\n<p>The <code>ArrayList::new</code> part looked innocent and clean; we would expect it to invoke the default constructor, but it turned out to be causing the memory issue.</p>\n<p>The equivalent of the provided method turned out to be</p>\n<pre class=\"lang-java prettyprint-override\"><code>return map.computeIfAbsent(id, k -&gt; new ArrayList&lt;&gt;(k));\n</code></pre>\n<p>Since the second parameter of the <code>computeIfAbsent</code> method is a <code>Function</code>, it expects an input, which would be passed on to the method reference, and <code>ArrayList</code> defines an overloaded constructor accepting an <code>int</code>. So the code was creating an <code>ArrayList</code> with an initial capacity as that of the provided <code>id</code> (the lambda variable <code>k</code> corresponds to <code>id</code> value).<br />\nSince the id represents large values like client id, which would be in the range of 1,000,000 for enterprise applications.</p>\n<p>So, unnecessary initialization of <code>ArrayList</code> with a huge initial capacity resulted in the performance impact.</p>\n<p>Just 10 invocations with id values above 150,000 was resulting in the consumption of 2GB.</p>\n<p><a href=\"https://i.sstatic.net/p83vA3fg.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/p83vA3fg.png\" alt=\"enter image description here\" /></a></p>\n<p>What should have been the ideal code is:</p>\n<pre class=\"lang-java prettyprint-override\"><code>return map.computeIfAbsent(id, k -&gt; new ArrayList&lt;&gt;());\n</code></pre>\n<p>After this change, the memory consumption came down to just under 10 MB.</p>\n<p>Small changes resulting in a big impact. (You may also read <a href=\"https://medium.com/@mgautham1995/one-thing-to-remember-while-using-method-references-2d283bce96ac\" rel=\"nofollow noreferrer\">this</a>)</p>\n<h3>When to use the <code>return map.computeIfAbsent(id, ArrayList::new);</code>?</h3>\n<p>Under any circumstance, the number of elements which are to be added to the <code>ArrayList</code> would always be close to the provided key, then it is fine to use <code>ArrayList::new</code> . Though such a scenario seems less likely.</p>\n<h3>Should I always skip the usage of <code>ArrayList::new</code>?</h3>\n<p>No! It depends on where we are using. Whenever a <code>Function</code> or <code>Consumer</code> is expected, and if the class has an overloaded constructor, which matches the input, then <strong>be careful</strong>.</p>\n<p>When a <code>Supplier</code> is expected, then it is fine to use <code>ArrayList::new</code>, since the default constructor would be invoked as a <code>Supplier</code> does not expected an input.</p>\n<p>Example:</p>\n<pre class=\"lang-java prettyprint-override\"><code>list.stream()\n    .map(/*some mapping*/)\n    .filter(/*some filtering*/)\n    .collect(Collectors.toCollection(ArrayList::new)); \n</code></pre>\n",
+    "score" : 12,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 10595663,
+      "reputation" : 5182,
+      "user_id" : 7804477,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/jMY74.jpg?s=256",
+      "display_name" : "Gautham M",
+      "link" : "https://stackoverflow.com/users/7804477/gautham-m"
+    },
+    "creation_date" : 1765264017,
+    "last_activity_date" : 1765712354,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79841612" : [ {
+      "comment_id" : 140893996,
+      "post_id" : 79841612,
+      "body" : "@Slaw <a href=\"https://stackoverflow.com/a/34250231/2670892\">This answer</a> has some details about why it was done.",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 3159259,
+        "reputation" : 111562,
+        "user_id" : 2670892,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/4iPV5.png?s=256",
+        "display_name" : "greg-449",
+        "link" : "https://stackoverflow.com/users/2670892/greg-449"
+      },
+      "creation_date" : 1765273880,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140893991,
+      "post_id" : 79841612,
+      "body" : "Yes. You can see this being handled in the <a href=\"https://github.com/openjdk/jdk/blob/9c91c68d1d5938d7e2b9a90c82b0a36ef1a063cd/src/java.base/share/classes/java/util/ArrayList.java#L232\" rel=\"nofollow noreferrer\">private <code>grow(int)</code> method</a>. And yes, it seems to be an optimization for code to be able to do <code>new ArrayList&lt;&gt;()</code> without allocating memory unnecessarily. Which helps with code that likes to avoid null (typically collection types should never be null, just empty) but didn&#39;t do <code>new ArrayList&lt;&gt;(0)</code> for whatever reason (e.g., to avoid too many array copying at small sizes).",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 8532578,
+        "reputation" : 49904,
+        "user_id" : 6395627,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Slaw",
+        "link" : "https://stackoverflow.com/users/6395627/slaw"
+      },
+      "creation_date" : 1765273481,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140893956,
+      "post_id" : 79841612,
+      "body" : "@Slaw Got it. Once the first element is added, the capacity would be updated. Till then the arraylist would be backed by an empty array. Apart from lazily updating the capacity, this change seems to promote always initialising a &quot;may or may not be used&quot; arraylist, instead of setting a <code>null</code> against it ?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10595663,
+        "reputation" : 5182,
+        "user_id" : 7804477,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/jMY74.jpg?s=256",
+        "display_name" : "Gautham M",
+        "link" : "https://stackoverflow.com/users/7804477/gautham-m"
+      },
+      "creation_date" : 1765272102,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140893899,
+      "post_id" : 79841612,
+      "body" : "@GauthamM To be fair, it&#39;s an implementation detail. So I doubt it will ever be part of the contract. Though an &quot;Implementation Note&quot; section about this probably wouldn&#39;t be unwarranted, in my opinion. Technically the documentation is still correct, it&#39;s just the allocation of the length 10 array happens at some later time.",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 8532578,
+        "reputation" : 49904,
+        "user_id" : 6395627,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Slaw",
+        "link" : "https://stackoverflow.com/users/6395627/slaw"
+      },
+      "creation_date" : 1765269737,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140893890,
+      "post_id" : 79841612,
+      "body" : "@greg-449 Seems like the change was done as part of Java 8 itself ? But javadocs are yet to be updated even in Java 25",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10595663,
+        "reputation" : 5182,
+        "user_id" : 7804477,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/jMY74.jpg?s=256",
+        "display_name" : "Gautham M",
+        "link" : "https://stackoverflow.com/users/7804477/gautham-m"
+      },
+      "creation_date" : 1765269490,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140893814,
+      "post_id" : 79841612,
+      "body" : "@Slaw The no-arg <code>ArrayList</code> constructor was changed a while ago to not allocate anything until the contents are set - see the use of <code>DEFAULTCAPACITY_EMPTY_ELEMENTDATA</code> empty array in <code>ArrayList</code>",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 3159259,
+        "reputation" : 111562,
+        "user_id" : 2670892,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/4iPV5.png?s=256",
+        "display_name" : "greg-449",
+        "link" : "https://stackoverflow.com/users/2670892/greg-449"
+      },
+      "creation_date" : 1765267000,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

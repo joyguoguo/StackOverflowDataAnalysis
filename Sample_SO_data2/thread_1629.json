@@ -1,0 +1,94 @@
+{
+  "question" : {
+    "question_id" : 79692605,
+    "title" : "Create LocalControllerAdvice",
+    "body" : "<p>I had a globalExceptionHandler and I want to create a localExceptionHandler for one specific controller.However, even using @Order or @assignableTypes does not work and every time I did the exception, is calling the GlobalExceptionHandler, not the SextExceptionController I created.</p>\n<p>SextExceptionController</p>\n<pre><code>@ControllerAdvice(assignableTypes = {ServeisExternsController.class})\npublic class SextExceptionHandler {\n\n    @ExceptionHandler(MethodArgumentNotValidException.class)\n    public ResponseEntity&lt;Map&lt;String, Object&gt;&gt; handleValidationExceptions(MethodArgumentNotValidException ex) {\n        String mis = ex.getBindingResult()\n                            .getFieldErrors()\n                            .stream()\n                            .findFirst()\n                            .map(DefaultMessageSourceResolvable::getDefaultMessage)\n                            .orElse(&quot;XX&quot;);\n\n        Map&lt;String, Object&gt; resposta = new HashMap&lt;&gt;();\n        resposta.put(&quot;X&quot;, -2);\n        resposta.put(&quot;X&quot;, mis );\n\n        return new ResponseEntity&lt;&gt;(resposta, HttpStatus.BAD_REQUEST);\n    }\n</code></pre>\n<p>GlobalExceptionHandler</p>\n<pre><code>@ControllerAdvice\n@Order(2)\npublic class GlobalExceptionHandler {\n    \n    @ExceptionHandler(MethodArgumentNotValidException.class)\n    public ResponseEntity&lt;ResponseError&gt; handleValidationExceptions(MethodArgumentNotValidException ex) {       \n        ResponseError response = new ResponseError();\n        List&lt;Error&gt; errors = new ArrayList&lt;&gt;();\n        ex.getBindingResult().getFieldErrors().forEach(error -&gt; {\n            Error err = new Error(HttpStatus.BAD_REQUEST.value(), getErrorMessage(error));\n            errors.add(err);\n        });\n        response.setErrors(errors);\n        return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(response);\n    }\n    \n    private String getErrorMessage(FieldError error) {\n        String campo = error.getField();\n        String errorCode = error.getCode();\n        \n        switch (errorCode) {\n            case &quot;NotNull&quot;:\n                return getNotNull(campo);\n            case &quot;NotEmpty&quot;:\n                return getNotEmpty(campo);\n            case &quot;NotBlank&quot;:\n                return getNotEmpty(campo);\n            case &quot;Size&quot;:\n                int min = (int) error.getArguments()[1];\n                int max = (int) error.getArguments()[2];\n                return getSize(campo, min, max);\n            case &quot;CustomValidator&quot;:\n                return getCustomMessage(error.getDefaultMessage());\n            default:\n                return getErrorValidacioDefault(campo);\n        }\n    }\n}\n</code></pre>\n<p>EDIT: Same problem using <code>@ExceptionHandler</code> in the controller</p>\n",
+    "tags" : [ "java", "spring", "controller-advice" ],
+    "owner" : {
+      "account_id" : 17588891,
+      "reputation" : 47,
+      "user_id" : 12761138,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b22a06f68ce6378775e09c8985264fe2?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "manecJ",
+      "link" : "https://stackoverflow.com/users/12761138/manecj"
+    },
+    "is_answered" : true,
+    "view_count" : 48,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1751890892,
+    "creation_date" : 1751880073,
+    "link" : "https://stackoverflow.com/questions/79692605/create-localcontrolleradvice",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79692728,
+    "question_id" : 79692605,
+    "body" : "<p>Is there a specific reason you would like to have two different approaches for the exact same error?</p>\n<p>I have three suggestions.</p>\n<ul>\n<li><p>My first suggestion would be to create a custom error for the one controller where you want a special handling of the error, let's say <code>SpecialControllerArgumentNotValidException.class</code> . This way you would not break the pattern of having one Global Exception handler.</p>\n<pre><code>public class GlobalExceptionHandler {\n\n    @ExceptionHandler(MethodArgumentNotValidException.class){...}\n\n    @ExceptionHandler(SpecialControllerArgumentNotValidException.class){...}\n}\n</code></pre>\n</li>\n<li><p>My second suggestion, as suggested above in the comments, is to try using @ExceptionHandler on the controller: (great examples can be found here: <a href=\"https://spring.io/blog/2013/11/01/exception-handling-in-spring-mvc\" rel=\"nofollow noreferrer\">https://spring.io/blog/2013/11/01/exception-handling-in-spring-mvc</a> )</p>\n<pre><code>@RestController\n@RequestMapping(&quot;/api/something&quot;)\npublic class SomethingController {\n\n    @PostMapping\n    public ResponseEntity&lt;String&gt; createSomething(@Valid @RequestBody SomethingDto) {\n        return ResponseEntity.ok(&quot;Something created&quot;);\n    }\n\n    @ExceptionHandler(MethodArgumentNotValidException.class)\n    public ResponseEntity&lt;Map&lt;String, Object&gt;&gt; handleValidationExceptions(MethodArgumentNotValidException ex) {\n        String mis = ex.getBindingResult()\n                            .getFieldErrors()\n                            .stream()\n                            .findFirst()\n                            .map(DefaultMessageSourceResolvable::getDefaultMessage)\n                            .orElse(&quot;XX&quot;);\n\n        Map&lt;String, Object&gt; resposta = new HashMap&lt;&gt;();\n        resposta.put(&quot;X&quot;, -2);\n        resposta.put(&quot;X&quot;, mis );\n\n        return new ResponseEntity&lt;&gt;(resposta, HttpStatus.BAD_REQUEST);\n    }\n...\n}\n</code></pre>\n</li>\n<li><p>My third suggestion would be to use this approach :</p>\n<blockquote>\n<p>If we want to selectively apply or limit the scope of the controller advice to a particular controller, or a package, we can use the properties provided by the annotation:</p>\n<p><code>@ControllerAdvice(annotations = Advised.class)</code>: only controllers marked with the <code>@Advised</code> annotation will be handled by the controller advice.</p>\n</blockquote>\n<p>taken from here: <a href=\"https://reflectoring.io/spring-boot-exception-handling/?utm_source=chatgpt.com\" rel=\"nofollow noreferrer\">https://reflectoring.io/spring-boot-exception-handling/?utm_source=chatgpt.com</a></p>\n</li>\n</ul>\n",
+    "score" : 2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 29135493,
+      "reputation" : 21,
+      "user_id" : 22319771,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/5vVfk.jpg?s=256",
+      "display_name" : "julsku",
+      "link" : "https://stackoverflow.com/users/22319771/julsku"
+    },
+    "creation_date" : 1751885112,
+    "last_activity_date" : 1751885112,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140570214,
+    "post_id" : 79692605,
+    "body" : "Then you must be doing something really strange in your setup. Which doesn&#39;t show by just putting the 2 exception handlers in here. So please create a sample that we can check / run . Also plesae include the <b>full class</b>, so with package <b>and</b> import statements. There are 2 <code>MethodArgumentNotValidException</code> make sure you use the one from <code>org.springframework.web.bind</code> not the messaging one. Else it won&#39;t match.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126826,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1751881774,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140570153,
+    "post_id" : 79692605,
+    "body" : "I prove it with ExceptionHandler in the controller and it triggers the Global too",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 17588891,
+      "reputation" : 47,
+      "user_id" : 12761138,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b22a06f68ce6378775e09c8985264fe2?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "manecJ",
+      "link" : "https://stackoverflow.com/users/12761138/manecj"
+    },
+    "creation_date" : 1751880460,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140570142,
+    "post_id" : 79692605,
+    "body" : "If it is for a single controller just place the <code>@ExceptionHandler</code> method in that controller.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126826,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1751880153,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

@@ -1,0 +1,163 @@
+{
+  "question" : {
+    "question_id" : 79576137,
+    "title" : "Why does Instant.now() have a much higher precision on my Unix machine vs Windows?",
+    "body" : "<p>To get a sense of how accurate <code>Instant.now()</code> is on various machines, I ran a very simple test to see how often the clock updated:</p>\n<pre><code>public class Test {\n    private static final Logger logger = LogManager.getLogger(Test.class.getName());\n\n    public static void main(String... args) {\n        while (true) {\n            logger.info(Instant.now());\n        }\n    }\n}\n</code></pre>\n<p>On a Intel Core i9 laptop running Windows 11, most of the log lines printed the same timestamp, and would only change every 1ms or so.</p>\n<pre><code>18:23:55.325 [main] INFO Test - 2025-04-15T22:23:55.325858100Z\n18:23:55.325 [main] INFO Test - 2025-04-15T22:23:55.325858100Z\n18:23:55.325 [main] INFO Test - 2025-04-15T22:23:55.325858100Z\n18:23:55.325 [main] INFO Test - 2025-04-15T22:23:55.325858100Z\n18:23:55.325 [main] INFO Test - 2025-04-15T22:23:55.325858100Z\n18:23:55.326 [main] INFO Test - 2025-04-15T22:23:55.326858800Z\n18:23:55.326 [main] INFO Test - 2025-04-15T22:23:55.326858800Z\n18:23:55.326 [main] INFO Test - 2025-04-15T22:23:55.326858800Z\n18:23:55.326 [main] INFO Test - 2025-04-15T22:23:55.326858800Z\n18:23:55.326 [main] INFO Test - 2025-04-15T22:23:55.326858800Z\n</code></pre>\n<p>On a Dell T620 server running Debian 12 (with chrony NTP), every timestamp was different and increasing (maybe 5-10us apart).</p>\n<pre><code>18:18:04.585 [main] INFO Test - 2025-04-15T22:18:04.585059578Z\n18:18:04.585 [main] INFO Test - 2025-04-15T22:18:04.585065991Z\n18:18:04.585 [main] INFO Test - 2025-04-15T22:18:04.585072460Z\n18:18:04.585 [main] INFO Test - 2025-04-15T22:18:04.585078943Z\n18:18:04.585 [main] INFO Test - 2025-04-15T22:18:04.585085285Z\n18:18:04.585 [main] INFO Test - 2025-04-15T22:18:04.585091618Z\n18:18:04.585 [main] INFO Test - 2025-04-15T22:18:04.585113372Z\n18:18:04.585 [main] INFO Test - 2025-04-15T22:18:04.585122554Z\n18:18:04.585 [main] INFO Test - 2025-04-15T22:18:04.585129166Z\n18:18:04.585 [main] INFO Test - 2025-04-15T22:18:04.585135690Z\n18:18:04.585 [main] INFO Test - 2025-04-15T22:18:04.585142432Z\n18:18:04.585 [main] INFO Test - 2025-04-15T22:18:04.585148890Z\n</code></pre>\n<p>Both machines used Java 21.</p>\n<p>I'm just curious why one machine can measure times with microsecond precision while the other can only do so with millisecond precision. That's not just a little less precision - it's a whole order of magnitude less precision.</p>\n<p>Microsecond precision starts becoming important when you're comparing timestamps produced by different processes/machines, and so cannot rely on <code>System.nanoTime()</code>.</p>\n<p>Is it a Windows vs Unix thing? Or is it more likely there's fundamentally better hardware clocks in the server?</p>\n",
+    "tags" : [ "java", "time", "clock", "system-clock", "current-time" ],
+    "owner" : {
+      "account_id" : 1856144,
+      "reputation" : 10346,
+      "user_id" : 1681681,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/626b7e8b46910cd41920bf22d35d119e?s=256&d=identicon&r=PG",
+      "display_name" : "mchen",
+      "link" : "https://stackoverflow.com/users/1681681/mchen"
+    },
+    "is_answered" : false,
+    "view_count" : 284,
+    "answer_count" : 1,
+    "score" : 3,
+    "last_activity_date" : 1745973804,
+    "creation_date" : 1744757046,
+    "link" : "https://stackoverflow.com/questions/79576137/why-does-instant-now-have-a-much-higher-precision-on-my-unix-machine-vs-window",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79599371,
+    "question_id" : 79576137,
+    "body" : "<p>It's because Java's <code>Instant.now()</code> wraps whatever the OS gives you for the wall-clock, and Windows and Linux expose very different resolutions for that.</p>\n<p>On Windows, Java ends up calling the Win32 <code>GetSystemTimeAsFileTime</code> API, which returns time in 100 ns units, but is only updated on the kernel’s system-timer interrupt, generally every 10-16 ms. That’s why you see the timestamp stick for ~1 ms (or more) between ticks.</p>\n<p>Windows 8+ added <code>GetSystemTimePreciseAsFileTime</code> for microsecond-level updates, but Java 21 doesn’t use that. (<a href=\"https://learn.microsoft.com/en-us/windows/win32/sysinfo/acquiring-high-resolution-time-stamps\" rel=\"nofollow noreferrer\">Source</a>)</p>\n<p>On Linux, Java calls the POSIX <code>clock_gettime(CLOCK_REALTIME)</code>, which on modern distributions supports full nanosecond‐precision returns (subject to your hardware timer and kernel config). Typical resolutions you’ll actually see are in the sub-microsecond to few-microsecond range. You can confirm your system’s advertised precision with <code>clock_getres(2)</code>. (<a href=\"https://www.man7.org/linux/man-pages/man2/clock_getres.2.html\" rel=\"nofollow noreferrer\">Source</a>)</p>\n<p>The Java <code>Instant.now()</code> calls the native function <code>getNanoTimeAdjustment()</code> which documents:</p>\n<blockquote>\n<p>The value returned has the best resolution available to the JVM on the current system. This is usually down to microseconds - or tenth of microseconds - depending on the OS/Hardware and the JVM implementation.</p>\n</blockquote>\n<p>That's implemented in jvm.cpp as <code>os::javaTimeSystemUTC(seconds, nanos)</code>.</p>\n<p>On Windows, that's calling <a href=\"https://github.com/openjdk/jdk/blob/master/src/hotspot/os/windows/os_windows.cpp#L1203\" rel=\"nofollow noreferrer\"><code>GetSystemTimeAsFileTime</code></a></p>\n<p>Whereas on Linux, it's: <a href=\"https://github.com/openjdk/jdk/blob/master/src/hotspot/os/posix/os_posix.cpp#L1458\" rel=\"nofollow noreferrer\"><code>clock_gettime(CLOCK_REALTIME, &amp;ts);</code></a></p>\n<p>The &quot;right way&quot; to get high precision in Java in a platform-independant manner is to use <code>System.nanoTime()</code>, which is good for meausuring elapsed time (but not wall-clock). On Windows that's using <a href=\"https://github.com/openjdk/jdk/blob/master/src/hotspot/os/windows/os_windows.cpp#L1212\" rel=\"nofollow noreferrer\"><code>QueryPerformanceCounter</code></a>.</p>\n<p>I can't find a source of why Java is not using <code>GetSystemTimePreciseAsFileTime</code> on Windows platforms that provide it. Perhaps, just simplicity of implementation.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 51278,
+      "reputation" : 10532,
+      "user_id" : 153184,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/dca582d0d725ddd6deb5fddedc598375?s=256&d=identicon&r=PG",
+      "display_name" : "Jonathan Hedley",
+      "link" : "https://stackoverflow.com/users/153184/jonathan-hedley"
+    },
+    "creation_date" : 1745973804,
+    "last_activity_date" : 1745973804,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140342326,
+    "post_id" : 79576137,
+    "body" : "<code>Instant.now()</code> <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/time/Instant.html#now()\" rel=\"nofollow noreferrer\">is equivalent</a> to <code>Instant.now(Clock.systemUTC())</code>, and the docs for <code>Clock.system()</code>, <code>Clock.systemUTC()</code>, and <code>Clock.systemDefaultZone()</code> all say “This clock is based on the best available system clock. This may use System.currentTimeMillis(), or a higher resolution clock if one is available.” I would guess the Windows clock is based on <a href=\"https://stackoverflow.com/q/43009885/1831987\">ticks</a> (though that doesn’t explain why it jumped by 700 ns).",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 2053598,
+      "reputation" : 44991,
+      "user_id" : 1831987,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/38b1c37530189ec4471a43a618e33f67?s=256&d=identicon&r=PG",
+      "display_name" : "VGR",
+      "link" : "https://stackoverflow.com/users/1831987/vgr"
+    },
+    "creation_date" : 1744835665,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140339745,
+    "post_id" : 79576137,
+    "body" : "<i>Is it a Windows vs Unix thing? Or is it more likely there&#39;s fundamentally better hardware clocks in the server?</i> It can be either or a combination. I read somewhere that clock precision in Windows can be configured somehow, but higher precision also costs more energy, so unless critical you probably don’t want it. I don’t remember the details.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 7612423,
+      "reputation" : 87409,
+      "user_id" : 5772882,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Anonymous",
+      "link" : "https://stackoverflow.com/users/5772882/anonymous"
+    },
+    "creation_date" : 1744790228,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140339683,
+    "post_id" : 79576137,
+    "body" : "@BasilBourque It doesn&#39;t have to do with CPU load. The timer resolution on Windows is lower (higher granularity) than on Linux.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 213468,
+      "reputation" : 110280,
+      "user_id" : 466862,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/d873f397779db38cd510d9ee5416fd43?s=256&d=identicon&r=PG",
+      "display_name" : "Mark Rotteveel",
+      "link" : "https://stackoverflow.com/users/466862/mark-rotteveel"
+    },
+    "creation_date" : 1744788707,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140338892,
+    "post_id" : 79576137,
+    "body" : "You don’t really need the logger when only a single thread is involved. <code>System.out.println</code> is chronological if single-threaded. You might try code like <a href=\"https://ideone.com/cpRC8b\" rel=\"nofollow noreferrer\">this on Ideone.com</a>. (Not that micro-benchmarking is my speciality, far from it.)",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 322981,
+      "reputation" : 347089,
+      "user_id" : 642706,
+      "user_type" : "registered",
+      "accept_rate" : 58,
+      "profile_image" : "https://i.sstatic.net/ZWEI3.jpg?s=256",
+      "display_name" : "Basil Bourque",
+      "link" : "https://stackoverflow.com/users/642706/basil-bourque"
+    },
+    "creation_date" : 1744759178,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140338861,
+    "post_id" : 79576137,
+    "body" : "(A) You should mention those facts in your Question. That is critical info. (B) You might want to run the same kind of code using <code>System.nanoTime</code>.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 322981,
+      "reputation" : 347089,
+      "user_id" : 642706,
+      "user_type" : "registered",
+      "accept_rate" : 58,
+      "profile_image" : "https://i.sstatic.net/ZWEI3.jpg?s=256",
+      "display_name" : "Basil Bourque",
+      "link" : "https://stackoverflow.com/users/642706/basil-bourque"
+    },
+    "creation_date" : 1744757804,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140338859,
+    "post_id" : 79576137,
+    "body" : "Thanks @Basil, but for sure not. I ran the test again with the same results; the system CPU usage reported by windows was in the single-digit territory, and there&#39;s low usage of other resources like memory.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1856144,
+      "reputation" : 10346,
+      "user_id" : 1681681,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/626b7e8b46910cd41920bf22d35d119e?s=256&d=identicon&r=PG",
+      "display_name" : "mchen",
+      "link" : "https://stackoverflow.com/users/1681681/mchen"
+    },
+    "creation_date" : 1744757654,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140338857,
+    "post_id" : 79576137,
+    "body" : "Perhaps in the first case your computer is overburdened. If so, your JVM’s threads would not be scheduled on a CPU core for execution as often as on the second computer.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 322981,
+      "reputation" : 347089,
+      "user_id" : 642706,
+      "user_type" : "registered",
+      "accept_rate" : 58,
+      "profile_image" : "https://i.sstatic.net/ZWEI3.jpg?s=256",
+      "display_name" : "Basil Bourque",
+      "link" : "https://stackoverflow.com/users/642706/basil-bourque"
+    },
+    "creation_date" : 1744757522,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

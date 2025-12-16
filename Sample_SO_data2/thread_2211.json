@@ -1,0 +1,115 @@
+{
+  "question" : {
+    "question_id" : 79640687,
+    "title" : "Dynamic Spring security depending on path variable, request parameter values",
+    "body" : "<p>Suppose you need to restrict access to <code>POST /users/{id}</code> to allow only those users whose id is <code>{id}</code>. Your security is no longer completely static, it depends on the actual value of a path variable (it could also be some request parameter).</p>\n<p>Assuming Spring and JWT are your choices, this is how you <em>may</em> do it.</p>\n<pre class=\"lang-java prettyprint-override\"><code>// @RestController class\n    @PutMapping(&quot;/{id}&quot;)\n    @PreAuthorize(&quot;@userPermissionService.isCurrentUserIdEqualTo(#id)&quot;)\n    public ResponseEntity&lt;UserResponseDto&gt; updateUser(@PathVariable long id,\n                                                      @RequestBody UpdateUserRequestDto userRequestDto) {\n        // some business logic\n    }\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>@Service\npublic class UserPermissionService {\n\n    public boolean isCurrentUserIdEqualTo(String userId) {\n        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();\n        if (authentication == null || !authentication.isAuthenticated()) return false;\n        Jwt jwt = (Jwt) authentication.getPrincipal();\n        Long currentUserId = jwt.getClaim(&quot;userid&quot;);\n        return currentUserId != null &amp;&amp; currentUserId.toString().equals(userId);\n    }\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>@Configuration\n@EnableMethodSecurity\npublic class SecurityConfig {\n    // your security config\n}\n</code></pre>\n<pre class=\"lang-xml prettyprint-override\"><code>        &lt;dependency&gt;\n            &lt;groupId&gt;org.springframework.boot&lt;/groupId&gt;\n            &lt;artifactId&gt;spring-boot-starter-oauth2-resource-server&lt;/artifactId&gt;\n        &lt;/dependency&gt;\n</code></pre>\n<p>It works, but there are a few buts.</p>\n<p>First, I'm not totally on board with SpEL generally.</p>\n<p>Second, you need to reference the bean by its name which is by default the class's decapitalized simple name. If <code>UserPermissionService</code> is an interface implemented by <code>UserPermissionServiceImpl</code>, the bean name's going to be <code>userPermissionServiceImpl</code>. You now would have to couple your controller class with an implementation, or manually specify its bean name and then move that name string each time you want to change the <code>UserPermissionService</code> that you use.</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Service(&quot;userPermissionService&quot;) // first, I want to use this implementation...\npublic class UserPermissionServiceImpl implements UserPermissionService {\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>@Service(&quot;userPermissionService&quot;) // ...but then I decide to use this one – move the bean name to another class!\npublic class UserPermissionServiceImpl2 implements UserPermissionService {\n</code></pre>\n<p>Third, I also don't like the fact that it hides the controller's dependency on <code>UserPermissionService</code>. What I would like to do is to explicitly declare it as an injectable dependency.</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class UserController {\n\n    // ...\n    private final UserPermissionService permissionService; // then somehow reference it\n</code></pre>\n<p>However, I'm not sure how it would work. I almost certainly can't reference fields by name in a SpEL expression.</p>\n<p>So how do I achieve my goal without the aforementioned drawbacks?</p>\n",
+    "tags" : [ "java", "spring" ],
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2683,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "is_answered" : true,
+    "view_count" : 59,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1748464768,
+    "creation_date" : 1748356410,
+    "link" : "https://stackoverflow.com/questions/79640687/dynamic-spring-security-depending-on-path-variable-request-parameter-values",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79640734,
+    "question_id" : 79640687,
+    "body" : "<p>You can implement a custom <a href=\"https://docs.spring.io/spring-security/reference/api/java/org/springframework/security/access/expression/SecurityExpressionRoot.html\" rel=\"nofollow noreferrer\">SecurityExpressionRoot </a>which adds your method to existing methods accepted by PreAuthorize. Example:</p>\n<pre><code>public class CustomMethodSecurityExpressionRoot \n  extends SecurityExpressionRoot implements MethodSecurityExpressionOperations {\n\n    private Authentication authentication;\n\n    public CustomMethodSecurityExpressionRoot(Authentication authentication) {\n        super(authentication);\n        this.authentication = authentication;\n    }\n\n    public boolean isCurrentUserIdEqualTo(int id) {\n        // your logic\n    }\n\n}\n</code></pre>\n<p>This way, you don't need to hardcode any bean name and you can just reference the method like this:</p>\n<pre><code>@PutMapping(&quot;/{id}&quot;)\n@PreAuthorize(&quot;isCurrentUserIdEqualTo(#id)&quot;)\npublic ResponseEntity&lt;UserResponseDto&gt; updateUser(@PathVariable long id,\n                                                  @RequestBody UpdateUserRequestDto userRequestDto) {\n        // some business logic\n}\n</code></pre>\n<p>Detailed tutorial for how to set it up can be found on <a href=\"https://www.baeldung.com/spring-security-create-new-custom-security-expression\" rel=\"nofollow noreferrer\">https://www.baeldung.com/spring-security-create-new-custom-security-expression</a></p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 2714938,
+      "reputation" : 6448,
+      "user_id" : 2342529,
+      "user_type" : "registered",
+      "accept_rate" : 98,
+      "profile_image" : "https://i.sstatic.net/SSkK4.jpg?s=256",
+      "display_name" : "Alexandru Severin",
+      "link" : "https://stackoverflow.com/users/2342529/alexandru-severin"
+    },
+    "creation_date" : 1748358082,
+    "last_activity_date" : 1748358082,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79640734" : [ {
+      "comment_id" : 140464744,
+      "post_id" : 79640734,
+      "body" : "Also, note that modern IDEs are able to cleanly integrate Spring. In IntelliJ for example the SpEL Strings are validated and treated as code (hovering the method shows it&#39;s documentation, renaming it renames appropriate references, ctrl+click navigates to it, writing invalid bean names or method names is shown as error, etc)",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2714938,
+        "reputation" : 6448,
+        "user_id" : 2342529,
+        "user_type" : "registered",
+        "accept_rate" : 98,
+        "profile_image" : "https://i.sstatic.net/SSkK4.jpg?s=256",
+        "display_name" : "Alexandru Severin",
+        "link" : "https://stackoverflow.com/users/2342529/alexandru-severin"
+      },
+      "creation_date" : 1748411891,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140464737,
+      "post_id" : 79640734,
+      "body" : "SpEL relies on annotation and annotations can only reference methods as Strings. But you can also manually call permissionService.isCurrentUserIdEqualTo() inside the Controller and throw some Exception in case of invalid access if you prefer it",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2714938,
+        "reputation" : 6448,
+        "user_id" : 2342529,
+        "user_type" : "registered",
+        "accept_rate" : 98,
+        "profile_image" : "https://i.sstatic.net/SSkK4.jpg?s=256",
+        "display_name" : "Alexandru Severin",
+        "link" : "https://stackoverflow.com/users/2342529/alexandru-severin"
+      },
+      "creation_date" : 1748411615,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140463098,
+      "post_id" : 79640734,
+      "body" : "Also note it&#39;s not immediately obvious in the controller code where <code>isCurrentUserIdEqualTo()</code> is declared. It may make debugging and maintenance more challenging. While my implementation is suboptimal, it at least makes clear there&#39;s some <code>userPermissionService</code> bean that has a method with such a name",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10187542,
+        "reputation" : 2683,
+        "user_id" : 20692967,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+        "display_name" : "Sergey Zolotarev",
+        "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+      },
+      "creation_date" : 1748359603,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140463078,
+      "post_id" : 79640734,
+      "body" : "Thank you! I guess there&#39;s no way around SpEL, is there?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10187542,
+        "reputation" : 2683,
+        "user_id" : 20692967,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+        "display_name" : "Sergey Zolotarev",
+        "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+      },
+      "creation_date" : 1748359237,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

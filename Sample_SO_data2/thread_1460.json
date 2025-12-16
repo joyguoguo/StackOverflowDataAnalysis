@@ -1,0 +1,290 @@
+{
+  "question" : {
+    "question_id" : 79707238,
+    "title" : "Jackson Custom Deserialization - deserialize into known object instance WITHOUT JsonTypeInfo annotations or Mixins",
+    "body" : "<p>I have a class <code>BaseClass</code> that during runtime will store a reference to another object <code>Thing</code>. <code>BaseClass</code> is meant to be extensible so I've made it abstract like so:</p>\n<pre class=\"lang-java prettyprint-override\"><code>abstract class BaseClass{\n    // see explanation for annotations below\n    @JsonIgnore private final Thing storedThing;\n    @JsonProperty private final String thingId;\n    protected BaseClass(){}  // empty constructor\n    protected BaseClass(Thing thing){\n      // store thing\n    }\n    // other stuff\n  }\n</code></pre>\n<p><code>Thing</code> is polymorphic and has a LOT of data. So for serialization/deserialization, I'm looking to only store the id of <code>Thing</code> instead of the whole object (this is a hard requirement). So if we have a class <code>SomeClass</code> implementing <code>BaseClass</code>, its json might look like so:</p>\n<pre class=\"lang-json prettyprint-override\"><code>// SomeClass extends BaseClass\n&quot;SomeClass&quot;:{\n  &quot;thingId&quot; : &quot;ahbjhadbv&quot; // target id of stored Thing. All other info is ignored\n}\n</code></pre>\n<p>The intent being that during deserialization I can look up the actual <code>Thing</code> instance using the id (<code>Thing</code> is stored elsewhere and can be queried) and put that back in.</p>\n<p>Implementors of <code>BaseClass</code> are also free to add any state data to their implementations should they want. E.g. <code>SomeOtherClass</code> which implements <code>BaseClass</code> could look like so:</p>\n<pre class=\"lang-json prettyprint-override\"><code>// SomeOtherClassextends BaseClass\n&quot;SomeOtherClass&quot;:{\n  &quot;thingId&quot; : &quot;asdawetgvd&quot; // target id of stored Thing. All other info is ignored\n  &quot;someOtherData&quot;: {...}\n  &quot;evenMoreData&quot; : {...}\n}\n</code></pre>\n<p>Implementing serialization to suit my needs was simple enough with Jackson.</p>\n<p>Now the annoying/interesting bit - for reasons I can't go into, I am hamstrung with these constraints:</p>\n<ul>\n<li>I cannot use mixins/<code>@JsonTypeInfo</code>/ <code>@JsonSubTypes</code> annotations.</li>\n<li>I cannot provide a multi-argument constructor for both <code>Thing</code> and <code>ThingId</code> on <code>BaseClass</code>.</li>\n<li>Even if I do push back on the constructors, I have no guarantees that implementors of <code>BaseClass</code> will implement the multi-argument constructor</li>\n<li>I cannot assume that the impelemtors of <code>BaseClass</code> will all implement an empty constructor.</li>\n<li>names of state data fields as defined in derived classes might not align with the names in their serialized counterparts because implementors can <code>@JsonProperty()</code> and define a different name</li>\n</ul>\n<p>I do, however, have assurances that all derived classes will implement at least one of the two provided constructors in <code>BaseClass</code>. I will also have knowledge of the class type that extends <code>BaseClass</code>. Finally, I am also assured that objects will be serialized and deserialized within the same runtime (so if I store any params during serialization, they can be available for use during deserialization)</p>\n<p>Knowing this, I decided to create my own custom deserializer - a part of which is shown below:</p>\n<pre class=\"lang-java prettyprint-override\"><code>\n    // Clazz is known beforehand\n    &lt;T extends BaseClass&gt; T deserialize(Class&lt;T&gt; clazz, JsonNode serializedData){\n        // implementors are guaranteed to use one of the two available constructors from the base class.\n\n        boolean hasEmptyConstructor = Arrays.stream(clazz.getDeclaredConstructors()).anyMatch(x-&gt;x.getParameterCount() == 0)\n        T instance;\n        if(hasEmptyConstructor){\n            instance = clazz.getConstructor().newInstance();\n        } else {\n            Thing dummyThing = getDummyThing(); // empty thing object needed only for deserialzation\n            instance = clazz.getConstructor(Thing.class).newInstance(dummyThing);\n        }\n\n        // populate instance with other state data from serializedData\n    }\n</code></pre>\n<p>And now the question - given that the class <code>T</code> can have state data fields other than <code>thingId</code>, how can I reliably populate the instantiated object's fields with said data using jackson ?</p>\n<p>Since the state data might have field names different from what's stored in the <code>serializedData</code> input (due to implementors using <code>@JsonProperty()</code> and defining a different name)\nI cannot directly use reflection to get field names. I will need to use jackson somehow, but I haven't been able to figure out how. Most available methods seem to require a type instead of an instantiated object, and I can't find any way to inject said object into the deserializer.</p>\n<p>Edit: The best solution for my case was to use <code>mapper.readerForUpdating(object).readValue(json);</code> as described in this post: <a href=\"https://stackoverflow.com/questions/12518618/deserialize-json-into-existing-object-java\">Deserialize JSON into existing object (Java)</a>.\nFull credits to Olivier in comments below</p>\n",
+    "tags" : [ "java", "json", "jackson", "deserialization" ],
+    "owner" : {
+      "account_id" : 11512926,
+      "reputation" : 123,
+      "user_id" : 10560184,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/3399de3e1ec229ab54f7a9926b6a35b8?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Andorrax",
+      "link" : "https://stackoverflow.com/users/10560184/andorrax"
+    },
+    "is_answered" : true,
+    "view_count" : 230,
+    "answer_count" : 2,
+    "score" : 2,
+    "last_activity_date" : 1753785624,
+    "creation_date" : 1752928427,
+    "link" : "https://stackoverflow.com/questions/79707238/jackson-custom-deserialization-deserialize-into-known-object-instance-without",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79712583,
+    "question_id" : 79707238,
+    "body" : "<p>If you can use a Jackson module, you can use a DeserializerModifier, like this:</p>\n<p>Let's say you have a ThingService to retrieve the Thing details:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public static class ThingService {\n    public Thing getThing(String id) {\n        return new Thing(&quot;Thing name for &quot; + id);\n    }\n}\n</code></pre>\n<p>You can use it in an ObjectMapper like this:</p>\n<pre class=\"lang-java prettyprint-override\"><code>private static final ObjectMapper mapper = new ObjectMapper()\n        .registerModule(new SimpleModule()\n                .setDeserializerModifier(new MyDeserializerModifier(new ThingService())));\n</code></pre>\n<p>In the deserializer modifier, when we have a <code>JsonDeserializer</code> for <code>BaseClass</code>, we can wrap it:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@RequiredArgsConstructor\npublic static class MyDeserializerModifier extends BeanDeserializerModifier {\n\n    private final ThingService thingService;\n\n    @Override\n    public JsonDeserializer&lt;?&gt; modifyDeserializer(DeserializationConfig config, BeanDescription beanDesc, JsonDeserializer&lt;?&gt; deserializer) {\n        if (BaseClass.class.isAssignableFrom(beanDesc.getBeanClass())) {\n            return new InterceptingDeserializer(deserializer, thingService);\n        }\n        return super.modifyDeserializer(config, beanDesc, deserializer);\n    }\n}\n</code></pre>\n<p>With it wrapped, we can call the original deserializer to retrieve all other fields, then we can use the <code>thingId</code> to retrieve <code>Thing</code> object from the <code>ThingService</code> and map all the fields we need to the final object:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@RequiredArgsConstructor\npublic static class InterceptingDeserializer extends JsonDeserializer&lt;Object&gt; implements ContextualDeserializer, ResolvableDeserializer {\n\n    private final JsonDeserializer&lt;?&gt; delegating;\n    private final ThingService thingService;\n\n    @Override\n    public Object deserialize(JsonParser jsonParser, DeserializationContext deserializationContext) throws IOException, JacksonException {\n        BaseClass deserialized = (BaseClass) delegating.deserialize(jsonParser, deserializationContext);\n        Thing thing = thingService.getThing(deserialized.getThingId());\n        deserialized.setThingName(thing.getName());\n        return deserialized;\n    }\n\n    @Override\n    public JsonDeserializer&lt;?&gt; createContextual(DeserializationContext deserializationContext, BeanProperty beanProperty) throws JsonMappingException {\n        if (delegating instanceof ContextualDeserializer contextualDeserializer) {\n            return new InterceptingDeserializer(contextualDeserializer.createContextual(deserializationContext, beanProperty), thingService);\n        }\n        return this;\n    }\n\n    @Override\n    public void resolve(DeserializationContext deserializationContext) throws JsonMappingException {\n        if (delegating instanceof ResolvableDeserializer resolvableDeserializer) {\n            resolvableDeserializer.resolve(deserializationContext);\n        }\n    }\n}\n</code></pre>\n<p>These are the classes I used for my example:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@NoArgsConstructor\n@Getter\n@Setter\npublic static abstract class BaseClass {\n    private String thingId;\n    private String thingName;\n}\n\n@Getter\n@Setter\npublic static class SubClass extends BaseClass {\n    private String fooData;\n\n}\n\n@Getter\n@Setter\n@AllArgsConstructor\npublic static class Thing {\n    private String name;\n}\n</code></pre>\n<p>And the final call will return the populated <code>thingName</code> from the service.</p>\n<pre class=\"lang-java prettyprint-override\"><code>public static void main(String[] args) throws JsonProcessingException {\n    SubClass subClass = mapper.readValue(&quot;&quot;&quot;\n            {\n                &quot;thingId&quot;: &quot;1&quot;,\n                &quot;fooData&quot;: &quot;Some data&quot;\n            }\n            &quot;&quot;&quot;, SubClass.class);\n\n    System.out.println(&quot;Thing name: &quot; + subClass.getThingName());\n}\n</code></pre>\n<p><strong>Later Edit: For non-standard objects (forgive lombok annotations)</strong></p>\n<p>For the situation when fields are named differently or the object has non-standard constructors, a more complex module will help you to better manage it:</p>\n<pre class=\"lang-java prettyprint-override\"><code>\n@RequiredArgsConstructor\npublic class CustomDeserializationModule extends SimpleModule {\n    private final JacksonExample.ThingService thingService;\n\n    public void setupModule(SetupContext context) {\n        super.setupModule(context);\n        context.addValueInstantiators(new MyValueInstantiators());\n        context.addBeanDeserializerModifier(new MyDeserializerModifier(thingService));\n        context.addDeserializationProblemHandler(new MyDeserializationProblemHandler());\n    }\n\n    public static class MyValueInstantiators extends ValueInstantiators.Base {\n        @Override\n        public ValueInstantiator findValueInstantiator(DeserializationConfig config, BeanDescription beanDesc, ValueInstantiator defaultInstantiator) {\n            if (JacksonExample.BaseClass.class.isAssignableFrom(beanDesc.getBeanClass())) {\n                return new BaseClassValueInstantiator(defaultInstantiator, beanDesc);\n            }\n            return defaultInstantiator;\n        }\n    }\n\n    @RequiredArgsConstructor\n    public static class BaseClassValueInstantiator extends ValueInstantiator {\n        private final ValueInstantiator defaultInstantiator;\n        private final BeanDescription beanDesc;\n\n        @Override\n        public boolean canCreateUsingDefault() {\n            return true;\n        }\n\n        @SneakyThrows\n        @Override\n        public Object createUsingDefault(DeserializationContext ctxt) throws IOException {\n            // custom logic to create the object here\n            return findDefaultConstructor(beanDesc.getBeanClass())\n                    .map(this::constructInstance)\n                    .or(() -&gt; findThingConstructor(beanDesc.getBeanClass())\n                            .map(__ -&gt; this.constructInstance(__, new JacksonExample.Thing(&quot;&quot;))))\n\n                    .orElseThrow();\n        }\n\n        @SneakyThrows\n        private Object constructInstance(Constructor&lt;?&gt; constructor, Object... args) {\n            return constructor.newInstance(args);\n        }\n\n        private Optional&lt;Constructor&lt;?&gt;&gt; findThingConstructor(Class&lt;?&gt; instClass) {\n            for (Constructor&lt;?&gt; constructor : instClass.getConstructors()) {\n                if (constructor.getParameterTypes().length == 1 &amp;&amp; constructor.getParameterTypes()[0].isAssignableFrom(JacksonExample.Thing.class)) {\n                    return Optional.of(constructor);\n                }\n            }\n            return Optional.empty();\n        }\n\n        private Optional&lt;Constructor&lt;?&gt;&gt; findDefaultConstructor(Class&lt;?&gt; instClass) {\n            for (Constructor&lt;?&gt; constructor : instClass.getConstructors()) {\n                if (constructor.getParameterTypes().length == 0) {\n                    return Optional.of(constructor);\n                }\n            }\n            return Optional.empty();\n        }\n    }\n\n    public static class MyDeserializationProblemHandler extends DeserializationProblemHandler {\n        @Override\n        public boolean handleUnknownProperty(DeserializationContext ctxt, JsonParser p, JsonDeserializer&lt;?&gt; deserializer, Object beanOrClass, String propertyName) throws IOException {\n            if (beanOrClass instanceof JacksonExample.FooClass fooClass) {\n                // If the property is not found (i.e.: different name) you could map it here. \n                // Return true if successful.\n                return switch (propertyName) {\n                    case &quot;fooData&quot; -&gt; {\n                        fooClass.setFooDataOther(p.getText());\n                        yield true;\n                    }\n                    default -&gt; super.handleUnknownProperty(ctxt, p, deserializer, beanOrClass, propertyName);\n                };\n            }\n            return super.handleUnknownProperty(ctxt, p, deserializer, beanOrClass, propertyName);\n        }\n    }\n\n    @RequiredArgsConstructor\n    public static class MyDeserializerModifier extends BeanDeserializerModifier {\n\n        private final JacksonExample.ThingService thingService;\n\n        @Override\n        public JsonDeserializer&lt;?&gt; modifyDeserializer(DeserializationConfig config, BeanDescription beanDesc, JsonDeserializer&lt;?&gt; deserializer) {\n            if (JacksonExample.BaseClass.class.isAssignableFrom(beanDesc.getBeanClass())) {\n                return new InterceptingDeserializer(deserializer, thingService);\n            }\n            return super.modifyDeserializer(config, beanDesc, deserializer);\n        }\n    }\n\n\n    @RequiredArgsConstructor\n    public static class InterceptingDeserializer extends JsonDeserializer&lt;Object&gt; implements ContextualDeserializer, ResolvableDeserializer {\n\n        private final JsonDeserializer&lt;?&gt; delegating;\n        private final JacksonExample.ThingService thingService;\n\n        @Override\n        public Object deserialize(JsonParser jsonParser, DeserializationContext deserializationContext) throws IOException, JacksonException {\n            JacksonExample.BaseClass deserialized = (JacksonExample.BaseClass) delegating.deserialize(jsonParser, deserializationContext);\n            // can map additional things here\n            JacksonExample.Thing thing = thingService.getThing(deserialized.getThingId());\n            deserialized.setThingName(thing.getName());\n            return deserialized;\n        }\n\n        @Override\n        public JsonDeserializer&lt;?&gt; createContextual(DeserializationContext deserializationContext, BeanProperty beanProperty) throws JsonMappingException {\n            if (delegating instanceof ContextualDeserializer contextualDeserializer) {\n                return new InterceptingDeserializer(contextualDeserializer.createContextual(deserializationContext, beanProperty), thingService);\n            }\n            return this;\n        }\n\n        @Override\n        public void resolve(DeserializationContext deserializationContext) throws JsonMappingException {\n            if (delegating instanceof ResolvableDeserializer resolvableDeserializer) {\n                resolvableDeserializer.resolve(deserializationContext);\n            }\n        }\n    }\n}\n</code></pre>\n<p><strong>ValueInstantiators</strong></p>\n<p>Whenever an object of type BaseClass is deserialized, you instruct Jackson to use your custom code to create the object instance. Here you can determine the best approach to create the object.</p>\n<p><strong>BeanDeserializerModifier</strong></p>\n<p>We need to intercept the deserializer. This will help to add additional properties to the object, from a service response for example.</p>\n<p><strong>DeserializationProblemHandler</strong></p>\n<p>This can help us fix any deserialization problems. In my example we treat the missing property situation, and try to remap it to another field. You can have any remapping logic here.</p>\n<p><strong>Usage example</strong></p>\n<pre class=\"lang-java prettyprint-override\"><code>public class JacksonExample {\n\n    private static final ObjectMapper mapper = new ObjectMapper()\n            .registerModule(new CustomDeserializationModule(new ThingService()));\n\n    public static class ThingService {\n        public Thing getThing(String id) {\n            return new Thing(&quot;Thing name for &quot; + id);\n        }\n    }\n\n    @NoArgsConstructor\n    @Getter\n    @Setter\n    public static abstract class BaseClass {\n        private String thingId;\n        private String thingName;\n    }\n\n    @Getter\n    @Setter\n    public static class SubClass extends BaseClass {\n        private String fooData;\n\n    }\n\n    @Getter\n    @Setter\n    public static class FooClass extends BaseClass {\n        private String fooDataOther;\n\n        public FooClass(Thing thing) {\n            this.setThingName(thing.getName());\n        }\n\n    }\n\n    @Getter\n    @Setter\n    @AllArgsConstructor\n    public static class Thing {\n        private String name;\n    }\n\n    public static void main(String[] args) throws JsonProcessingException {\n        SubClass subClass = mapper.readValue(&quot;&quot;&quot;\n                {\n                    &quot;thingId&quot;: &quot;1&quot;,\n                    &quot;fooData&quot;: &quot;Some data&quot;\n                }\n                &quot;&quot;&quot;, SubClass.class);\n\n        System.out.println(&quot;Thing name: &quot; + subClass.getThingName());\n        System.out.println(&quot;fooData name: &quot; + subClass.getFooData());\n        FooClass fooClass = mapper.readValue(&quot;&quot;&quot;\n                {\n                    &quot;thingId&quot;: &quot;1&quot;,\n                    &quot;fooData&quot;: &quot;Some data&quot;\n                }\n                &quot;&quot;&quot;, FooClass.class);\n\n        System.out.println(&quot;Thing name: &quot; + fooClass.getThingName());\n        System.out.println(&quot;FooDataOther: &quot; + fooClass.getFooDataOther());\n    }\n}\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 1601399,
+      "reputation" : 638,
+      "user_id" : 1482356,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/d6160b6e40d230fa92c6da8072b2f7e5?s=256&d=identicon&r=PG",
+      "display_name" : "Peter Adrian",
+      "link" : "https://stackoverflow.com/users/1482356/peter-adrian"
+    },
+    "creation_date" : 1753306279,
+    "last_activity_date" : 1753392817,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79718467,
+    "question_id" : 79707238,
+    "body" : "<p>For my use case, the best solution for my case was to use <code>mapper.readerForUpdating(object).readValue(json);</code> as described in this post: <a href=\"https://stackoverflow.com/questions/12518618/deserialize-json-into-existing-object-java\">Deserialize JSON into existing object (Java)</a>.</p>\n<p>Full credits to @Olivier in comments</p>\n",
+    "score" : 0,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 11512926,
+      "reputation" : 123,
+      "user_id" : 10560184,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/3399de3e1ec229ab54f7a9926b6a35b8?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Andorrax",
+      "link" : "https://stackoverflow.com/users/10560184/andorrax"
+    },
+    "creation_date" : 1753785624,
+    "last_activity_date" : 1753785624,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140626414,
+    "post_id" : 79707238,
+    "body" : "@Olivier turns out your linked post was indeed what I was looking for ! Happy to have my post marked as duplicate. I&#39;ll edit my post to add your linked one",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 11512926,
+      "reputation" : 123,
+      "user_id" : 10560184,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/3399de3e1ec229ab54f7a9926b6a35b8?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Andorrax",
+      "link" : "https://stackoverflow.com/users/10560184/andorrax"
+    },
+    "creation_date" : 1753785265,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140611098,
+    "post_id" : 79707238,
+    "body" : "This question is similar to: <a href=\"https://stackoverflow.com/questions/12518618/deserialize-json-into-existing-object-java\">Deserialize JSON into existing object (Java)</a>. If you believe it’s different, please <a href=\"https://stackoverflow.com/posts/79707238/edit\">edit</a> the question, make it clear how it’s different and/or how the answers on that question are not helpful for your problem.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 17592368,
+      "reputation" : 19777,
+      "user_id" : 12763954,
+      "user_type" : "registered",
+      "profile_image" : "https://lh6.googleusercontent.com/-uYTsiw1bQ_o/AAAAAAAAAAI/AAAAAAAAAAA/ACHi3rev-nenZRronqGEJxeFQWww3ShBnQ/s256-rj/photo.jpg",
+      "display_name" : "Olivier",
+      "link" : "https://stackoverflow.com/users/12763954/olivier"
+    },
+    "creation_date" : 1753256084,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140607725,
+    "post_id" : 79707238,
+    "body" : "I did think of one potential approach - I have control over both serialization and deserialization. I also have assurance that things will be serialized BEFORE deserializaiton is ever invoked. During serialization I could store field names vs &quot;jacksonified&quot; names for each class separately. Then during deserialization, I retrieve this store and get all the correct field names. Unfortunately this means I need to manually feed in field data to each instantiated object - something I&#39;d much rather let Jackson do.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 11512926,
+      "reputation" : 123,
+      "user_id" : 10560184,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/3399de3e1ec229ab54f7a9926b6a35b8?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Andorrax",
+      "link" : "https://stackoverflow.com/users/10560184/andorrax"
+    },
+    "creation_date" : 1753159611,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140607554,
+    "post_id" : 79707238,
+    "body" : "well, at the very least if the JsonNode is an object node, you can use <a href=\"https://www.javadoc.io/doc/com.fasterxml.jackson.core/jackson-databind/latest/com/fasterxml/jackson/databind/JsonNode.html\" rel=\"nofollow noreferrer\">fieldNames()</a> to retrieve an iterator for the field names in the node, but i still think that if there is no naming convention, you wont be able to map it to a field properly",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 21724606,
+      "reputation" : 1441,
+      "user_id" : 16034206,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/MRBdT.jpg?s=256",
+      "display_name" : "pebble unit",
+      "link" : "https://stackoverflow.com/users/16034206/pebble-unit"
+    },
+    "creation_date" : 1753148475,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140607540,
+    "post_id" : 79707238,
+    "body" : "@pebbleunit unfortunately no, there are no conventions (and there likely won&#39;t be).  I suppose my real requirement here is to somehow hook into Jackson&#39;s object instantiation logic and inject my own instances....while letting jackson deal with everything else. I&#39;m not sure if such a feature actually exists.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 11512926,
+      "reputation" : 123,
+      "user_id" : 10560184,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/3399de3e1ec229ab54f7a9926b6a35b8?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Andorrax",
+      "link" : "https://stackoverflow.com/users/10560184/andorrax"
+    },
+    "creation_date" : 1753147733,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140604844,
+    "post_id" : 79707238,
+    "body" : "I think no amount of code is going to deserialize data into a POJO properly if a the JSON provider can name their fields as they wish whilst your code has no idea of what to expect for a field. Isn&#39;t that why Jackson provides JsonAlias and JsonProperty features?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 21724606,
+      "reputation" : 1441,
+      "user_id" : 16034206,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/MRBdT.jpg?s=256",
+      "display_name" : "pebble unit",
+      "link" : "https://stackoverflow.com/users/16034206/pebble-unit"
+    },
+    "creation_date" : 1753061656,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140604821,
+    "post_id" : 79707238,
+    "body" : "Will the implementors have a convention for renaming fields using JsonProperty, or it is entirely up to an implementor? If there is a constant, specified convention, you could probably define aliases that you could get() on a JsonNode for a specific field, and for the first that is not null/NullNode - use that for population",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 21724606,
+      "reputation" : 1441,
+      "user_id" : 16034206,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/MRBdT.jpg?s=256",
+      "display_name" : "pebble unit",
+      "link" : "https://stackoverflow.com/users/16034206/pebble-unit"
+    },
+    "creation_date" : 1753060440,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79712583" : [ {
+      "comment_id" : 140626419,
+      "post_id" : 79712583,
+      "body" : "@PeterAdrian thanks for the detailed writeup ! It turned out that the post linked by Olivier in his reply to my post solved all my problems and with much less work. But I&#39;ve awarded you the bounty as this approach is also quite interesting and might be helpful for some future work. Thanks again !",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 11512926,
+        "reputation" : 123,
+        "user_id" : 10560184,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/3399de3e1ec229ab54f7a9926b6a35b8?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Andorrax",
+        "link" : "https://stackoverflow.com/users/10560184/andorrax"
+      },
+      "creation_date" : 1753785377,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140616459,
+      "post_id" : 79712583,
+      "body" : "@Olivier Got it. Just added this scenario also! And I thing I covered all requirements.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1601399,
+        "reputation" : 638,
+        "user_id" : 1482356,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/d6160b6e40d230fa92c6da8072b2f7e5?s=256&d=identicon&r=PG",
+        "display_name" : "Peter Adrian",
+        "link" : "https://stackoverflow.com/users/1482356/peter-adrian"
+      },
+      "creation_date" : 1753392963,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140616108,
+      "post_id" : 79712583,
+      "body" : "<i>&quot;as long as they can be created by Jackson&quot;</i> That&#39;s the point: how will Jackson create an object if the class doesn&#39;t provide a no-arg constructor?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 17592368,
+        "reputation" : 19777,
+        "user_id" : 12763954,
+        "user_type" : "registered",
+        "profile_image" : "https://lh6.googleusercontent.com/-uYTsiw1bQ_o/AAAAAAAAAAI/AAAAAAAAAAA/ACHi3rev-nenZRronqGEJxeFQWww3ShBnQ/s256-rj/photo.jpg",
+        "display_name" : "Olivier",
+        "link" : "https://stackoverflow.com/users/12763954/olivier"
+      },
+      "creation_date" : 1753384439,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140615932,
+      "post_id" : 79712583,
+      "body" : "@Olivier I&#39;ve taken the code examples from my IDE, lombok is not required, but I used it for convenience.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1601399,
+        "reputation" : 638,
+        "user_id" : 1482356,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/d6160b6e40d230fa92c6da8072b2f7e5?s=256&d=identicon&r=PG",
+        "display_name" : "Peter Adrian",
+        "link" : "https://stackoverflow.com/users/1482356/peter-adrian"
+      },
+      "creation_date" : 1753379773,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140615929,
+      "post_id" : 79712583,
+      "body" : "@Olivier I assumed that the objects can be deserialized by Jackson. What that deserializer is doing: let jackson deserialize it&#39;s way what it can, then use custom logic to populate the rest. It doesn&#39;t really matter how the other classes extend BaseClass, as long as they can be created by jackson.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1601399,
+        "reputation" : 638,
+        "user_id" : 1482356,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/d6160b6e40d230fa92c6da8072b2f7e5?s=256&d=identicon&r=PG",
+        "display_name" : "Peter Adrian",
+        "link" : "https://stackoverflow.com/users/1482356/peter-adrian"
+      },
+      "creation_date" : 1753379698,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140614513,
+      "post_id" : 79712583,
+      "body" : "You should also avoid using Lombok since the question doesn&#39;t mention it.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 17592368,
+        "reputation" : 19777,
+        "user_id" : 12763954,
+        "user_type" : "registered",
+        "profile_image" : "https://lh6.googleusercontent.com/-uYTsiw1bQ_o/AAAAAAAAAAI/AAAAAAAAAAA/ACHi3rev-nenZRronqGEJxeFQWww3ShBnQ/s256-rj/photo.jpg",
+        "display_name" : "Olivier",
+        "link" : "https://stackoverflow.com/users/12763954/olivier"
+      },
+      "creation_date" : 1753350517,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140614509,
+      "post_id" : 79712583,
+      "body" : "Note the constraint: <i>&quot;I cannot assume that the implementors of BaseClass will all implement an empty constructor.&quot;</i>",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 17592368,
+        "reputation" : 19777,
+        "user_id" : 12763954,
+        "user_type" : "registered",
+        "profile_image" : "https://lh6.googleusercontent.com/-uYTsiw1bQ_o/AAAAAAAAAAI/AAAAAAAAAAA/ACHi3rev-nenZRronqGEJxeFQWww3ShBnQ/s256-rj/photo.jpg",
+        "display_name" : "Olivier",
+        "link" : "https://stackoverflow.com/users/12763954/olivier"
+      },
+      "creation_date" : 1753350453,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

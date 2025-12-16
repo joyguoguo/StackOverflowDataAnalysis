@@ -1,0 +1,151 @@
+{
+  "question" : {
+    "question_id" : 79803428,
+    "title" : "Spring Boot @Async methods not inheriting trace context from @Scheduled parent method - how to propagate traceId and have a new spanId?",
+    "body" : "<p>I have a Spring Boot application with scheduled jobs that call async methods. The scheduled method gets a trace ID automatically, but it's not propagating to the async methods.</p>\n<p>I need each scheduled execution to have</p>\n<ul>\n<li>one trace ID shared across all operations</li>\n<li>with different span IDs for each async operation.</li>\n</ul>\n<p><strong>Current Setup:</strong></p>\n<ul>\n<li>Spring Boot 3.5.4</li>\n<li>Micrometer 1.15.2 with Brave bridge for tracing</li>\n<li>Log4j2 with MDC for structured logging</li>\n<li><code>ThreadPoolTaskExecutor</code> for async processing</li>\n</ul>\n<p><strong>PollingService.java</strong></p>\n<pre><code>import lombok.NonNull;\nimport lombok.RequiredArgsConstructor;\nimport lombok.extern.slf4j.Slf4j;\nimport org.springframework.scheduling.annotation.EnableScheduling;\nimport org.springframework.scheduling.annotation.Scheduled;\nimport org.springframework.stereotype.Service;\n\n@Slf4j\n@Service\n@EnableScheduling\n@RequiredArgsConstructor\npublic class PollingService {\n    \n    @NonNull\n    private final DataProcessor dataProcessor;\n    \n    @Scheduled(fixedDelay = 5000)\n    public void pollData() {\n        log.info(&quot;Starting data polling&quot;); \n        // Shows traceId and spanId correctly in logs\n        \n        // These async calls lose trace context\n        dataProcessor.processPendingData();\n        dataProcessor.processRetryData();\n    }\n}\n</code></pre>\n<p><strong>DataProcessor.java</strong></p>\n<pre><code>import lombok.RequiredArgsConstructor;\nimport lombok.extern.slf4j.Slf4j;\nimport org.springframework.scheduling.annotation.Async;\nimport org.springframework.stereotype.Service;\n\n@Slf4j\n@Service\n@RequiredArgsConstructor\npublic class DataProcessor {\n    \n    public static final String THREAD_POOL_NAME = &quot;threadPoolTaskExecutor&quot;;\n    \n    @Async(THREAD_POOL_NAME)\n    public void processPendingData() {\n        log.info(&quot;Processing pending items&quot;);\n        // Shows traceId: null in logs\n        // Business logic here\n    }\n    \n    @Async(THREAD_POOL_NAME)\n    public void processRetryData() {\n        log.info(&quot;Processing retry items&quot;);  \n        // Shows traceId: null in logs\n        // Retry logic here\n    }\n}\n</code></pre>\n<p><strong>AsyncConfig.java</strong></p>\n<pre><code>import org.springframework.beans.factory.annotation.Value;\nimport org.springframework.context.annotation.Bean;\nimport org.springframework.context.annotation.Configuration;\nimport org.springframework.scheduling.annotation.EnableAsync;\nimport org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;\n\n@Configuration\n@EnableAsync\npublic class AsyncConfig {\n    \n    public static final String THREAD_POOL_NAME = &quot;threadPoolTaskExecutor&quot;;\n    \n    @Value(&quot;${thread-pools.data-poller.max-size:10}&quot;)\n    private int threadPoolMaxSize;\n    \n    @Value(&quot;${thread-pools.data-poller.core-size:5}&quot;)\n    private int threadPoolCoreSize;\n    \n    @Value(&quot;${thread-pools.data-poller.queue-capacity:100}&quot;)\n    private int threadPoolQueueSize;\n    \n    @Bean(name = THREAD_POOL_NAME)\n    public ThreadPoolTaskExecutor getThreadPoolTaskExecutor() {\n        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();\n        executor.setMaxPoolSize(threadPoolMaxSize);\n        executor.setCorePoolSize(threadPoolCoreSize);\n        executor.setQueueCapacity(threadPoolQueueSize);\n        executor.initialize();\n        return executor;\n    }\n}\n</code></pre>\n<p><strong>Problem:</strong>\nIn my logs, I see:</p>\n<p>Scheduled method: traceId=abc123, spanId=def456<br />\nAsync methods: traceId=null, spanId=null</p>\n<p>The trace context is not propagating across thread boundaries when <code>@Async</code> methods execute.</p>\n<p><strong>What I Need:</strong></p>\n<p>All methods in one scheduled execution should share the same trace ID\nEach async method should have its own unique span ID\nMDC should properly contain traceId/spanId in all threads for log correlation</p>\n<p><strong>Question:</strong></p>\n<p>What's the recommended way to propagate trace context from <code>@Scheduled</code> methods to <code>@Async</code> methods in Spring Boot with Micrometer/Brave so trace ID is same but span IDs are different?</p>\n<p>I'd prefer a solution that:</p>\n<ul>\n<li>Uses Spring Boot's built-in tracing capabilities</li>\n<li>Maintains clean separation between business logic and tracing</li>\n<li>Works with the existing <code>@Async</code> annotation pattern</li>\n<li>Doesn't require significant refactoring of existing code</li>\n</ul>\n<p>Any examples or best practices would be greatly appreciated!</p>\n",
+    "tags" : [ "java", "spring", "spring-boot", "threadpoolexecutor", "micrometer-tracing" ],
+    "owner" : {
+      "account_id" : 44481772,
+      "reputation" : 17,
+      "user_id" : 31775267,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/55950ef27af2995823de90ca9794a36b?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Bluev Blue",
+      "link" : "https://stackoverflow.com/users/31775267/bluev-blue"
+    },
+    "is_answered" : false,
+    "view_count" : 254,
+    "closed_date" : 1761733694,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1761824782,
+    "creation_date" : 1761710948,
+    "link" : "https://stackoverflow.com/questions/79803428/spring-boot-async-methods-not-inheriting-trace-context-from-scheduled-parent-m",
+    "closed_reason" : "Duplicate"
+  },
+  "answers" : [ {
+    "answer_id" : 79803599,
+    "question_id" : 79803428,
+    "body" : "<p>These 2 answers could help to find solution of your problem</p>\n<ul>\n<li><a href=\"https://stackoverflow.com/a/79435244/7613649\">how to propagate trace ID</a></li>\n<li><a href=\"https://stackoverflow.com/a/79804705/7613649\">how to start new span ID</a></li>\n</ul>\n<p>The final solution could look like:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Bean\npublic TaskDecorator taskDecorator(Tracer tracer) {\n    return runnable -&gt; ContextSnapshotFactory.builder()\n        .build()\n        .captureAll()\n        .wrap(wrapInNewSpan(runnable, tracer));\n}\n\nprivate Runnable wrapInNewSpan(Runnable runnable, Tracer tracer) {\n    return () -&gt; {\n        Span span = tracer.nextSpan().name(&quot;new-span&quot;).start();\n        try (Tracer.SpanInScope scope = tracer.withSpan(span)) {\n            runnable.run();\n        } finally {\n            span.end();\n        }\n    };\n}\n\n@Bean(name = THREAD_POOL_NAME)\npublic ThreadPoolTaskExecutor getThreadPoolTaskExecutor(TaskDecorator taskDecorator) {\n    return new ThreadPoolTaskExecutorBuilder()\n        .taskDecorator(taskDecorator) // attention here\n        .maxPoolSize(threadPoolMaxSize)\n        .corePoolSize(threadPoolCoreSize)\n        .queueCapacity(threadPoolQueueSize)\n        .build();\n}\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 10320634,
+      "reputation" : 3398,
+      "user_id" : 7613649,
+      "user_type" : "registered",
+      "accept_rate" : 25,
+      "profile_image" : "https://www.gravatar.com/avatar/c95137fce225c304ac42743da3816d6c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Geba",
+      "link" : "https://stackoverflow.com/users/7613649/geba"
+    },
+    "creation_date" : 1761729169,
+    "last_activity_date" : 1761824782,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140827377,
+    "post_id" : 79803428,
+    "body" : "Note that asking &quot;the recommended way&quot; is off-topic as well because it is an opinion-based question. Likewise, questions asking for &quot;best practices&quot; are also off-topic for the same reasons.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 3273747,
+      "reputation" : 21271,
+      "user_id" : 2756409,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://i.sstatic.net/UIrGI.jpg?s=256",
+      "display_name" : "TylerH",
+      "link" : "https://stackoverflow.com/users/2756409/tylerh"
+    },
+    "creation_date" : 1761835825,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140826887,
+    "post_id" : 79803428,
+    "body" : "Also take a look at <a href=\"https://stackoverflow.com/questions/78257248/configuring-micrometer-to-automatically-create-new-span-on-async\" title=\"configuring micrometer to automatically create new span on async\">stackoverflow.com/questions/78257248/&hellip;</a> It should help to implement starting of new span id",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10320634,
+      "reputation" : 3398,
+      "user_id" : 7613649,
+      "user_type" : "registered",
+      "accept_rate" : 25,
+      "profile_image" : "https://www.gravatar.com/avatar/c95137fce225c304ac42743da3816d6c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Geba",
+      "link" : "https://stackoverflow.com/users/7613649/geba"
+    },
+    "creation_date" : 1761824556,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140826884,
+    "post_id" : 79803428,
+    "body" : "There is metapost regarding whether your question is duplicate <a href=\"https://meta.stackoverflow.com/questions/436363/duplicate-target-doesnt-fully-address-the-question\" title=\"duplicate target doesnt fully address the question\">meta.stackoverflow.com/questions/436363/&hellip;</a>",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 10320634,
+      "reputation" : 3398,
+      "user_id" : 7613649,
+      "user_type" : "registered",
+      "accept_rate" : 25,
+      "profile_image" : "https://www.gravatar.com/avatar/c95137fce225c304ac42743da3816d6c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Geba",
+      "link" : "https://stackoverflow.com/users/7613649/geba"
+    },
+    "creation_date" : 1761824483,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140824584,
+    "post_id" : 79803428,
+    "body" : "I suggest to re-open the question because the original does not cover how to have a new span id",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10320634,
+      "reputation" : 3398,
+      "user_id" : 7613649,
+      "user_type" : "registered",
+      "accept_rate" : 25,
+      "profile_image" : "https://www.gravatar.com/avatar/c95137fce225c304ac42743da3816d6c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Geba",
+      "link" : "https://stackoverflow.com/users/7613649/geba"
+    },
+    "creation_date" : 1761733903,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79803599" : [ {
+      "comment_id" : 140831405,
+      "post_id" : 79803599,
+      "body" : "@BluevBlue Hi, I&#39;ve written other options to start a new span here <a href=\"https://stackoverflow.com/a/79804705/7613649\">stackoverflow.com/a/79804705/7613649</a> and what option I prefer",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10320634,
+        "reputation" : 3398,
+        "user_id" : 7613649,
+        "user_type" : "registered",
+        "accept_rate" : 25,
+        "profile_image" : "https://www.gravatar.com/avatar/c95137fce225c304ac42743da3816d6c?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Geba",
+        "link" : "https://stackoverflow.com/users/7613649/geba"
+      },
+      "creation_date" : 1762028228,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140828407,
+      "post_id" : 79803599,
+      "body" : "Hey thanks for your answer, do you think my new implementation is robust and code be made clearer?   <a href=\"https://stackoverflow.com/questions/79805315/micrometer-trace-for-async-method-and-scheduled-method\" title=\"micrometer trace for async method and scheduled method\">stackoverflow.com/questions/79805315/&hellip;</a>",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 44481772,
+        "reputation" : 17,
+        "user_id" : 31775267,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/55950ef27af2995823de90ca9794a36b?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Bluev Blue",
+        "link" : "https://stackoverflow.com/users/31775267/bluev-blue"
+      },
+      "creation_date" : 1761880770,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

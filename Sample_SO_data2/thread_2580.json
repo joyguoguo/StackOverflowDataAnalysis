@@ -1,0 +1,112 @@
+{
+  "question" : {
+    "question_id" : 79613431,
+    "title" : "About accepting parameters for `multipart/form-data` requests in the `Controller`",
+    "body" : "<p>While using the <code>Controller</code> to receive parameters for <code>multipart/form-data</code> requests, I found that the <code>spring.servlet.multipart.resolve-lazily</code> configuration option has an impact on whether the request parameters are assigned to object properties.</p>\n<hr />\n<p>Here is an example:</p>\n<p><strong>Versions</strong>:</p>\n<ul>\n<li>spring-boot: 3.4.5</li>\n<li>spring-web: 6.2.5</li>\n<li>spring-webmvc: 6.2.5</li>\n</ul>\n<p><strong>DemoController.java</strong>:</p>\n<pre class=\"lang-java prettyprint-override\"><code>import jakarta.servlet.http.HttpServletResponse;\nimport org.springframework.http.MediaType;\nimport org.springframework.web.bind.annotation.PostMapping;\nimport org.springframework.web.bind.annotation.RequestMapping;\nimport org.springframework.web.bind.annotation.RestController;\n\n@RestController\n@RequestMapping(&quot;/demo&quot;)\npublic class DemoController {\n\n  @PostMapping(value = &quot;/bundle&quot;, consumes = MediaType.MULTIPART_FORM_DATA_VALUE)\n  public void generateBundle(Person person, HttpServletResponse response) {\n    // ...\n  }\n\n}\n</code></pre>\n<p><strong>Person.java</strong></p>\n<pre class=\"lang-java prettyprint-override\"><code>import java.util.List;\nimport java.io.Serial;\nimport java.io.Serializable;\n\npublic static class Person implements Serializable {\n\n    @Serial\n    private static final long serialVersionUID = 1L;\n\n    private String name;\n    private Integer age;\n    private List&lt;String&gt; hobby;\n\n    public String getName() {\n      return name;\n    }\n\n    public void setName(String name) {\n      this.name = name;\n    }\n\n    public Integer getAge() {\n      return age;\n    }\n\n    public void setAge(Integer age) {\n      this.age = age;\n    }\n\n    public List&lt;String&gt; getHobby() {\n      return hobby;\n    }\n\n    public void setHobby(List&lt;String&gt; hobby) {\n      this.hobby = hobby;\n    }\n}\n\n</code></pre>\n<p><strong>HTTP request</strong>:</p>\n<pre class=\"lang-none prettyprint-override\"><code>POST /demo/bundle HTTP/1.1\nCookie: SESSION=NTVmY2MwOTctNGFhMS00YTcxLWJlYTgtZWIyOTFmYTU2ZWJm\nUser-Agent: PostmanRuntime/7.43.3\nAccept: */*\nCache-Control: no-cache\nPostman-Token: 7d9c80b3-df15-4691-a444-ee60b26444d3\nHost: 127.0.0.1:8888\nAccept-Encoding: gzip, deflate, br\nConnection: keep-alive\nContent-Type: multipart/form-data; boundary=--------------------------716551840207761516003096\nContent-Length: 485\n \n----------------------------716551840207761516003096\nContent-Disposition: form-data; name=&quot;name&quot;\nxiaoming\n----------------------------716551840207761516003096\nContent-Disposition: form-data; name=&quot;age&quot;\n20\n----------------------------716551840207761516003096\nContent-Disposition: form-data; name=&quot;hobby&quot;\nfoo\n----------------------------716551840207761516003096\nContent-Disposition: form-data; name=&quot;hobby&quot;\nbar\n----------------------------716551840207761516003096--\n</code></pre>\n<p><strong>Description</strong>:</p>\n<ul>\n<li>When <code>spring.servlet.multipart.resolve-lazily</code> is <code>false</code></li>\n</ul>\n<p>The properties in <code>person</code> are all <code>null</code>.</p>\n<ul>\n<li>When <code>spring.servlet.multipart.resolve-lazily</code> is <code>true</code></li>\n</ul>\n<p>The properties in <code>person</code> can be assigned the correct value.</p>\n<hr />\n<p>I don't know if this is a bug, and I'm not sure if there's something wrong with the way I'm using it.</p>\n",
+    "tags" : [ "java", "spring", "spring-boot", "spring-mvc" ],
+    "owner" : {
+      "account_id" : 29014688,
+      "reputation" : 11,
+      "user_id" : 22225369,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/AAcHTtf-XyztpCKUQSO8OF1A-FMoXRajctxXBcDhXmERDJX-=k-s256",
+      "display_name" : "DY L",
+      "link" : "https://stackoverflow.com/users/22225369/dy-l"
+    },
+    "is_answered" : false,
+    "view_count" : 89,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1747080047,
+    "creation_date" : 1746759422,
+    "link" : "https://stackoverflow.com/questions/79613431/about-accepting-parameters-for-multipart-form-data-requests-in-the-controller",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79613470,
+    "question_id" : 79613431,
+    "body" : "<p>This is just how Spring parse multipart requests: without <code>@ModelAttribute</code> and with <code>resolve-lazily=false</code>, Spring doesn't know how to populate the POJO.</p>\n<p>When <code>spring.servlet.multipart.resolve-lazily=false</code>, Spring parses the multipart request eagerly, before the argument resolvers (like <code>@ModelAttribute</code>) kick in.</p>\n<p>This can cause issues if you're binding multipart parameters directly to a POJO\n(like your <code>Person</code> class) and not using <code>@ModelAttribute</code> explicitly.</p>\n<p>When you set <code>spring.servlet.multipart.resolve-lazily=true</code>, Spring delays parsing the multipart request until it's actually needed by the argument resolver - which is exactly when it's trying to populate your <code>Person</code> object.</p>\n<p>Thats's why the fields get set correctly in that case.</p>\n<p>You can explicitly annotate argument with <code>@ModelAttribute</code> - this ensures Spring uses the correct data binder and resolves multipart form fields properly, regardless of the <code>resolve-lazily</code> setting:</p>\n<pre><code>@PostMapping(value = &quot;/bundle&quot;, consumes = MediaType.MULTIPART_FORM_DATA_VALUE)\npublic void generateBundle(\n    @ModelAttribute Person person, \n    HttpServletResponse response\n) {\n    // ...\n}\n\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 38931631,
+      "reputation" : 671,
+      "user_id" : 29023248,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/WxoZEuKw.png?s=256",
+      "display_name" : "Aleksey Bykov",
+      "link" : "https://stackoverflow.com/users/29023248/aleksey-bykov"
+    },
+    "creation_date" : 1746764016,
+    "last_activity_date" : 1746764452,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140410127,
+    "post_id" : 79613431,
+    "body" : "@萝莉w 谢谢你的回答，我看了源码，发现问题是出在嵌入式 web 服务器上（商用的）。",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 29014688,
+      "reputation" : 11,
+      "user_id" : 22225369,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/AAcHTtf-XyztpCKUQSO8OF1A-FMoXRajctxXBcDhXmERDJX-=k-s256",
+      "display_name" : "DY L",
+      "link" : "https://stackoverflow.com/users/22225369/dy-l"
+    },
+    "creation_date" : 1746776490,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140409676,
+    "post_id" : 79613431,
+    "body" : "If the program runs without errors, that&#39;s correct. But I&#39;ll still advice you to use <code>@RequestBody</code> parameter annotation before <code>Person person</code>, then the controller can also get the parameter when the request content type is <code>application&#47;json</code>.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 14331879,
+      "reputation" : 346,
+      "user_id" : 10352428,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/619aa63a0625944a2aa2fd0fdacb95cb?s=256&d=identicon&r=PG",
+      "display_name" : "萝莉w",
+      "link" : "https://stackoverflow.com/users/10352428/%e8%90%9d%e8%8e%89w"
+    },
+    "creation_date" : 1746760495,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79613470" : [ {
+      "comment_id" : 140410134,
+      "post_id" : 79613470,
+      "body" : "You&#39;re welcome)",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 38931631,
+        "reputation" : 671,
+        "user_id" : 29023248,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/WxoZEuKw.png?s=256",
+        "display_name" : "Aleksey Bykov",
+        "link" : "https://stackoverflow.com/users/29023248/aleksey-bykov"
+      },
+      "creation_date" : 1746776600,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140410115,
+      "post_id" : 79613470,
+      "body" : "Sorry, I looked into the source code and found that it was a problem with the embedded web server (Commercial software). But what you said makes sense, I will pay attention to this, thank you.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 29014688,
+        "reputation" : 11,
+        "user_id" : 22225369,
+        "user_type" : "registered",
+        "profile_image" : "https://lh3.googleusercontent.com/a/AAcHTtf-XyztpCKUQSO8OF1A-FMoXRajctxXBcDhXmERDJX-=k-s256",
+        "display_name" : "DY L",
+        "link" : "https://stackoverflow.com/users/22225369/dy-l"
+      },
+      "creation_date" : 1746776241,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

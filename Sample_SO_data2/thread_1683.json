@@ -1,0 +1,290 @@
+{
+  "question" : {
+    "question_id" : 79688009,
+    "title" : "N+1 Problem when trying to get full entity into a DTO",
+    "body" : "<p>Using Hibernate 5.6 here and I've got a two basic entities...</p>\n<pre><code>@Entity\nclass MyEntity {\n  @Id\n  private long id;\n  private String name;\n  @OneToOne\n  @JoinColumn(name = &quot;subEntity_id&quot;)\n  private SubEntity subEntity;\n  //...\n}\n\n@Entity\nclass SubEntity{\n  @Id\n  private long id;\n  private String someField;\n}\n</code></pre>\n<p>Now when I try to following query, everything works fine...</p>\n<pre><code>&quot;SELECT new SomeDto( e.name, e.subEntity.someField ) \n FROM MyEntity e\n WHERE e.id IN :someIds&quot;\n</code></pre>\n<p>This, rather predictably, results in one query, loading all the data for all MyEntities into SomeDto objects.</p>\n<p>But when I want to get the full SubEntity (with another SomeDto constructor, obviously)...</p>\n<pre><code>&quot;SELECT new SomeDto( e.name, e.subEntity ) \n FROM MyEntity e\n WHERE e.id IN :someIds&quot;\n</code></pre>\n<p>The whole thing suddenly becomes an n+1 problem, since I get one query loading the MyEntity objects and then one additional query for each of them, loading the SubEntity (which should actually be already contained in the query result).</p>\n<p>The main problem is of course, that SubEntity has, in actuality, more fields. I could of course create a constructor in the DTO to get all the fields but that feels somewhat silly and will result in ugly-ish code. So, is there an easy way to get the full SubEntity with a single query for everything?</p>\n",
+    "tags" : [ "java", "hibernate" ],
+    "owner" : {
+      "account_id" : 5955901,
+      "reputation" : 10682,
+      "user_id" : 4682610,
+      "user_type" : "registered",
+      "accept_rate" : 29,
+      "profile_image" : "https://i.sstatic.net/sMhnZ.jpg?s=256",
+      "display_name" : "Florian Schaetz",
+      "link" : "https://stackoverflow.com/users/4682610/florian-schaetz"
+    },
+    "is_answered" : true,
+    "view_count" : 120,
+    "answer_count" : 2,
+    "score" : 0,
+    "last_activity_date" : 1751923699,
+    "creation_date" : 1751486666,
+    "link" : "https://stackoverflow.com/questions/79688009/n1-problem-when-trying-to-get-full-entity-into-a-dto",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79688234,
+    "question_id" : 79688009,
+    "body" : "<p>In Hibernate 6.6.18.Final, the mere mention of <code>e.subEntity</code> in the select clause is enough to join fetch <code>SubEntity</code>, so no special commands are needed.</p>\n<p>Hibernate 5 however defaults to fetching the association lazily. After all, if you write</p>\n<pre><code>SELECT new SomeDto( e.name, e.subEntity ) \n FROM MyEntity e\n WHERE e.id IN :someIds\n</code></pre>\n<p>Hibernate doesn't know whether you merely need the identity of the <code>SubEntity</code> (which it can get from the <code>Entity</code> table, and put into the DTO as lazy loading proxy) or its state (which requires joining the <code>SubEntity</code> table). Hibernate 5 defaults to doing less work and fetches just the identity at first. Only when you access that state of <code>SubEntity</code> does Hibernate realize that you need that, too, and fetches it upon access, one by one.</p>\n<p>The solution is to tell hibernate up front that you need the state of <code>SubEntity</code>, for instance by using a <a href=\"https://jakarta.ee/specifications/persistence/3.2/jakarta-persistence-spec-3.2#a4931\" rel=\"nofollow noreferrer\">fetch join</a>:</p>\n<pre><code>SELECT new SomeDto( e.name, e.subEntity ) \n FROM MyEntity e\n JOIN FETCH e.subEntity\n WHERE e.id IN :someIds\n</code></pre>\n<p>however, the query validator of Hibernate 5 doesn't understand and complains:</p>\n<blockquote>\n<p>Caused by: org.hibernate.QueryException: query specified join fetching, but the owner of the fetched association was not present in the select list</p>\n</blockquote>\n<p>which we can fix by selecting the entity instead</p>\n<pre><code>\nSELECT e\n FROM MyEntity e\n JOIN FETCH e.subEntity\n WHERE e.id IN :someIds\n</code></pre>\n<p>and map to the DTO in Java, for instance like:</p>\n<pre><code>return resultStream.map(e -&gt; new SomeDto(e.getName(), e.getSubEntity())).toList()\n</code></pre>\n<p>BTW, in Hibernate 6, you could also do</p>\n<pre><code>SELECT new SomeDto(e)\n FROM MyEntity e\n JOIN FETCH e.subEntity\n WHERE e.id IN :someIds\n</code></pre>\n<p>and do the conversion in a DTO constructor - but the Hibernate 5 query validator doesn't yet understand that arguments to a DTO constructor are &quot;present in the select list&quot; and hence refuses the join fetch ...</p>\n<p>This strategy does have the disadvantage that all fields of <code>MyEntity</code> are fetched from the database, even though we only need <code>name</code> and <code>subEntity</code>.</p>\n",
+    "score" : 2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 61566,
+      "reputation" : 70922,
+      "user_id" : 183406,
+      "user_type" : "registered",
+      "accept_rate" : 74,
+      "profile_image" : "https://www.gravatar.com/avatar/ca03242df77ec2d8f70f2cea0d6209be?s=256&d=identicon&r=PG",
+      "display_name" : "meriton",
+      "link" : "https://stackoverflow.com/users/183406/meriton"
+    },
+    "creation_date" : 1751508026,
+    "last_activity_date" : 1751923699,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79688172,
+    "question_id" : 79688009,
+    "body" : "<p>I'm not that experienced, and maybe it's not the safest solution, but have you tried running the query so that it returns an <code>Object[]</code> instead? It could help avoid the N+1 issue, since <code>e.subEntity</code> would be loaded in the same query.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 42846170,
+      "reputation" : 1,
+      "user_id" : 30952074,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/715dbb55b6fa130bfdbafcc766f47b81?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Mario Myers",
+      "link" : "https://stackoverflow.com/users/30952074/mario-myers"
+    },
+    "creation_date" : 1751499025,
+    "last_activity_date" : 1751499025,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140570653,
+    "post_id" : 79688009,
+    "body" : "@JohnBollinger No sure if it&#39;s worth it for Hibernate 5.6, especially as I don&#39;t seem to be able to reproduce it with a simple setup with a modern Spring Boot + Hibernate 6.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 5955901,
+      "reputation" : 10682,
+      "user_id" : 4682610,
+      "user_type" : "registered",
+      "accept_rate" : 29,
+      "profile_image" : "https://i.sstatic.net/sMhnZ.jpg?s=256",
+      "display_name" : "Florian Schaetz",
+      "link" : "https://stackoverflow.com/users/4682610/florian-schaetz"
+    },
+    "creation_date" : 1751892612,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140562131,
+    "post_id" : 79688009,
+    "body" : "That&#39;s really weird. I mean, it would have been a little weird already if the explicit join had helped, but that not even that is sufficient for Hibernate to recognize that it can get all the information it needs with a single query over a join is especially weird.  It&#39;s impossible for us to tell whether there is some unusual factor influencing that in your case, but if you can produce a minimal, self-contained example demonstrating the issue then that would probably make a good subject for an issue against Hibernate.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2792262,
+      "reputation" : 190832,
+      "user_id" : 2402272,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+      "display_name" : "John Bollinger",
+      "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+    },
+    "creation_date" : 1751549527,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140561020,
+    "post_id" : 79688009,
+    "body" : "@JohnBollinger Unfortunately no. That was our starting point, with an explicit join, but the problem was already there that way. With or without explicit join by itself doesn&#39;t seem to make a difference.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 5955901,
+      "reputation" : 10682,
+      "user_id" : 4682610,
+      "user_type" : "registered",
+      "accept_rate" : 29,
+      "profile_image" : "https://i.sstatic.net/sMhnZ.jpg?s=256",
+      "display_name" : "Florian Schaetz",
+      "link" : "https://stackoverflow.com/users/4682610/florian-schaetz"
+    },
+    "creation_date" : 1751527393,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140560229,
+    "post_id" : 79688009,
+    "body" : "Does it help to use an explicit join? <code>SELECT new SomeDto(e.name, s) FROM MyEntity e JOIN e.subEntity s WHERE e.id IN :someIds</code>",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 2792262,
+      "reputation" : 190832,
+      "user_id" : 2402272,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+      "display_name" : "John Bollinger",
+      "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+    },
+    "creation_date" : 1751494643,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79688172" : [ {
+      "comment_id" : 140572577,
+      "post_id" : 79688172,
+      "body" : "@JohnBollinger This is, unfortunately, exactly what doesn&#39;t work. meriton pointed out nicely, why it doesn&#39;t work, but unfortunately, in Hibernate 5, there doesn&#39;t seem to be a good solution.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 5955901,
+        "reputation" : 10682,
+        "user_id" : 4682610,
+        "user_type" : "registered",
+        "accept_rate" : 29,
+        "profile_image" : "https://i.sstatic.net/sMhnZ.jpg?s=256",
+        "display_name" : "Florian Schaetz",
+        "link" : "https://stackoverflow.com/users/4682610/florian-schaetz"
+      },
+      "creation_date" : 1751955501,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140570763,
+      "post_id" : 79688172,
+      "body" : "@FlorianSchaetz I think this answer is suggesting <code>SELECT name, subEntity FROM MyEntity</code>, and / or the equivalent with an explicit join.  I&#39;d rate that a long shot for eliciting a different query strategy from your original case, but I don&#39;t think it&#39;s fair to equate it with adding all the fields to the DTO constructor.  Of course, it&#39;s not a drop-in replacement, either.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2792262,
+        "reputation" : 190832,
+        "user_id" : 2402272,
+        "user_type" : "registered",
+        "accept_rate" : 85,
+        "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+        "display_name" : "John Bollinger",
+        "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+      },
+      "creation_date" : 1751894872,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140561018,
+      "post_id" : 79688172,
+      "body" : "That&#39;s basically the same as adding all the fields to the constructor of the Dto. It works, sure, but it&#39;s not really &quot;nice&quot; to read or maintain.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 5955901,
+        "reputation" : 10682,
+        "user_id" : 4682610,
+        "user_type" : "registered",
+        "accept_rate" : 29,
+        "profile_image" : "https://i.sstatic.net/sMhnZ.jpg?s=256",
+        "display_name" : "Florian Schaetz",
+        "link" : "https://stackoverflow.com/users/4682610/florian-schaetz"
+      },
+      "creation_date" : 1751527320,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79688234" : [ {
+      "comment_id" : 140575075,
+      "post_id" : 79688234,
+      "body" : "@FlorianSchaetz And you probably can&#39;t change the mapping, or can you? Because upon further investigation, the reason for the n+1 selects you see is not lazy loading being triggered, but the association being mapped eagerly - and old hibernate will resolve an eager ToOne association with select fetching. If the mapping were lazy instead, you could fetch the projection first, and then follow up with a second query to load all SubEntities (happy to write an answer describing that in detail if it meets your requirements)",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 61566,
+        "reputation" : 70922,
+        "user_id" : 183406,
+        "user_type" : "registered",
+        "accept_rate" : 74,
+        "profile_image" : "https://www.gravatar.com/avatar/ca03242df77ec2d8f70f2cea0d6209be?s=256&d=identicon&r=PG",
+        "display_name" : "meriton",
+        "link" : "https://stackoverflow.com/users/183406/meriton"
+      },
+      "creation_date" : 1752009564,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140572572,
+      "post_id" : 79688234,
+      "body" : "If I wanted to fetch the whole entity, I wouldn&#39;t go through this whole projection stuff, tbh. The point is exactly that I do not want to fetch the whole entity but only some fields plus one specific sub-entity, so loading the whole entity completely defeats the purpose. (The entity in question is, let&#39;s say, kind of... historically grown and has far too many fields.)",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 5955901,
+        "reputation" : 10682,
+        "user_id" : 4682610,
+        "user_type" : "registered",
+        "accept_rate" : 29,
+        "profile_image" : "https://i.sstatic.net/sMhnZ.jpg?s=256",
+        "display_name" : "Florian Schaetz",
+        "link" : "https://stackoverflow.com/users/4682610/florian-schaetz"
+      },
+      "creation_date" : 1751955388,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140571768,
+      "post_id" : 79688234,
+      "body" : "Ok, that made me curious enough to actually set up a test environment :-) Conceptually speaking, there is nothing wrong with this fetch join, it&#39;s just that the hibernate&#39;s query validator contains a consistency check that only deals with common cases, dto projection not being among them ... fortunately, that&#39;s easy to work around by doing the DTO projection in Java, as my edited answer shows.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 61566,
+        "reputation" : 70922,
+        "user_id" : 183406,
+        "user_type" : "registered",
+        "accept_rate" : 74,
+        "profile_image" : "https://www.gravatar.com/avatar/ca03242df77ec2d8f70f2cea0d6209be?s=256&d=identicon&r=PG",
+        "display_name" : "meriton",
+        "link" : "https://stackoverflow.com/users/183406/meriton"
+      },
+      "creation_date" : 1751920031,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140570554,
+      "post_id" : 79688234,
+      "body" : "Nope, since fetch join isn&#39;t even allowed there, only getting AST errors then. It basically tells me, since it&#39;s not a collection, I am out of luck there.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 5955901,
+        "reputation" : 10682,
+        "user_id" : 4682610,
+        "user_type" : "registered",
+        "accept_rate" : 29,
+        "profile_image" : "https://i.sstatic.net/sMhnZ.jpg?s=256",
+        "display_name" : "Florian Schaetz",
+        "link" : "https://stackoverflow.com/users/4682610/florian-schaetz"
+      },
+      "creation_date" : 1751890950,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140562386,
+      "post_id" : 79688234,
+      "body" : "@FlorianSchaetz Apologies, I didn&#39;t have a hibernate at hand to test with. You might actually need a <i>fetch</i> join, have edited. Does that work?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 61566,
+        "reputation" : 70922,
+        "user_id" : 183406,
+        "user_type" : "registered",
+        "accept_rate" : 74,
+        "profile_image" : "https://www.gravatar.com/avatar/ca03242df77ec2d8f70f2cea0d6209be?s=256&d=identicon&r=PG",
+        "display_name" : "meriton",
+        "link" : "https://stackoverflow.com/users/183406/meriton"
+      },
+      "creation_date" : 1751553881,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140561015,
+      "post_id" : 79688234,
+      "body" : "Strangely, no. With Join is also does n+1 queries, not a single one. The query with the explicit join was actually our starting point, I was just able to reproduce the problem without any join at all. But join by itself does not seem to help, still getting 1 query for all myEntities and then n for the SubEntity.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 5955901,
+        "reputation" : 10682,
+        "user_id" : 4682610,
+        "user_type" : "registered",
+        "accept_rate" : 29,
+        "profile_image" : "https://i.sstatic.net/sMhnZ.jpg?s=256",
+        "display_name" : "Florian Schaetz",
+        "link" : "https://stackoverflow.com/users/4682610/florian-schaetz"
+      },
+      "creation_date" : 1751527271,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

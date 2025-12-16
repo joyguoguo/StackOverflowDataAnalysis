@@ -1,0 +1,83 @@
+{
+  "question" : {
+    "question_id" : 79776432,
+    "title" : "Liberty TLS java.net.http.WebSocket failing after migrating to Java 21 &amp; Jakarta",
+    "body" : "<p>We have <code>java.net.http.WebSocket</code> code that connects to our devices with the <code>wss://</code> TLS Web Socket protocol successfully under our OpenLiberty Java 17, Java EE (and Spring 5) application, but fails under Java 21, Jakarta EE (and Spring 6).</p>\n<p><code>server.xml</code> has a default SSL configuration that points to a trust store that has the custom signer cert these devices use. The SSL configuration also has TLS hostname verification disabled, because some internal certs this application sees seem to be flaky as to what name they present, despite all our best efforts at resolving this.</p>\n<pre class=\"lang-xml prettyprint-override\"><code>&lt;ssl id=&quot;defaultSSLConfig&quot; trustStoreRef=&quot;defaultTrustStore&quot; verifyHostname=&quot;false&quot; trustDefaultCerts=&quot;true&quot;/&gt;\n\n&lt;keyStore id=&quot;defaultTrustStore&quot; location=&quot;${server.config.dir}/trust.jks&quot; password=&quot;${TRUST_PASSWORD}&quot;/&gt;\n</code></pre>\n<p>Liberty features went from:</p>\n<pre class=\"lang-xml prettyprint-override\"><code>&lt;featureManager&gt;\n    &lt;feature&gt;concurrent-1.0&lt;/feature&gt;\n    &lt;feature&gt;webProfile-8.0&lt;/feature&gt;\n    &lt;feature&gt;javaMail-1.6&lt;/feature&gt;\n    &lt;feature&gt;mpHealth-4.0&lt;/feature&gt;\n&lt;/featureManager&gt;\n</code></pre>\n<p>to:</p>\n<pre class=\"lang-xml prettyprint-override\"><code>&lt;featureManager&gt;\n    &lt;feature&gt;concurrent-3.0&lt;/feature&gt;\n    &lt;feature&gt;webProfile-10.0&lt;/feature&gt;\n    &lt;feature&gt;mail-2.1&lt;/feature&gt;\n    &lt;feature&gt;mpHealth-4.0&lt;/feature&gt;\n&lt;/featureManager&gt;\n</code></pre>\n<p>Same OpenLiberty versions (latest, currently 25.0.0.9).</p>\n<p>The same WebSocket code that works under the old version of the app:</p>\n<pre class=\"lang-java prettyprint-override\"><code>webSocket = HttpClient.newHttpClient().newWebSocketBuilder()\n    .connectTimeout(Duration.ofSeconds(5))\n    .buildAsync(URI.create(endpoint), this)\n    .get();\n</code></pre>\n<p>Results in certificate chain error under the new version:</p>\n<blockquote>\n<p>21:15:01,510 ERROR com.ibm.gs.houston.payment.pos.ingenico.usi.UsiPosProvider:startPayment[Default Executor-thread-7]: BusinessUnit=breaux, ApplicationID=Doug, OrderNumber=2025092504, deviceId=9995: java.util.concurrent.ExecutionException: javax.net.ssl.SSLHandshakeException: PKIX path building failed: sun.security.provider.certpath.SunCertPathBuilderException: unable to find valid certification path to requested target: javax.net.ssl.SSLHandshakeException: PKIX path building failed: sun.security.provider.certpath.SunCertPathBuilderException: unable to find valid certification path to requested target</p>\n</blockquote>\n<p>There's no more additional information with <a href=\"https://www.ibm.com/support/pages/mustgather-ssl-problems-websphere-liberty\" rel=\"nofollow noreferrer\">JVM or Liberty SSL debug/trace</a>.</p>\n<p>It looks like <code>java.net.http.WebSocket</code> no longer uses the default SSL configuration under Liberty. When I change the Java code to explicitly reference the Liberty &quot;defaultSSLConfiguration&quot; SSLContext, I get past this error:</p>\n<pre class=\"lang-java prettyprint-override\"><code>webSocket = HttpClient.newBuilder().sslContext(sslContext).build().newWebSocketBuilder()\n    .connectTimeout(Duration.ofSeconds(5))\n    .buildAsync(URI.create(endpoint), this)\n    .get();\n</code></pre>\n<p>Where <code>sslContext</code> was injected as</p>\n<pre class=\"lang-java prettyprint-override\"><code>com.ibm.websphere.ssl.JSSEHelper.getInstance().getSSLContext(&quot;defaultSSLConfig&quot;, null, null);\n</code></pre>\n<p>But, now, I get the error</p>\n<pre><code>javax.net.ssl.SSLHandshakeException: No name matching &lt;redacted&gt; found\n</code></pre>\n<p>Despite, as you can see above, having specified <code>verifyHostname=&quot;false&quot;</code> in that <code>&lt;ssl&gt;</code> element. Further, if I override this behavior at the JVM level with <code>-Djdk.internal.httpclient.disableHostnameVerification=true</code>, the Web Socket connection fully works. Which suggests to me that even when I explicitly reference the &quot;defaultSSLConfig&quot;, not all of its settings are being used.</p>\n<p>(We also <em>should</em> have a valid wildcard certificate CN, but that's a separate topic.)</p>\n<p>Is this behavioral change expected with the Java and Liberty feature upgrades? Is there some better, recommended way for me to get the behavior I need, where I have pointed Liberty to a trust store that contains the necessary certificates for this Web Socket communication?</p>\n<h2>Update</h2>\n<p>From @covener's helpful answer, <a href=\"https://openliberty.io/docs/latest/troubleshooting.html#ssl-tls\" rel=\"nofollow noreferrer\">Troubleshooting security</a> has this relevant bit:</p>\n<blockquote>\n<p>When the Secure Sockets Layer (ssl-1.0) feature is enabled, you acquire the Liberty default SSLContext class by using the SSLContext.getDefault() method. However, when the Transport Security feature is enabled, the SSLContext.getDefault() method returns the Java Secure Socket Extension (JSSE) SSLContext class. Therefore, changing from one feature to the other might require you to update your application code. <strong>To obtain the default Liberty SSLContext class when the Transport Security feature is enabled, use the JSSEHelper.getInstance().getSSLContext(null, null, null) method instead of the SSLContext.getDefault() method.</strong></p>\n</blockquote>\n<p>Where I can confirm that, indeed, the following behaves the same way as explicitly using &quot;defaultSSLConfig&quot;:</p>\n<pre class=\"lang-java prettyprint-override\"><code>com.ibm.websphere.ssl.JSSEHelper.getInstance().getSSLContext(null, null, null);\n</code></pre>\n<p>Which includes still not honoring the <code>verifyHostname=&quot;false&quot;</code> setting.</p>\n<p>Further, <a href=\"https://openliberty.io/docs/latest/reference/config/wsocOutbound.html\" rel=\"nofollow noreferrer\"><code>&lt;wsocOutbound&gt;</code></a> doesn't seem to be affecting the behavior at all.</p>\n<p>It also says that the default <a href=\"https://openliberty.io/docs/latest/reference/config/wsocOutbound.html#sslOptions\" rel=\"nofollow noreferrer\"><code>wsocOutbound sslOptions</code></a> <code>sslRef</code> is &quot;defaultSSLConfiguration&quot; anyway. I did go ahead and attempt explicitly pointing it to that configuration, but unsurprisingly the original problem remains.</p>\n<p>(<em>Ahhh, <a href=\"https://www.ibm.com/docs/en/was-liberty/base?topic=features-jakarta-websocket-21\" rel=\"nofollow noreferrer\">this reference</a> confirms that element controls the JavaEE/JakartaEE Web Sockets, not the JavaSE <code>java.net.http.WebSocket</code>.</em>)</p>\n<h2>Update 2</h2>\n<p>And, stepping through the code with a debugger, the <code>SSLContext</code> instance's properties <em>do</em> contain the hostname override. From implementation type <code>LibertySSLContext.contextSpi.delegate.contextSpi.trustManager.config</code> :</p>\n<pre class=\"lang-none prettyprint-override\"><code>...\ncom.ibm.ssl.alias=defaultSSLConfig\ncom.ibm.ssl.trustStoreName=defaultTrustStore\ncom.ibm.ws.ssl.verifyHostname=false\n...\n</code></pre>\n<p><s>I don't know if the problem is that that property is at the <code>ws.ssl</code> level rather than the <code>ssl</code> level.</s></p>\n<p>I injected the config/properties object and tried manually adding some related properties, and this doesn't make a difference either. Unsurprising, I suppose, as these are documented under &quot;<a href=\"https://www.ibm.com/support/pages/hostname-verification-websphere-application-server-traditional\" rel=\"nofollow noreferrer\">Traditional WebSphere</a>&quot; rather than Liberty.</p>\n",
+    "tags" : [ "java", "websocket", "websphere-liberty", "open-liberty", "java-http-client" ],
+    "owner" : {
+      "account_id" : 419537,
+      "reputation" : 5165,
+      "user_id" : 796761,
+      "user_type" : "registered",
+      "accept_rate" : 50,
+      "profile_image" : "https://www.gravatar.com/avatar/5753a5c71aa5ab839635f6852c04c3ae?s=256&d=identicon&r=PG",
+      "display_name" : "Doug Breaux",
+      "link" : "https://stackoverflow.com/users/796761/doug-breaux"
+    },
+    "is_answered" : true,
+    "view_count" : 160,
+    "answer_count" : 1,
+    "score" : 3,
+    "last_activity_date" : 1759335045,
+    "creation_date" : 1758924945,
+    "link" : "https://stackoverflow.com/questions/79776432/liberty-tls-java-net-http-websocket-failing-after-migrating-to-java-21-jakarta",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79777350,
+    "question_id" : 79776432,
+    "body" : "<p>For the first half of the problem, it's likely changing the other features caused you to move to transportSecurity-1.0:</p>\n<p><a href=\"https://openliberty.io/docs/latest/reference/feature/transportSecurity-1.0.html\" rel=\"nofollow noreferrer\">https://openliberty.io/docs/latest/reference/feature/transportSecurity-1.0.html</a></p>\n<blockquote>\n<p>The Transport Security feature supersedes the <a href=\"https://openliberty.io/docs/latest/reference/feature/ssl-1.0.html\" rel=\"nofollow noreferrer\">Secure Socket Layer</a> (<code>ssl-1.0</code>) feature and adds functions that are not included with the <code>ssl-1.0</code> feature.</p>\n<p>When the <code>ssl-1.0</code> feature is enabled, the SSL context that is obtained by the <code>SSLContext.getDefault()</code> method is the default Liberty configuration. When the Transport Security feature is enabled, the SSL context that is obtained by the <code>SSLContext.getDefault()</code> method is the SSLContext of the Java Secure Socket Extension (JSSE).</p>\n<p>However, when the Transport Security feature is enabled, Open Liberty also sets a custom SSL socket factory. Therefore, the <code>SSLSocketFactory.getDefault()</code> method returns an SSL socket factory that is based on the Open Liberty custom socket factory provider, which uses the Open Liberty SSL context instead of the JSSE default. Due to these differences between the Transport Security feature and <code>ssl-1.0</code> in how the default Liberty <code>SSLContext</code> class is obtained, you might need to update your application code when you change from one feature to the other, or when you migrate from Java EE to Jakarta EE. For more information, see <a href=\"https://openliberty.io/docs/latest/troubleshooting.html#ssl-tls\" rel=\"nofollow noreferrer\">Troubleshooting SSL and TLS</a>.</p>\n</blockquote>\n<p>-/-</p>\n<p>For the second half, maybe configuring &lt;wsocOutbound&gt; properties explicitly?</p>\n<p><a href=\"https://openliberty.io/docs/latest/reference/config/wsocOutbound.html\" rel=\"nofollow noreferrer\">https://openliberty.io/docs/latest/reference/config/wsocOutbound.html</a></p>\n<p>Your update may include some behavior related to:</p>\n<p><a href=\"https://openliberty.io/docs/latest/reference/diff/jakarta-ee10-diff.html#_client_ssl_configuration\" rel=\"nofollow noreferrer\">https://openliberty.io/docs/latest/reference/diff/jakarta-ee10-diff.html#_client_ssl_configuration</a></p>\n<blockquote>\n<p>Starting with WebSocket 2.1, applications can set their SSLContext class by using a jakarta.websocket.ClientEndpointConfig.Builder#sslContext​ instance, which Liberty uses to establish the wss connection to a server. This option overrides all Liberty server SSL configurations and must be used with caution. It is recommended to enable SSL communication in the server.xml file by enabling the Transport Security feature. Also, you can configure SSL by setting the WAS WebSocket Outbound element in the server.xml file.</p>\n</blockquote>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 34986,
+      "reputation" : 17963,
+      "user_id" : 98959,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/pBjGTEXf.jpg?s=256",
+      "display_name" : "covener",
+      "link" : "https://stackoverflow.com/users/98959/covener"
+    },
+    "creation_date" : 1759065880,
+    "last_activity_date" : 1759087070,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79777350" : [ {
+      "comment_id" : 140766663,
+      "post_id" : 79777350,
+      "body" : "Well... <code>&lt;wsocOutbound&gt;</code> documentation claims the default <code>&lt;sslOptions sslRef&gt;</code> is already <code>defaultSSLConfig</code>. But it&#39;s definitely not behaving that way. Nor when I explicitly add that element and point it to the config. Back to the untrusted cert chain error.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 419537,
+        "reputation" : 5165,
+        "user_id" : 796761,
+        "user_type" : "registered",
+        "accept_rate" : 50,
+        "profile_image" : "https://www.gravatar.com/avatar/5753a5c71aa5ab839635f6852c04c3ae?s=256&d=identicon&r=PG",
+        "display_name" : "Doug Breaux",
+        "link" : "https://stackoverflow.com/users/796761/doug-breaux"
+      },
+      "creation_date" : 1759155173,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140766610,
+      "post_id" : 79777350,
+      "body" : "Relevant, useful information, as always, @covener . I do find the documentation about using JSSE for SSLContext but not for SSLSocketFactory very confusing/unclear. But noting this bit from the troubleshooting link: &quot;To obtain the default Liberty SSLContext class when the Transport Security feature is enabled, use the JSSEHelper.getInstance().getSSLContext(null, null, null) method instead of the SSLContext.getDefault() method.&quot; But it still feels like a bug that once you get that Liberty SSLContext, you&#39;re not getting the behavior from its configured attributes. Will next explore wsocOutbound",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 419537,
+        "reputation" : 5165,
+        "user_id" : 796761,
+        "user_type" : "registered",
+        "accept_rate" : 50,
+        "profile_image" : "https://www.gravatar.com/avatar/5753a5c71aa5ab839635f6852c04c3ae?s=256&d=identicon&r=PG",
+        "display_name" : "Doug Breaux",
+        "link" : "https://stackoverflow.com/users/796761/doug-breaux"
+      },
+      "creation_date" : 1759153575,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

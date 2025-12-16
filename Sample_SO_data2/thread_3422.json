@@ -1,0 +1,64 @@
+{
+  "question" : {
+    "question_id" : 79552436,
+    "title" : "How to customize the &quot;413 Payload Too Large&quot; response in Quarkus with multipart/form-data requests?",
+    "body" : "<h1>How to customize the &quot;413 Payload Too Large&quot; response in Quarkus with multipart/form-data requests?</h1>\n<p>I'm working with a Java 21 Quarkus (3.18.1) API that uses the <code>quarkus.http.limits.max-form-attribute-size</code> property to limit request body size. When a request body exceeds this limit, the application automatically responds with a &quot;413 Payload Too Large&quot; error.</p>\n<p>I want to customize this response to return a custom JSON payload that maintains a consistent response schema across my application.</p>\n<p>The HTTP requests to my API use <code>multipart/form-data</code> with both text fields and file uploads. For example:</p>\n<pre class=\"lang-bash prettyprint-override\"><code>curl --request POST \\\n  --url http://localhost:8080/api \\\n  --header 'content-type: multipart/form-data' \\\n  --form 'text=content' \\\n  --form 'document=@C:\\path\\to\\file.pdf'\n</code></pre>\n<p>How can I intercept and customize the &quot;413 Payload Too Large&quot; response for these multipart requests?</p>\n<p>Any suggestions about the best approach to handle this would be appreciated.</p>\n",
+    "tags" : [ "java", "rest", "quarkus", "multipart", "http-status-codes" ],
+    "owner" : {
+      "account_id" : 2521076,
+      "reputation" : 41,
+      "user_id" : 2191437,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/1b26d2696c007813a39bad23491289e9?s=256&d=identicon&r=PG",
+      "display_name" : "Mad",
+      "link" : "https://stackoverflow.com/users/2191437/mad"
+    },
+    "is_answered" : true,
+    "view_count" : 285,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1745410696,
+    "creation_date" : 1743670368,
+    "link" : "https://stackoverflow.com/questions/79552436/how-to-customize-the-413-payload-too-large-response-in-quarkus-with-multipart",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79588613,
+    "question_id" : 79552436,
+    "body" : "<p>When using Quarkus with Vert.x HTTP server, the check of the body size defined in the property <code>quarkus.http.limits.max-body-size</code> is handled by the method <a href=\"https://github.com/quarkusio/quarkus/blob/cdba06981fbc4d58ab5111f7566473ac498ee07f/extensions/vertx-http/runtime/src/main/java/io/quarkus/vertx/http/runtime/options/HttpServerCommonHandlers.java#L36\" rel=\"nofollow noreferrer\"><code>io.quarkus.vertx.http.runtime.options.enforceMaxBodySize(ServerLimitsConfig, Router)</code></a> which directly close the connection with an HTTP status code 413 when the max body limit is exceeded. In this case, the only way is to modify this behavior is to &quot;override&quot; this handler with something like this:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class MaxBodySizeCheckingHandler {\n\n    @ConfigProperty(name = &quot;quarkus.http.limits.max-body-size&quot;)\n    private MemorySize maxBodySize;\n\n    public void enforceMaxBodySize(@Observes final Router httpRouteRouter) {\n        if (maxBodySize != null) {\n            final long limit = maxBodySize.asLongValue();\n            final Long limitObj = limit;\n            httpRouteRouter.route()\n                // Take precedence over the default handler defined in HttpServerCommonHandlers.\n                .order(RouteConstants.ROUTE_ORDER_UPLOAD_LIMIT - 1)\n                .handler(event -&gt; {\n                    final String lengthString = event.request().headers().get(HttpHeaderNames.CONTENT_LENGTH);\n\n                    if (lengthString != null) {\n                        long length = Long.parseLong(lengthString);\n                        if (length &gt; limit) {\n                            event.response().headers()\n                                .add(HttpHeaderNames.CONTENT_TYPE, &quot;application/json&quot;)\n                                .add(HttpHeaderNames.CONNECTION, &quot;close&quot;);\n                            event.response().setStatusCode(HttpResponseStatus.REQUEST_ENTITY_TOO_LARGE.code());\n                            event.response().endHandler(e -&gt; event.request().connection().close());\nevent.response().end(&quot;{\\&quot;message\\&quot;:\\&quot;File too large\\&quot;}&quot;);\n                            return;\n                        }\n                    } else {\n                        event.put(VertxHttpRecorder.MAX_REQUEST_SIZE_KEY, limitObj);\n                    }\n                    event.next();\n                });\n        }\n    }\n}\n</code></pre>\n<p>Regarding the check based on the property <code>quarkus.http.limits.max-form-attribute-size</code>, an <a href=\"https://quarkus.io/guides/rest#exception-mapping\" rel=\"nofollow noreferrer\"><code>ExceptionMapper</code></a> for the type <code>WebApplicationException</code> might help, but I was not able to reproduce this specific case.</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 18258835,
+      "reputation" : 11,
+      "user_id" : 13292108,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/5YqOO.png?s=256",
+      "display_name" : "Maxime W",
+      "link" : "https://stackoverflow.com/users/13292108/maxime-w"
+    },
+    "creation_date" : 1745410696,
+    "last_activity_date" : 1745410696,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79588613" : [ {
+      "comment_id" : 140753041,
+      "post_id" : 79588613,
+      "body" : "Oh man, none of ExceptionMappers couldn&#39;t help me to customize 413 error...  Only your solution has worked! Thanks a lot =)",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 9829083,
+        "reputation" : 1,
+        "user_id" : 31547057,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/cbb2fd0b16dcd57708183956ff06701f?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "tral909",
+        "link" : "https://stackoverflow.com/users/31547057/tral909"
+      },
+      "creation_date" : 1758572799,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

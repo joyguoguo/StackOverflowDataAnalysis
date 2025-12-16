@@ -1,0 +1,46 @@
+{
+  "question" : {
+    "question_id" : 79611794,
+    "title" : "Is it possible to use Narayana REST-AT (REST-AtomicTransactions) embedded in a Spring Boot project with the default Tomcat?",
+    "body" : "<p>I’m trying to implement two-phase commit transactions using Narayana REST-AT fully embedded in a Spring Boot application—no WildFly/JBoss server, no Docker Compose or external broker, just project dependencies—and deploy it on OpenShift using the default embedded Tomcat.</p>\n<p>My question is simple:</p>\n<p>Can I use Narayana REST-AT directly in a Spring Boot project with the built-in Tomcat so that it:</p>\n<p>Exposes internal REST endpoints for transaction management (/transactions, /prepare, /commit, /rollback), and</p>\n<p>Allows methods annotated with @Transactional(RestAtomicTransaction.TYPE) to participate in a global two-phase commit?</p>\n",
+    "tags" : [ "java", "jboss", "jta", "distributed-transactions", "narayana" ],
+    "owner" : {
+      "account_id" : 21287080,
+      "reputation" : 26,
+      "user_id" : 20267312,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/03b8e183929cbe373bf4bc7b85d03b6d?s=256&d=identicon&r=PG",
+      "display_name" : "Watlas",
+      "link" : "https://stackoverflow.com/users/20267312/watlas"
+    },
+    "is_answered" : false,
+    "view_count" : 99,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1747663931,
+    "creation_date" : 1746685008,
+    "link" : "https://stackoverflow.com/questions/79611794/is-it-possible-to-use-narayana-rest-at-rest-atomictransactions-embedded-in-a-s",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79620094,
+    "question_id" : 79611794,
+    "body" : "<p>Although your question is pleasantly succinct I can only give a lengthy but complete response.</p>\n<p>The REST-AT transaction manager (aka coordinator) API is exposed using standard REST endpoints [1] and transaction participants must also expose an API using standard REST endpoints [2]. The protocol that defines the comms between these two REST endpoints follows the HTTP standards and are defined in [3a]. It is possible to expose those two endpoints in the same application just like any other REST based application can but from a reliability stance it is better to separate the participant from the transaction manager.</p>\n<p>Even though the REST-AT and JTA transaction models are semantically identical the APIs and transport protocol are different and as such the two models need to be &quot;bridged&quot; to enable JTA style transactions to participate in a REST-AT transaction [3b]. This piece of the puzzle is only integrated in WildFly and therefore using `@Transactional(RestAtomicTransaction.TYPE)` to facilitate participation in a global two-phase commit requires the app server. If there is a call from the community to make the bridge a standalone component then that is certainly possible.</p>\n<p>I've just realised as I write this that when you wrote `@Transactional` you may not have intended the question as being specific to only JTA - we do support annotations for the REST-AT transaction model [3c] but since we've not had questions about it I doubt they have had much exposure, if you are so inclined then any experimentation you can do would be welcome, if you continue a conversation on zulip (<a href=\"https://narayana.zulipchat.com/\" rel=\"nofollow noreferrer\">https://narayana.zulipchat.com/</a>) we can discuss more about that if need be. We are wanting to address the use of annotations and lack of users by providing a quarkus extension [3d], the more developers that contribute to that issue thread the more likely that it's priority can be raised.</p>\n<p>If you are using JAX-RS then you can embed the coordinator by running an embedded JAX-RS server such as undertow [4] and register the JAX-RS resource, Coordinator.class, corresponding to the REST-AT transaction manager [5]. You will also need register your participant to handle the prepare/rollback/commit endpoints [5]. The participant/coordinator interactions are handled by a JAXRS filter, ServerSRAFilter, [5]. ServerSRAFilter is a recent addition and has not been used in anger so, depending on your needs, you may prefer to handle participant/coordinator interactions yourself as we do in the test suite [6].</p>\n<p>The testsuite shows how to do various things, such as starting a coordinator etc [7].</p>\n<p>[1] <a href=\"https://www.narayana.io//docs/project/index.html#client_responsibilities\" rel=\"nofollow noreferrer\">https://www.narayana.io//docs/project/index.html#client_responsibilities</a></p>\n<p>[2] <a href=\"https://www.narayana.io//docs/project/index.html#%5C_service_responsibilities\" rel=\"nofollow noreferrer\">https://www.narayana.io//docs/project/index.html#%5C_service_responsibilities</a></p>\n<p>[3a] <a href=\"https://github.com/jbosstm/documentation/blob/main/rts/docs/REST-Atomic_v2_draft_8_comments_sept_4.pdf\" rel=\"nofollow noreferrer\">https://github.com/jbosstm/documentation/blob/main/rts/docs/REST-Atomic_v2_draft_8_comments_sept_4.pdf</a></p>\n<p>[3b] <a href=\"https://www.narayana.io//docs/project/index.html#%5C_jta_bridge\" rel=\"nofollow noreferrer\">https://www.narayana.io//docs/project/index.html#%5C_jta_bridge</a></p>\n<p>[3c] <a href=\"https://www.narayana.io//docs/api/org/jboss/jbossts/star/annotation/package-summary.html\" rel=\"nofollow noreferrer\">https://www.narayana.io//docs/api/org/jboss/jbossts/star/annotation/package-summary.html</a></p>\n<p>[3d] <a href=\"https://github.com/quarkusio/quarkus/issues/15364\" rel=\"nofollow noreferrer\">https://github.com/quarkusio/quarkus/issues/15364</a></p>\n<p>[4] <a href=\"https://docs.jboss.org/resteasy/docs/3.1.4.Final/javadocs/org/jboss/resteasy/plugins/server/undertow/UndertowJaxrsServer.html\" rel=\"nofollow noreferrer\">https://docs.jboss.org/resteasy/docs/3.1.4.Final/javadocs/org/jboss/resteasy/plugins/server/undertow/UndertowJaxrsServer.html</a></p>\n<p>[5] <a href=\"https://github.com/jbosstm/narayana/blob/7.2.2.Final/rts/at/tx/src/test/java/org/jboss/jbossts/star/test/SRATest.java#L62\" rel=\"nofollow noreferrer\">https://github.com/jbosstm/narayana/blob/7.2.2.Final/rts/at/tx/src/test/java/org/jboss/jbossts/star/test/SRATest.java#L62</a></p>\n<p>[6] <a href=\"https://github.com/jbosstm/narayana/blob/7.2.2.Final/rts/at/tx/src/test/java/org/jboss/jbossts/star/test/SpecTest.java\" rel=\"nofollow noreferrer\">https://github.com/jbosstm/narayana/blob/7.2.2.Final/rts/at/tx/src/test/java/org/jboss/jbossts/star/test/SpecTest.java</a></p>\n<p>[7] <a href=\"https://github.com/jbosstm/narayana/blob/7.2.2.Final/rts/at/tx/src/test/java/org/jboss/jbossts/star/test/BaseTest.java#L198\" rel=\"nofollow noreferrer\">https://github.com/jbosstm/narayana/blob/7.2.2.Final/rts/at/tx/src/test/java/org/jboss/jbossts/star/test/BaseTest.java#L198</a></p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 11132642,
+      "reputation" : 121,
+      "user_id" : 8172158,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-Y55_jZhMEW0/AAAAAAAAAAI/AAAAAAAAADQ/QV5N09EKu5Y/s256-rj/photo.jpg",
+      "display_name" : "Michael Musgrove",
+      "link" : "https://stackoverflow.com/users/8172158/michael-musgrove"
+    },
+    "creation_date" : 1747154730,
+    "last_activity_date" : 1747663931,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : { }
+}

@@ -1,0 +1,186 @@
+{
+  "question" : {
+    "question_id" : 79553668,
+    "title" : "How to ensure an iterator with a read lock will unlock even if it doesn&#39;t finish?",
+    "body" : "<p>I have a collection. Many threads should be able to read from it at a time, but only one thread should be able to write to it at a time, and only when it's not being read. Java's <a href=\"https://docs.oracle.com/javase/8/docs/api/java/util/concurrent/locks/ReentrantReadWriteLock.html\" rel=\"nofollow noreferrer\">ReentrantReadWriteLock</a> seems prefect for this.</p>\n<p>However, I am confused about how to write the iterator for the collection. The iterator should obtain the read lock when it starts. But I can't figure out how to ensure that it will unlock in the case when the iterator never finished.</p>\n<p>Here's some example code that is just a wrapper around a normal iterator that locks and unlocks:</p>\n<pre><code>import java.util.Iterator;\nimport java.util.concurrent.locks.Lock;\nimport java.util.concurrent.locks.ReadWriteLock;\n\npublic class ReadLockIterator&lt;T&gt; implements Iterator&lt;T&gt; {\n    \n    private final Lock lock;\n    private final Iterator&lt;T&gt; iterator;\n    \n    public ReadLockIterator(ReadWriteLock lock, Iterator&lt;T&gt; iterator) {\n        this.lock = lock.readLock();\n        this.iterator = iterator;\n        this.lock.lock();\n    }\n    \n    @Override\n    public boolean hasNext() {\n        return iterator.hasNext();\n    }\n\n    @Override\n    public T next() {\n        try {\n            return iterator.next();\n        }\n        finally {\n            if(!hasNext())\n                lock.unlock();\n        }\n    }\n}\n</code></pre>\n<p>This will work fine as long as the user gets every element from the iterator. But what happens if the user doesn't do that? How can I ensure that the lock will eventually be released, even if some elements are never read from the iterator?</p>\n<p>My first thought was to put a second check in the iterator's <code>finalize()</code> method, but then I read that finalize should not be used for unlocking.</p>\n<p>What's the best way to handle this?</p>\n",
+    "tags" : [ "java", "multithreading", "concurrency" ],
+    "owner" : {
+      "account_id" : 583143,
+      "reputation" : 113,
+      "user_id" : 252964,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/99a6cfc3e326f20d4a096f4a5b1cef26?s=256&d=identicon&r=PG",
+      "display_name" : "Stephen Ware",
+      "link" : "https://stackoverflow.com/users/252964/stephen-ware"
+    },
+    "is_answered" : true,
+    "view_count" : 94,
+    "answer_count" : 4,
+    "score" : 0,
+    "last_activity_date" : 1744136365,
+    "creation_date" : 1743703008,
+    "link" : "https://stackoverflow.com/questions/79553668/how-to-ensure-an-iterator-with-a-read-lock-will-unlock-even-if-it-doesnt-finish",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79553776,
+    "question_id" : 79553668,
+    "body" : "<p>There is not a good way to handle this.  The most viable strategy is to require every user of your iterator to wrap the usage in lock/unlock.  If you find yourself saying, &quot;That's not a very viable strategy,&quot; I would agree, but that doesn't mean that a better solution exists.</p>\n<p>The case of the <a href=\"https://docs.oracle.com/javase/8/docs/api/java/util/Collections.html#synchronizedCollection-java.util.Collection-\" rel=\"nofollow noreferrer\">synchronized collections</a> illustrates this, as every user of those collections has to manually lock the collection: it's very awkward, but there isn't a better way.</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 465573,
+      "reputation" : 200423,
+      "user_id" : 869736,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/ae7bb06b9a23a4dd7eea69e853d47d12?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Louis Wasserman",
+      "link" : "https://stackoverflow.com/users/869736/louis-wasserman"
+    },
+    "creation_date" : 1743706677,
+    "last_activity_date" : 1743706677,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79554167,
+    "question_id" : 79553668,
+    "body" : "<p>You should make a lock class for your collection that implements <code>AutoCloseable</code> and  <code>Iterable</code>.</p>\n<p>Then you can use try-with-resources to make sure the lock is closed, and your iterator implementations can fail if the lock is not open:</p>\n<pre><code>try(MyLock lock = myCollection.getReadLock()) {\n    for(Item item: lock) {\n        ...\n    }\n}\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 7178634,
+      "reputation" : 60923,
+      "user_id" : 5483526,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/780a651189f64a2cbf4b7f62cf852005?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Matt Timmermans",
+      "link" : "https://stackoverflow.com/users/5483526/matt-timmermans"
+    },
+    "creation_date" : 1743721621,
+    "last_activity_date" : 1743721621,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79562783,
+    "question_id" : 79553668,
+    "body" : "<p>I'd copy <a href=\"https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/util/concurrent/package-summary.html#concurrent-collections-heading\" rel=\"nofollow noreferrer\">the behavior of the standard java collections</a>: iterator methods should throw <code>ConcurrentModificationException</code> if any write happened since the creation of the iterator.<br />\nThat'd make your collection easy to understand for other developers.</p>\n<p>Your collection could also provide a read lock which can be used to guarantee that no modification happen (and no <code>ConcurrentModificationException</code> is thrown) while the iterator is in use.</p>\n<hr />\n<p>Another (probably easier to implement) option would be to allow to create and use iterators only when the current thread owns the read lock for the collection.</p>\n<p>If an attempt to create an iterator is made when <code>collection.getReadLock()</code> isn't held by the current thread, then <code>IllegalStateException</code> (or some custom exception) should be thrown.<br />\nSimilarly every method of the iterator should check that it's invoked in the thread it was created in, and that the read lock, that was held when this iterator was created, hasn't been released yet.</p>\n<p>This way the code for the iterator can be mostly single-threaded, which usually significantly less complicated than multi-threading code.</p>\n<hr />\n<p>In both cases the iterator can be used like that:</p>\n<pre class=\"lang-java prettyprint-override\"><code>var collection = ...;\nvar readLock = collection.getReadLock();\nreadLock.lock();\ntry {\n  for (var item: collection) {\n    process(item);\n  }\n} finally {\n  readLock.unlock();\n}\n</code></pre>\n<hr />\n<p>Making a lock <code>Iterable</code> (as suggested in <a href=\"https://stackoverflow.com/a/79554167\">this answer</a>) makes the code non-intuitive in my opinion.<br />\nI'd suggest renaming &quot;lock&quot; into &quot;snapshot&quot; or something along these lines in that case.</p>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 41280407,
+      "reputation" : 26,
+      "user_id" : 30213460,
+      "user_type" : "unregistered",
+      "profile_image" : "https://www.gravatar.com/avatar/4e3443fd3e864267671e9ea2e83c2442?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "user30213460",
+      "link" : "https://stackoverflow.com/users/30213460/user30213460"
+    },
+    "creation_date" : 1744136283,
+    "last_activity_date" : 1744136365,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79553945,
+    "question_id" : 79553668,
+    "body" : "<p>It may just be the case that there is no good solution to this problem, as <a href=\"https://stackoverflow.com/users/869736/louis-wasserman\">Louis Wasserman</a> has mentioned. I certainly can't come up with a good one.</p>\n<p>I did want to post <em>something</em>, even if it's not a very good solution. This is an improved version of my iterator wrapper. It is guaranteed to unlock if the wrapped iterator reaches the end of the collection or if the wrapped iterator throws an exception. It also implements the <code>AutoCloseable</code> interface so that it clearly advertises that it uses a resource that needs to be released. This doesn't really solve the problem, but at least it reduces the chance that a user will misuse it.</p>\n<pre><code>import java.util.Iterator;\nimport java.util.concurrent.locks.Lock;\nimport java.util.concurrent.locks.ReadWriteLock;\n\npublic class ReadLockIterator&lt;T&gt; implements Iterator&lt;T&gt;, AutoCloseable {\n    \n    private final Lock lock;\n    private final Iterator&lt;T&gt; iterator;\n    private boolean hasNext;\n    private T next;\n    private boolean closed = false;\n    \n    public ReadLockIterator(ReadWriteLock lock, Iterator&lt;T&gt; iterator) {\n        this.lock = lock.readLock();\n        this.iterator = iterator;\n        this.lock.lock();\n        advance();\n    }\n    \n    @Override\n    public boolean hasNext() {\n        return hasNext;\n    }\n\n    @Override\n    public T next() {\n        if(!hasNext)\n            throw new NoSuchElementException(&quot;The iterator has no more elements.&quot;);\n        T next = this.next;\n        advance();\n        return next;\n    }\n\n    @Override\n    public void close() {\n        if(!closed) {\n            hasNext = false;\n            closed = true;\n            lock.unlock();\n        }\n    }\n    \n    private void advance() {\n        hasNext = false;\n        try {\n            if(!closed &amp;&amp; iterator.hasNext()) {     \n                next = iterator.next();\n                hasNext = true;\n            }\n        }\n        finally {\n            if(!hasNext)\n                close();\n        }\n    }\n}\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 583143,
+      "reputation" : 113,
+      "user_id" : 252964,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/99a6cfc3e326f20d4a096f4a5b1cef26?s=256&d=identicon&r=PG",
+      "display_name" : "Stephen Ware",
+      "link" : "https://stackoverflow.com/users/252964/stephen-ware"
+    },
+    "creation_date" : 1743711396,
+    "last_activity_date" : 1743711396,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140299919,
+    "post_id" : 79553668,
+    "body" : "<code>o.finalize()</code> is an abomination, and it&#39;s been deprecated since late 2021. Don&#39;t use it. <a href=\"https://openjdk.org/jeps/421\" rel=\"nofollow noreferrer\">openjdk.org/jeps/421</a>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 14247365,
+      "reputation" : 453,
+      "user_id" : 10291999,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/1yd1F.png?s=256",
+      "display_name" : "Ohm&#39;s Lawman",
+      "link" : "https://stackoverflow.com/users/10291999/ohms-lawman"
+    },
+    "creation_date" : 1743779386,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79562783" : [ {
+      "comment_id" : 140317681,
+      "post_id" : 79562783,
+      "body" : "Yeah, I think this is probably an improvement over the previous answers. I think I will use a combination of the methods you suggested. Each time the iterator reads a new element it will lock, read, and unlock. But before returning a next element, it will also check if any write locks have occurred since the iterator was created, and if so, throw a ConcurrentModificationException. This way the collection doesn&#39;t have to remain locked for the life of the iterator, but doing so will avoid the exception.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 583143,
+        "reputation" : 113,
+        "user_id" : 252964,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/99a6cfc3e326f20d4a096f4a5b1cef26?s=256&d=identicon&r=PG",
+        "display_name" : "Stephen Ware",
+        "link" : "https://stackoverflow.com/users/252964/stephen-ware"
+      },
+      "creation_date" : 1744226303,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79554167" : [ {
+      "comment_id" : 140299513,
+      "post_id" : 79554167,
+      "body" : "This is probably the best suggestion I&#39;ve seen so far. It&#39;s not ideal that every for loop will now have to be wrapped in a try, but I think this minimizes the chances someone will misuse the iterator.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 583143,
+        "reputation" : 113,
+        "user_id" : 252964,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/99a6cfc3e326f20d4a096f4a5b1cef26?s=256&d=identicon&r=PG",
+        "display_name" : "Stephen Ware",
+        "link" : "https://stackoverflow.com/users/252964/stephen-ware"
+      },
+      "creation_date" : 1743773634,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79553776" : [ {
+      "comment_id" : 140296510,
+      "post_id" : 79553776,
+      "body" : "You can do a <i>little</i> better with streams, potentially, with e.g. <a href=\"https://docs.oracle.com/javase/8/docs/api/java/util/stream/BaseStream.html#onClose-java.lang.Runnable-\" rel=\"nofollow noreferrer\"><code>onClose</code></a>.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 465573,
+        "reputation" : 200423,
+        "user_id" : 869736,
+        "user_type" : "registered",
+        "accept_rate" : 82,
+        "profile_image" : "https://www.gravatar.com/avatar/ae7bb06b9a23a4dd7eea69e853d47d12?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Louis Wasserman",
+        "link" : "https://stackoverflow.com/users/869736/louis-wasserman"
+      },
+      "creation_date" : 1743708540,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140296436,
+      "post_id" : 79553776,
+      "body" : "Huh... well, that&#39;s a shame. I&#39;m going to hold out hope for a bit that someone else will comment with a solution, but if not, I&#39;ll mark this as the best answer.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 583143,
+        "reputation" : 113,
+        "user_id" : 252964,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/99a6cfc3e326f20d4a096f4a5b1cef26?s=256&d=identicon&r=PG",
+        "display_name" : "Stephen Ware",
+        "link" : "https://stackoverflow.com/users/252964/stephen-ware"
+      },
+      "creation_date" : 1743707171,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

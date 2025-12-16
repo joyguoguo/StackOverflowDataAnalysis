@@ -1,0 +1,131 @@
+{
+  "question" : {
+    "question_id" : 79775340,
+    "title" : "How to manage two qualified ObjectMapper in my SpringBoot project properly?",
+    "body" : "<p>I have a SpringBoot (3.4.7) application using two different REST clients whose JAR libaries are added to the project via dependency. Both clients come with their own <code>ObjectMapper</code>s autowired with <code>@Qualified</code> in their WebClient components annotated with <code>@Component</code>.</p>\n<p>The REST client <code>ObjectMapper</code> 1 and 2 look pretty the same:</p>\n<pre><code>@Configuration\npublic class My1JacksonConfig {\n\n    @Qualifier(&quot;my1ServicesObjectMapper&quot;).\n    @Bean(&quot;my1ServicesObjectMapper&quot;)\n    public ObjectMapper my1ServicesObjectMapper() {\n        return new ObjectMapper()\n                .findAndRegisterModules()\n                .enable(SerializationFeature.INDENT_OUTPUT)\n                .registerModule(new JavaTimeModule())\n                ;\n    }\n}\n</code></pre>\n<p>Each <code>WebClient</code> gets its mapper injected:</p>\n<pre><code>    @Bean(&quot;my1WebClient&quot;)\n    public WebClient my1WebClient(@Qualifier(&quot;my1ServicesObjectMapper&quot;) ObjectMapper objectMapper) {\n        if (my1WebClient == null) {\n            bootstrappWebClient();\n        }\n        return my1WebClient;\n    }\n</code></pre>\n<p>When running the application it says:</p>\n<pre><code>2025-09-26T00:03:03.599708862+02:00 ERROR [] --- [main] org.springframework.boot.diagnostics.LoggingFailureAnalysisReporter: \n\n***************************\nAPPLICATION FAILED TO START\n***************************\n\nDescription:\n\nParameter 0 of method mappingJackson2HttpMessageConverter in org.springframework.boot.autoconfigure.http.JacksonHttpMessageConvertersConfiguration$MappingJackson2HttpMessageConverterConfiguration required a single bean, but 2 were found:\n    - my1ServicesObjectMapper: defined by method 'my1ServicesObjectMapper' in class path resource [com/harry/potter/client/My1JacksonConfig.class]\n    - my2ServicesObjectMapper: defined by method 'my2ServicesObjectMapper' in class path resource [com/harry/potter/client/My2JacksonConfig.class]\n\nThis may be due to missing parameter name information\n\nAction:\n\nConsider marking one of the beans as @Primary, updating the consumer to accept multiple beans, or using @Qualifier to identify the bean that should be consumed\n\nEnsure that your compiler is configured to use the '-parameters' flag.\nYou may need to update both your build tool settings as well as your IDE.\n(See https://github.com/spring-projects/spring-framework/wiki/Spring-Framework-6.1-Release-Notes#parameter-name-retention)\n\n</code></pre>\n<p>The mentioned class <code>mappingJackson2HttpMessageConverter</code> is not of any interest by the application. It seems to be loaded with one of the SpringBoot starters. But obviously it wants to autowire an <code>ObjectMapper</code> and complaints about finding my two qualified <code>ObjectMapper</code>s.</p>\n<p>If I add one ObjectMapper <code>@Bean</code> to the application making it primary (<code>@Primary</code>) the problem is solved, better said worked-around.</p>\n<p>What can I do to not have to add a (for me) senseless <code>ObjectMapper</code> to my code?</p>\n<p><strong>EDIT 1</strong></p>\n<p>Both WebClient's configuration looks pretty the same:</p>\n<pre><code>@Configuration\n@ConfigurationProperties(&quot;harry.potter.client&quot;)\npublic class My1WebClientConfiguration {\n    private Map&lt;GuardHeaderAttribute, String&gt; guardHeaders = new HashMap&lt;&gt;();\n    private String url = &quot;http://harry-potter-services-api:8080/my1&quot;;\n    private long timeout = 20000;\n    private WebClient my1WebClient;\n\n    @Bean(&quot;my1WebClient&quot;)\n    public WebClient my1WebClient(@Qualifier(&quot;my1ServicesObjectMapper&quot;) ObjectMapper objectMapper) {\n        if (my1WebClient == null) {\n            bootstrappWebClient();\n        }\n\n        return my1WebClient;\n    }\n\n    private void bootstrappWebClient() {\n        HttpClient httpClient = HttpClient.create().responseTimeout(Duration.ofMillis(timeout));\n        WebClient.Builder builder = WebClient.builder().clientConnector(new ReactorClientHttpConnector(httpClient))\n            .baseUrl(url);\n\n        my1WebClient = builder.filter((request, next) -&gt; {\n            ClientRequest requestWithHeaders = ClientRequest.from(request).headers(addGuardHeaders).build();\n            return next.exchange(requestWithHeaders);\n        }).build();\n    }\n\n    private final Consumer&lt;HttpHeaders&gt; addGuardHeaders = headers -&gt; guardHeaders.entrySet()\n            .forEach(entry -&gt; headers.set(entry.getKey().getValue(), entry.getValue()));\n\n    // some getter and setter\n}\n</code></pre>\n",
+    "tags" : [ "java", "spring", "spring-boot" ],
+    "owner" : {
+      "account_id" : 4950299,
+      "reputation" : 308,
+      "user_id" : 3984474,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/cf146ea3664464b084bcc4c7310743da?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "JBStonehenge",
+      "link" : "https://stackoverflow.com/users/3984474/jbstonehenge"
+    },
+    "is_answered" : false,
+    "view_count" : 120,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1758895452,
+    "creation_date" : 1758838206,
+    "link" : "https://stackoverflow.com/questions/79775340/how-to-manage-two-qualified-objectmapper-in-my-springboot-project-properly",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79775422,
+    "question_id" : 79775340,
+    "body" : "<p>The <code>mappingJackson2HttpMessageConverter</code> comes from the class <code>JacksonHttpMessageConvertersConfiguration</code> in which Spring Boot applications automatically configures <code>HttpMessageConverter</code> instances, including <code>MappingJackson2HttpMessageConverter</code> for JSON. You say you don't need it, which I find highly unusual, since without it, your web layer won’t be able to receive and send JSON from and to your clients.</p>\n<p>Your problem obviously are the dependencies that mindlessly declare beans without any consideration that there may be conflicts in the client app, as you're seeing. If you've any control on the source code of the dependencies, then the best option would be to configure those <code>ObjectMapper</code> conditionally and only in absence of other beans of the same type. If you can't do that, you may try to override the <code>mappingJackson2HttpMessageConverter</code> bean as shown below:</p>\n<pre><code>@Configuration\npublic class JacksonConfig {\n\n    @Bean\n    public MappingJackson2HttpMessageConverter mappingJackson2HttpMessageConverter() {\n        MappingJackson2HttpMessageConverter jsonConverter = new MappingJackson2HttpMessageConverter();\n        ObjectMapper objectMapper = new ObjectMapper();\n        // Configure ObjectMapper properties, e.g., to ignore unknown properties\n        objectMapper.configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);\n        jsonConverter.setObjectMapper(objectMapper);\n        return jsonConverter;\n    }\n}\n</code></pre>\n<p>I'll let you decide if this is better than declaring a <code>@Primary ObjectMapper</code>. You can't really exclude the offending <code>My1JacksonConfig</code> and <code>My2JacksonConfig</code> since the corresponding <code>WebClient</code> instances expect the qualified beans to be present; like I said, whoever created those dependencies did a terrible job.</p>\n",
+    "score" : -1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 446597,
+      "reputation" : 25249,
+      "user_id" : 839733,
+      "user_type" : "registered",
+      "accept_rate" : 69,
+      "profile_image" : "https://i.sstatic.net/2s6lO.jpg?s=256",
+      "display_name" : "Abhijit Sarkar",
+      "link" : "https://stackoverflow.com/users/839733/abhijit-sarkar"
+    },
+    "creation_date" : 1758851985,
+    "last_activity_date" : 1758853991,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140761934,
+    "post_id" : 79775340,
+    "body" : "@SpaceTrucker That&#39;s right. I do exactly know what the WebClients need. Therefore I qualified the ObjectMappers they are supposed to be using. But how can I know which ObjecMapper configuration the <code>JacksonHttpMessageConvertersConfiguration</code> is expecting to work properly?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 4950299,
+      "reputation" : 308,
+      "user_id" : 3984474,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/cf146ea3664464b084bcc4c7310743da?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "JBStonehenge",
+      "link" : "https://stackoverflow.com/users/3984474/jbstonehenge"
+    },
+    "creation_date" : 1758894476,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140761476,
+    "post_id" : 79775340,
+    "body" : "If the existing object mapper beans are configured differently then you should explicitly state which object mapper you want for the http message converter. Otherwise your application behaviour is undefined. So there is some sense behind that.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1580843,
+      "reputation" : 13706,
+      "user_id" : 1466267,
+      "user_type" : "registered",
+      "accept_rate" : 91,
+      "profile_image" : "https://www.gravatar.com/avatar/c47d1f7544a8c4a1bb7a41d511f53604?s=256&d=identicon&r=PG",
+      "display_name" : "SpaceTrucker",
+      "link" : "https://stackoverflow.com/users/1466267/spacetrucker"
+    },
+    "creation_date" : 1758880760,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79775422" : [ {
+      "comment_id" : 140763032,
+      "post_id" : 79775422,
+      "body" : "Thank you, Abhijit. I would appreciate if you could explain &quot;... the best option would be to configure those ObjectMapper [of the two WebClients] conditionally and only in absence of other beans of the same type&quot; in more detail.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 4950299,
+        "reputation" : 308,
+        "user_id" : 3984474,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/cf146ea3664464b084bcc4c7310743da?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "JBStonehenge",
+        "link" : "https://stackoverflow.com/users/3984474/jbstonehenge"
+      },
+      "creation_date" : 1758937626,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140762694,
+      "post_id" : 79775422,
+      "body" : "@JBStonehenge I already provided a solution to that, but I can’t help you design your whole application, that’s not how this site works.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 446597,
+        "reputation" : 25249,
+        "user_id" : 839733,
+        "user_type" : "registered",
+        "accept_rate" : 69,
+        "profile_image" : "https://i.sstatic.net/2s6lO.jpg?s=256",
+        "display_name" : "Abhijit Sarkar",
+        "link" : "https://stackoverflow.com/users/839733/abhijit-sarkar"
+      },
+      "creation_date" : 1758915593,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140761980,
+      "post_id" : 79775422,
+      "body" : "Thank you so much. Don&#39;t hesitate to give us a better solution for those terribles dependencies. I edited my question (EDIT 1) to show you the WebClient configuration.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 4950299,
+        "reputation" : 308,
+        "user_id" : 3984474,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/cf146ea3664464b084bcc4c7310743da?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "JBStonehenge",
+        "link" : "https://stackoverflow.com/users/3984474/jbstonehenge"
+      },
+      "creation_date" : 1758895653,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

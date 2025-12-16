@@ -1,0 +1,923 @@
+{
+  "question" : {
+    "question_id" : 79728609,
+    "title" : "Given a whole hour of the day, how to find the next whole hour?",
+    "body" : "<p>I need to iterate through the whole hours of an interval of a particular day. So given the time at one whole hour on the day in question, say, 01:00, how do I find the next whole hour? The next whole hour would usually be 02:00, but due to summer time (DST) and other anomalies it could be 01:00 again or 03:00 or maybe even other hours.</p>\n<p>In case it’s 01:00 again, this is the result I want, as long as I can distinguish from the first 01:00 — so I will need for example a <code>ZonedDateTime</code> or an <code>Instant</code>.</p>\n<p>The next whole hour may be “midnight”, the start of the next day, but I have no need to go further into the next day.</p>\n<p>Easy, you may say, add one hour. But not everywhere does summer time mean adjusting the clock by exactly one hour, so I may not hit a whole hour again. And at least in the past time zone changes have occurred that turned the clocks forward or backward by funny amounts, for example +0:09:40 (Danish time 1894).</p>\n<p>Next idea, add an hour and truncate to whole hours. The following example demonstrates that this does not always give the correct time either. The example uses Australia/Lord_Howe time zone just for the sake of the example.</p>\n<pre><code>    ZoneId zoneId = ZoneId.of(&quot;Australia/Lord_Howe&quot;);\n    ZonedDateTime zdt = ZonedDateTime.of(2026, 4, 5,\n            1, 0, 0, 0, zoneId);\n    System.out.println(zdt);\n    System.out.println(zdt.plusHours(1));\n    System.out.println(zdt.plusHours(1).truncatedTo(ChronoUnit.HOURS));\n</code></pre>\n<p>Output:</p>\n<pre class=\"lang-none prettyprint-override\"><code>2026-04-05T01:00+11:00[Australia/Lord_Howe]\n2026-04-05T01:30+10:30[Australia/Lord_Howe]\n2026-04-05T01:00+11:00[Australia/Lord_Howe]\n</code></pre>\n<p>Lord Howe Island has a summer time offset of 30 minutes. When summer time ends and the time approaches 02:00, it’s adjusted to 01:30. Truncating gets us back to the 01:00 where we started. I may repeat the operation, but I will always get back where I started.</p>\n<p><strong>For precision:</strong> I need the next point in time (the next instant) where the clock in the time zone in question is at a whole hour (minutes, seconds and fraction of second all being 0).</p>\n",
+    "tags" : [ "java", "java-time", "dst", "zoneddatetime", "timeofday" ],
+    "owner" : {
+      "account_id" : 7612423,
+      "reputation" : 87409,
+      "user_id" : 5772882,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Anonymous",
+      "link" : "https://stackoverflow.com/users/5772882/anonymous"
+    },
+    "is_answered" : true,
+    "view_count" : 1391,
+    "answer_count" : 7,
+    "score" : 9,
+    "last_activity_date" : 1757129138,
+    "creation_date" : 1754571752,
+    "link" : "https://stackoverflow.com/questions/79728609/given-a-whole-hour-of-the-day-how-to-find-the-next-whole-hour",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79728980,
+    "question_id" : 79728609,
+    "body" : "<p>Right now, the operation I <em>think</em> you're asking for is to add one hour of physical time, then round <em>forward,</em> not back -- not as in <code>truncatedTo</code> -- to a local time ending in <code>:00</code>.  (I am uncertain you have defined your terms clearly enough to define the operations you're hoping for, but perhaps once you have such a definition, you will be set.)</p>\n<p>To do that, I would expect you need to convert to <code>Instant</code>, add one hour, convert back through <code>ZonedDateTime</code> to <code>LocalTime</code>, add <em>one hour minus one nanosecond,</em> <code>truncatedTo(ChronoUnit.HOURS)</code>, and then finally convert back to <code>ZonedDateTime</code>.</p>\n<p>(Adding one hour minus one nanosecond and truncating to hours is equivalent to rounding up instead of down as truncatedTo does.)</p>\n<p>I <em>strongly</em> recommend <a href=\"https://errorprone.info/docs/time\" rel=\"nofollow noreferrer\">errorprone.info/docs/time</a> for anyone hoping to reason about anything like this (or write any code to do with time).</p>\n",
+    "score" : 8,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 465573,
+      "reputation" : 200423,
+      "user_id" : 869736,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/ae7bb06b9a23a4dd7eea69e853d47d12?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Louis Wasserman",
+      "link" : "https://stackoverflow.com/users/869736/louis-wasserman"
+    },
+    "creation_date" : 1754589868,
+    "last_activity_date" : 1754665623,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79728616,
+    "question_id" : 79728609,
+    "body" : "<p>I am assuming that time zone transitions/changes/anomalies do not come within a few hours after each other. While neither politicians, the IANA time zone database nor Java’s data model guarantees this, they tend to come at most twice a year, and I consider it an acceptable assumption. Sure, assumption is the mother of all f*ckups. I will discuss this at the end of the answer.</p>\n<p>The discussion under Louis Wasserman’s answer convinced me: If you add one hour to a whole hour and don’t get a whole hour, then you must have crossed a transition and have a new UTC offset. In this situation the job is to find the first whole hour after the transition. We can’t know whether it comes before or after the point we’ve landed at, but it cannot be more than an hour away in either backward or forward direction in time. So try backward first, and if not there, then round forward. So I have rewritten the code and have avoided the loop that some seemed not to like.</p>\n<pre><code>/**\n * @param original A whole hour of the day\n * @return The next whole hour of the day\n */\npublic static ZonedDateTime nextWholeHour(ZonedDateTime original) {\n    if (! original.truncatedTo(ChronoUnit.HOURS).equals(original)) {\n        throw new IllegalArgumentException(&quot;The original time must be on a whole hour&quot;);\n    }\n    ZonedDateTime oneHourLater = original.plusHours(1);\n    // Does rounding back/down/truncating give a useful result?\n    ZonedDateTime roundedBack = oneHourLater.truncatedTo(ChronoUnit.HOURS);\n    if (roundedBack.isAfter(original)) {\n        return roundedBack;\n    }\n    // No, round forward/up instead\n    ZonedDateTime roundedForward\n            = oneHourLater.plusHours(1).truncatedTo(ChronoUnit.HOURS);\n    if (roundedForward.isEqual(original)) {\n        throw new IllegalStateException(&quot;Failed to find next whole hour within two hours from &quot; + original);\n    }\n    return roundedForward;\n}\n</code></pre>\n<p>Trying your example from Lord Howe:</p>\n<pre><code>    ZoneId zoneId = ZoneId.of(&quot;Australia/Lord_Howe&quot;);\n    ZonedDateTime zdt = ZonedDateTime.of(2026, 4, 5,\n            1, 0, 0, 0, zoneId);\n\n    System.out.println(nextWholeHour(zdt));\n</code></pre>\n<p>Output:</p>\n<pre class=\"lang-none prettyprint-override\"><code>2026-04-05T02:00+10:30[Australia/Lord_Howe]\n</code></pre>\n<p>The result is one and half hours after the starting point because this is the first time we again hit a whole hour on the clock.</p>\n<p><strong>My assumption:</strong> In theory strange patterns of transitions shortly after each other could cause whole hours to come three within one hour or two more than two hours apart. In the former case my code might miss a whole hour, but the resulting chunk would still not be more than one hour long. Could your users live with that? Where I work, my users would realize that this would be a very special situation and would accept the result. In the latter case I think we are better off throwing an exception than producing a chunk more than two hours long, and users will again understand that this is a special situation that the code could not foresee, and will tell you what they want in the situation.</p>\n<p><strong>For the really bulletproof solution</strong>, since you say you are iterating over all whole hours in some interval, first find all transitions (clock time gaps and clock time overlaps) within the interval (usually 0, occasionally 1, theoretically more). The <code>ZoneRules</code> object that you can get from the <code>ZoneId</code> can give them to you. Then find all whole hours before the first transition, between each pair of consecutive transitions and after the last transition.</p>\n",
+    "score" : 4,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 43409091,
+      "reputation" : 56,
+      "user_id" : 31231423,
+      "user_type" : "unregistered",
+      "profile_image" : "https://www.gravatar.com/avatar/6d6f4a67ef907de3a4c6753d1fda929c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Rowan Horv&#225;th",
+      "link" : "https://stackoverflow.com/users/31231423/rowan-horv%c3%a1th"
+    },
+    "creation_date" : 1754572055,
+    "last_activity_date" : 1754898634,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79735821,
+    "question_id" : 79728609,
+    "body" : "<h2>The bulletproof solution</h2>\n<p>This answer combines the best ideas from the answers by Louis Wasserman and by Rowan Horváth and provides the code.</p>\n<p>Rowan Horváth is right that the bulletproof solution to iterating over the whole hours in your interval is to find all transitions of UTC offset within that interval. Then find all whole hours before the first transition, between each pair of consecutive transitions and after the last transition. So that is what I am doing.</p>\n<h2>Code</h2>\n<p>The code follows Louis Wasserman’s recommendation to avoid <code>ZonedDateTime</code>. It’s longer than the code you get from each of those two answers, but in return takes all possible combinations of transitions (gaps and overlaps) into account.</p>\n<pre><code>/**\n * @return The instants of all whole hours in zoneId\n *         between start inclusive and end exclusive in chronological order.\n */\npublic static List&lt;Instant&gt; wholeHoursBetween(ZoneId zoneId,\n                                              Instant start,\n                                              Instant end) {\n    // First find all time zone transitions between start and end, both exclusive.\n    List&lt;ZoneOffsetTransition&gt; transitions = new ArrayList&lt;&gt;();\n    ZoneRules rules = zoneId.getRules();\n    ZoneOffsetTransition transition = rules. nextTransition(start);\n    while (transition != null &amp;&amp; transition.getInstant().isBefore(end)) {\n        transitions.add(transition);\n        transition = rules. nextTransition(transition.getInstant());\n    }\n\n    List&lt;Instant&gt; wholeHours = new ArrayList&lt;&gt;();\n\n    // For each part interval before, between and after the transitions,\n    // find all whole hours using the UTC offset\n    // in effect for that part interval.\n    if (transitions.isEmpty()) {\n        addWholeHours(wholeHours, start.atZone(zoneId).getOffset(),\n                      start, end);\n    } else {\n        addWholeHours(wholeHours, start.atZone(zoneId).getOffset(),\n                      start, transitions.getFirst().getInstant());\n        for (int i = 0; i &lt; transitions.size() - 2; i++) {\n            addWholeHours(wholeHours, transitions.get(i).getOffsetAfter(),\n                          transitions.get(i).getInstant(), transitions.get(i + 1).getInstant());\n        }\n        addWholeHours(wholeHours, transitions.getLast().getOffsetAfter(),\n                      transitions.getLast().getInstant(), end);\n    }\n\n    return wholeHours;\n}\n\n/**\n * Adds to wholeHours the instants of the whole hours at offset\n * between start inclusive and end exclusive\n */\nprivate static void addWholeHours(List&lt;Instant&gt; wholeHours,\n                                  ZoneOffset offset,\n                                  Instant start,\n                                  Instant end) {\n    // Round start forward/up to the net whole hour\n    Instant wholeHour = start.atOffset(offset)\n            .plusHours(1)\n            .minusNanos(1)\n            .truncatedTo(ChronoUnit.HOURS)\n            .toInstant();\n    while (wholeHour.isBefore(end)) {\n        wholeHours.add(wholeHour);\n        wholeHour = wholeHour.plus(1, ChronoUnit.HOURS);\n    }\n}\n</code></pre>\n<h2>Trying it out</h2>\n<p>Your example from Lord Howe island, taking an interval from 00:00 to 04:00:</p>\n<pre><code>    var zoneId = ZoneId.of(&quot;Australia/Lord_Howe&quot;);\n    var date = LocalDate.of(2026, Month.APRIL, 5);\n    Instant start = date.atStartOfDay(zoneId).toInstant();\n    Instant end = date.atTime(4, 0).atZone(zoneId).toInstant();\n    List&lt;Instant&gt; wholeHours = wholeHoursBetween(zoneId, start, end);\n\n    System.out.println(start + &quot; start&quot;);\n    wholeHours.forEach(i\n            -&gt; System.out.println(i + &quot; &quot; + i.atZone(zoneId).toLocalTime()));\n    System.out.println(end + &quot; end&quot;);\n</code></pre>\n<p>Output shows the instants left and the local clock time (the whole hours) right:</p>\n<pre class=\"lang-none prettyprint-override\"><code>2026-04-04T13:00:00Z start\n2026-04-04T13:00:00Z 00:00\n2026-04-04T14:00:00Z 01:00\n2026-04-04T15:30:00Z 02:00\n2026-04-04T16:30:00Z 03:00\n2026-04-04T17:30:00Z end\n</code></pre>\n<p>(The demonstration code does use <code>ZonedDateTime</code> as an intermediate step for converting from <code>Instant</code> to <code>LocalTime</code>, which is Java’s way of making that conversion.)</p>\n<p>The opposite transition is a bit more interesting. When Summer time begins in October, the clocks are turned forward from 02:00 to 02:30, so the time 02:00 does not exist and should not be in the output.</p>\n<pre><code>    var date = LocalDate.of(2025, Month.OCTOBER, 5);\n</code></pre>\n<pre class=\"lang-none prettyprint-override\"><code>2025-10-04T13:30:00Z start\n2025-10-04T13:30:00Z 00:00\n2025-10-04T14:30:00Z 01:00\n2025-10-04T16:00:00Z 03:00\n2025-10-04T17:00:00Z end\n</code></pre>\n<p>As expected 02:00 is not there. The instants to the left tells that there are one and a half hours between 01:00 and 03:00.</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 43507625,
+      "reputation" : 11,
+      "user_id" : 31276659,
+      "user_type" : "unregistered",
+      "profile_image" : "https://www.gravatar.com/avatar/0b7fc4a325eef977ca3b0af9365e5a11?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Mariam Stojanovski",
+      "link" : "https://stackoverflow.com/users/31276659/mariam-stojanovski"
+    },
+    "creation_date" : 1755198923,
+    "last_activity_date" : 1755232172,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79728667,
+    "question_id" : 79728609,
+    "body" : "<p>Using <code>LocalDateTime</code> as intermediate works as well. Since the addition is without any zone information, DST doesn't interfere. Re-adding the zone information doesn't cause the local part to change.</p>\n<pre class=\"lang-java prettyprint-override\"><code>System.out.println(zdt.toLocalDateTime().plusHours(1).atZone(zdt.getZone()));\n</code></pre>\n<p>Output:</p>\n<pre><code>2026-04-05T02:00+10:30[Australia/Lord_Howe]\n</code></pre>\n<p>Note that the difference between the original and updated value in this case is not 1:00 but 1:30:</p>\n<pre class=\"lang-java prettyprint-override\"><code>System.out.println(zdt.toInstant());\nSystem.out.println(zdt.toLocalDateTime().plusHours(1).atZone(zdt.getZone()).toInstant());\n</code></pre>\n<p>Output:</p>\n<pre><code>2026-04-04T14:00:00Z\n2026-04-04T15:30:00Z\n</code></pre>\n<p>When I apply this to Europe/Amsterdam and October 26th 2025, the difference is even 2 hours.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 1211967,
+      "reputation" : 9964,
+      "user_id" : 1180351,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/pKB8y.png?s=256",
+      "display_name" : "Rob Spoor",
+      "link" : "https://stackoverflow.com/users/1180351/rob-spoor"
+    },
+    "creation_date" : 1754574077,
+    "last_activity_date" : 1754574077,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79728674,
+    "question_id" : 79728609,
+    "body" : "<p>The reason why simply adding 1 hour does not work is because the addition is zone-aware by virtue of being routed through the <code>ZonedDateTime</code>. However, we can simply extract the <code>LocalDate</code> and <code>LocalTime</code> and do arithmetic on those. Note that this does <em>not</em> make the code locale-sensitive as &quot;Local&quot; in this context simply means lacking any offset information (an <code>OffsetDate</code> is just a <code>LocalDate</code> with an offset).</p>\n<pre class=\"lang-java prettyprint-override\"><code>public static ZonedDateTime nextHour(ZonedDateTime zdt) {\n    return ZonedDateTime.of(\n            zdt.toLocalDate(),\n            zdt.toLocalTime().plusHours(1),\n            zdt.getZone()\n    );\n}\n</code></pre>\n<p>Or if you want to handle wrapping to the next date:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public static ZonedDateTime nextHour(ZonedDateTime zdt) {\n    return zdt.toLocalDateTime()\n            .plusHours(1)\n            .atZone(zdt.getZone());\n}\n</code></pre>\n<p>The results are the same as <a href=\"https://stackoverflow.com/a/79728616/10808904\">Rowan's answer</a> while avoiding loops.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 14914414,
+      "reputation" : 1185,
+      "user_id" : 10808904,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Ts8fIsJj.png?s=256",
+      "display_name" : "Xavier Pedraza",
+      "link" : "https://stackoverflow.com/users/10808904/xavier-pedraza"
+    },
+    "creation_date" : 1754574313,
+    "last_activity_date" : 1754574313,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79729153,
+    "question_id" : 79728609,
+    "body" : "<p>Another road that leads to Rome:</p>\n<pre><code>public LocalDateTime getNextHour( LocalDateTime data ) {\n   ZoneId zoneId = ZoneId.of( &quot;Australia/Lord_Howe&quot; );\n   LocalDateTime aux = data.plusHours( 1 );\n\n     // we obtain the difference (in seconds) of the offset with respect to *UTC*\n   int diff = zoneId.getRules().getOffset( data ).getTotalSeconds() - \n           zoneId.getRules().getOffset( aux ).getTotalSeconds();\n   if( diff == 0 ) return aux;\n\n     // The return mentioned truncates the departure to a full hour. In my humble \n     // opinion, if there is a possibility that the differences are only minutes, \n     // this would not be very appropriate, or at least a logic must be established \n     // to determine which side to truncate.\n   // return data.plusSeconds( diff ).truncatedTo( ChronoUnit.HOURS );\n   return data.plusSeconds( diff );\n}\n</code></pre>\n<p>Rethinking what the method returns, I think one possibility is to round using the same philosophy we use for numbers, that is, if the difference is less than 30 minutes, we ignore it, otherwise we set it to 1 hour.</p>\n<pre><code>public LocalDateTime getNextHour2( LocalDateTime data, String zone ) {\n   ZoneId zoneId = ZoneId.of( zone );    \n   LocalDateTime aux = data.plusHours( 1 );\n   int diff = zoneId.getRules().getOffset( data ).getTotalSeconds()\n           - zoneId.getRules().getOffset( aux ).getTotalSeconds();\n   System.out.println( &quot;diff = &quot; + diff );\n   if( diff &lt;= -1800 ) return data;\n   if( diff &lt; 1800 ) return data.plusHours( 1 );\n   return data.plusHours( 2 );    \n}\n</code></pre>\n<p>Using <strong>zoneId.getRules().getOffset( data ).getTotalSeconds()</strong> returns the\ndifference in seconds between <em>UTC</em> time and the time corresponding to the\ndate <strong>data</strong> for the zone <strong>zoneId</strong> (you don't need anything else). I am\nnot familiar with how these modifications are applied, but testing with your\nexample, I find that <strong>data = LocalDateTime.of( 2025, 9, 6, 23, 0, 0 );</strong>\nthe difference with <strong>data.plusHours( 1 );</strong> is “0”. However, if I use\n“2025, 9, 7, 0, 0”, the difference is “3600”, one hour. It seems that\nthe change occurs at 1:00.</p>\n<p>Edit: adapting the answer to the requirements of the latest editions of your question...</p>\n<pre><code>class ZonDatTim {\n\n   boolean isSummerTime;\n   private LocalDateTime dateTime;\n   private ZoneId zoneId;\n\n   public ZonDatTim( LocalDateTime dat, String zon, boolean sum ) {\n      zoneId = ZoneId.of( zon );\n      isSummerTime = sum;\n      dateTime = dat;\n   }\n\n   LocalDateTime getNext() {\n      LocalDateTime aux = dateTime.plusHours( 1 );\n      int diff = zoneId.getRules().getOffset( dateTime ).getTotalSeconds()\n              - zoneId.getRules().getOffset( aux ).getTotalSeconds();\n      if( isSummerTime ) { \n         if( diff &lt;= 0 ) {\n            dateTime = aux;\n         }\n         else if( diff &lt;= 1800 ) {\n            isSummerTime = false;\n            dateTime = aux; \n         }\n         else {\n            isSummerTime = false;\n            dateTime = dateTime.plusHours( 2 ); \n         }\n      }\n      else { \n         if( diff &lt;= - 1800 ) {\n            isSummerTime = true; \n         }\n         else if( diff &lt; 0 ) {\n            isSummerTime = true;\n            dateTime = aux; \n         }\n         else if( diff &gt;= 0 ) {\n            dateTime = aux;\n         }\n      }\n      return dateTime;\n   }\n}\n</code></pre>\n<p>I think this is the path you should take, regardless of the implementation of the <strong>getNext()</strong> method, the object of this class would be an attribute of the <em>User</em> class.</p>\n<p>Special care must be taken when creating the object, as an incorrect value for <strong>isSummerTime</strong> will generate inconsistent behavior.</p>\n<p>PS: Please review the logic of the “if” statements... I just woke up, I'm not human ;)</p>\n<p>This code has a “potential problem” if the user requests a new time during winter time, and then stops making requests for a while, and when they do so again, it is the exact time of the change from summer to winter, the object will find <strong>isSummerTime</strong> with the value “false,” when it should be “true,” so it will return the same time, when it should return the previous one. I don't know if in practice there is a possibility of this happening, but if there is, a possible solution is to generate an automatic request every 3 months.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 10843443,
+      "reputation" : 924,
+      "user_id" : 20882864,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+      "display_name" : "Marce Puente",
+      "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+    },
+    "creation_date" : 1754602206,
+    "last_activity_date" : 1754876139,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79728806,
+    "question_id" : 79728609,
+    "body" : "<p>If you really want the next whole hour to an entire hour (without additional minutes)</p>\n<p>Code :</p>\n<pre><code>public class NextStrictlyWholeHour {\n\n    public static ZonedDateTime findNextStrictlyWholeHour(ZonedDateTime startTime) {\n        ZonedDateTime baseHour = startTime.truncatedTo(ChronoUnit.HOURS);\n        ZonedDateTime candidate;\n        int hoursToAdd = 1;\n\n        while (hoursToAdd &lt; 24 * 365 * 5) {\n            candidate = baseHour.plusHours(hoursToAdd).truncatedTo(ChronoUnit.HOURS);\n\n            boolean isOffsetWholeHour = candidate.getOffset().getTotalSeconds() % 3600 == 0;\n\n            if (candidate.isAfter(startTime) &amp;&amp; isOffsetWholeHour) {\n                return candidate; \n            }\n            hoursToAdd++;\n        }\n        throw new IllegalStateException(&quot;Could not find a strictly whole hour within 5 years for zone: &quot; + startTime.getZone());\n    }\n\n    public static void main(String[] args) {\n        // Lord Howe transitions from +11:00 (whole) to +10:30 (not whole).\n        ZoneId lordHoweZone = ZoneId.of(&quot;Australia/Lord_Howe&quot;);\n        ZonedDateTime lordHoweTime = ZonedDateTime.of(2026, 4, 5, 1, 30, 0, 0, lordHoweZone);\n\n        System.out.println(&quot;Zone:                   &quot; + lordHoweZone);\n        System.out.println(&quot;Start time:             &quot; + lordHoweTime);\n        System.out.println(&quot;Next strictly whole hour: &quot; + findNextStrictlyWholeHour(lordHoweTime));\n    }\n}\n</code></pre>\n<p>Expected Output :</p>\n<pre><code>Zone:                   Australia/Lord_Howe\nStart time:             2026-04-05T01:30:00+11:00[Australia/Lord_Howe]\nNext strictly whole hour: 2026-10-05T03:00:00+11:00[Australia/Lord_Howe]\n</code></pre>\n<p>This time, 2026-10-05T03:00:00, meets both conditions: it's a whole hour, and its offset, +11:00, is also a whole hour. This becomes the result.</p>\n",
+    "score" : -2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 28650464,
+      "reputation" : 11,
+      "user_id" : 21937520,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/AGNmyxb9blgksLEJjbSemZFhLQQuZR6CnKF5Ddsvuqu-XA=k-s256",
+      "display_name" : "Mpin",
+      "link" : "https://stackoverflow.com/users/21937520/mpin"
+    },
+    "creation_date" : 1754580283,
+    "last_activity_date" : 1754637525,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140718416,
+    "post_id" : 79728609,
+    "body" : "@TylerH I need this (1) for Europe/Copenhagen time zone for now (2) for any time zone where my code may be used in the future, so all time zones (and we have cooperation with folks in Australia). And unlikely, but I cannot rule out that politicians will at some point introduce rules here that resemble those of Lord Howe, which is why I gave this example.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7612423,
+      "reputation" : 87409,
+      "user_id" : 5772882,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Anonymous",
+      "link" : "https://stackoverflow.com/users/5772882/anonymous"
+    },
+    "creation_date" : 1757128817,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140717956,
+    "post_id" : 79728609,
+    "body" : "Do you need this for all timezones or specifically for Lord Howe Island?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3273747,
+      "reputation" : 21269,
+      "user_id" : 2756409,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://i.sstatic.net/UIrGI.jpg?s=256",
+      "display_name" : "TylerH",
+      "link" : "https://stackoverflow.com/users/2756409/tylerh"
+    },
+    "creation_date" : 1757103253,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140669887,
+    "post_id" : 79728609,
+    "body" : "Thanks, @OldFrank, for the suggestion. My primary concern is that politicians where I live may introduce funny anomalies at some point in the future. Unlikely, definitely, but I cannot rule it out. And in my case, if the program behaves wrong or crashes for that reason, we would have only a very short time to fix it before important data gets lost; so I want to make sure I prevent any problems. The other concern is of course that the code may at a point be in use somewhere in the world where a wry transition may occur.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7612423,
+      "reputation" : 87409,
+      "user_id" : 5772882,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Anonymous",
+      "link" : "https://stackoverflow.com/users/5772882/anonymous"
+    },
+    "creation_date" : 1755348580,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140669146,
+    "post_id" : 79728609,
+    "body" : "Lord Howe Island has got 347 inhabitants (source: Wikipedia). The probability that your dataset would include data from Lord Howe Island is fairly low.  My suggestion is to simplify the problem statement - and I&#39;m guessing that some simplification won&#39;t affect results.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3976045,
+      "reputation" : 878,
+      "user_id" : 3279222,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/9Ka5y.jpg?s=256",
+      "display_name" : "OldFrank",
+      "link" : "https://stackoverflow.com/users/3279222/oldfrank"
+    },
+    "creation_date" : 1755299610,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140656895,
+    "post_id" : 79728609,
+    "body" : "Interesting question, @k314159. 1. Such situations are quite hopeless to deal with. 2. I believe that no time zone in the time zone database reflects the change you mention, so we don’t stand any chance. 3. If one did, I would immediately expect the answers by Rowan Horv&#225;th and Louis Wasserman to work. Maybe even the one by Mpin.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7612423,
+      "reputation" : 87409,
+      "user_id" : 5772882,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Anonymous",
+      "link" : "https://stackoverflow.com/users/5772882/anonymous"
+    },
+    "creation_date" : 1754903905,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140656759,
+    "post_id" : 79728609,
+    "body" : "You&#39;ve got some answers that work for DST shifts of up to 1 hour. What about when the local time offset changes by more than that? For example, those islands that pass laws to go to the other side of the International Date Line.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 19118721,
+      "reputation" : 12499,
+      "user_id" : 13963086,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/9df2c3c4c87d8050b8fd6a59c88c7133?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "k314159",
+      "link" : "https://stackoverflow.com/users/13963086/k314159"
+    },
+    "creation_date" : 1754899530,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140652890,
+    "post_id" : 79728609,
+    "body" : "I understand the uneasy feeling as dealing with dates is tricky, but you&#39;d only need to do this if the <code>.plusHour(1).truncatedTo(...)</code> ends up being indistinguishable from the original ZonedDateTime input. In that case, since you&#39;ve only added an hour, and since it wrapped back to the input, the gap cannot be longer than 2h. You&#39;d have to be careful which instance you&#39;re explicitly setting the hour on, though (to preserve the the changed zone offset). But again, if you go down this route, you&#39;d still need to think it through thoroughly and test extensively, so you know, pros and cons.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 8607013,
+      "reputation" : 602,
+      "user_id" : 8166486,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/rhYMK.png?s=256",
+      "display_name" : "Filip Milovanović",
+      "link" : "https://stackoverflow.com/users/8166486/filip-milovanovi%c4%87"
+    },
+    "creation_date" : 1754684122,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140652839,
+    "post_id" : 79728609,
+    "body" : "@FilipMilovanović Thanks for your thoughtful comments. I exactly believe that a chunk of one and a half hours is the best solution in the Lord Howe example. Not knowing how long the gap or overlap could be in other examples, I hesitate to think I can set the hour explicitly to obtain the result I want.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7612423,
+      "reputation" : 87409,
+      "user_id" : 5772882,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Anonymous",
+      "link" : "https://stackoverflow.com/users/5772882/anonymous"
+    },
+    "creation_date" : 1754682260,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140652797,
+    "post_id" : 79728609,
+    "body" : "P.S. If the duration doesn&#39;t present a problem, you can check if your truncated time equals your original time, and then use <code>withHour</code> (rather than <code>plusHours</code>) to obtain a copy with the hour explicitly set to the specified value. If it&#39;s the source hour was less than 23, add 1 (to the <code>withHour</code> argument) , else do <code>zdt.plusDays(1).withHour(0)</code>. You might need to modify this in case there are other edge cases.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 8607013,
+      "reputation" : 602,
+      "user_id" : 8166486,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/rhYMK.png?s=256",
+      "display_name" : "Filip Milovanović",
+      "link" : "https://stackoverflow.com/users/8166486/filip-milovanovi%c4%87"
+    },
+    "creation_date" : 1754680875,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140652735,
+    "post_id" : 79728609,
+    "body" : "&quot;but we have a tradition for 1 hour chunks&quot; - but, assuming I understood this well, if you take local time shenanigans into consideration, it looks like you&#39;re not going to end up with a 1 hour chunk. In your Lord Howe Island example, if your chunk start is tied to 01:00 local time, and the time gets adjusted back to 01:30 just before it reaches 02:00, there&#39;s still 30 min to go, so your chunk will end up 1h 30 min long. Is this a problem?",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 8607013,
+      "reputation" : 602,
+      "user_id" : 8166486,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/rhYMK.png?s=256",
+      "display_name" : "Filip Milovanović",
+      "link" : "https://stackoverflow.com/users/8166486/filip-milovanovi%c4%87"
+    },
+    "creation_date" : 1754678848,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140652582,
+    "post_id" : 79728609,
+    "body" : "@Abion47 Thanks for your question. 1. Because users are used to data chunks being delimited by whole hours; if some day our time zone gets an offset from UTC that is not a whole number of hours (or the system be used in a time zone where it is so), they will be confused and claim it’s a bug in the system (and they will be correct). 2. Because other systems depend on data from this system and rely on the fact that data is delimited on whole hours in the local time zone and may stop working if that were not the case.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7612423,
+      "reputation" : 87409,
+      "user_id" : 5772882,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Anonymous",
+      "link" : "https://stackoverflow.com/users/5772882/anonymous"
+    },
+    "creation_date" : 1754674455,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140652561,
+    "post_id" : 79728609,
+    "body" : "Why mess with this stuff at all? Why not get the start hour as a Unix timestamp, add <code>3600</code> seconds, and let the internal logic of <code>ZonedDateTime</code> sort out what the localized equivalent of that is?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1307115,
+      "reputation" : 25409,
+      "user_id" : 1255873,
+      "user_type" : "registered",
+      "accept_rate" : 86,
+      "profile_image" : "https://i.sstatic.net/dZChN.jpg?s=256",
+      "display_name" : "Abion47",
+      "link" : "https://stackoverflow.com/users/1255873/abion47"
+    },
+    "creation_date" : 1754673865,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140649946,
+    "post_id" : 79728609,
+    "body" : "@LouisWasserman Thanks for the comment and not least the link. I see the point: the <code>ZonedDateTime</code> squeezing together two distinct concepts, the physical time and the clock time. While the problem can probably be solved without <code>ZonedDateTime</code>, I still believe that the question of “next physical time where the clock time is at a whole hour” cannot be solved without taking both into account somehow. I’d love to see your suggestion.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7612423,
+      "reputation" : 87409,
+      "user_id" : 5772882,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Anonymous",
+      "link" : "https://stackoverflow.com/users/5772882/anonymous"
+    },
+    "creation_date" : 1754589912,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140649934,
+    "post_id" : 79728609,
+    "body" : "Right now, the operation I <i>think</i> you&#39;re asking for is to add one hour of physical time, then round <i>forward,</i> not back -- not as in <code>truncatedTo</code> -- to a local time ending in <code>:00</code>.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 465573,
+      "reputation" : 200423,
+      "user_id" : 869736,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/ae7bb06b9a23a4dd7eea69e853d47d12?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Louis Wasserman",
+      "link" : "https://stackoverflow.com/users/869736/louis-wasserman"
+    },
+    "creation_date" : 1754589655,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140649913,
+    "post_id" : 79728609,
+    "body" : "I think some of the confusion here is in using <code>ZonedDateTime</code>, which is itself bad and confusing in ways that directly relate to this problem.  I <i>strongly</i> recommend <a href=\"https://errorprone.info/docs/time\" rel=\"nofollow noreferrer\">errorprone.info/docs/time</a> and then coming back to this.  (The section &quot;Avoid the &#39;zoned datetime&#39;&quot; specifically discusses how the type ZDT confuses precisely this sort of operation.)",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 465573,
+      "reputation" : 200423,
+      "user_id" : 869736,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/ae7bb06b9a23a4dd7eea69e853d47d12?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Louis Wasserman",
+      "link" : "https://stackoverflow.com/users/869736/louis-wasserman"
+    },
+    "creation_date" : 1754589164,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140649892,
+    "post_id" : 79728609,
+    "body" : "We need to chop up broadcast (radio and TV) data into manageable chunks. From a practical standpoint a chunk could be 2 hours or more, but we have a tradition for 1 hour chunks, so splitting at any other point than every whole hour will confuse people.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7612423,
+      "reputation" : 87409,
+      "user_id" : 5772882,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Anonymous",
+      "link" : "https://stackoverflow.com/users/5772882/anonymous"
+    },
+    "creation_date" : 1754588579,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140649834,
+    "post_id" : 79728609,
+    "body" : "Is this logically sound? What is the application for finding the next arithmetic hour in a day irrespective of how much actual time elapses?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 14914414,
+      "reputation" : 1185,
+      "user_id" : 10808904,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Ts8fIsJj.png?s=256",
+      "display_name" : "Xavier Pedraza",
+      "link" : "https://stackoverflow.com/users/10808904/xavier-pedraza"
+    },
+    "creation_date" : 1754587449,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79729153" : [ {
+      "comment_id" : 140657126,
+      "post_id" : 79729153,
+      "body" : "I was. At 2024-09-07T23:00 Chile was still using standard time. So I set <code>sum</code> to <code>false</code> to indicate it was not summer time. Do I have to do it the other way around? If, so, will you please explain in the answer?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 7612423,
+        "reputation" : 87409,
+        "user_id" : 5772882,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Anonymous",
+        "link" : "https://stackoverflow.com/users/5772882/anonymous"
+      },
+      "creation_date" : 1754911396,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140657021,
+      "post_id" : 79729153,
+      "body" : "Just one more comment: if the user&#39;s first interaction with the system occurs right at the time of the change from winter to summer time, when the clock is set back one hour (in the example of Chilean time, we will have two hours “2025,9,7,0,0,0”), there is no way to distinguish between ‘normal’ time and “modified” time.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10843443,
+        "reputation" : 924,
+        "user_id" : 20882864,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+        "display_name" : "Marce Puente",
+        "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+      },
+      "creation_date" : 1754907630,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140657000,
+      "post_id" : 79729153,
+      "body" : "That&#39;s because you instantiated the class using: <b>ZonDatTim zdt = new ZonDatTim( first, “America/Santiago”, false );</b> when you should have used: <b>ZonDatTim zdt = new ZonDatTim( first, “America/Santiago”, true );</b>, as I mentioned earlier, when initializing the class, you have to be very careful with the Boolean that is passed as an argument.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10843443,
+        "reputation" : 924,
+        "user_id" : 20882864,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+        "display_name" : "Marce Puente",
+        "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+      },
+      "creation_date" : 1754907176,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140656339,
+      "post_id" : 79729153,
+      "body" : "In the September case I still get 2024-09-08T00:00 twice when I should not have it at all. In the April case I should get 23:00 twice but get it only once; you have come closer.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 7612423,
+        "reputation" : 87409,
+        "user_id" : 5772882,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Anonymous",
+        "link" : "https://stackoverflow.com/users/5772882/anonymous"
+      },
+      "creation_date" : 1754880960,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140656281,
+      "post_id" : 79729153,
+      "body" : "It&#39;s already been corrected...",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10843443,
+        "reputation" : 924,
+        "user_id" : 20882864,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+        "display_name" : "Marce Puente",
+        "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+      },
+      "creation_date" : 1754876182,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140655762,
+      "post_id" : 79729153,
+      "body" : "When summer time ended in April this year, 23:00 should come twice, then 00:00, etc. Starting from <code>new ZonDatTim(LocalDateTime.of(2025, 4, 5, 22, 0), &quot;America&#47;Santiago&quot;, true)</code> I got 2025-04-05T23:00, which is fine, it then goes backward to 2025-04-05T22:00 and after that just repeats giving me 2025-04-05T23:00, apparently forever. Better wake up and get human before diving into it. :-)",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 7612423,
+        "reputation" : 87409,
+        "user_id" : 5772882,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Anonymous",
+        "link" : "https://stackoverflow.com/users/5772882/anonymous"
+      },
+      "creation_date" : 1754846902,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140655760,
+      "post_id" : 79729153,
+      "body" : "Sorry, it’s not correct. In September last year summer time in Chile began. Starting from <code>new ZonDatTim(LocalDateTime.of(2024, 9, 7, 23, 0), &quot;America&#47;Santiago&quot;, false)</code> I expected no 00:00 but 01:00, 02:00, etc. when calling <code>getNext()</code> repeatedly. instead I got 2024-09-08T00:00, then 2024-09-08T00:00 again, then finally 2024-09-08T01:00, 2024-09-08T02:00, 2024-09-08T03:00, etc.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 7612423,
+        "reputation" : 87409,
+        "user_id" : 5772882,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Anonymous",
+        "link" : "https://stackoverflow.com/users/5772882/anonymous"
+      },
+      "creation_date" : 1754846702,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140655755,
+      "post_id" : 79729153,
+      "body" : "Thanks for the edit. My first reaction is it’s too manual, too low-level, not general enough, too hard to convince myself that it’s correct. I don’t immediately trust it, but will play around with it a little.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 7612423,
+        "reputation" : 87409,
+        "user_id" : 5772882,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Anonymous",
+        "link" : "https://stackoverflow.com/users/5772882/anonymous"
+      },
+      "creation_date" : 1754846104,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140650761,
+      "post_id" : 79729153,
+      "body" : "Thanks for the contribution. Accepting and returning a <code>LocalDateTime</code> won’t suffice because sometimes with overlaps (like fall back from summer time) a <code>LocalDateTime</code> can be ambiguous. If you don’t want to give me a <code>ZonedDateTime</code> (as Louis Wasserman argued to avoid), we need an <code>Instant</code>.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 7612423,
+        "reputation" : 87409,
+        "user_id" : 5772882,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Anonymous",
+        "link" : "https://stackoverflow.com/users/5772882/anonymous"
+      },
+      "creation_date" : 1754624645,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79728674" : [ {
+      "comment_id" : 140649823,
+      "post_id" : 79728674,
+      "body" : "@RobSpoor I believe that it&#39;s still valuable in case the asker is making a distinction between &quot;finding the next hour in the same day&quot; (then the loopback behavior of the 1st snippet is desirable) and &quot;finding the next hour in the same calendar&quot;",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 14914414,
+        "reputation" : 1185,
+        "user_id" : 10808904,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/Ts8fIsJj.png?s=256",
+        "display_name" : "Xavier Pedraza",
+        "link" : "https://stackoverflow.com/users/10808904/xavier-pedraza"
+      },
+      "creation_date" : 1754587196,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79728980" : [ {
+      "comment_id" : 140654981,
+      "post_id" : 79728980,
+      "body" : "That article, <a href=\"https://errorprone.info/docs/time\" rel=\"nofollow noreferrer\"><i>How to Think About Time</i></a>, definitely is a sound read for all. Regarding <code>ZonedDateTime</code>, I see the article’s point, it mixes up to distinct concepts, the date-time and the time zone. I still do not 100 % agree to avoid that. Rather, while my user may know what is meant by “1:00 AM”, I would like that my program “knows” too. With a <code>LocalDateTime</code> alone it does not. A <code>ZonedDateTime</code> makes sure it does.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 7612423,
+        "reputation" : 87409,
+        "user_id" : 5772882,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Anonymous",
+        "link" : "https://stackoverflow.com/users/5772882/anonymous"
+      },
+      "creation_date" : 1754812163,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140653834,
+      "post_id" : 79728980,
+      "body" : "Upvoted for the link: <a href=\"https://errorprone.info/docs/time\" rel=\"nofollow noreferrer\">errorprone.info/docs/time</a>. I&#39;ve not seen that before. I hadn&#39;t thought before that negative durations are so problematic. Perhaps we should differentiate a time interval (which may be negative) and a duration is a non-negative time interval and could represent the elapsed time of a physical process.  Though I have seen systems where an estimated (in practice variable) latency suggests some processes took a negative amount of time.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 5277236,
+        "reputation" : 8627,
+        "user_id" : 4213662,
+        "user_type" : "registered",
+        "accept_rate" : 80,
+        "profile_image" : "https://graph.facebook.com/693430827/picture?type=large",
+        "display_name" : "Persixty",
+        "link" : "https://stackoverflow.com/users/4213662/persixty"
+      },
+      "creation_date" : 1754741967,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140650120,
+      "post_id" : 79728980,
+      "body" : "I want both of them (theoretically there could be more than two, but I am willing to assume that two is the max).",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 7612423,
+        "reputation" : 87409,
+        "user_id" : 5772882,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Anonymous",
+        "link" : "https://stackoverflow.com/users/5772882/anonymous"
+      },
+      "creation_date" : 1754595020,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140650114,
+      "post_id" : 79728980,
+      "body" : "It is not obvious to me what you want the semantics to <i>be</i> in the case of a daylight savings jump where there are multiple 1:00s in a day.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 465573,
+        "reputation" : 200423,
+        "user_id" : 869736,
+        "user_type" : "registered",
+        "accept_rate" : 82,
+        "profile_image" : "https://www.gravatar.com/avatar/ae7bb06b9a23a4dd7eea69e853d47d12?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Louis Wasserman",
+        "link" : "https://stackoverflow.com/users/869736/louis-wasserman"
+      },
+      "creation_date" : 1754594636,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140650100,
+      "post_id" : 79728980,
+      "body" : "I believe the a general and simple to understand way would be add one hour, try rounding backward, and if that gives us the original time, then round forward instead. One issue to take into account is that converting <code>LocalTime</code> back to <code>ZonedDateTime</code> may be ambiguous, may have two possible results.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 7612423,
+        "reputation" : 87409,
+        "user_id" : 5772882,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Anonymous",
+        "link" : "https://stackoverflow.com/users/5772882/anonymous"
+      },
+      "creation_date" : 1754593864,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140649979,
+      "post_id" : 79728980,
+      "body" : "You can, I suppose, explicitly check whether adding one hour in local time and converting back to physical time produces a difference less than 3600 seconds.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 465573,
+        "reputation" : 200423,
+        "user_id" : 869736,
+        "user_type" : "registered",
+        "accept_rate" : 82,
+        "profile_image" : "https://www.gravatar.com/avatar/ae7bb06b9a23a4dd7eea69e853d47d12?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Louis Wasserman",
+        "link" : "https://stackoverflow.com/users/869736/louis-wasserman"
+      },
+      "creation_date" : 1754590723,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140649966,
+      "post_id" : 79728980,
+      "body" : "Thanks for the constructive contribution. Staying with Lord Howe, I believe your suggestion will work well for both spring forward and fall back because the change always happens at a whole hour on the old scale (always 02:00) so that there will always be an hour or more between the whole hours. Wouldn’t a case of less than an hour between whole hours be thinkable? Maybe not likely, hard to rule out completely.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 7612423,
+        "reputation" : 87409,
+        "user_id" : 5772882,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Anonymous",
+        "link" : "https://stackoverflow.com/users/5772882/anonymous"
+      },
+      "creation_date" : 1754590402,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79728806" : [ {
+      "comment_id" : 140651273,
+      "post_id" : 79728806,
+      "body" : "Thanks for the contribution and welcome to Stack Overflow. My question may not have been clear enough. I need the whole hours on the clock in the time zone in question no matter if the UTC offset is a whole number of hours or not. Also in India (current UTC offset +05:30) and Nepal (UTC+05:45) I will need “one hour later” in the normal case and only a different amount across time zone changes/transitions/anomalies if I don’t happen to hit a whole hour on the clock..",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 7612423,
+        "reputation" : 87409,
+        "user_id" : 5772882,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Anonymous",
+        "link" : "https://stackoverflow.com/users/5772882/anonymous"
+      },
+      "creation_date" : 1754643797,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140651060,
+      "post_id" : 79728806,
+      "body" : "This could solve a needed whole hour result (without any additional extra minutes)",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 28650464,
+        "reputation" : 11,
+        "user_id" : 21937520,
+        "user_type" : "registered",
+        "profile_image" : "https://lh3.googleusercontent.com/a/AGNmyxb9blgksLEJjbSemZFhLQQuZR6CnKF5Ddsvuqu-XA=k-s256",
+        "display_name" : "Mpin",
+        "link" : "https://stackoverflow.com/users/21937520/mpin"
+      },
+      "creation_date" : 1754638036,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79728616" : [ {
+      "comment_id" : 140660202,
+      "post_id" : 79728616,
+      "body" : "@Anonymous You&#39;re right.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10843443,
+        "reputation" : 924,
+        "user_id" : 20882864,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+        "display_name" : "Marce Puente",
+        "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+      },
+      "creation_date" : 1755004658,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140658157,
+      "post_id" : 79728616,
+      "body" : "@MarcePuente <i>... summer time (clock set back), ....</i> It’s the other way around: when summer time begins, clocks are turned <i>forward</i>, not back.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 7612423,
+        "reputation" : 87409,
+        "user_id" : 5772882,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Anonymous",
+        "link" : "https://stackoverflow.com/users/5772882/anonymous"
+      },
+      "creation_date" : 1754936517,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140658148,
+      "post_id" : 79728616,
+      "body" : "@MarcePuente A <code>ZonedDateTime</code> does know its own offset from UTC and therefore also at which instant, at which point on the time line it falls. So yes, we can distinguish 00:00 summer time from 00:00 standard time.  If using the <code>of()</code> factory method for testing, <i>In the case of an overlap, when clocks are set back, there are two valid offsets. This method uses the earlier offset typically corresponding to &quot;summer&quot;.</i> (from the docs) You may use the <code>withLaterOffsetAtOverlap()</code> to force the other interpretation.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 7612423,
+        "reputation" : 87409,
+        "user_id" : 5772882,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Anonymous",
+        "link" : "https://stackoverflow.com/users/5772882/anonymous"
+      },
+      "creation_date" : 1754936361,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140657067,
+      "post_id" : 79728616,
+      "body" : "The problem with this implementation (and the others) is that if I enter (in the example of Chile) “2025,9,7,0,0,0” (which is repeated), the system has no way of knowing whether this moment corresponds to winter time (unchanged) or summer time (clock set back), so the result will not necessarily be correct.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10843443,
+        "reputation" : 924,
+        "user_id" : 20882864,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+        "display_name" : "Marce Puente",
+        "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+      },
+      "creation_date" : 1754909254,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140654000,
+      "post_id" : 79728616,
+      "body" : "@FilipMilovanović For my part I would argue that instead of throwing you can just truncate the original, and the result will still be after the untriuncated original. Which may also be useful. I said in the question and Rowan Horv&#225;th said in the Javadoc that <code>original</code> should fall an a whole hour, so throwing if it doesn’t makes sense AFAIAC.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 7612423,
+        "reputation" : 87409,
+        "user_id" : 5772882,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Anonymous",
+        "link" : "https://stackoverflow.com/users/5772882/anonymous"
+      },
+      "creation_date" : 1754749684,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140652803,
+      "post_id" : 79728616,
+      "body" : "Why would you throw an <code>IllegalArgumentException</code> to signal that your code can&#39;t handle what is both logically, and judging by the method&#39;s documentation, a perfectly legal argument? :)",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 8607013,
+        "reputation" : 602,
+        "user_id" : 8166486,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/rhYMK.png?s=256",
+        "display_name" : "Filip Milovanović",
+        "link" : "https://stackoverflow.com/users/8166486/filip-milovanovi%c4%87"
+      },
+      "creation_date" : 1754681140,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140650784,
+      "post_id" : 79728616,
+      "body" : "@RobSpoor Sweeper’s interpretation is what I intended. I’m unsure how I can make that clearer in the question, I tried a bit. So Roean Horv&#225;th’s answer passes in this case.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 7612423,
+        "reputation" : 87409,
+        "user_id" : 5772882,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Anonymous",
+        "link" : "https://stackoverflow.com/users/5772882/anonymous"
+      },
+      "creation_date" : 1754626417,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140650639,
+      "post_id" : 79728616,
+      "body" : "@RobSpoor I think we have different understandings of the problem. To me those are the correct results.",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 6651855,
+        "reputation" : 292280,
+        "user_id" : 5133585,
+        "user_type" : "registered",
+        "accept_rate" : 96,
+        "profile_image" : "https://i.sstatic.net/dfqcw.png?s=256",
+        "display_name" : "Sweeper",
+        "link" : "https://stackoverflow.com/users/5133585/sweeper"
+      },
+      "creation_date" : 1754613397,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140649802,
+      "post_id" : 79728616,
+      "body" : "I was hoping that your answer fixed the issue mine has, but for Europe/Amsterdam it fails for both 2025-03-30T01:00:00+01:00 (the result is 2025-03-30T03:00:00+02:00) and 2025-10-26T02:00:00+02:00 (the result is 2025-10-26T02:00:00+01:00).",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1211967,
+        "reputation" : 9964,
+        "user_id" : 1180351,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/pKB8y.png?s=256",
+        "display_name" : "Rob Spoor",
+        "link" : "https://stackoverflow.com/users/1180351/rob-spoor"
+      },
+      "creation_date" : 1754586784,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79728667" : [ {
+      "comment_id" : 140651106,
+      "post_id" : 79728667,
+      "body" : "I wanted to display what happens if the start time didn&#39;t fall on the edge of DST switches, and for NL, those are times that fall inside the DST block. The Australian example has a switch of 1.5 hours, in NL we have full hours.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1211967,
+        "reputation" : 9964,
+        "user_id" : 1180351,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/pKB8y.png?s=256",
+        "display_name" : "Rob Spoor",
+        "link" : "https://stackoverflow.com/users/1180351/rob-spoor"
+      },
+      "creation_date" : 1754639728,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140650641,
+      "post_id" : 79728667,
+      "body" : "I&#39;m not sure why you are usingt 02:30 and 3:30 as inputs? The question says &quot;given the time of day at one whole hour&quot;.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 6651855,
+        "reputation" : 292280,
+        "user_id" : 5133585,
+        "user_type" : "registered",
+        "accept_rate" : 96,
+        "profile_image" : "https://i.sstatic.net/dfqcw.png?s=256",
+        "display_name" : "Sweeper",
+        "link" : "https://stackoverflow.com/users/5133585/sweeper"
+      },
+      "creation_date" : 1754613474,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

@@ -1,0 +1,133 @@
+{
+  "question" : {
+    "question_id" : 79703558,
+    "title" : "Otel-collector not sending traces to jaeger",
+    "body" : "<p>I have a few Java applications that have working otel tracing implementations. The details of how this works is largely irrelevant (implemented using micrometer and spring-boot-actuator) but the point is when I point these programs directly at jaeger:4318, the traces show up as expected. Quite a few of my traces are not necessary so I wanted to remove certain unhelpful traces or ideally rename them. This lead me to discovering the otel-collector which seemed like the ideal thing to take traces in from my service and send them out to jaeger but trying to get them working has completely failed, there is no error just nothing happens.</p>\n<p>Here is my api service's docker image</p>\n<pre><code>  api-service:\n    image: &lt;api-image&gt;\n    restart: on-failure\n    depends_on:\n    - mysql\n    - zookeeper\n    - redis\n    - kafka\n    - user-app\n    - ff4j-ui\n    volumes:\n    - $PWD/data/config:/config\n    environment:\n      SPRING_REDIS_HOST: &lt;host&gt;\n      AWS_ACCESS_KEY_ID: &lt;AWS_ACCESS_KEY_ID&gt;\n      SPRING_DATASOURCE_PASSWORD: &lt;PASSWORD&gt;\n      AWS_SECRET_ACCESS_KEY: &lt;AWS_SECRET_ACCESS_KEY&gt;\n      CORS_EXPOSED_HEADERS: &lt;HEADERS&gt;\n      XSRF_DOMAIN: 127.0.0.1\n      ZOOKEEPER_CONNECTION: zookeeper:2181\n      JAEGER_SAMPLER_TYPE: const\n      SPRING_DATASOURCE_USERNAME: &lt;USERNAME&gt;\n      REDIS_SESSION_HOST: redis\n      JDBC_INCLUDES: QUERY, KEYS, FETCH\n      OTEL_EXPORTER_OTLP_ENDPOINT=: http://0.0.0.0:4318\n      CCS_SERVICE_NAME: &lt;SERVICE-NAME&gt;\n      FEATUREFLAG_HOSTURL: http://ff4j-ui:8099\n      CORS_ALLOWED_ORIGINS: http://127.0.0.1:8081\n      SWAGGER_ENABLED: 'false'\n      CORS_ALLOWED_METHODS: GET,POST,HEAD,OPTIONS,PATCH,PUT,DELETE\n      JAEGER_SAMPLER_PARAM: '1'\n      JAEGER_AGENT_HOST: jaeger\n      HTTP_SERVICE_CONNECT_TIMEOUT: '99999'\n      HTTP_SERVICE_READ_TIMEOUT: '999999'\n      SPRING_DATASOURCE_URL: &lt;DATASOURCE-URL&gt;\n      SPRING_KAFKA_BOOTSTRAPSERVERS: kafka:9092\n      MANAGEMENT_OTLP_TRACING_ENDPOINT: http://0.0.0.0:4318\n    ports:\n    - 8082:8080\n    - 7988:5005\n</code></pre>\n<p>Here is the otel-collector's docker file</p>\n<pre><code>  otel-collector:\n    image: otel/opentelemetry-collector-contrib:latest\n    depends_on:\n    - jaeger\n    volumes:\n    - $PWD/data/config/otel-collector-config.yml:/etc/otel-collector-config.yml\n    ports:\n    - 4317:4317\n    - 4318:4318\n    - 1888:1888\n    - 13133:13133\n    - 55679:55679\n</code></pre>\n<p>Here is the jaeger docker file:</p>\n<pre><code>image: jaegertracing/all-in-one:latest # At least 1.35 if you want to have enabled collector\ncontainer_name: jaeger\nenvironment:\n   COLLECTOR_ZIPKIN_HOST_PORT: 9411\n   COLLECTOR_OTLP_ENABLED: true\n   SPAN_STORAGE_TYPE: memory\n   LOG_LEVEL: debug\n   JAEGER_LOG_LEVEL: debug\nports: \n   - &quot;16686:16686&quot; \n   - &quot;16685:16685&quot;\n</code></pre>\n<p>And here is the config file for the otel-collector</p>\n<pre><code>receivers:\n  otlp:\n    protocols:\n      grpc:\n        endpoint: 0.0.0.0:4317\n      http:\n        endpoint: 0.0.0.0:4318\n\nprocessors:\n  filter:\n    traces:\n      exclude:\n        spans:\n          - 'name == &quot;security filterchain before&quot;'\n          - 'name == &quot;authorize request&quot;'\n\nexporters:\n  otlp/jaeger:\n    endpoint: jaeger:4317\n    tls:\n      insecure: true # Use this for local Docker environments without TLS\n\n  debug:\n    verbosity: detailed\n\nservice:\n  telemetry:\n    logs:\n      level: debug\n  extensions: [zpages]\n  pipelines:\n    traces:\n      receivers: [otlp]\n      exporters: [otlp/jaeger,debug]\n</code></pre>\n<p>When I set it to export to debug it this works and displays logs in the console but sending to jaeger does not send anywhere and does not show up at http://localhost:16686/ even though when I set my api-service's MANAGEMENT_OTLP_TRACING_ENDPOINT to jaeger:4318 it works flawlessly.</p>\n<p>I have tried everything, removing all processors from the config file so I know that's not the issue, changing it to point at jaeger:4318 or jaeger:14250, trying newer versions of jaeger I've even messed around with setting the MANAGEMENT_OTLP_TRACING_ENDPOINT to otel-collector:4138 or otel-collector:4137 (which isn't really necessary given the traces show up in debug mode).</p>\n<p>Regardless of what I do, no traces end up going out from my collector to jaeger. Either I would like to fix this or failing that just find another solution to do what I want to do.</p>\n",
+    "tags" : [ "java", "open-telemetry", "micrometer", "jaeger", "open-telemetry-collector" ],
+    "owner" : {
+      "account_id" : 35583260,
+      "reputation" : 21,
+      "user_id" : 27290237,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/7ad5b258ef8c5f16dc91a9d36a2daa9d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Mak",
+      "link" : "https://stackoverflow.com/users/27290237/mak"
+    },
+    "is_answered" : true,
+    "view_count" : 352,
+    "answer_count" : 2,
+    "score" : 0,
+    "last_activity_date" : 1755853332,
+    "creation_date" : 1752675103,
+    "link" : "https://stackoverflow.com/questions/79703558/otel-collector-not-sending-traces-to-jaeger",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79743190,
+    "question_id" : 79703558,
+    "body" : "<p>My issue was simply that I was using a program to compile all of my docker-compose files into 1. This program only kept the &quot;essential&quot; parts and didn't keep the <code>command: --config /etc/otel/config.yaml</code> part of my otel-collector so the config wasn't being loaded properly into the collector.</p>\n",
+    "score" : 0,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 35583260,
+      "reputation" : 21,
+      "user_id" : 27290237,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/7ad5b258ef8c5f16dc91a9d36a2daa9d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Mak",
+      "link" : "https://stackoverflow.com/users/27290237/mak"
+    },
+    "creation_date" : 1755853332,
+    "last_activity_date" : 1755853332,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79709147,
+    "question_id" : 79703558,
+    "body" : "<p>Your collector exporter is configured as</p>\n<pre><code>endpoint: jaeger:4317\n</code></pre>\n<p>but Jaeger docker file does not expose this port</p>\n<pre><code>ports: \n   - &quot;16686:16686&quot; \n   - &quot;16685:16685&quot;\n</code></pre>\n",
+    "score" : -1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 3162612,
+      "reputation" : 810,
+      "user_id" : 2673284,
+      "user_type" : "registered",
+      "accept_rate" : 78,
+      "profile_image" : "https://www.gravatar.com/avatar/62f0505a967f1d0ddbed12eeb0193951?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Yuri Shkuro",
+      "link" : "https://stackoverflow.com/users/2673284/yuri-shkuro"
+    },
+    "creation_date" : 1753104810,
+    "last_activity_date" : 1753104810,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79709147" : [ {
+      "comment_id" : 140618773,
+      "post_id" : 79709147,
+      "body" : "the <code>ports:</code> section is a mapping, you can remap internal port to a different port externally and configure collector to talk to that new port. You can also change Jaeger config to listen on a different port if you want to keep the mapping 1:1",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 3162612,
+        "reputation" : 810,
+        "user_id" : 2673284,
+        "user_type" : "registered",
+        "accept_rate" : 78,
+        "profile_image" : "https://www.gravatar.com/avatar/62f0505a967f1d0ddbed12eeb0193951?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Yuri Shkuro",
+        "link" : "https://stackoverflow.com/users/2673284/yuri-shkuro"
+      },
+      "creation_date" : 1753462933,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140614399,
+      "post_id" : 79709147,
+      "body" : "This is what is typically done in otel collector setups and all examples I can find of otel collector setup seem to do this e.g:  <a href=\"https://github.com/cumanachao/devfest-opentelemetry/blob/main/otel.yml\" rel=\"nofollow noreferrer\">github.com/cumanachao/devfest-opentelemetry/blob/main/otel.y&zwnj;&#8203;ml</a>  <a href=\"https://github.com/cumanachao/devfest-opentelemetry/blob/main/docker-compose.yml\" rel=\"nofollow noreferrer\">github.com/cumanachao/devfest-opentelemetry/blob/main/&hellip;</a>    I do agree that it&#39;s odd to send a request to an endpoint where the port isn&#39;t open but this seems to be how it&#39;s done. If I set port 4317 on the jaeger dockerfile then otel-collector cannot expose the port",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 35583260,
+        "reputation" : 21,
+        "user_id" : 27290237,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/7ad5b258ef8c5f16dc91a9d36a2daa9d?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Mak",
+        "link" : "https://stackoverflow.com/users/27290237/mak"
+      },
+      "creation_date" : 1753347909,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140612272,
+      "post_id" : 79709147,
+      "body" : "you are missing port 4317 in the docker file",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 3162612,
+        "reputation" : 810,
+        "user_id" : 2673284,
+        "user_type" : "registered",
+        "accept_rate" : 78,
+        "profile_image" : "https://www.gravatar.com/avatar/62f0505a967f1d0ddbed12eeb0193951?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Yuri Shkuro",
+        "link" : "https://stackoverflow.com/users/2673284/yuri-shkuro"
+      },
+      "creation_date" : 1753280971,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140608311,
+      "post_id" : 79709147,
+      "body" : "Not sure if I&#39;m misunderstanding but I thought I put that at the bottom of my Jaeger docker file above? Trying with &amp; without quotes either way the otlp/jaeger exporter is not showing up in my zpages and the traces aren&#39;t going through to jaeger",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 35583260,
+        "reputation" : 21,
+        "user_id" : 27290237,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/7ad5b258ef8c5f16dc91a9d36a2daa9d?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Mak",
+        "link" : "https://stackoverflow.com/users/27290237/mak"
+      },
+      "creation_date" : 1753174458,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

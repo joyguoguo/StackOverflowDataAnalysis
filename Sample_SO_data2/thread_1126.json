@@ -1,0 +1,350 @@
+{
+  "question" : {
+    "question_id" : 79744836,
+    "title" : "Why does List.copyOf(...) use a redundant array creation?",
+    "body" : "<p>The method <code>java.util.List#copyOf</code> in Java 24 calls another method <code>java.util.ImmutableCollections#listCopy</code> which has the following body:</p>\n<pre class=\"lang-java prettyprint-override\"><code>    @SuppressWarnings(&quot;unchecked&quot;)\n    static &lt;E&gt; List&lt;E&gt; listCopy(Collection&lt;? extends E&gt; coll) {\n        if (coll instanceof List12 || (coll instanceof ListN&lt;?&gt; c &amp;&amp; !c.allowNulls)) {\n            return (List&lt;E&gt;)coll;\n        } else if (coll.isEmpty()) { // implicit nullcheck of coll\n            return List.of();\n        } else {\n            return (List&lt;E&gt;)List.of(coll.toArray());\n        }\n    }\n</code></pre>\n<p>The invocation <code>List.of(coll.toArray())</code> creates yet another copy of the passed array:</p>\n<pre class=\"lang-java prettyprint-override\"><code>    @SafeVarargs\n    @SuppressWarnings(&quot;varargs&quot;)\n    static &lt;E&gt; List&lt;E&gt; of(E... elements) {\n        switch (elements.length) { // implicit null check of elements\n            case 0:\n                @SuppressWarnings(&quot;unchecked&quot;)\n                var list = (List&lt;E&gt;) ImmutableCollections.EMPTY_LIST;\n                return list;\n            case 1:\n                return new ImmutableCollections.List12&lt;&gt;(elements[0]);\n            case 2:\n                return new ImmutableCollections.List12&lt;&gt;(elements[0], elements[1]);\n            default:\n                return ImmutableCollections.listFromArray(elements);\n        }\n    }\n</code></pre>\n<p>because <code>java.util.ImmutableCollections#listFromArray</code> has the following body:</p>\n<pre class=\"lang-java prettyprint-override\"><code>    @SafeVarargs\n    static &lt;E&gt; List&lt;E&gt; listFromArray(E... input) {\n        // copy and check manually to avoid TOCTOU\n        @SuppressWarnings(&quot;unchecked&quot;)\n        E[] tmp = (E[])new Object[input.length]; // implicit nullcheck of input\n        for (int i = 0; i &lt; input.length; i++) {\n            tmp[i] = Objects.requireNonNull(input[i]);\n        }\n        return new ListN&lt;&gt;(tmp, false);\n    }\n</code></pre>\n<p>instead of this we could do something like that:</p>\n<pre class=\"lang-java prettyprint-override\"><code>var array = coll.toArray();\nfor (int i = 0, len = array.length; i &lt; len; i++) {\n  Objects.requireNonNull(array[i]);\n}\nreturn ListN&lt;&gt;((E[]) array, false);\n</code></pre>\n<p>Personally, I’d like to have another method, such as java.util.List#directCopyOf, that omits the null check. This would be useful to avoid the performance cost in cases where nulls are allowed. In this case the code will be so:</p>\n<pre class=\"lang-java prettyprint-override\"><code>return ListN&lt;&gt;((E[]) coll.toArray(), true);\n</code></pre>\n<p>The question is: why does List.copyOf(...) internally use a redundant array creation just after obtaining a fresh array <code>coll.toArray()</code>?</p>\n",
+    "tags" : [ "java", "immutability", "nullable" ],
+    "owner" : {
+      "account_id" : 9783242,
+      "reputation" : 758,
+      "user_id" : 7250390,
+      "user_type" : "registered",
+      "profile_image" : "https://graph.facebook.com/1050047641788982/picture?type=large",
+      "display_name" : "Dmitry Ovchinnikov",
+      "link" : "https://stackoverflow.com/users/7250390/dmitry-ovchinnikov"
+    },
+    "is_answered" : true,
+    "view_count" : 278,
+    "answer_count" : 3,
+    "score" : 2,
+    "last_activity_date" : 1756681433,
+    "creation_date" : 1756035575,
+    "link" : "https://stackoverflow.com/questions/79744836/why-does-list-copyof-use-a-redundant-array-creation",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79744850,
+    "question_id" : 79744836,
+    "body" : "<p>Copying to an array prevents <a href=\"https://en.wikipedia.org/wiki/Time-of-check_to_time-of-use\" rel=\"nofollow noreferrer\">TOCTOU</a> issues (time-of-check time-of-use), as commented in the code:</p>\n<blockquote>\n<pre><code>// copy and check manually to avoid TOCTOU\n</code></pre>\n</blockquote>\n<p>If copying is done in multi-threaded code, a second thread could modify the array while it is being copied. Construction of the new list must be atomic: you cannot change the immutable list once created, therefore you need to create a copy <em>before</em> constructing your immutable list instance.</p>\n<p>It's also worthwhile checking the JavaDoc of the <code>listFromArray</code> method</p>\n<blockquote>\n<p>Creates a new List from an <em>untrusted</em> array, creating a new array for internal storage, and checking for and rejecting null elements. (emphasis mine)</p>\n</blockquote>\n<p>Note there's also <code>listFromTrustedArray</code> which does <em>not</em> create another copy of the input array (but this one seems to only be called from JDK-internal classes). I'd have assumed that <code>Collections#toArray()</code> is not guaranteed to return a <em>copy</em> of the collection's contents, but alas, this would break the contract too:</p>\n<blockquote>\n<p>The returned array will be &quot;safe&quot; in that no references to it are maintained by this collection. (In other words, this method must allocate a new array even if this collection is backed by an array). The caller is thus free to modify the returned array.</p>\n</blockquote>\n<p>But I guess that this contract cannot be <em>guaranteed</em>, thus the JDK implementers create a <em>defensive copy</em> of the returned array. It would be far too easy to create a &quot;malicious&quot; <code>Collection</code> implementation which violates the contract of this method.</p>\n<p>Also note that <code>new ListN&lt;&gt;</code> does <em>not</em> copy the passed array again, it simply keeps a reference to it.</p>\n<hr />\n<p>Regarding your second point</p>\n<blockquote>\n<p>Personally, I’d like to have another method, such as java.util.List#directCopyOf, that omits the null check.</p>\n</blockquote>\n<p>That would break the contract of <code>List.of</code>/<code>List.copyOf</code>, which <a href=\"https://docs.oracle.com/javase/9/docs/api/java/util/List.html\" rel=\"nofollow noreferrer\">specifies</a> that the returned list will never hold null values:</p>\n<blockquote>\n<h3>Immutable List Static Factory Methods</h3>\n<p>The <code>List.of()</code> static factory methods provide a convenient way to create immutable lists. The <code>List</code> instances created by these methods have the following characteristics:</p>\n<ul>\n<li>They are structurally immutable. Elements cannot be added, removed, or replaced. Calling any mutator method will always cause UnsupportedOperationException to be thrown. However, if the contained elements are themselves mutable, this may cause the List's contents to appear to change.</li>\n<li>They disallow null elements. Attempts to create them with null elements result in NullPointerException.</li>\n<li>They are serializable if all elements are serializable.</li>\n<li>The order of elements in the list is the same as the order of the provided arguments, or of the elements in the provided array.</li>\n<li>They are value-based. Callers should make no assumptions about the identity of the returned instances. Factories are free to create new instances or reuse existing ones. Therefore, identity-sensitive operations on these instances (reference equality (==), identity hash code, and synchronization) are unreliable and should be avoided.</li>\n<li>They are serialized as specified on the Serialized Form page.</li>\n</ul>\n</blockquote>\n<p>If you need a collection that can hold null values, copy to a <code>new ArrayList&lt;&gt;(collection)</code> or wrap in <code>Collections.immutableList(list)</code>.</p>\n<p>Also see <a href=\"https://stackoverflow.com/questions/46579074/what-is-the-difference-between-list-of-and-arrays-aslist\">What is the difference between List.of and Arrays.asList?</a> – not only does the immutable list reject nulls on construction, but it throws when calling <code>list.contains(null)</code> too.</p>\n",
+    "score" : 8,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 39208,
+      "reputation" : 269427,
+      "user_id" : 112968,
+      "user_type" : "registered",
+      "accept_rate" : 68,
+      "profile_image" : "https://i.sstatic.net/zHTaT.png?s=256",
+      "display_name" : "knittl",
+      "link" : "https://stackoverflow.com/users/112968/knittl"
+    },
+    "creation_date" : 1756036454,
+    "last_activity_date" : 1756373551,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79745002,
+    "question_id" : 79744836,
+    "body" : "<h2>Quick answer</h2>\n<pre class=\"lang-java prettyprint-override\"><code>public static &lt;T&gt; List&lt;T&gt; fasterImmutableCopy(Collection&lt;T&gt; in) {\n  List list = Arrays.asList(in.toArray());\n  return Collections.unmodifiableList((List&lt;T&gt;) list);\n}\n</code></pre>\n<p>This:</p>\n<ul>\n<li>Saves one fast-garbage array allocation.</li>\n<li>Absolutely guarantees full immutability even if <code>in</code> is later modified.</li>\n<li>... but requires the implementation of <code>in</code> to have heeded the contract explicitly spelled out in <code>toArray</code> javadoc: That a new array is always allocated.</li>\n<li>Makes no guarantees about correctness in the face of multicore shenanigans, but then no API with that signature could possibly do that.</li>\n</ul>\n<p>But your question is partly '... but why isnt the actual implementation of <code>List.of</code> just like this snippet above'. That can be answered too, but this requires quite some philosophical delving into the nature of API design.</p>\n<h2>Performance over correctness</h2>\n<p>You've asked, essentially, 'what programming principles were the authors of this code thinking of when they wrote this code, given that it made the seemingly bizarre choice to make <strong>2</strong> copies of the input for no apparent reason'.</p>\n<p>Which requires delving into programming principles to try to explain what the authors were possibly thinking here. Or to be more precise, I'm not the author and I did not follow the conversation when this code was written; likely there <em>is no conversation</em> - I don't think the various <code>xyz-dev</code> mailing lists of the OpenJDK team covered this minute detail of the implementation, but I admit I didn't check.</p>\n<p>The crucial dilemma that powers the answer is one that comes up <em>a lot</em> in API design:</p>\n<p><strong>The dilemma of performance vs correctness</strong>.</p>\n<p>To put it in contract terms: APIs are designed to be used in a certain way and make certain guarantees.</p>\n<p>If you prefer correctness over performance, you write the API so that it is <em>not possible</em> for the guarantees to fail (or if they do, that this is done 'nicely', e.g. via exceptions, and not via unspecified or bizarre behaviour). This is a little bit 'good API design' and a lot of 'write checks to ensure the preconditions have been adhered to be the caller'. You execute these checks <em>even if</em> writing the API like that means the implementation is less efficient or harder to use.</p>\n<p>If you prefer performance over correctness, you don't do that; instead, you 'hide' behind the general maxim of: &quot;This is my contract; <em>you</em> ensure you use <em>me</em> correctly, and in trade I will provide the following guarantees. Just like legal contracts, if you fail to live up to your part of this contract I will probably fail to live up to my part, and that's all on you!&quot;</p>\n\n<p>The answer, as usual, lies in the middle. Or possibly closer to preferring correctness of performance, but being extremist (<em>always</em> doing that) is not generally the right way to go about programming.</p>\n<p>The problem lies in the simple fact that the <em>actual desired result</em> is unachievable. Thinking that you can achieve it is hubris or naivite. To be specific: You <em>cannot</em> prevent idiotic usage of your API by writing checks. You are not <em>that</em> good, and the universe is <em>really</em> good at coming up with inventive flavours of idiotry.</p>\n<p>As a trivial example for this specific scenario: Imagine I have some sort of perfect immutable list implementation that performs every imaginable check, regardless of cost, to ensure the list is never, ever modified in any way by anything for any reason.</p>\n<p>Then some enterprising idiot comes along and makes a <code>List&lt;StringBuilder&gt;</code>. Another well meaning idiot then takes this code, reads the immutability guarantees, and completely fails to understand that the <em>elements</em> in the list aren't immutable at all.</p>\n<p>Sure, pilot error. <em>That is the point</em> - mistakes can happen regardless of how many checks you write.</p>\n<p>Checks are <em>good</em> but given that <em>so good, I have eliminated all bugs before we even start</em> is unattainable, it's reasonable to opt for a contract obligation instead of a check if the obligation is obvious and the check is expensive.</p>\n\n<p>That just leaves the debate of where one draws the line.</p>\n<h3>Why does list insist on checking its preconditions explicitly?</h3>\n<p>You're using <code>List</code> in the one way where it can be used to hold large collections: The &quot;make me a copy of this collection&quot; mode, where list adds guarantees that the input doesn't have, such as &quot;I am completely immutable; even if callers bend over backwards to try to pull the rug out from under me by changing the source collection&quot;, and &quot;I contain no null&quot;.</p>\n<p>There is no opt-out; list does not have a method that skips the checks and shifts the responsibility into contract. Perhaps there should be, but as its core API, once such a method is added it can never be removed and it does clutter up the brainspace and the javadoc. That might not be a reason to avoid implementing <code>unsafeCopy</code> that you agree with, but it's <em>a</em> reason, and I'm pretty sure (though I am no OpenJDK core contributor) that it's good enough for OpenJDK: An attempt to add such a method would be denied.</p>\n<h3>... and why is it implemented so 'badly'?</h3>\n<p>You'd have to ask the author.</p>\n<p>To venture a guess: <code>List.of</code> 'feels' like its designed for holding small amounts of data: It's great at <code>List.of(&quot;bunch&quot;, &quot;of&quot;, &quot;data&quot;, &quot;explicitly&quot;, &quot;listed&quot;, &quot;out&quot;);</code> and its API for making things via a loop is quite limited. For example, guava's <code>ImmutableList.builder</code> is much better at the job. If the API is meant for smaller lists, the <code>O(n)</code> nature of checks is extremely unlikely to be a problem: In the cost v. benefit analysis, 'spend the time to check input' now looks like a much better answer.</p>\n<p>Likely it's a dilemma where the choice was made for the slower option that has less potential for contract breakage.</p>\n<p>The problem it's trying to dance around are boneheaded implementations of <code>toArray()</code>.</p>\n<p>The javadoc of <a href=\"https://docs.oracle.com/javase/8/docs/api/java/util/Collection.html#toArray--\" rel=\"noreferrer\"><code>Collection.toArray()</code></a> spell out that the returned array <strong>must be newly allocated</strong> and has done so since its beginnings.</p>\n<p>However, if 'rely on coders reading and applying preconditions' is on the table, then why are we doing any of this? Why not just go back to stuff like <code>Collections.unmodifiableList(Arrays.asList(someArrayWithThePreconditionThatCallersLoseTheRef))</code>? Much faster, after all.</p>\n<p>If an implementation of collection returns an array that the collection continues to hold a ref to and may change later, the guarantees of <code>List.of</code> can be broken. Imagine that the list returned by <code>Arrays.asList</code> had this implementation of <code>toArray()</code>:</p>\n<pre><code>@Value\nclass ArraysAsListList&lt;T&gt; implements List&lt;T&gt; {\n  T[] array;\n\n  public int size() { return array.length; }\n  public Object[] toArray() { return array; }\n  ...\n}\n</code></pre>\n<p>Then this implementation is broken but a test is unlikely to find the bug, and it's one of those bugs that can be proven to never possibly cause a problem given a specific JDK implementation and codebase.</p>\n<h3>But why call <code>toArray</code>? Why not just iterate</h3>\n<p><code>toArray</code> is essentially <code>clone()</code> here. It's just a way to <em>iterate semi-atomically</em>. The list interface does not require <code>toArray</code> to be atomic, or in any way more robust in multicore scenarios than e.g. <code>for (T elem : list)</code> would be, so we're very deep down the rabbithole of finding the least evil, and 'you cannot check your way around <em>every</em> precondition' is holding strong.</p>\n<p>The cost of <code>list.toArray()</code> is likely not significantly higher than <code>for (T elem : list)</code> directly.. unless of course the input is very large, in which case that is a weird conclusion to draw. This gets us back to: &quot;It feels like the authors were thinking of smallish lists when writing the implementation, and thus, when weighing the downside of 'another array' vs 'slightly higher chance it does what you want in multicore scenarios', they made a decision to incur the cost of another array&quot;.</p>\n<h2>Compromise</h2>\n<p>If you must compromise, you can. The snippet at the top of this answer makes a different tradeoff; avoids an array allocation 'in trade' for shifting the rule of '<code>toArray()</code> must always allocate a new array, and the collection must not maintain a ref to it' to the contract.</p>\n<p>However, the extra array allocated by <code>List.of</code> is 'fast garbage'. a single thread makes, loops, and then loses all refs to this array without ever invoking a blocking operation. The actual cost of that array allocation is thus in a good position to be far less costly than it might initially seem.</p>\n<p>Of course, guarantees about preconditions and output tends to clash with guarantees about performance, as it does here. Fast garbage array allocs are <em>usually</em> cheaper than you think but that's not a guarantee.</p>\n",
+    "score" : 7,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 401843,
+      "reputation" : 107206,
+      "user_id" : 768644,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+      "display_name" : "rzwitserloot",
+      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+    },
+    "creation_date" : 1756051359,
+    "last_activity_date" : 1756051359,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79752060,
+    "question_id" : 79744836,
+    "body" : "<p>The most probable reason of copying the array `coll.toArray()` is copied one more time is to avoid sharing the underlying data. For example, consider a custom collection like this:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class MyCollection&lt;E&gt; extends AbstractCollection&lt;E&gt; {\n  \n  private final E[] array;\n\n  public MyCollection(E[] array) {\n     this.array = array;\n  }\n\n  // ...\n\n  @Override\n  public Object[] toArray() {\n    return array;\n  }\n\n}\n</code></pre>\n<p>If you call <code>List.of(new MyCollection&lt;&gt;(array))</code>, the resulting List would end up sharing the same backing array. The extra copy ensures that the new List has its own internal storage, independent of the original collection.</p>\n<p>In practice, this isn’t dangerous, since the immutable wrapper (<code>ListN</code>) prevents any modification of the internal array, either directly or through iterators. Still, the copy is a defensive measure to guarantee isolation from potentially unsafe or unusual collection implementations.</p>\n<p>Another effect of this extra copy is that it ensures the resulting list is truly immutable. If the source collection exposes its internal array and someone modifies that array, those changes would otherwise be visible through the ListN instance. By copying the array again, the JDK guarantees that the List is completely insulated from external modifications, making it fully immutable.</p>\n<p>In principle, it might be possible to skip this extra copy when dealing with well-behaved internal JDK classes such as ArrayList or LinkedList, where the implementation details are known. However, the JDK takes the safer, uniform approach of always copying to avoid subtle bugs and to keep the contract consistent across all collection types.</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 9783242,
+      "reputation" : 758,
+      "user_id" : 7250390,
+      "user_type" : "registered",
+      "profile_image" : "https://graph.facebook.com/1050047641788982/picture?type=large",
+      "display_name" : "Dmitry Ovchinnikov",
+      "link" : "https://stackoverflow.com/users/7250390/dmitry-ovchinnikov"
+    },
+    "creation_date" : 1756680988,
+    "last_activity_date" : 1756681433,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140691236,
+    "post_id" : 79744836,
+    "body" : "You claim there&#39;s a performance cost.  Are you certain the JVM doesn&#39;t actually optimize it away where it&#39;s safe?  Have you measured that it actually takes more time?",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 465573,
+      "reputation" : 200423,
+      "user_id" : 869736,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/ae7bb06b9a23a4dd7eea69e853d47d12?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Louis Wasserman",
+      "link" : "https://stackoverflow.com/users/869736/louis-wasserman"
+    },
+    "creation_date" : 1756142718,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140688424,
+    "post_id" : 79744836,
+    "body" : "@knittl I&#39;m talking about a new method and you can see that the internal ListN implementation already has a parameter to specify whether nulls are allowed or not. Obviously, the existing methods should keep their behavior.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 9783242,
+      "reputation" : 758,
+      "user_id" : 7250390,
+      "user_type" : "registered",
+      "profile_image" : "https://graph.facebook.com/1050047641788982/picture?type=large",
+      "display_name" : "Dmitry Ovchinnikov",
+      "link" : "https://stackoverflow.com/users/7250390/dmitry-ovchinnikov"
+    },
+    "creation_date" : 1756039335,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140688357,
+    "post_id" : 79744836,
+    "body" : "<code>Personally, I’d like to have another method, such as java.util.List#directCopyOf, that omits the null check.</code> – that would break the contract of <code>List.of</code>, because the immutable list is defined/specified to never hold nulls. <code>List.of</code> never allows nulls. If you need a list that holds null, copy to an <code>new ArrayList&lt;T&gt;(collection)</code> or wrap in an <code>Collections.immutableList(list)</code>",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 39208,
+      "reputation" : 269427,
+      "user_id" : 112968,
+      "user_type" : "registered",
+      "accept_rate" : 68,
+      "profile_image" : "https://i.sstatic.net/zHTaT.png?s=256",
+      "display_name" : "knittl",
+      "link" : "https://stackoverflow.com/users/112968/knittl"
+    },
+    "creation_date" : 1756036035,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79744850" : [ {
+      "comment_id" : 140691350,
+      "post_id" : 79744850,
+      "body" : "@DmitryOvchinnikov why do you insist on claiming that <code>coll.toArray()</code> returns a new array? That does not have to be the case. <code>class TrickedYou&lt;T&gt; implements List&lt;T&gt; { private final T[] arr; public TrickedYou(T[] arr) { this.arr = arr; } @Override public T[] toArray() { return arr; } … }</code>, now call <code>String[] a = { &quot;one&quot;, &quot;two&quot; }; List.copyOf(new TrickedYou&lt;&gt;(a));</code> – <code>a</code> is shared, as is the array returned by <code>toArray()</code> (because it&#39;s the same array reference!). Boom! TOCTOU bug/race-condition",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 39208,
+        "reputation" : 269427,
+        "user_id" : 112968,
+        "user_type" : "registered",
+        "accept_rate" : 68,
+        "profile_image" : "https://i.sstatic.net/zHTaT.png?s=256",
+        "display_name" : "knittl",
+        "link" : "https://stackoverflow.com/users/112968/knittl"
+      },
+      "creation_date" : 1756145959,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140691329,
+      "post_id" : 79744850,
+      "body" : "it&#39;s not about sharing an user provided array. First, the JDK developers get a fresh array by calling <code>coll.toArray()</code>, this is a completely new array, nobody shares it. Then, this array is being passed to <code>java.util.ImmutableCollections#listFromArray</code> method where a new array is created again to copy this fresh array. Instead of this, it&#39;s possible to reuse this array and check every element without creating a new instance of array.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 9783242,
+        "reputation" : 758,
+        "user_id" : 7250390,
+        "user_type" : "registered",
+        "profile_image" : "https://graph.facebook.com/1050047641788982/picture?type=large",
+        "display_name" : "Dmitry Ovchinnikov",
+        "link" : "https://stackoverflow.com/users/7250390/dmitry-ovchinnikov"
+      },
+      "creation_date" : 1756145246,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140688852,
+      "post_id" : 79744850,
+      "body" : "@DmitryOvchinnikov &#187;We can check nulls in a loop for the fresh array after coll.toArray() invocation&#171; only if the collection adheres to the contract of <code>toArray()</code> and returns a new, independent array. That&#39;s the contract, but nothing prevents an implementer from violating this contract and returning a shared array. See rzwitzerloot&#39;s answer for an example implementation that violates this contract. That&#39;s why a <i>defensive copy</i> of the array is made inside <code>List.of</code>.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 39208,
+        "reputation" : 269427,
+        "user_id" : 112968,
+        "user_type" : "registered",
+        "accept_rate" : 68,
+        "profile_image" : "https://i.sstatic.net/zHTaT.png?s=256",
+        "display_name" : "knittl",
+        "link" : "https://stackoverflow.com/users/112968/knittl"
+      },
+      "creation_date" : 1756055470,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140688848,
+      "post_id" : 79744850,
+      "body" : "@DmitryOvchinnikov &#187;but my question was: why are OpenJDK developers creating another array after creating a fresh array from the passed collection&quot; – that&#39;s a question you have to ask the OpenJDK developers and authors. I gave several reasons in my answer why they might have done it and rzwitzerloot provided even more details and attempts at explanation.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 39208,
+        "reputation" : 269427,
+        "user_id" : 112968,
+        "user_type" : "registered",
+        "accept_rate" : 68,
+        "profile_image" : "https://i.sstatic.net/zHTaT.png?s=256",
+        "display_name" : "knittl",
+        "link" : "https://stackoverflow.com/users/112968/knittl"
+      },
+      "creation_date" : 1756055392,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140688840,
+      "post_id" : 79744850,
+      "body" : "I mentioned a completely new method, not an existing one. Nobody forbids to add a group of methods to allow nulls which allows us to avoid null checks where it is not necessary (no hidden costs principle). Obviously I can create a new wrapper of such list, but my question was: why are OpenJDK developers creating another array after creating a fresh array from the passed collection? It doesn&#39;t make sense. We can check nulls in a loop for the fresh array after coll.toArray() invocation. At this moment the concurrency issues don&#39;t exist since the array was already created.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 9783242,
+        "reputation" : 758,
+        "user_id" : 7250390,
+        "user_type" : "registered",
+        "profile_image" : "https://graph.facebook.com/1050047641788982/picture?type=large",
+        "display_name" : "Dmitry Ovchinnikov",
+        "link" : "https://stackoverflow.com/users/7250390/dmitry-ovchinnikov"
+      },
+      "creation_date" : 1756055280,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140688732,
+      "post_id" : 79744850,
+      "body" : "@DmitryOvchinnikov yes, you can have immutable lists with null elements (I think Guava collections allow that). I&#39;m not saying that you can&#39;t have it, I&#39;m saying that the contract of <code>List.of</code>/<code>List.copyOf</code> forbids it, nothing prevents you or anybody else from creating an immutable collection that permits null values.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 39208,
+        "reputation" : 269427,
+        "user_id" : 112968,
+        "user_type" : "registered",
+        "accept_rate" : 68,
+        "profile_image" : "https://i.sstatic.net/zHTaT.png?s=256",
+        "display_name" : "knittl",
+        "link" : "https://stackoverflow.com/users/112968/knittl"
+      },
+      "creation_date" : 1756050938,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140688448,
+      "post_id" : 79744850,
+      "body" : "<code>Arrays.asList()</code> is a mutable list wrapper over an array. I&#39;m talking about immutability: the immutability has nothing to do with null checks. I can have an immutable list with null elements. The immutable factory that produces immutable lists with a possibility of null elements doesn&#39;t contradict the immutability. <code>Collections#immutableList</code> is another wrapper of an underlying list. ListN is also a wrapper that can permit null elements if I pass the second parameter as true. The question was about a redundancy of the second copy of the array <code>coll.toArray()</code> before passing it to the ListN.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 9783242,
+        "reputation" : 758,
+        "user_id" : 7250390,
+        "user_type" : "registered",
+        "profile_image" : "https://graph.facebook.com/1050047641788982/picture?type=large",
+        "display_name" : "Dmitry Ovchinnikov",
+        "link" : "https://stackoverflow.com/users/7250390/dmitry-ovchinnikov"
+      },
+      "creation_date" : 1756040299,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140688417,
+      "post_id" : 79744850,
+      "body" : "I&#39;m talking about copying twice, after creating a NEW array: <code>coll.toArray()</code>. The list has nothing to do with the result after creation a fresh array from its elements.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 9783242,
+        "reputation" : 758,
+        "user_id" : 7250390,
+        "user_type" : "registered",
+        "profile_image" : "https://graph.facebook.com/1050047641788982/picture?type=large",
+        "display_name" : "Dmitry Ovchinnikov",
+        "link" : "https://stackoverflow.com/users/7250390/dmitry-ovchinnikov"
+      },
+      "creation_date" : 1756039086,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79745002" : [ {
+      "comment_id" : 140691331,
+      "post_id" : 79745002,
+      "body" : "@DmitryOvchinnikov have <i>you</i> read both answers to your question, especially rzwitserloot&#39;s answer? <code>coll.toArray()</code> does not necessarily create a new array. Its contract states that it must return a new, independent array, but nothing prevents somebody implementing the interface from returning a shared array instance that can be modified by another thread (I called it a &quot;malicious&quot; implementation and rzwitzerloot called it an &quot;idiotic&quot; implementation). This makes it necessary to create a copy of the returned array, otherwise the contract of <code>List.of</code> could be broken (&quot;correctness&quot;).",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 39208,
+        "reputation" : 269427,
+        "user_id" : 112968,
+        "user_type" : "registered",
+        "accept_rate" : 68,
+        "profile_image" : "https://i.sstatic.net/zHTaT.png?s=256",
+        "display_name" : "knittl",
+        "link" : "https://stackoverflow.com/users/112968/knittl"
+      },
+      "creation_date" : 1756145272,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140691316,
+      "post_id" : 79745002,
+      "body" : "@knittl, did you read my answers to your comments? I&#39;m talking about a new array creation after calling <code>coll.toArray()</code>, the new array is already created at this point, then the JDK developers create another one, named <code>tmp</code>. Please read the question one more time. I am not asking about an alternative or more performant or memory efficient solution. I&#39;m asking about a concrete decision of the JDK developers of creating another array just after obtaining a new array from the source collection. Maybe there is some reason of this.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 9783242,
+        "reputation" : 758,
+        "user_id" : 7250390,
+        "user_type" : "registered",
+        "profile_image" : "https://graph.facebook.com/1050047641788982/picture?type=large",
+        "display_name" : "Dmitry Ovchinnikov",
+        "link" : "https://stackoverflow.com/users/7250390/dmitry-ovchinnikov"
+      },
+      "creation_date" : 1756144843,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140689498,
+      "post_id" : 79745002,
+      "body" : "@DmitryOvchinnikov ... and this answer addresses that. It <i>also</i> provides the solution if you want to avoid 1 array creation. It also addresses why you&#39;re wrong, and that given sufficiently idiotic implementations of the underlying <code>Collection</code> implementation, the second copy is necessary. I get the feeling you didn&#39;t read the answer before kneejerking this response.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 401843,
+        "reputation" : 107206,
+        "user_id" : 768644,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+        "display_name" : "rzwitserloot",
+        "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+      },
+      "creation_date" : 1756092236,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140688863,
+      "post_id" : 79745002,
+      "body" : "To add to rzwitzerloot&#39;s excellent points: Using a plain loop over the input collection means you cannot pre-size the target array. If you were to access <code>.size()</code> before looping the iteration, you have a race-condition/toctou again: the collection might have been modified between querying its size and iterating its elements. If you don&#39;t pre-size, you need a dynamic data structure such as <code>ArrayList</code>, which neds to re-allocate its backing array when too many elements are added, increasing not only the runtime and memory costs but also the code complexity.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 39208,
+        "reputation" : 269427,
+        "user_id" : 112968,
+        "user_type" : "registered",
+        "accept_rate" : 68,
+        "profile_image" : "https://i.sstatic.net/zHTaT.png?s=256",
+        "display_name" : "knittl",
+        "link" : "https://stackoverflow.com/users/112968/knittl"
+      },
+      "creation_date" : 1756055906,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140688807,
+      "post_id" : 79745002,
+      "body" : "The question was not about a workaround, it was about a new array creation after coll.toArray when there are no issues in a multicore environment since a fresh array was already made from the source collection.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 9783242,
+        "reputation" : 758,
+        "user_id" : 7250390,
+        "user_type" : "registered",
+        "profile_image" : "https://graph.facebook.com/1050047641788982/picture?type=large",
+        "display_name" : "Dmitry Ovchinnikov",
+        "link" : "https://stackoverflow.com/users/7250390/dmitry-ovchinnikov"
+      },
+      "creation_date" : 1756054110,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

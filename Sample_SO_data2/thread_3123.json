@@ -1,0 +1,79 @@
+{
+  "question" : {
+    "question_id" : 79572613,
+    "title" : "How to properly reuse heavy calculations performed in the Parent class within the Child class?",
+    "body" : "<p>Suppose I have a Parent class in Java:</p>\n<pre><code>public class Parent {\n    protected int value;\n\n    public Parent() {\n        value = performHeavyCalculations();\n    }\n\n    private int performHeavyCalculations() {...}\n}\n</code></pre>\n<p>Also I have a Child class:</p>\n<pre><code>public class Child extends Parent {\n    private int newValue;\n    \n    public Child() {\n        super();\n        newValue = value + performAnotherHeavyCalculations();\n    }\n    \n    private int performAnotherHeavyCalculations() {...}\n}\n</code></pre>\n<p>Before creating a Child class I have a requirement to create Parent class. How can I properly design my program to not repeat heavy calculations in Parent class while constructing the Child class?</p>\n",
+    "tags" : [ "java", "oop", "inheritance", "design-patterns", "clean-architecture" ],
+    "owner" : {
+      "account_id" : 28953653,
+      "reputation" : 51,
+      "user_id" : 22177648,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/34cab65a5ee65cb918ccc7b4e013d6d0?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "i1ravenov",
+      "link" : "https://stackoverflow.com/users/22177648/i1ravenov"
+    },
+    "is_answered" : true,
+    "view_count" : 100,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1744620089,
+    "creation_date" : 1744616786,
+    "link" : "https://stackoverflow.com/questions/79572613/how-to-properly-reuse-heavy-calculations-performed-in-the-parent-class-within-th",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79572672,
+    "question_id" : 79572613,
+    "body" : "<p>Why would creating a parent class ever be a requirement in itself? This is a design decision, and not part of the problem to solve. I would avoid it, since parent-child relationships are very rigid and tend to cause tight coupling, making re-use harder.</p>\n<p>A more flexible approach is to model the heavy calculations as services which can be injected where needed. The rule of thumb is to favor composition over inheritance.</p>\n<pre><code>interface Calculator {     \n    int calculate();\n}\n\nclass HeavyCalculator implements Calculator {\n    @Override\n    public int calculate() { \n        // here is the code from performHeavyCalculations\n    }\n}\n\nclass AnotherHeavyCalculator implements Calculator {\n    @Override\n    public int calculate() { \n        // here is the code from performAnotherHeavyCalculations\n    }\n}\n\npublic class Application {\n\n    private final Calculator heavyCalculator;\n    private final Calculator anotherHeavyCalculator;\n    \n    // dependency injection via the constructor\n    public Application(Calculator heavyCalculator, Calculator anotherHeavyCalculator) {\n        // just initialize, don't do the work in the constructor\n        this.heavyCalculator = heavyCalculator;\n        this.anotherHeavyCalculator = anotherHeavyCalculator;\n    }\n\n    // Here the work is done. Keeping this concern separate from \n    // instance construction\n    public int doWork() {\n        return heavyCalculator.calculate() + anotherHeavyCalculator.calculate()\n    }\n}\n</code></pre>\n<p>So now you need to first create an instance, and then call <code>doWork</code>:</p>\n<pre><code>// here the dependencies are injected manually\n// Frameworks like Spring Boot can do this for you\nApplication app = new Application(new HeavyCalculator(), new AnotherHeavyCalculator());\nint value = app.doWork();\n</code></pre>\n<p>Only store the value in a field if you need it in that class later on. Otherwise it might be cleaner to just return the value to the calling code as shown. But this depends on your actual use case.</p>\n<p>The above design is more flexible, promotes re-use and makes the code easier to test than the proposed parent-child approach.</p>\n<p>It is easier to test because the three classes can be unit-tested independently, since they don't know about each other's internals. For example in the code you showed, the protected value field in the Parent is directly referenced by the Child, making the code tightly coupled and harder to test separately. My proposed design uses an abstraction (the Calculator interface) to separate the concerns of the classes more clearly. Now it's easy to write unit tests for all three, and you can mock the calculators when testing the Application class:</p>\n<pre><code>public ApplicationTest {\n\n    @Mock\n    private Calculator calculator1;\n    @Mock\n    private Calculator calculator2;\n\n    private Application testSubject;\n\n    @BeforeEach\n    public void setUp() {\n        testSubject = new Application(calculator1, calculator2);\n    }\n\n    @Test\n    public void testHappyFlow() {\n        when(calculator1.calculate()).thenReturn(13);\n        when(calculator2.calculate()).thenReturn(29);\n\n        // CALL\n        int actual = testSubject.doWork();\n\n        assertEquals(42, actual);\n    }\n}\n\npublic HeavyCalculatorTest {\n  \n    private HeavyCalculator testSubject;\n\n    @BeforeEach\n    public void setUp() {\n        testSubject = new HeavyCalculator();\n    }\n\n    @Test\n    public void testHappyFlow() {\n\n        // CALL\n        int actual = testSubject.calculate();\n\n        // assuming the heavy calculator should always return 5\n        // probably it's more complicated than that in real life\n        assertEquals(5, actual);\n    }\n}\n</code></pre>\n<p>Now if you re-use any of these classes anywhere else, they are already unit tested and have a clear contract (the Calculator interface). Maybe it is not even necessary to look inside the source code of these classes at that point. This is a big advantage.</p>\n",
+    "score" : 2,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 60737,
+      "reputation" : 16299,
+      "user_id" : 181336,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/22Byl.png?s=256",
+      "display_name" : "Adriaan Koster",
+      "link" : "https://stackoverflow.com/users/181336/adriaan-koster"
+    },
+    "creation_date" : 1744618750,
+    "last_activity_date" : 1744620089,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140331901,
+    "post_id" : 79572613,
+    "body" : "@Geba yes, of course. they have some common features, in my case they both iterate other array and perform some calculations, and method from Child class uses data calculated at Parent class",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 28953653,
+      "reputation" : 51,
+      "user_id" : 22177648,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/34cab65a5ee65cb918ccc7b4e013d6d0?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "i1ravenov",
+      "link" : "https://stackoverflow.com/users/22177648/i1ravenov"
+    },
+    "creation_date" : 1744618303,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140331884,
+    "post_id" : 79572613,
+    "body" : "Are <code>performAnotherHeavyCalculations</code> and <code>performHeavyCalculations</code> different things?",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 10320634,
+      "reputation" : 3398,
+      "user_id" : 7613649,
+      "user_type" : "registered",
+      "accept_rate" : 25,
+      "profile_image" : "https://www.gravatar.com/avatar/c95137fce225c304ac42743da3816d6c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Geba",
+      "link" : "https://stackoverflow.com/users/7613649/geba"
+    },
+    "creation_date" : 1744618024,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

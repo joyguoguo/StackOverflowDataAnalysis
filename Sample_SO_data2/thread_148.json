@@ -1,0 +1,191 @@
+{
+  "question" : {
+    "question_id" : 79835635,
+    "title" : "Launching a jar by directly loading jar bytes in memory from a graal native image and launching the application no disk writes",
+    "body" : "<p>I'm building an application launcher using GraalVM native image. The launcher downloads an encrypted JAR, decrypts it in memory, and needs to launch it without ever touching the disk. Security requirement - the decrypted application code should never be written anywhere. Is it possible to load the full jar?</p>\n<p>What I've tried (all failed):</p>\n<ol>\n<li><p>Direct ClassLoader approach - Doesn't work, native-image has no bytecode interpreter</p>\n</li>\n<li><p>Embedding JVM via JNI -Too complex and wasted a full day, and it never worked and i did not see or understand what was wrong and where and won't try this again due to jni unless some guides me. Technically possible, but it is a nightmare to work with it.</p>\n</li>\n<li><p>Writing temp JAR and spawning <strong><code>java -jar</code></strong> - Works perfectly BUT defeats the entire purpose (JAR is on disk, even if briefly), this is currently for testing my app.</p>\n</li>\n</ol>\n<p>I'm bundling a JRE means the launcher will download if not found on the user's machine, same as the jar from my server, so I can spawn Java processes. I just need a way to tell that JVM process, &quot;here's a JAR in memory, load it&quot; without writing files.</p>\n<p>How do enterprise apps handle this? Game launchers, IDE updaters, etc - they must have solved this problem, right?</p>\n<p>I love Java, but here I just don't like it. I can not compile it to a full native image as some libs don't support it, which I have in my jar.  Also, all methods of loading by defineClass work in ide but without jvm can not work in a native image.</p>\n<p>Any suggestions would be greatly appreciated! I really need help from you all legends.</p>\n",
+    "tags" : [ "java", "javafx", "jar", "classloader", "graalvm" ],
+    "owner" : {
+      "account_id" : 25922749,
+      "reputation" : 1,
+      "user_id" : 19645050,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/086947287ee7eae9b3fb85a6a78fad2b?s=256&d=identicon&r=PG",
+      "display_name" : "Robert Hood",
+      "link" : "https://stackoverflow.com/users/19645050/robert-hood"
+    },
+    "is_answered" : false,
+    "view_count" : 115,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1765252265,
+    "creation_date" : 1764663733,
+    "link" : "https://stackoverflow.com/questions/79835635/launching-a-jar-by-directly-loading-jar-bytes-in-memory-from-a-graal-native-imag",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79840785,
+    "question_id" : 79835635,
+    "body" : "<p>Please be aware that even if you find a way to keep the JAR file in memory from the perspective of Java, that doesn't mean the OS isn't saving the memory to disk for whatever reason (paging, swapping, etc.). Also, be aware that, no matter what, you end up with the decrypted classes on the end user's computer. A determined user can look at the application's memory to get them. Your approach also requires the decryption key to be used locally, which means a determined user could get to it as well.</p>\n<hr />\n<blockquote>\n<p>How do enterprise apps handle this? Game launchers, IDE updaters, etc - they must have solved this problem, right?</p>\n</blockquote>\n<p>They're either are not native images, and thus can load arbitrary classes at run-time, or they fork a &quot;normal&quot; Java application. Also, a lot of enterprise apps are hosted on a server and out of reach of the end user. Even a desktop application may just be a thin client around a web API.</p>\n<p>And such applications may not believe going through the effort of decrypting a JAR locally and keeping it in memory is worth the development and maintenance cost. For instance, the Minecraft launcher just downloads the necessary JARs and saves them locally, then forks a new process to run the game. Those JARs aren't encrypted, though they are <em>obfuscated</em> (or they were; I believe that's at least partly changing soon, if it hasn't already).</p>\n<hr />\n<p>As you've noted, you cannot load arbitrary classes at run-time in a GraalVM native image. There's no bytecode interpreter to read the bytecode. A native image is built with the assumption the end application is a closed world. All classes have to be known at build-time.</p>\n<p>Starting a JVM via JNI is likely not viable. The native image is not a proper Java Runtime Environment (JRE). The libraries, both native and Java, necessary to run a JVM are not included with the native image. That said, you <em>might</em> be able to point at a JRE installed locally. I've never tried that though, so I don't know if it's possible. Also, creating multiple JVMs in a single process is not supported. I don't know if a JVM can interfere with the execution of the native image (the latter isn't a JVM, but it does still have things like a garbage collector).</p>\n<p>Forking a &quot;normal&quot; Java application appears to be the only solution, unless you're willing to forgo the native image in the first place. You just need a way to send the JAR file to the fork without saving the JAR file to disk. One way to do that is to send the JAR file over the fork's standard input stream. Another way is to send it over a socket. But you'll need to create a lightweight Java application and ship it with your native image to facilitate this. At run-time you'd download the JAR, decrypt it, fork the normal Java application, send the JAR file to the fork, have the fork initialize the necessary class loaders, and then finally have the fork execute the JAR's entry point via reflection.</p>\n<p>Of course, that requires a local JRE to fork the normal Java application. Which means you either need to include a JRE with your application or require the end user install an appropriate version of Java. You may want to reconsider whether building and shipping a native image in this scenario is worth it. If you're just trying to minimize startup time, perhaps <a href=\"https://openjdk.org/jeps/483\" rel=\"nofollow noreferrer\">JEP 483: Ahead-of-Time Class Loading &amp; Linking</a> can be helpful (also see JEPs 514 and 515, linked to by 483). Or maybe what you want to do is deploy a normal Java application packaged with something like <code>jlink</code> and/or <code>jpackage</code>, then include the native image in that package (is the native image the primary or a secondary application?).</p>\n<p>As for how you keep the JAR file in memory in the forked application, you have to be careful. Some options may seem to keep the JAR file in memory but actually save it to disk as part of the implementation. Two options I <em>believe</em> should work include:</p>\n<ol>\n<li><p>Reading the JAR file with a <code>java.util.jar.JarInputStream</code> and extracting the information into a <code>Map&lt;String, byte[]&gt;</code>. The keys are the class and other resource names and the values are the data. Note that decompresses the data which means more memory is being used (and loaded classes essentially become fully duplicated). There might be ways to mitigate that (e.g., find a way to read the <em>compressed</em> bytes and only decompress on demand, remove <em>classes</em> from the map after they're loaded, etc.).</p>\n</li>\n<li><p>Using an in-memory <code>java.nio.file</code> file system implementation like <a href=\"https://github.com/google/jimfs\" rel=\"nofollow noreferrer\">jimfs</a>. You'd store the JAR file in this in-memory file system. Then you can use the <a href=\"https://docs.oracle.com/en/java/javase/25/docs/api/jdk.zipfs/module-summary.html\" rel=\"nofollow noreferrer\">ZIP File System</a>, which is an NIO file system implementation for reading ZIP/JAR files. The latter allows access to the JAR file while keeping the JAR file stored in the in-memory file system (the ZIP File System shouldn't cache anything to disk when you only perform read operations; it may cache for write operations, but that shouldn't be relevant here).</p>\n</li>\n</ol>\n<p>Both those options would be part of the custom <code>ClassLoader</code> implementation. And note this all gets a little more complicated if you want to make this <em>Java Platform Module System</em> (JPMS) compatible. Not only do you need to make the <code>ClassLoader</code> implementation module-aware, but you'll also need custom implementations of <code>ModuleFinder</code>, <code>ModuleReference</code>, and <code>ModuleReader</code>. I'd only make the code module-aware if absolutely and truly needed.</p>\n<p>Both options would also probably benefit from a custom <code>URLStreamHandler</code> for accessing resources. This can be isolated to the class loader implementation since you can tell a <code>URL</code> which <code>URLStreamHandler</code> to use when creating it.</p>\n<hr />\n<p>An alternative approach was mentioned by @jewelsea in the question comments (still requires a proper JVM). Instead of sending the entire JAR file and decrypting it locally, host the classes on your server and send them individually on-demand. This should be possible with <code>URLClassLoader</code> I believe. If not, you can create your own class loader for this. And now you don't have to keep the classes in an encrypted state. Just make sure to send them over HTTPS so they can't be read in transit.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 8532578,
+      "reputation" : 49904,
+      "user_id" : 6395627,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Slaw",
+      "link" : "https://stackoverflow.com/users/6395627/slaw"
+    },
+    "creation_date" : 1765185841,
+    "last_activity_date" : 1765252265,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140892185,
+    "post_id" : 79835635,
+    "body" : "@jewelsea Hadn&#39;t considered that. But I don&#39;t believe it will work with a GraalVM native image. The native image doesn&#39;t come with a proper JVM. There&#39;s no bytecode interpreter. So, it can&#39;t load classes at run-time. Everything has to be known at build-time.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 8532578,
+      "reputation" : 49904,
+      "user_id" : 6395627,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Slaw",
+      "link" : "https://stackoverflow.com/users/6395627/slaw"
+    },
+    "creation_date" : 1765182754,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140891951,
+    "post_id" : 79835635,
+    "body" : "@slaw Perhaps the classes could just be hosted at the url without placing them in a jar, then perhaps the UrlClassLoader using just https and not also the jar protocol would work for the asker.  Again, I haven&#39;t tried this with Graal, so would not know if it would work with that.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1180113,
+      "reputation" : 160487,
+      "user_id" : 1155209,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/5192e7cbcf2f72a847d6fb0d1552f049?s=256&d=identicon&r=PG",
+      "display_name" : "jewelsea",
+      "link" : "https://stackoverflow.com/users/1155209/jewelsea"
+    },
+    "creation_date" : 1765164019,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140888250,
+    "post_id" : 79835635,
+    "body" : "@jewelsea I don&#39;t think <code>URLClassLoader</code> fits the OP&#39;s requirements. It&#39;s an implementation detail, but that class relies on <a href=\"https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/util/jar/JarFile.html\" rel=\"nofollow noreferrer\"><code>JarFile</code></a> which requires the JAR file to be on disk. It will download the JAR file from the HTTP server and save it to disk before accessing it.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 8532578,
+      "reputation" : 49904,
+      "user_id" : 6395627,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Slaw",
+      "link" : "https://stackoverflow.com/users/6395627/slaw"
+    },
+    "creation_date" : 1764892783,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140886631,
+    "post_id" : 79835635,
+    "body" : "<code>String jarUrlString = &quot;jar:https:&#47;&#47;example.com&#47;path&#47;to&#47;your.jar!&#47;&quot;;     URL jarUrl = new URL(jarUrlString); URLClassLoader classLoader = new URLClassLoader(new URL[]{jarUrl}); Class&lt;?&gt; loadedClass = classLoader.loadClass(&quot;com.example.YourClass&quot;);  Object instance = loadedClass.getDeclaredConstructor().newInstance(); loadedClass.getMethod(&quot;doSomething&quot;).invoke(instance);</code>.  The example code was copied in pieces from a Google AI search, I didn&#39;t try it myself.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1180113,
+      "reputation" : 160487,
+      "user_id" : 1155209,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/5192e7cbcf2f72a847d6fb0d1552f049?s=256&d=identicon&r=PG",
+      "display_name" : "jewelsea",
+      "link" : "https://stackoverflow.com/users/1155209/jewelsea"
+    },
+    "creation_date" : 1764828355,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140886624,
+    "post_id" : 79835635,
+    "body" : "JavaSE has an inbuilt mechanism for loading classes from remote servers over https, using the <a href=\"https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/net/URLClassLoader.html\" rel=\"nofollow noreferrer\"><code>URLClassLoader</code></a>.  Whether it would work with Graal, I don&#39;t know (I doubt it).",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1180113,
+      "reputation" : 160487,
+      "user_id" : 1155209,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/5192e7cbcf2f72a847d6fb0d1552f049?s=256&d=identicon&r=PG",
+      "display_name" : "jewelsea",
+      "link" : "https://stackoverflow.com/users/1155209/jewelsea"
+    },
+    "creation_date" : 1764828083,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140883979,
+    "post_id" : 79835635,
+    "body" : "This honestly sounds like the worst use-case imaginable for a native image... Native images explicitly operate under a closed-world principle and what you&#39;re doing is as open-world as it gets.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 111563,
+      "reputation" : 16134,
+      "user_id" : 294657,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/c858688cffaffffb2dfabae6bc89ba7e?s=256&d=identicon&r=PG",
+      "display_name" : "kaqqao",
+      "link" : "https://stackoverflow.com/users/294657/kaqqao"
+    },
+    "creation_date" : 1764703062,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140883239,
+    "post_id" : 79835635,
+    "body" : "Not possible afaik. You could write it to mounted  ram  if your OS supports it",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 22124137,
+      "reputation" : 4244,
+      "user_id" : 16376827,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/1ImPw.png?s=256",
+      "display_name" : "g00se",
+      "link" : "https://stackoverflow.com/users/16376827/g00se"
+    },
+    "creation_date" : 1764678973,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140883177,
+    "post_id" : 79835635,
+    "body" : "This question seems to broad. It needs a <a href=\"https://stackoverflow.com/help/minimal-reproducible-example\">minimal reproducible example</a> and more focus on a single specific issue.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 372682,
+      "reputation" : 26512,
+      "user_id" : 721855,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/vZiox.png?s=256",
+      "display_name" : "aled",
+      "link" : "https://stackoverflow.com/users/721855/aled"
+    },
+    "creation_date" : 1764677494,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140882879,
+    "post_id" : 79835635,
+    "body" : "Thats a dumb security requirement, I&#39;m afraid - because any modern OS running on something larger than a microcontroller will write RAM contents to disk, either when <a href=\"https://en.wikipedia.org/w/index.php?title=Hibernation_(computing)&amp;oldid=1320481078\" rel=\"nofollow noreferrer\">hibernating</a> or generally <a href=\"https://en.wikipedia.org/wiki/Memory_paging\" rel=\"nofollow noreferrer\">via swapping</a>",
+    "score" : 3,
+    "owner" : {
+      "account_id" : 30223964,
+      "reputation" : 262,
+      "user_id" : 23162960,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/2451acfac254a6fc75757ecf89d75f9a?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Jannik S.",
+      "link" : "https://stackoverflow.com/users/23162960/jannik-s"
+    },
+    "creation_date" : 1764666366,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

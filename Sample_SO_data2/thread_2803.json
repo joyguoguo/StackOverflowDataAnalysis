@@ -1,0 +1,83 @@
+{
+  "question" : {
+    "question_id" : 79596740,
+    "title" : "Quarkus WebSockets Next Intercepting HTTP GET Requests when using the @WebSocket annotation",
+    "body" : "<p>After moving from <code>quarkus-websocket</code> to <code>quarkus-websockets-next</code>, any HTTP GET to a <code>@WebSocket</code> path now errors with</p>\n<pre><code>&quot;Connection&quot; header must be &quot;Upgrade&quot;\n</code></pre>\n<p>This is because the new extension intercepts every matching request and treats it as a WebSocket handshake.</p>\n<p>In the old <code>quarkus-websocket</code> model, <code>@ServerEndpoint</code> only handled true WebSocket upgrades; plain GETs to the same URL would fall through to JAX-RS resources.</p>\n<p>With <code>quarkus-websockets-next</code>, <code>@WebSocket(path=&quot;/…&quot;)</code> installs a single Vert.x handler for all HTTP methods on that path. A standard GET—lacking the required Connection: Upgrade header—gets caught and rejected before any REST logic can run.</p>\n<p>Below is a minimal Quarkus project showing:</p>\n<ol>\n<li><p><strong>Legacy</strong> (<code>quarkus-websockets</code>):</p>\n<ul>\n<li>A REST <code>@GET /chat</code> endpoint</li>\n<li>A JSR-356 WebSocket <code>@ServerEndpoint(&quot;/chat&quot;)</code><br />\n→ <strong>GET</strong> works (<code>200 OK</code>), <strong>WS</strong> works</li>\n</ul>\n</li>\n<li><p><strong>Next</strong> (<code>quarkus-websockets-next</code>):</p>\n<ul>\n<li>Same REST resource</li>\n<li>New <code>@WebSocket(path = &quot;/chat&quot;)</code><br />\n→ <strong>Any</strong> <code>GET /chat</code> now fails with</li>\n</ul>\n</li>\n</ol>\n<pre><code>&quot;Connection&quot; header must be &quot;Upgrade&quot;\n</code></pre>\n<p>Sample reproduction using:</p>\n<pre><code>&lt;dependency&gt;\n  &lt;groupId&gt;io.quarkus&lt;/groupId&gt;\n  &lt;artifactId&gt;quarkus-websockets&lt;/artifactId&gt;\n&lt;/dependency&gt;\n</code></pre>\n<p><code>ChatResource.java</code>:</p>\n<pre><code>@Path(&quot;/chat&quot;)\n@ApplicationScoped\npublic class ChatResource {\n    @GET\n    public String hello() {\n        return &quot;Hello from REST!&quot;;\n    }\n}\n</code></pre>\n<p><code>ChatEndpoint.java</code>:</p>\n<pre><code>@ServerEndpoint(&quot;/chat&quot;)\n@ApplicationScoped\npublic class ChatEndpoint {\n    @OnOpen\n    public void onOpen(Session session) { /*...*/ }\n\n    @OnMessage\n    public void onMessage(Session session, String msg) {\n        session.getAsyncRemote().sendText(&quot;Echo:&quot; + msg);\n    }\n}\n</code></pre>\n<p>Behavior</p>\n<p>GET http://localhost:8080/chat → 200 OK with “Hello from REST!”</p>\n<p>ws://localhost:8080/chat → WebSocket handshake succeeds</p>\n<p>With the new <code>quarkus-websockets-next</code>:</p>\n<pre><code>&lt;dependency&gt;\n  &lt;groupId&gt;io.quarkus&lt;/groupId&gt;\n  &lt;artifactId&gt;quarkus-websockets-next&lt;/artifactId&gt;\n&lt;/dependency&gt;\n</code></pre>\n<p><code>ChatResource.java (unchanged)</code>:</p>\n<pre><code>@Path(&quot;/chat&quot;)\n@ApplicationScoped\npublic class ChatResource {\n    @GET\n    public String hello() {\n        return &quot;Hello from REST!&quot;;\n    }\n}\n</code></pre>\n<p><code>ChatSocket.java</code>:</p>\n<pre><code>@WebSocket(path = &quot;/chat&quot;)\n@ApplicationScoped\npublic class ChatSocket {\n    @OnOpen\n    public void onOpen(WebSocketConnection conn) { /*...*/ }\n\n    @OnMessage\n    public void onMessage(WebSocketConnection conn, String msg) {\n        conn.sendText(&quot;Echo:&quot; + msg).subscribe().with(r -&gt; {}, t -&gt; {});\n    }\n}\n</code></pre>\n<p>Behavior</p>\n<p>GET http://localhost:8080/chat\n→ fails with</p>\n<pre><code>&quot;Connection&quot; header must be &quot;Upgrade&quot;\n</code></pre>\n<p>ws://localhost:8080/chat → WebSocket handshake succeeds</p>\n<p>Is this expected from the <code>quarkus-websockets-next</code> or is this a bug? Because I am implementing some endpoints for a standard specification where I can have the endpoints something like this:</p>\n<pre><code>/queries/{queryName}/events\n</code></pre>\n<p>As per the specification, it should do the following:</p>\n<pre><code>Returns all events that match the query or creates a new Websocket subscription.\n</code></pre>\n<p>This was working with the <code>quarkus-websockets</code> and now failing the GET request with <code>quarkus-websockets-next</code> so bit confusing if this is an issue that needs a fix.</p>\n",
+    "tags" : [ "java", "websocket", "quarkus", "java-websocket" ],
+    "owner" : {
+      "account_id" : 10278040,
+      "reputation" : 3642,
+      "user_id" : 7584240,
+      "user_type" : "registered",
+      "accept_rate" : 17,
+      "profile_image" : "https://i.sstatic.net/9BMGL.jpg?s=256",
+      "display_name" : "BATMAN_2008",
+      "link" : "https://stackoverflow.com/users/7584240/batman-2008"
+    },
+    "is_answered" : true,
+    "view_count" : 153,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1745908137,
+    "creation_date" : 1745852167,
+    "link" : "https://stackoverflow.com/questions/79596740/quarkus-websockets-next-intercepting-http-get-requests-when-using-the-websocket",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79597726,
+    "question_id" : 79596740,
+    "body" : "<p>It's a bug in WebSockets Next. We tried to fix this problem in <a href=\"https://github.com/quarkusio/quarkus/pull/43439\" rel=\"nofollow noreferrer\">https://github.com/quarkusio/quarkus/pull/43439</a> (Quarkus 3.15.2+) but the fix is not quite correct, in the sense that the next route is used but WS Next still attempts to upgrade the request at some point; i.e. it's a timing issue.</p>\n<p>The problem should be fixed in <a href=\"https://github.com/quarkusio/quarkus/pull/47583\" rel=\"nofollow noreferrer\">https://github.com/quarkusio/quarkus/pull/47583</a>.</p>\n<p>In any case, I also checked the <a href=\"https://datatracker.ietf.org/doc/html/rfc6455\" rel=\"nofollow noreferrer\">RFC 6455</a> and it states that the opening handshake must be HTTP GET with specific headers (e.g. <code>Upgrade: websocket</code> and <code>Connection: Upgrade</code>) and the server should return an HTTP response with an appropriate error code (such as 400) if the handshake violates the requiremenets. So I'm not really sure if the required behavior (ignoring non-websocket requests) is guaranteed for other implementations...</p>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 3138056,
+      "reputation" : 1631,
+      "user_id" : 2654154,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/nSmwmAnP.jpg?s=256",
+      "display_name" : "Martin Kouba",
+      "link" : "https://stackoverflow.com/users/2654154/martin-kouba"
+    },
+    "creation_date" : 1745908137,
+    "last_activity_date" : 1745908137,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79597726" : [ {
+      "comment_id" : 140379625,
+      "post_id" : 79597726,
+      "body" : "I wanted to use the <code>Sec-WebSocket-Protocol</code>, so I migrated to <code>quarkus-websocket-next</code>, but due to an open issue, I am reverting to <code>quarkus-websockets</code>. But for some reason, the <code>Sec-WebSocket-Protocol</code> does not work in <code>quarkus-websockets</code>. I have created an issue. If you get a chance, can you please have a look and provide your suggestion? <a href=\"https://stackoverflow.com/q/79598141/7584240\">stackoverflow.com/q/79598141/7584240</a>",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10278040,
+        "reputation" : 3642,
+        "user_id" : 7584240,
+        "user_type" : "registered",
+        "accept_rate" : 17,
+        "profile_image" : "https://i.sstatic.net/9BMGL.jpg?s=256",
+        "display_name" : "BATMAN_2008",
+        "link" : "https://stackoverflow.com/users/7584240/batman-2008"
+      },
+      "creation_date" : 1745922657,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140379292,
+      "post_id" : 79597726,
+      "body" : "Thanks a lot for confirming this as a bug. I was trying different things to confirm if I am missing something during the implementation of <code>quarkus-websockets-next</code>. I will revert and continue using the <code>quarkus-websockets</code> until this is merged in the future Quarkus version.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10278040,
+        "reputation" : 3642,
+        "user_id" : 7584240,
+        "user_type" : "registered",
+        "accept_rate" : 17,
+        "profile_image" : "https://i.sstatic.net/9BMGL.jpg?s=256",
+        "display_name" : "BATMAN_2008",
+        "link" : "https://stackoverflow.com/users/7584240/batman-2008"
+      },
+      "creation_date" : 1745915737,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

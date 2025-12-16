@@ -1,0 +1,244 @@
+{
+  "question" : {
+    "question_id" : 79664014,
+    "title" : "How to determine if 2 instances of java.nio.file.Path are pointing to the same file?",
+    "body" : "<p>I have a simple problem -- I have multiple threads that are doing appends to a file, based upon a file name that the user can choose.</p>\n<p>At first, I tried to synchronize on instances of <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/nio/file/Path.html\" rel=\"nofollow noreferrer\">Path</a>, but after reading comments from Reddit <a href=\"https://old.reddit.com/r/java/comments/1k3uh5c/where_is_the_java_language_going_javaone/mo8ydi0/\" rel=\"nofollow noreferrer\">HERE</a> and <a href=\"https://old.reddit.com/r/java/comments/1k3uh5c/where_is_the_java_language_going_javaone/mo8gvpb/\" rel=\"nofollow noreferrer\">HERE</a>, it appears that this is the wrong approach. Namely -- 2 different instances of <code>String</code> will result in 2 different instances of <code>Path</code> that are not equals, according to <code>Path.equals()</code>, but DO point to the exact same file. I tested this myself, and it appears that they are right. For example, consider this example that I ran on my Windows 11 machine.</p>\n<pre><code>final Path a = Path.of(&quot;abc.java&quot;); //find abc.java in the current directory\nfinal Path b = Path.of(&quot;./abc.java&quot;); //go to current directory, then find abc.java\nSystem.out.println(a.equals(b)); //false, but they are the same file!\n</code></pre>\n<p><em><strong>(and to be clear, the reason I care about <code>Path.equals()</code> is because that will allow it to be unique in a <code>Map&lt;Path, V&gt;</code> or a <code>Set&lt;Path&gt;</code>, and then I can use those containers to get the same instance always. After all, the <code>synchronized(someObject)</code> statement handles thread synchronization based on whether or not <code>a == b</code> and NOT on <code>a.equals(b)</code>. Just wanted to clarify, since it wasn't clear my intentions before.</strong></em></p>\n<p>I need something to synchronize on. And it is clear that just synchronizing on an instance of <code>Path</code> that I put into my <code>Map&lt;Path, V&gt;</code> made via <code>Path.of(sanitizedStringFromUser)</code> isn't going to cut it. Sure, I could play &quot;whack-a-mole&quot;, and try to find all of the possible ways that 2 different instances of <code>String</code> could resolve to the same file when served to <code>Path.of()</code>. But I am certain that I am reinventing the wheel here.</p>\n<p>How should I resolve this, using idiomatic Java?</p>\n",
+    "tags" : [ "java", "path", "filenames", "race-condition", "realpath" ],
+    "owner" : {
+      "account_id" : 14010051,
+      "reputation" : 260,
+      "user_id" : 10118965,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/61afd55894624ae8f6e4189b68db1f30?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "davidalayachew",
+      "link" : "https://stackoverflow.com/users/10118965/davidalayachew"
+    },
+    "is_answered" : true,
+    "view_count" : 159,
+    "answer_count" : 2,
+    "score" : 1,
+    "last_activity_date" : 1750119143,
+    "creation_date" : 1749755955,
+    "link" : "https://stackoverflow.com/questions/79664014/how-to-determine-if-2-instances-of-java-nio-file-path-are-pointing-to-the-same-f",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79664074,
+    "question_id" : 79664014,
+    "body" : "<blockquote>\n<p>I have a simple problem</p>\n</blockquote>\n<p>No you don't. For example, the answer to your question depends on how you care to define the word &quot;the same&quot;. You have a complex problem that cannot be answered <em>at all</em> without a list of caveats.</p>\n<p>I better get into those caveats then.</p>\n<h2>It's a JVM, not an OS</h2>\n<p>Any other process on the system can, of course, write to those files too and cause all sorts of havoc.</p>\n<p>One commonly employed fix is to start with your &quot;I append to a file&quot; and call it right then and there. <strong>Do not do that</strong>. If you have a file that just poofs into existence fully formed, that makes many things a lot simpler. There is no need to worry about the notion of '... but what if some other process sees that file and goes: Swell! I can read it! but this then fails because you weren't done appending to it', for example.</p>\n<p>To do this, you create a temporary file (which you can create using a method invocation that ensures it truly is unique), append until you're happy with it, and then atomically rename it into the correct place. File systems do support atomic creation and renaming (meaning: If 2 processes simultaneously atomically rename some file into the same <code>x.foo</code> file, at least one of them will fail, guaranteed). They do not support atomic filling, i.e. you can't ask the OS: I want to write to this file for a while, can you make it look to other processes like it does not exist at all until I tell you I'm done with it?</p>\n<p>Which is why you fake that by saying 'give me a unique file atomically and guaranteed (filesystems can do that) and then 'move it to its final location atomically, i.e. only if it does not already exist and if 2 processes attempt to do this simultaneously, all-but-one will fail' (filesystems can do that as well). This then means to other processes there is no file until all of a sudden there is a file, and it is in its complete, finished state.</p>\n<p>If you think that is not appropriate.. it is, you just need to redesign those systems that need this file to do this.</p>\n<p>Unless, of course, you're talking about log files. Or rather, even then - having multiple separate systems that all try to make a sensible, consecutive log file is <em>not possible</em> either - instead each process should write its own log, and if you want, you can merge them later (either once all are done, or if these are forever-running processes, they should rotate their logs and you can thus merge all the rotated-out logs, as they are 'finished'). We're now back to the start: You have processes using atomic access to create unique files they definitely own and there is no risk.</p>\n<h2>But the JVM <em>is</em> one system!</h2>\n<p>So use the JVM's tools. synchronize on some logger object, have all things send their logs to that logger object and now this logger thing is the one and only bit of code that needs to open a file and write to it. Alternatively, have each part of the JVM write to a unique file, and merge them later.</p>\n<h2>Nevermind all that, I just want an answer to my question</h2>\n<p>Well, what you want is impossible, which is why you need to go with the alternatives.</p>\n<p>Take, for example, this 'trick':</p>\n<pre><code>touch foo.txt\nln foo.txt bar.txt\n</code></pre>\n<p>You now have 2 files - foo.txt and bar.txt. They are separate in all ways. No possible imagination of &quot;path equality&quot; would ever call these 2 things the same.</p>\n<p>Nevertheless, write to one and you end up changing the other. Because they are hardlinked together. <strong>There is no canonical path here</strong> - even though I first created foo and then hardlinked it into bar, as far as the file system is concerned, foo and bar are peers. foo is not 'more canonical' than bar. Had you reversed the operation (create bar first, then hardlink it into foo), the bits on disk are identical in every way except, possibly, timestamps, which surely you don't want to look at, and which can be made equal trivially.</p>\n<p>And yet, if within your JVM you decide to open an append stream on both of these it'll be one heck of a mess. Understandable that you'd want to avoid this, but <strong>you can't</strong>. At least, not in a way that java supports, i.e. not in an OS independent way.</p>\n<p>If you want to merely try to get somewhat close, there's <code>path.toRealPath()</code> which will follow <em>softlinks</em> and which will apply <code>..</code> and <code>.</code> as well, but, this <em>does not</em> give you 100% guarantees that you won't end up with 2 appenders that congeal their output into a big old mess.</p>\n<p>On presumably most systems, you could use <code>Files.isSameFile</code>. That method <em>should</em> return <code>true</code> if giving it 2 paths to different locations that are hardlinks of each other. The javadoc is rather vague, as per a comment from Sweeper, it works on MacOS, and therefore presumably all posixy systems, at least. Note that windows also has hardlinks these days, made with <code>fsutil</code> if memory serves, you should test if you want to use this.</p>\n<p>Presumably you'd have a list of all existing appenders, and anytime any code wants to make another appender, you'd check every item in the existing list with <code>isSameFile</code>; no lookup is possible here, you'd have to do this possibly relatively expensive operation. You might want to therefore cache the results of such an operation.</p>\n<p>But isSameFile doesn't let you write a guaranteed system. To get that guarantee, you have each appender atomically create a new file. Now it is <em>not possible</em> for them to clash, and it's guaranteed.</p>\n<h2>How do I do that?</h2>\n<p>To create a file in a way that you know, 100% guaranteed, there is no clash, you use:</p>\n<pre><code>try (var out = Files.newOutputStream(pathToFile, StandardOpenOption.CREATE_NEW)) {\n ... \n}\n</code></pre>\n<p>The only way to run into trouble here is if some other process (or some other code inside your JVM process) finds that file and decides to also write to it. At that point, it's 'pilot error'. You can't stop the user from tossing their computer in a blender either. The point is, if every 'appender' uses CREATE_NEW it is <em>impossible</em> to get a clash.</p>\n<p>If you want to rename them into the right place, you use:</p>\n<pre><code>Files.move(pathToTempFile, pathToFinalFile, StandardCopyOption.ATOMIC_MOVE)\n</code></pre>\n<p>This will move it only if <code>pathToFinalFile</code> doesn't already exist (no matter how much resolving or unrolling of soft links, aliases, <code>..</code> / <code>.</code>, has to be done), and will guarantee that this holds up even if 2 processes or threads attempt to do this simultaneously.</p>\n<p>That just leaves 'how do I make a temp file' - generally just, in a loop, append random numbers, keep calling <code>Files.newOutputStream(..., CREATE_NEW)</code> until it works, use that. You can use java's baked in temp file generator to do this if you must, <code>Files.createTempFile</code>.</p>\n",
+    "score" : 6,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 401843,
+      "reputation" : 107206,
+      "user_id" : 768644,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+      "display_name" : "rzwitserloot",
+      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+    },
+    "creation_date" : 1749759680,
+    "last_activity_date" : 1750040955,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79664015,
+    "question_id" : 79664014,
+    "body" : "<p><em><strong>EDIT -- As addressed in the other answers, this answer is problematic for reasons mentioned above. Once I get a second to breath, I will fix this answer to avoid giving misinformation. But for now, PLEASE DISREGARD THIS ANSWER.</strong></em></p>\n<hr />\n<p>The term you are looking for is a <a href=\"https://stackoverflow.com/questions/12100299/whats-a-canonical-path\">Canonical Path</a>. In fact, it would be good to read up on the term <a href=\"https://en.wikipedia.org/wiki/Canonical_form\" rel=\"nofollow noreferrer\">Canonical</a>, as that will provide useful context.</p>\n<p>So, if you want to know if 2 instances of <code>Path</code> are pointing to the same object, then find the Canonical Path to the file.</p>\n<p>The way to find the Canonical Path to a file in Java is to use the method <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/nio/file/Path.html#toRealPath(java.nio.file.LinkOption...)\" rel=\"nofollow noreferrer\">Path.toRealPath()</a>.</p>\n<pre><code>System.out.println(a.toRealPath().equals(b.toRealPath())); //true, as it should be!\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 14010051,
+      "reputation" : 260,
+      "user_id" : 10118965,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/61afd55894624ae8f6e4189b68db1f30?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "davidalayachew",
+      "link" : "https://stackoverflow.com/users/10118965/davidalayachew"
+    },
+    "creation_date" : 1749755955,
+    "last_activity_date" : 1750119143,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140520135,
+    "post_id" : 79664014,
+    "body" : "By the way, a path like <code>b = Path.of(&quot;.&#47;abc.java&quot;)</code> can be converted to <code>Path.of(&quot;abc.java&quot;)</code> by using <code>b.normalize()</code>, which is independent of the actual filesystem state. But, for example, <code>Path.of(&quot;abc.java&quot;)</code> and <code>Path.of(&quot;..&#47;foo&#47;abc.java&quot;)</code> might point to the same file if the current directory has the name <code>foo</code> which requires accessing the actual filesystem to find out. That assuming you’re always using the default method of resolving against the current directory. You’re free to use <code>arbitraryPath.resolve(b)</code> instead, which may have an entirely different outcome.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 3211603,
+      "reputation" : 301001,
+      "user_id" : 2711488,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+      "display_name" : "Holger",
+      "link" : "https://stackoverflow.com/users/2711488/holger"
+    },
+    "creation_date" : 1750159045,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140518869,
+    "post_id" : 79664014,
+    "body" : "@Holger Apologies, I should have clarified that I was storing these instances of <code>Path</code> as keys in a <code>Map&lt;Path, V&gt;</code>. So, the uniqueness traits of keys for instances of <code>Map</code> are taking care of that for me. But yes, you are 100% correct, and in fact, I am pretty sure I was thinking that it operated on <code>Path::equals</code>. I will edit my post shortly to clarify this point. <b><i>EDIT -- fixed. Lmk if you think it should be improved further.</i></b>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 14010051,
+      "reputation" : 260,
+      "user_id" : 10118965,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/61afd55894624ae8f6e4189b68db1f30?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "davidalayachew",
+      "link" : "https://stackoverflow.com/users/10118965/davidalayachew"
+    },
+    "creation_date" : 1750118754,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140516866,
+    "post_id" : 79664014,
+    "body" : "It doesn’t matter whether <code>equals</code> returns <code>true</code> or not, <code>synchronized</code> doesn’t care about  equality at all. All threads must use <code>synchronized</code> <i>with the same object</i>, i.e. <code>a == b</code> must be <code>true</code>, to have an effect.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 3211603,
+      "reputation" : 301001,
+      "user_id" : 2711488,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+      "display_name" : "Holger",
+      "link" : "https://stackoverflow.com/users/2711488/holger"
+    },
+    "creation_date" : 1750070432,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140510056,
+    "post_id" : 79664014,
+    "body" : "for nix OSes here&#39;s how to get the inode <a href=\"https://stackoverflow.com/questions/53935601/uniquely-identify-file-in-java\" title=\"uniquely identify file in java\">stackoverflow.com/questions/53935601/&hellip;</a>",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 3377022,
+      "reputation" : 14393,
+      "user_id" : 2834978,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/ff9af10001f37bc0de566ca2caf2f558?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "LMC",
+      "link" : "https://stackoverflow.com/users/2834978/lmc"
+    },
+    "creation_date" : 1749773203,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79664015" : [ {
+      "comment_id" : 140551834,
+      "post_id" : 79664015,
+      "body" : "With the existence of Reinier&#39;s answer, does it make more sense to delete this one?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 14010051,
+        "reputation" : 260,
+        "user_id" : 10118965,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/61afd55894624ae8f6e4189b68db1f30?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "davidalayachew",
+        "link" : "https://stackoverflow.com/users/10118965/davidalayachew"
+      },
+      "creation_date" : 1751239403,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140516890,
+      "post_id" : 79664015,
+      "body" : "…and the result can change over time, especially when you’re going from a path to a non-existing file to an existing file in the first append operation.",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 3211603,
+        "reputation" : 301001,
+        "user_id" : 2711488,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+        "display_name" : "Holger",
+        "link" : "https://stackoverflow.com/users/2711488/holger"
+      },
+      "creation_date" : 1750070721,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140509677,
+      "post_id" : 79664015,
+      "body" : "Slightly dangerous answer; this <b>does not</b> address hardlinks.",
+      "score" : 4,
+      "owner" : {
+        "account_id" : 401843,
+        "reputation" : 107206,
+        "user_id" : 768644,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+        "display_name" : "rzwitserloot",
+        "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+      },
+      "creation_date" : 1749758755,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79664074" : [ {
+      "comment_id" : 140550414,
+      "post_id" : 79664074,
+      "body" : "I have a second to breath, so I&#39;ll take it to say thanks for the solid answer Reinier. I think what you are saying is right, and the only reason I went for an append instead of creating new files was for the potential feature enhancement of inserting records to the file so that they are ordered by some attribute. But that&#39;s premature optimization -- I&#39;ll deal with those performance problems when I get there. For now, I&#39;ll go with what you suggested. I&#39;ll use the strategy of making a new file name by incrementing some number, since making a temp file then moving it slows down performance. Ty vm",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 14010051,
+        "reputation" : 260,
+        "user_id" : 10118965,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/61afd55894624ae8f6e4189b68db1f30?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "davidalayachew",
+        "link" : "https://stackoverflow.com/users/10118965/davidalayachew"
+      },
+      "creation_date" : 1751164698,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140515801,
+      "post_id" : 79664074,
+      "body" : "Thanks for posting this. I&#39;m juggling some other stuff, so don&#39;t have the time to read through this all properly yet. I will get to it, and likely accept this answer once I get free.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 14010051,
+        "reputation" : 260,
+        "user_id" : 10118965,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/61afd55894624ae8f6e4189b68db1f30?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "davidalayachew",
+        "link" : "https://stackoverflow.com/users/10118965/davidalayachew"
+      },
+      "creation_date" : 1750034710,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140509987,
+      "post_id" : 79664074,
+      "body" : "@sweeper I&#39;m going to edit this answer and add it, that seems quite pertinent. Not quite sure how that&#39;s going to go in practice (anytime you add any file, you blast it past every already existing &#39;active appender&#39;, call isSameFile on the lot, and if you find one, then merge those 2 appenders JVM side, I guess?). Still, rather relevant here.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 401843,
+        "reputation" : 107206,
+        "user_id" : 768644,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+        "display_name" : "rzwitserloot",
+        "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+      },
+      "creation_date" : 1749769082,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140509797,
+      "post_id" : 79664074,
+      "body" : "<code>Files.isSameFile</code> seems to handle hard links, at least on macOS. That could be an answer to the question in the title &quot;how to determine if 2 instances of java.nio.file.Path are pointing to the same file&quot; if we disregard the context.",
+      "score" : 5,
+      "owner" : {
+        "account_id" : 6651855,
+        "reputation" : 292280,
+        "user_id" : 5133585,
+        "user_type" : "registered",
+        "accept_rate" : 96,
+        "profile_image" : "https://i.sstatic.net/dfqcw.png?s=256",
+        "display_name" : "Sweeper",
+        "link" : "https://stackoverflow.com/users/5133585/sweeper"
+      },
+      "creation_date" : 1749762451,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

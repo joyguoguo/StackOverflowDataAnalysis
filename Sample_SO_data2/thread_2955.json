@@ -1,0 +1,101 @@
+{
+  "question" : {
+    "question_id" : 79585551,
+    "title" : "Is it possible create an ObjectMapper configured such that it AES encrypts all fields except fields annotated with a certain annotation?",
+    "body" : "<p>Let's say you have an annotation configured on a per field basis:</p>\n<pre><code>import java.lang.annotation.ElementType;\nimport java.lang.annotation.Retention;\nimport java.lang.annotation.RetentionPolicy;\nimport java.lang.annotation.Target;\n\n@Retention(RetentionPolicy.RUNTIME)\n@Target(ElementType.FIELD)\npublic @interface DoNotEncrypt {\n}\n</code></pre>\n<p>OK so now you have the annotation. So you can have your fields annotated when you don't want them encrypted:</p>\n<pre><code>static class CoolStuff {\n        private String shouldBeEncrypted;\n        @DoNotEncrypt\n        private String notEncrypted = &quot;should not be encrypted&quot;;\n\n        public String getShouldBeEncrypted() {\n            return shouldBeEncrypted;\n        }\n\n        public void setShouldBeEncrypted(String shouldBeEncrypted) {\n            this.shouldBeEncrypted = shouldBeEncrypted;\n        }\n\n        public String getNotEncrypted() {\n            return notEncrypted;\n        }\n\n        public void setNotEncrypted(String notEncrypted) {\n            this.notEncrypted = notEncrypted;\n        }\n    }\n</code></pre>\n<p>I want to implement this serializer:</p>\n<pre><code>import com.fasterxml.jackson.core.JsonGenerator;\nimport com.fasterxml.jackson.databind.JsonSerializer;\nimport com.fasterxml.jackson.databind.ObjectMapper;\nimport com.fasterxml.jackson.databind.SerializerProvider;\nimport com.fasterxml.jackson.databind.module.SimpleModule;\nimport org.slf4j.Logger;\nimport org.slf4j.LoggerFactory;\n\n/**\n * Encrypt every string except fields that have annotation {@link DoNotEncrypt}\n */\npublic class ConfidentialSerializer extends JsonSerializer&lt;Object&gt; {\n    private static final Logger LOG = LoggerFactory.getLogger(ConfidentialSerializer.class);\n    @Override\n    public void serialize(Object value, JsonGenerator gen, SerializerProvider serializers) {\n       // I want to implement this here\n    }\n    public static ObjectMapper configurationObjectMapper() {\n        ObjectMapper objectMapper = new ObjectMapper();\n        SimpleModule module = new SimpleModule();\n        // is this right?\n        module.addSerializer(Object.class, new ConfidentialSerializer());\n        objectMapper.registerModule(module);\n        return objectMapper;\n    }\n}\n</code></pre>\n<p>In order to test the change i want to see that strings are encrypted unless annotationed <code>@DoNotEncrypt</code>.</p>\n<pre><code>import com.fasterxml.jackson.core.JsonProcessingException;\nimport com.fasterxml.jackson.databind.ObjectMapper;\nimport org.junit.Test;\n\npublic class ConfidentialSerializerTest {\n    static class CoolStuff {\n        private String shouldBeEncrypted;\n        @DoNotEncrypt\n        private String notEncrypted;\n\n        public String getShouldBeEncrypted() {\n            return shouldBeEncrypted;\n        }\n\n        public void setShouldBeEncrypted(String shouldBeEncrypted) {\n            this.shouldBeEncrypted = shouldBeEncrypted;\n        }\n\n        public String getNotEncrypted() {\n            return notEncrypted;\n        }\n\n        public void setNotEncrypted(String notEncrypted) {\n            this.notEncrypted = notEncrypted;\n        }\n    }\n    @Test\n    public void testConfigurationObjectMapper() throws JsonProcessingException {\n        ObjectMapper objectMapper = ConfidentialSerializer.configurationObjectMapper();\n        CoolStuff coolStuff = new CoolStuff();\n        coolStuff = new CoolStuff();\n        coolStuff.setShouldBeEncrypted(&quot;is&quot;);\n        coolStuff.setNotEncrypted(&quot;is not&quot;);\n        String out = objectMapper.writeValueAsString(coolStuff);\n        Map mapOut = objectMapper.readValue(out, Map.class);\n        Assert.assertNotEquals(&quot;is&quot;, mapOut.get(&quot;notEncrypted&quot;));\n        Assert.assertEquals(&quot;is not&quot;, mapOut.get(&quot;shouldBeEncrypted&quot;));    }\n}\n</code></pre>\n<p>Is this something that is possible with Object Mapper? If so, how do you do it?</p>\n",
+    "tags" : [ "java", "encryption", "aes", "objectmapper", "fasterxml" ],
+    "owner" : {
+      "account_id" : 1203915,
+      "reputation" : 10731,
+      "user_id" : 1174024,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://i.sstatic.net/9zaVE.jpg?s=256",
+      "display_name" : "Nicholas DiPiazza",
+      "link" : "https://stackoverflow.com/users/1174024/nicholas-dipiazza"
+    },
+    "is_answered" : true,
+    "view_count" : 83,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1745930114,
+    "creation_date" : 1745284356,
+    "link" : "https://stackoverflow.com/questions/79585551/is-it-possible-create-an-objectmapper-configured-such-that-it-aes-encrypts-all-f",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79585605,
+    "question_id" : 79585551,
+    "body" : "<p>I think I have it working now.</p>\n<p>The key is recursion in <code>ConfidentialSerializer</code>. Once you have that working the rest is pretty easy.</p>\n<p>DoNotEncrypt.java</p>\n<pre><code>import java.lang.annotation.ElementType;\nimport java.lang.annotation.Retention;\nimport java.lang.annotation.RetentionPolicy;\nimport java.lang.annotation.Target;\n\n@Retention(RetentionPolicy.RUNTIME)\n@Target(ElementType.FIELD)\npublic @interface DoNotEncrypt {\n}\n</code></pre>\n<p>ConfidentialSerializerTest.java</p>\n<pre><code>import com.fasterxml.jackson.core.JsonGenerator;\nimport com.fasterxml.jackson.databind.JsonSerializer;\nimport com.fasterxml.jackson.databind.SerializerProvider;\nimport org.jetbrains.annotations.Nullable;\n\nimport java.io.IOException;\nimport java.lang.reflect.Field;\nimport java.lang.reflect.InvocationTargetException;\nimport java.lang.reflect.Method;\nimport java.util.Arrays;\nimport java.util.Collection;\nimport java.util.Map;\n\npublic class ConfidentialSerializer extends JsonSerializer&lt;Object&gt; {\n    @Override\n    public void serialize(Object value, JsonGenerator gen, SerializerProvider serializers) throws IOException {\n        try {\n            if (value == null) {\n                gen.writeNull();\n                return;\n            }\n\n            Class&lt;?&gt; clazz = value.getClass();\n            // Write String values directly\n            if (value instanceof String) {\n                gen.writeString((String) value);\n                return;\n            }\n            if (value instanceof Long) {\n                gen.writeNumber((Long) value);\n                return;\n            }\n            if (value instanceof Integer) {\n                gen.writeNumber((Integer) value);\n                return;\n            }\n            if (value instanceof Short) {\n                gen.writeNumber((Short) value);\n                return;\n            }\n            if (value instanceof Boolean) {\n                gen.writeBoolean((Boolean) value);\n                return;\n            }\n            if (value instanceof Collection) {\n                gen.writeStartArray();\n                for (Object item : (Collection&lt;?&gt;) value) {\n                    serialize(item, gen, serializers); // Recursively process list elements\n                }\n                gen.writeEndArray();\n                return;\n            }\n            if (value instanceof Map) {\n                gen.writeStartObject();\n                for (Map.Entry&lt;?, ?&gt; entry : ((Map&lt;?, ?&gt;) value).entrySet()) {\n                    gen.writeFieldName(entry.getKey().toString());\n                    serialize(entry.getValue(), gen, serializers); // Recursively process map values\n                }\n                gen.writeEndObject();\n                return;\n            }\n            gen.writeStartObject();\n\n            for (Field field : clazz.getDeclaredFields()) {\n                Method getterMethod = lookupGetterMethod(value, field);\n                if (getterMethod != null) {\n                    Object fieldValue = getFieldValue(getterMethod, field.getName(), value);\n\n                    gen.writeFieldName(field.getName());\n\n                    // Recursively process child fields\n                    if (fieldValue != null) {\n                        if (field.isAnnotationPresent(Confidential.class) &amp;&amp; fieldValue instanceof String) {\n                            fieldValue = AESEncrypter.encrypt((String) fieldValue);\n                        }\n                        serialize(fieldValue, gen, serializers);\n                    } else {\n                        gen.writeNull();\n                    }\n                }\n            }\n            gen.writeEndObject();\n        } catch (Exception e) {\n            throw new RuntimeException(&quot;Error encrypting nested field&quot;, e);\n        }\n    }\n\n    private static @Nullable Method lookupGetterMethod(Object value, Field field) {\n        String fieldName = field.getName();\n        String methodNameGet = &quot;get&quot; + fieldName.substring(0, 1).toUpperCase() + fieldName.substring(1);\n        String methodNameIs = &quot;is&quot; + fieldName.substring(0, 1).toUpperCase() + fieldName.substring(1);\n        Method getterMethod = Arrays.stream(value.getClass().getMethods())\n                .filter(method -&gt; method.getParameterCount() == 0 &amp;&amp;\n                        method.getModifiers() == java.lang.reflect.Modifier.PUBLIC &amp;&amp;\n                        (method.getName().equals(methodNameGet) || method.getName().equals(methodNameIs)))\n                .findFirst().orElse(null);\n        return getterMethod;\n    }\n\n    public Object getFieldValue(Method getterMethod, String fieldName, Object object) {\n        try {\n            return getterMethod.invoke(object);\n        } catch (IllegalAccessException | InvocationTargetException e) {\n            throw new RuntimeException(e);\n        }\n    }\n}\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 1203915,
+      "reputation" : 10731,
+      "user_id" : 1174024,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://i.sstatic.net/9zaVE.jpg?s=256",
+      "display_name" : "Nicholas DiPiazza",
+      "link" : "https://stackoverflow.com/users/1174024/nicholas-dipiazza"
+    },
+    "creation_date" : 1745287952,
+    "last_activity_date" : 1745930114,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79585605" : [ {
+      "comment_id" : 140473692,
+      "post_id" : 79585605,
+      "body" : "Note that field values that are encrypted without taking into account the field name is considered insecure in many usage scenarios. Because an attacker with write access to the data could switch encrypted field values and then let the legitimate app do the decryption work for accessing the decrypted value. Consider a saved user name in a login field. Such data can be then used as decryption oracle. To mitigate this use a master key and derive for each field an individual key, e.g. field key = HMAC_SHA1 of the field name with the master key as key.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 50585,
+        "reputation" : 43469,
+        "user_id" : 150978,
+        "user_type" : "registered",
+        "accept_rate" : 78,
+        "profile_image" : "https://www.gravatar.com/avatar/feadc214792e2581c3c750140e3eb2c7?s=256&d=identicon&r=PG",
+        "display_name" : "Robert",
+        "link" : "https://stackoverflow.com/users/150978/robert"
+      },
+      "creation_date" : 1748634745,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140359335,
+      "post_id" : 79585605,
+      "body" : "burned a couple hours trying your way. didn&#39;t figure it out. will try it another day",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1203915,
+        "reputation" : 10731,
+        "user_id" : 1174024,
+        "user_type" : "registered",
+        "accept_rate" : 85,
+        "profile_image" : "https://i.sstatic.net/9zaVE.jpg?s=256",
+        "display_name" : "Nicholas DiPiazza",
+        "link" : "https://stackoverflow.com/users/1174024/nicholas-dipiazza"
+      },
+      "creation_date" : 1745355802,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140356919,
+      "post_id" : 79585605,
+      "body" : "A more jackson-way would be to use a <code>BeanSerializerModifier</code> and its <code>changeProperties(SerializationConfig, BeanDescription, List&lt;BeanPropertyWriter&gt;)</code> method to add encryption to the properties that need it. This will preserve the configuration flexibility that will get lost with this apporach where a single serializer handles all types itself.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1580843,
+        "reputation" : 13706,
+        "user_id" : 1466267,
+        "user_type" : "registered",
+        "accept_rate" : 91,
+        "profile_image" : "https://www.gravatar.com/avatar/c47d1f7544a8c4a1bb7a41d511f53604?s=256&d=identicon&r=PG",
+        "display_name" : "SpaceTrucker",
+        "link" : "https://stackoverflow.com/users/1466267/spacetrucker"
+      },
+      "creation_date" : 1745309493,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

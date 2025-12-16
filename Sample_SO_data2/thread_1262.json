@@ -1,0 +1,464 @@
+{
+  "question" : {
+    "question_id" : 79729121,
+    "title" : "How to combine multiple Java modules into one JAR?",
+    "body" : "<p>The goal:</p>\n<ol>\n<li>to combine multiple JARs and the modules in them into a single JAR</li>\n<li>allow consumers to include a single package dependency in their maven/gradle/... files</li>\n<li>make all of the modules available to the consumers</li>\n</ol>\n<p><em>I tried shade and assembly plugin for days now, and keep failing. To keep this short, I'll omit all the wrong approaches; I am looking for one that works.</em></p>\n<p>Before JPMS, it was simply shading all the contents into one JAR. Can't do that with modules, since there is only one top-level module-info.class for the entire JAR.</p>\n<p>If there was a transformer for shade combining module-info.class files like it does for e.g. Services, that would be the obvious solution. But to my knowledge, it doesn't exist.</p>\n<p>How can this be done - multiple JPMS modules in the same JAR combined - working with JDK11+?</p>\n<p>Background:</p>\n<ul>\n<li>Business requirement 1 was to package the maven modules to a single (signed) JAR. This has proven to be useful, and is to be continued.</li>\n<li>Business requirement 2 to use Java Modules (JPMS) came up new.</li>\n</ul>\n<p>The question is about finding a technical solution that fulfills both business requirements. It makes sense to probe whether JPMS can be omitted/ignored, but that's not what this question is about.</p>\n",
+    "tags" : [ "java", "maven", "maven-assembly-plugin", "maven-shade-plugin", "java-platform-module-system" ],
+    "owner" : {
+      "account_id" : 201997,
+      "reputation" : 2254,
+      "user_id" : 448779,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/b71b71d82074f242b6799e70678a604b?s=256&d=identicon&r=PG",
+      "display_name" : "foo",
+      "link" : "https://stackoverflow.com/users/448779/foo"
+    },
+    "is_answered" : true,
+    "view_count" : 389,
+    "answer_count" : 3,
+    "score" : 4,
+    "last_activity_date" : 1755882310,
+    "creation_date" : 1754599802,
+    "link" : "https://stackoverflow.com/questions/79729121/how-to-combine-multiple-java-modules-into-one-jar",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79729914,
+    "question_id" : 79729121,
+    "body" : "<p>If I understand correctly, you have multiple modular libraries that are relatively coupled together. And you want to provide a way to make it easier for consumers to declare dependencies on your libraries. In particular, you want to provide a way for consumers to declare a <em>single</em> dependency that gives access to all your libraries.</p>\n<p>You've considered shading your modules into a single artifact and publishing it. As you've figured out, this doesn't work well with JPMS because a standard JAR can only contain a single module. But I'd argue this is not a good idea even without JPMS modules being involved. In my opinion, a library should never be shaded. It makes it more difficult, if not impossible, for consumers to control their dependencies (e.g., exclusion, using a specific version, etc.) when they're all included in a single artifact. Maybe it's not so bad if only libraries from the same multi-project build are shaded, but I think the decision to shade a JAR should be left up to the <em>application</em> developers, not the <em>library</em> developers.</p>\n<p>This leaves you with a few options (plus any I'm not thinking of).</p>\n<h3>1. Just Don't Try</h3>\n<p>You can simply not try to publish a monolith artifact. Just publish each individual artifact like normal.</p>\n<p>This may make depending on your libraries more verbose, but it's still a viable solution. Keep in mind that editing a build file should not be an overly common occurrence outside of updating versions. Consumers of your libraries only need to declare the dependencies once and they're done. This isn't something that will plague them during every second of development. The same goes for <code>module-info.java</code> files.</p>\n<p>You can publish a BOM (Bill of Materials) to ease version management. Many multi-module projects do this (e.g,. Spring, JUnit, etc.).</p>\n<h3>2. Create an Aggregate Module</h3>\n<p><em><strong>Note:</strong> I find this to be the ideal solution of those presented in this answer.</em></p>\n<p>You can create an aggregate module. In this case, &quot;module&quot; means <em>both</em> a Maven module and a JPMS module. The Maven module would declare dependencies on your other modules:</p>\n<pre class=\"lang-xml prettyprint-override\"><code>&lt;parent&gt;\n  &lt;groupId&gt;com.example&lt;/groupId&gt;\n  &lt;artifactId&gt;mylib&lt;/artifactId&gt;\n  &lt;version&gt;${revision}&lt;/version&gt;\n&lt;/parent&gt;\n\n&lt;groupId&gt;com.example&lt;/groupId&gt;\n&lt;artifactId&gt;mylib-aggregate&lt;/artifactId&gt;\n\n&lt;dependencies&gt;\n  &lt;dependency&gt;\n    &lt;groupId&gt;com.example&lt;/groupId&gt;\n    &lt;artifactId&gt;mylib-core&lt;/artifactId&gt;\n    &lt;version&gt;${project.version}&lt;/version&gt;\n  &lt;/dependency&gt;\n  &lt;dependency&gt;\n    &lt;groupId&gt;com.example&lt;/groupId&gt;\n    &lt;artifactId&gt;mylib-util&lt;/artifactId&gt;\n    &lt;version&gt;${project.version}&lt;/version&gt;\n  &lt;/dependency&gt;\n&lt;/dependencies&gt;\n</code></pre>\n<p><sup>- For Gradle projects, these would be <code>api</code> dependencies (not <code>implementation</code>).</sup></p>\n<p>This module would have only one source file, a single <code>module-info.java</code> file:</p>\n<pre class=\"lang-java prettyprint-override\"><code>module com.example.mylib.aggregate {\n  requires transitive com.example.mylib.core;\n  requires transitive com.example.mylib.util;\n}\n</code></pre>\n<p>And that's it. You'd publish this aggregate module alongside all the individual modules.</p>\n<h5>Consumer</h5>\n<p>A consumer would just need to declare a dependency on the aggregate and all the transitive dependencies will be pulled in:</p>\n<pre class=\"lang-xml prettyprint-override\"><code>&lt;groupId&gt;org.company&lt;/groupid&gt;\n&lt;artifactId&gt;company-app&lt;/artifactId&gt;\n&lt;version&gt;0.1.0-SNAPSHOT&lt;/version&gt;\n\n&lt;dependencies&gt;\n  &lt;dependency&gt;\n    &lt;groupId&gt;com.example&lt;/groupId&gt;\n    &lt;artifactId&gt;mylib-aggregate&lt;/artifactId&gt;\n    &lt;version&gt;1.0.0&lt;/version&gt;\n  &lt;dependency&gt;\n&lt;/dependencies&gt;\n</code></pre>\n<p>Additionally, the consumer would now only need to declare a single <code>requires</code> directive instead of one for each module:</p>\n<pre class=\"lang-java prettyprint-override\"><code>module org.company.app {\n  requires com.example.mylib.aggregate;\n}\n</code></pre>\n<p>Assuming the consuming project is modular in the first place.</p>\n<h5>Real Examples</h5>\n<p>There are examples of such aggregate modules in &quot;the real world&quot;. Two of those are:</p>\n<ol>\n<li><p>The <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.se/module-summary.html\" rel=\"nofollow noreferrer\"><code>java.se</code></a> module included in the Java standard library.</p>\n</li>\n<li><p>The <a href=\"https://docs.junit.org/current/api/org.junit.jupiter/module-summary.html\" rel=\"nofollow noreferrer\"><code>org.junit.jupiter</code></a> module from the JUnit Jupiter API.</p>\n</li>\n</ol>\n<h3>3. Try to Merge Module Descriptors</h3>\n<p><em><strong>Note:</strong> I do not think this is a good or trivial approach.</em></p>\n<p>If you really want to create a &quot;shaded module&quot;, then you'll have to find a way merge each dependency's module-info descriptor into a single one.  You can easily read existing compiled descriptors via the <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/module/ModuleDescriptor.html\" rel=\"nofollow noreferrer\"><code>ModuleDescriptor</code></a> class. Writing a new one is a little more involved though. You can either:</p>\n<ol>\n<li><p>Write the source code for the new aggregate module, then compile it after merging everything. This may require using the <code>--patch-module</code> option:</p>\n<pre class=\"lang-none prettyprint-override\"><code>--patch-module &lt;aggregate-module&gt;=&lt;path-to-shaded-classes&gt;\n</code></pre>\n</li>\n<li><p>Write the class file directly using a byte-code manipulation library. There's a few such libraries out there. If you're running the build on Java 24+ then you could even make use of the new <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/classfile/package-summary.html\" rel=\"nofollow noreferrer\">Class-File API</a> (specifically one of the <code>ClassFile::buildModule[To]</code> methods) added to the standard library.</p>\n</li>\n</ol>\n<p>If you want to do this via the <em>Maven Shade Plugin</em>, then unfortunately this does not seem possible with a <a href=\"https://maven.apache.org/plugins/maven-shade-plugin/apidocs/org/apache/maven/plugins/shade/resource/ResourceTransformer.html\" rel=\"nofollow noreferrer\"><code>ResourceTransformer</code></a>. A <code>ResourceTransformer</code> is never passed class files, and so will never be passed any <code>module-info.class</code>. You <em>might</em> be able to do this with a custom <a href=\"https://maven.apache.org/plugins/maven-shade-plugin/apidocs/org/apache/maven/plugins/shade/Shader.html\" rel=\"nofollow noreferrer\"><code>Shader</code></a> implementation. Also, keep in mind that the <em>Maven Shade Plugin</em> can <em>relocate</em> classes (see <a href=\"https://maven.apache.org/plugins/maven-shade-plugin/apidocs/org/apache/maven/plugins/shade/relocation/Relocator.html\" rel=\"nofollow noreferrer\"><code>Relocator</code></a>). You'd have to take that into account when merging the module-info descriptor.</p>\n<p>Regardless, there are some things to note:</p>\n<ul>\n<li><p>Need to add a way to either specify the monolith module's name or generate it from other information.</p>\n</li>\n<li><p>What should the version of the monolith module be, if any? Is the version specified explicitly or is it computed based on the included modules?</p>\n</li>\n<li><p>How should non-modular dependencies be handled?</p>\n</li>\n<li><p>What happens if some but not all included modules are <code>open</code>? If one included module is open, should the monolith module be open? Or should packages from the open module be <code>opens</code> in the monolith module?</p>\n</li>\n<li><p>Exclude any <code>requires</code> directives for modules that are being included in the monolith.</p>\n</li>\n<li><p>What happens if there's some combination of <code>requires</code>, <code>requires static</code>, <code>requires transitive</code>, and <code>requires static transitive</code> for a single module across the modules included in the monolith? Which modifiers take precedence? Keep in mind that <code>static</code> requires typically are <em>not</em> resolved automatically at link-time (i.e., jlink) or run-time.</p>\n</li>\n<li><p>What happens if two or more included modules require different versions of the same module? Which version takes precedence?</p>\n</li>\n<li><p>Exclude any targets in qualified <code>exports</code> or <code>opens</code> directives for modules that are being included in the monolith. Exclude the <em>entire</em> qualified <code>exports</code> or <code>opens</code> directive if all its targets are excluded.</p>\n</li>\n<li><p>Exclude <strong>all</strong> <code>opens</code> directives if the monolith module ends up being <code>open</code>.</p>\n</li>\n<li><p>Don't forget to merge the &quot;packages&quot; attributes of the module-info descriptors.</p>\n</li>\n<li><p>May want to maintain the encounter order of module-info descriptors and their requires, exports, opens, uses, and provides directives. Could help with creating reproducible builds.</p>\n</li>\n</ul>\n<p>And there could be other corner cases I'm not thinking of.</p>\n<h3>4. Ignore JPMS</h3>\n<p>You can ignore JPMS by just excluding all <code>module-info.class</code> files when creating the shaded artifact. This does unfortunately mean the shaded artifact will not be modular, but that won't necessarily be a problem for consumers which aren't using JPMS themselves. Though again, I think publishing a shaded <em>library</em> is not a good idea in the first place.</p>\n<h3>5. Manually Create Module Descriptor</h3>\n<p>You could always manually create the module-info descriptor for your shaded JAR file. Though the maintenance may become tedious as you'll have to manually ensure it's still valid every time a dependency is updated.</p>\n",
+    "score" : 5,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 8532578,
+      "reputation" : 49904,
+      "user_id" : 6395627,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Slaw",
+      "link" : "https://stackoverflow.com/users/6395627/slaw"
+    },
+    "creation_date" : 1754664458,
+    "last_activity_date" : 1754760723,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79729999,
+    "question_id" : 79729121,
+    "body" : "<p>In addition to the <a href=\"https://stackoverflow.com/a/79729914/10871900\">amazing answer</a> by <a href=\"https://stackoverflow.com/users/6395627/slaw\">Slaw</a>, I want to add another approach: using two artifacts (both can be signed).</p>\n<p>As Slaw mentioned, having a fat JAR in a Maven repository causes many issues. This is especially the case for applications getting the same transitive dependency from two different sources as such applications will suffer from split packages (which don't work on the modulepath) and dependency conflict (you might have classes from different versions of the same dependency on your classpath/modulepath).</p>\n<p>To solve that, you could produce two artifacts: One fat JAR that includes all dependencies and one thin JAR that doesn't include any dependencies which is published in the Maven repository (if you really want to, you can also publish the fat JAR to the Maven repository <em>using a classifier</em>). The fat JAR would then not use modules or use a merged module descriptor (options 3 and 4 in <a href=\"https://stackoverflow.com/a/79729914/10871900\">Slaw's answer</a>) while the thin JAR is modularized normally.<br />\nYou can then sign both JARs as well as sign all dependency JARs and also make the dependency JARs available in your Maven repository.</p>\n<p>If someone wants to consume your artifact with Maven or Gradle (and possibly also use other dependencies), they can use the modularized thin JAR. If their build requires all dependencies to be signed, they can use your Maven repository for these dependencies as well and they only get signed artifacts (provided they don't depend on any artifacts that aren't signed) If they want to consume your JAR without using any build tool (which is the only reason one would ever want to use a far JAR as a dependency), they can just import your fat JAR in their IDE of choice.</p>\n",
+    "score" : 2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 15064163,
+      "reputation" : 17111,
+      "user_id" : 10871900,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/720202b6e19abc330dcd92e6a1254562?s=256&d=identicon&r=PG",
+      "display_name" : "dan1st",
+      "link" : "https://stackoverflow.com/users/10871900/dan1st"
+    },
+    "creation_date" : 1754668977,
+    "last_activity_date" : 1754668977,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79743660,
+    "question_id" : 79729121,
+    "body" : "<p>I found a solution that works well for me so far:</p>\n<h2>code</h2>\n<p>Use <a href=\"https://maven.apache.org/plugins/maven-assembly-plugin/\" rel=\"nofollow noreferrer\">maven-assembly-plugin</a> version 3.7.x, with an separate assembly XML <a href=\"https://maven.apache.org/plugins/maven-assembly-plugin/examples/single/using-components.html\" rel=\"nofollow noreferrer\">descriptor</a> file.</p>\n<p>This descriptor file contains something like:</p>\n<pre class=\"lang-xml prettyprint-override\"><code>    &lt;includeBaseDirectory&gt;false&lt;/includeBaseDirectory&gt;\n    &lt;containerDescriptorHandlers&gt;\n        &lt;containerDescriptorHandler&gt;\n            &lt;handlerName&gt;metaInf-services&lt;/handlerName&gt;\n        &lt;/containerDescriptorHandler&gt;\n    &lt;/containerDescriptorHandlers&gt;\n    &lt;dependencySets&gt;\n        &lt;dependencySet&gt;\n            &lt;outputDirectory&gt;com/example/mylib/moduleA&lt;/outputDirectory&gt;\n            &lt;useProjectArtifact&gt;false&lt;/useProjectArtifact&gt;\n            &lt;unpack&gt;true&lt;/unpack&gt;\n            &lt;includes&gt;\n                &lt;include&gt;com.example.mylib:packageA&lt;/include&gt;\n            &lt;/includes&gt;\n            &lt;unpackOptions&gt;\n                &lt;includes&gt;\n                    &lt;include&gt;module-info.class&lt;/include&gt;\n                &lt;/includes&gt;\n            &lt;/unpackOptions&gt;\n        &lt;/dependencySet&gt;\n        &lt;dependencySet&gt;\n            &lt;outputDirectory&gt;com/example/mylib/moduleA&lt;/outputDirectory&gt;\n            &lt;useProjectArtifact&gt;false&lt;/useProjectArtifact&gt;\n            &lt;unpack&gt;true&lt;/unpack&gt;\n            &lt;includes&gt;\n                &lt;include&gt;com.example.mylib:packageB&lt;/include&gt;\n            &lt;/includes&gt;\n            &lt;unpackOptions&gt;\n                &lt;includes&gt;\n                    &lt;include&gt;module-info.class&lt;/include&gt;\n                &lt;/includes&gt;\n            &lt;/unpackOptions&gt;\n        &lt;/dependencySet&gt;\n        &lt;dependencySet&gt;\n            &lt;outputDirectory&gt;/&lt;/outputDirectory&gt;\n            &lt;useProjectArtifact&gt;true&lt;/useProjectArtifact&gt;\n            &lt;unpack&gt;true&lt;/unpack&gt;\n            &lt;unpackOptions&gt;\n                &lt;excludes&gt;\n                    &lt;exclude&gt;module-info.class&lt;/exclude&gt;\n                &lt;/excludes&gt;\n            &lt;/unpackOptions&gt;\n        &lt;/dependencySet&gt;\n    &lt;/dependencySets&gt;\n&lt;/assembly&gt;\n</code></pre>\n<p>Parameters:</p>\n<ul>\n<li>com/example/mylib/moduleA  - module for A</li>\n<li>com.example.mylib:packageA - package for A</li>\n<li>com/example/mylib/moduleB  - module for B</li>\n<li>com.example.mylib:packageB - package for B</li>\n</ul>\n<p>everything else is generic.</p>\n<h2>result</h2>\n<p>The resulting single JAR contains two module-info.classes in subdirectories named after their respective modules, in which JPMS will find them.</p>\n<p>Package consumers with JPMS active need to <code>require</code> both packageA and packageB explicitly in their modules, though.</p>\n<p>Add a new dependencySet like the ones above for every module that should be made available.</p>\n<h2>explanation:</h2>\n<p>The services are aggregated by the <a href=\"https://maven.apache.org/plugins/maven-assembly-plugin/examples/single/using-container-descriptor-handlers.html\" rel=\"nofollow noreferrer\">container descriptor handler</a> metaInf-services.</p>\n<p>The desired module-info.class files are unpacked and moved to the special magic path JPMS expects to find them in. (I learned of these paths by reading the JPMS source.)</p>\n<p>Everything else is just unpacked and combined, omitting any extra module-info.class files.</p>\n<hr />\n<h2>notes</h2>\n<p>Aggregate Module as described by <em>Slaw</em> in #2 fails in one aspect:\nThe aggregate JAR contains the dependency declarations only.\nThere's only the module-info.class and the META-INF/ ; so this fails business requirement #1.</p>\n<p>Merging Module descriptors: as mentioned in my question, that would be ideal, but the respective transformer does not exist (as of 2025-08).</p>\n<p>Foregoing JPMS entirely is something I thought about often, but see business requirement #2.</p>\n<p>The answer by <em>dan1st</em> helped me explore another approach, and I am still considering it. If a library consumer requires JPMS, they have extra effort anyhow.</p>\n<p>Also, the aggregate module has the strong appeal that the consumer needs to <code>require</code> one module only. When the list of modules is much longer, that becomes cumbersome.</p>\n<p>But in the end, I made maven-assembly-plugin work for me. Result described above.\nThe path was first check how JPMS expects its data, then adapt the build to that expectation.</p>\n<p>It was very helpful, though, to learn from the other answers, and I recommend any reader of this answer to read and consider the ones by <a href=\"https://stackoverflow.com/a/79729914/448779\">Slaw</a> and <a href=\"https://stackoverflow.com/a/79729999/448779\">dan1st</a> as well.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 201997,
+      "reputation" : 2254,
+      "user_id" : 448779,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/b71b71d82074f242b6799e70678a604b?s=256&d=identicon&r=PG",
+      "display_name" : "foo",
+      "link" : "https://stackoverflow.com/users/448779/foo"
+    },
+    "creation_date" : 1755881438,
+    "last_activity_date" : 1755882310,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140654307,
+    "post_id" : 79729121,
+    "body" : "@khmarbaise I&#39;m not sure a BOM is exactly what OP is looking for (though that doesn&#39;t mean they shouldn&#39;t publish a BOM as well). For instance, the <i>junit-framework</i> project has <a href=\"https://github.com/junit-team/junit-framework/tree/main/junit-bom\" rel=\"nofollow noreferrer\">junit-bom</a> and <a href=\"https://github.com/junit-team/junit-framework/tree/main/junit-jupiter\" rel=\"nofollow noreferrer\">junit-jupiter</a>. The former is a BOM, whereas the latter is an &quot;aggregator module&quot; (at least that&#39;s what I&#39;m calling it; not sure if there&#39;s a better term) and is more like what the OP is looking for (minus the desire for a fat JAR).",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 8532578,
+      "reputation" : 49904,
+      "user_id" : 6395627,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Slaw",
+      "link" : "https://stackoverflow.com/users/6395627/slaw"
+    },
+    "creation_date" : 1754761209,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140654279,
+    "post_id" : 79729121,
+    "body" : "There are a number of examples to use BOM approach to make it more eaiser for users to use a lib with different modules/artifacts for example: <a href=\"https://github.com/jqno/equalsverifier/\" rel=\"nofollow noreferrer\">github.com/jqno/equalsverifier</a> or JUnit Jupiter the same..",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 112317,
+      "reputation" : 98455,
+      "user_id" : 296328,
+      "user_type" : "registered",
+      "accept_rate" : 60,
+      "profile_image" : "https://i.sstatic.net/DSpH6.jpg?s=256",
+      "display_name" : "khmarbaise",
+      "link" : "https://stackoverflow.com/users/296328/khmarbaise"
+    },
+    "creation_date" : 1754760087,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140654274,
+    "post_id" : 79729121,
+    "body" : "One thing to note about @khmarbaise&#39;s comment: For applications (not libraries!), this is technically possible using a custom <code>ClassLoader</code> and nested JAR files <a href=\"https://github.com/eclipse-jdt/eclipse.jdt.ui/tree/master/org.eclipse.jdt.ui/jar%20in%20jar%20loader\" rel=\"nofollow noreferrer\">like the Eclipse JAR in JAR loader</a> though in most cases, that isn&#39;t what you&#39;d want to do.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 15064163,
+      "reputation" : 17111,
+      "user_id" : 10871900,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/720202b6e19abc330dcd92e6a1254562?s=256&d=identicon&r=PG",
+      "display_name" : "dan1st",
+      "link" : "https://stackoverflow.com/users/10871900/dan1st"
+    },
+    "creation_date" : 1754759960,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140654264,
+    "post_id" : 79729121,
+    "body" : "In general a JAR can haven only a single <code>module-info.java</code> class... so from that perspective to combine serveral jars into a single one is by definition the wrong approach, because the module system has some design principles.. so that would mean just to throw them away... So shading does not make sense at all for JPMS based artifacts. It does not make sense for JAR&#39;s which are not modules... for a number of reasons (no overriding of deps/transitive exclusions etc.)... as well. So make those separe and create BOM-file which is the entry point for your users..",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 112317,
+      "reputation" : 98455,
+      "user_id" : 296328,
+      "user_type" : "registered",
+      "accept_rate" : 60,
+      "profile_image" : "https://i.sstatic.net/DSpH6.jpg?s=256",
+      "display_name" : "khmarbaise",
+      "link" : "https://stackoverflow.com/users/296328/khmarbaise"
+    },
+    "creation_date" : 1754759558,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140652387,
+    "post_id" : 79729121,
+    "body" : "I second @dan1st, your first requirement is making this more difficult than I think it needs to be. I recommend opening up a discussion about this with your team. Consider publishing each library, including an aggregate module, as separate artifacts, with each one being signed.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 8532578,
+      "reputation" : 49904,
+      "user_id" : 6395627,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Slaw",
+      "link" : "https://stackoverflow.com/users/6395627/slaw"
+    },
+    "creation_date" : 1754670050,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140652280,
+    "post_id" : 79729121,
+    "body" : "Is there a reason for the first requirement to be a single JAR as opposed to signing both your JAR and all libraries?",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 15064163,
+      "reputation" : 17111,
+      "user_id" : 10871900,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/720202b6e19abc330dcd92e6a1254562?s=256&d=identicon&r=PG",
+      "display_name" : "dan1st",
+      "link" : "https://stackoverflow.com/users/10871900/dan1st"
+    },
+    "creation_date" : 1754668193,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140652249,
+    "post_id" : 79729121,
+    "body" : "Guys, I appreciate your helpfulness; but this is getting out of hand. As the moderators say, &quot;Comments are not for extended discussion&quot;. I&#39;ll add a bit to the question.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 201997,
+      "reputation" : 2254,
+      "user_id" : 448779,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/b71b71d82074f242b6799e70678a604b?s=256&d=identicon&r=PG",
+      "display_name" : "foo",
+      "link" : "https://stackoverflow.com/users/448779/foo"
+    },
+    "creation_date" : 1754667571,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140651925,
+    "post_id" : 79729121,
+    "body" : "In my opinion, the question of <i>why</i> you want to use a fat JAR is very relevant here. Not just that it seems you might be asking an XY problem but the answer might actually be different depend on why you have these requirements, <i>especially</i> since you want to use it as a library. Using shaded JARs/JARs with dependencies cause various issues, especially with JPMS since you can have duplicate dependencies/split packages and other things. Similarly, the question of why you want to want to do this might affect whether using an aggregator module or other solutions (multiple artifacts) are possible.",
+    "score" : 3,
+    "owner" : {
+      "account_id" : 15064163,
+      "reputation" : 17111,
+      "user_id" : 10871900,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/720202b6e19abc330dcd92e6a1254562?s=256&d=identicon&r=PG",
+      "display_name" : "dan1st",
+      "link" : "https://stackoverflow.com/users/10871900/dan1st"
+    },
+    "creation_date" : 1754660943,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140651877,
+    "post_id" : 79729121,
+    "body" : "@foo I wouldn&#39;t call it &quot;dirty&quot;. Many people still develop their libraries without module-info and do not intend to ever change that.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 888714,
+      "reputation" : 36707,
+      "user_id" : 927493,
+      "user_type" : "registered",
+      "accept_rate" : 61,
+      "profile_image" : "https://i.sstatic.net/sxsnm.png?s=256",
+      "display_name" : "JF Meier",
+      "link" : "https://stackoverflow.com/users/927493/jf-meier"
+    },
+    "creation_date" : 1754659770,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140651875,
+    "post_id" : 79729121,
+    "body" : "@VGR: sorry, no; it&#39;s not a runnable application.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 201997,
+      "reputation" : 2254,
+      "user_id" : 448779,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/b71b71d82074f242b6799e70678a604b?s=256&d=identicon&r=PG",
+      "display_name" : "foo",
+      "link" : "https://stackoverflow.com/users/448779/foo"
+    },
+    "creation_date" : 1754659720,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140651871,
+    "post_id" : 79729121,
+    "body" : "@JF Meier: good question, that. Because some consumers of the library use JPMS. Whether or not to leave the library &quot;dirty&quot; (unnamed module) is not a technical consideration.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 201997,
+      "reputation" : 2254,
+      "user_id" : 448779,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/b71b71d82074f242b6799e70678a604b?s=256&d=identicon&r=PG",
+      "display_name" : "foo",
+      "link" : "https://stackoverflow.com/users/448779/foo"
+    },
+    "creation_date" : 1754659643,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140651867,
+    "post_id" : 79729121,
+    "body" : "This is literally the problem addressed by the standard <a href=\"https://docs.oracle.com/en/java/javase/24/docs/specs/man/jlink.html\" rel=\"nofollow noreferrer\">jlink</a> tool that comes with every JDK.  I assume you don&#39;t <i>need</i> a .jar, you just need something an end user can run/double-click.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2053598,
+      "reputation" : 44991,
+      "user_id" : 1831987,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/38b1c37530189ec4471a43a618e33f67?s=256&d=identicon&r=PG",
+      "display_name" : "VGR",
+      "link" : "https://stackoverflow.com/users/1831987/vgr"
+    },
+    "creation_date" : 1754659595,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140651848,
+    "post_id" : 79729121,
+    "body" : "Why do you need modules? Why not just use classical JARs without the JPMS?",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 888714,
+      "reputation" : 36707,
+      "user_id" : 927493,
+      "user_type" : "registered",
+      "accept_rate" : 61,
+      "profile_image" : "https://i.sstatic.net/sxsnm.png?s=256",
+      "display_name" : "JF Meier",
+      "link" : "https://stackoverflow.com/users/927493/jf-meier"
+    },
+    "creation_date" : 1754659339,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140651749,
+    "post_id" : 79729121,
+    "body" : "@dan1st: answering as comment; for the general usability of question and potential answer my specific motivation is irrelevant, I think. – I have a project with many modules, which can be combined depending on use case. However, for most &quot;normal&quot; cases and for getting started, it is cumbersome to include 8 or more dependencies. I want to provide this combined JAR for ease of use in standard situations, leaving full modularity as an option for advanced use. (also, the way I encounter embedded systems are built, a single JAR is very helpful.)",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 201997,
+      "reputation" : 2254,
+      "user_id" : 448779,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/b71b71d82074f242b6799e70678a604b?s=256&d=identicon&r=PG",
+      "display_name" : "foo",
+      "link" : "https://stackoverflow.com/users/448779/foo"
+    },
+    "creation_date" : 1754656765,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140650787,
+    "post_id" : 79729121,
+    "body" : "Can you please elaborate on why you need/want it as a single JAR? Maven and Gradle are built for resolving transitive dependencies. If they include a dependency, they get all transitive dependencies automatically.",
+    "score" : 4,
+    "owner" : {
+      "account_id" : 15064163,
+      "reputation" : 17111,
+      "user_id" : 10871900,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/720202b6e19abc330dcd92e6a1254562?s=256&d=identicon&r=PG",
+      "display_name" : "dan1st",
+      "link" : "https://stackoverflow.com/users/10871900/dan1st"
+    },
+    "creation_date" : 1754626959,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79743660" : [ {
+      "comment_id" : 140695558,
+      "post_id" : 79743660,
+      "body" : "@Slaw I&#39;m fairly certain their setup only works because <a href=\"https://stackoverflow.com/questions/79729121/how-to-combine-multiple-java-modules-into-one-jar/79743660#comment140685389_79743660\">Maven is including transitive dependencies</a> with their JAR being basically ignored (see also the OP&#39;s response)",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 15064163,
+        "reputation" : 17111,
+        "user_id" : 10871900,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/720202b6e19abc330dcd92e6a1254562?s=256&d=identicon&r=PG",
+        "display_name" : "dan1st",
+        "link" : "https://stackoverflow.com/users/10871900/dan1st"
+      },
+      "creation_date" : 1756290946,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140694451,
+      "post_id" : 79743660,
+      "body" : "&quot;<i>The inside of the JAR(s) is walked as if it were exploded.</i>&quot; -- I cannot reproduce this on Java 24. Created two modules, <code>app</code> and <code>lib</code>, where the former requires the latter, and then put them in a JAR file. The JAR layout was <code>&#47;app&#47;module-info.class</code> and <code>&#47;lib&#47;module-info.class</code> (plus classes inside those modules, as well as the META-INF directory). Then running <code>java -p &lt;jarfile&gt; -m app&#47;&lt;main-class&gt;</code> gave a &quot;Module app not found&quot; error, as I expected. Is your setup different? Are you <i>sure</i> your classes are being loaded into <i>named modules</i>?",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 8532578,
+        "reputation" : 49904,
+        "user_id" : 6395627,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Slaw",
+        "link" : "https://stackoverflow.com/users/6395627/slaw"
+      },
+      "creation_date" : 1756244646,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140693414,
+      "post_id" : 79743660,
+      "body" : "@dan1st Thank you for pointing out the possibility the &quot;consumer&quot; maven is pulling in the transitive dependencies. I&#39;ll check for that. -- <code>jdeps</code> on the combined JAR shows no such depedencies.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 201997,
+        "reputation" : 2254,
+        "user_id" : 448779,
+        "user_type" : "registered",
+        "accept_rate" : 100,
+        "profile_image" : "https://www.gravatar.com/avatar/b71b71d82074f242b6799e70678a604b?s=256&d=identicon&r=PG",
+        "display_name" : "foo",
+        "link" : "https://stackoverflow.com/users/448779/foo"
+      },
+      "creation_date" : 1756218753,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140692977,
+      "post_id" : 79743660,
+      "body" : "@Slaw It&#39;s (3) - and no custom module finder. The inside of the JAR(s) is walked as if it were exploded. That is my understanding. Not sure it is intended, but the module walk does not seem to handle JAR contents differently from local directories.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 201997,
+        "reputation" : 2254,
+        "user_id" : 448779,
+        "user_type" : "registered",
+        "accept_rate" : 100,
+        "profile_image" : "https://www.gravatar.com/avatar/b71b71d82074f242b6799e70678a604b?s=256&d=identicon&r=PG",
+        "display_name" : "foo",
+        "link" : "https://stackoverflow.com/users/448779/foo"
+      },
+      "creation_date" : 1756206665,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140688005,
+      "post_id" : 79743660,
+      "body" : "And at the risk of beating a dead horse/harping on about something you can&#39;t or don&#39;t want to change, I still honestly think <i>business requirement #1</i> is unfortunate and it should be reconsidered. It is fundamentally at odds with JPMS, at least for modules loaded from the <code>--module-path</code>. Even a custom <code>ModuleFinder</code> that can find and load modules embedded in &quot;subdirectories&quot; of a JAR file is not quite the same. It would involve a new <code>ModuleLayer</code> being created, which means non-system class loaders and custom bootstrapping. That would make a library <i>harder</i> to use.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 8532578,
+        "reputation" : 49904,
+        "user_id" : 6395627,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Slaw",
+        "link" : "https://stackoverflow.com/users/6395627/slaw"
+      },
+      "creation_date" : 1756016265,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140687992,
+      "post_id" : 79743660,
+      "body" : "Can you link to the JPMS source code that allegedly supports this? The last time I went through that code, the default <code>ModuleFinder</code> could only find modules in three ways: (1) An &quot;exploded directory&quot;, which is a directory with a <code>module-info.class</code> file; (2) a &quot;packaged module&quot;, which is a JAR file with a <code>module-info.class</code> file in its root; or (3) a directory of multiple exploded or packaged modules. This is also documented by <code>ModuleFinder::of(Path...)</code>. So, unless <i>Maven Assembly Plugin</i> is packaging a custom <code>ModuleFinder</code> (and all that entails), I don&#39;t see how your solution works.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 8532578,
+        "reputation" : 49904,
+        "user_id" : 6395627,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Slaw",
+        "link" : "https://stackoverflow.com/users/6395627/slaw"
+      },
+      "creation_date" : 1756015508,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140685394,
+      "post_id" : 79743660,
+      "body" : "@dan1st The JVM only ever loads a single module-info.class file per JAR. The only exception is using a custom <code>ClassLoader</code> which would have to be done by the application before any of the modules are loaded. An approach using different directories for different modules works outside of a JAR but Java can&#39;t load anything like that within a JAR.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 15064163,
+        "reputation" : 17111,
+        "user_id" : 10871900,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/720202b6e19abc330dcd92e6a1254562?s=256&d=identicon&r=PG",
+        "display_name" : "dan1st",
+        "link" : "https://stackoverflow.com/users/10871900/dan1st"
+      },
+      "creation_date" : 1755882598,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140685389,
+      "post_id" : 79743660,
+      "body" : "&quot;The resulting single JAR contains two module-info.classes in subdirectories named after their respective modules, in which JPMS will find them.&quot; - No, that just isn&#39;t the case. Java will not resolve anything from subdirectories and you will see that when trying to compile/run applications using that &quot;shaded modular&quot; JAR from the CLI. The reason it (probably because I don&#39;t know how you tested it) works with tools like Maven is that Maven automatically downloads the transitive dependencies so it gets the modules from the transitive dependencies, not from your fat JAR.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 15064163,
+        "reputation" : 17111,
+        "user_id" : 10871900,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/720202b6e19abc330dcd92e6a1254562?s=256&d=identicon&r=PG",
+        "display_name" : "dan1st",
+        "link" : "https://stackoverflow.com/users/10871900/dan1st"
+      },
+      "creation_date" : 1755882507,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

@@ -1,0 +1,328 @@
+{
+  "question" : {
+    "question_id" : 79764061,
+    "title" : "How make @JoinColumns conditional?",
+    "body" : "<p>I have the following scenario:</p>\n<pre class=\"lang-java prettyprint-override\"><code>class AId {\nString aId1;\nString aId2;\n}\n\n@IdClass{AId.class}\nclass A {\n@Id String aId1;\n@Id String aId2;\n\nString aType;  // possible values are 0,1\n\n}\n\n@IdClass{BId.class}\nclass B {\n@Id String bId1;\n@Id String bId2;\n\nString bType; // possible values are 0,1,2\n\n@ManyToOne (fetchType=&quot;EAGER&quot;)\n@JoinColumn(name = bId1, referenceColumn = aId1)\n@JoinColumn(name = bType, referenceColumn = aType)\nA aOfB;      // B will have an A only if bType &lt;&gt; 2\n\n}\n\n</code></pre>\n<p>So if <code>B={01,02,1}</code>, I want to perform the join with table A to obtain <code>A={01,03,1}</code><br />\nBut, if <code>B={01,02,2}</code> since <code>bType</code> is <code>2</code>, I know that it won't have an <code>A</code> element and I don't want to join when I fetch <code>B</code>. I am just unsure what the correct syntax is to achieve this.</p>\n<p>Do I use <code>@JoinFormula</code>? But the examples that I've seen using <code>@JoinFormula</code> only relies on single column joins whereas in my case I need 2.</p>\n<p>Update:\nI was hoping that there would be a way to make the query dynamic. Example if bType&lt;&gt;2, I would have the following query:</p>\n<pre><code>select\n    b1_0.b_id1,\n    b1_0.b_id2,\n    a1_0.a_id1,\n    a1_0.a_id2,\n    a1_0.a_type,\n    b1_0.bType \nfrom\n    b_table b1_0 \nleft join\n    a_table a1_0 \n        on a1_0.a_id1=b1_0.b_id1 \n        and a1_0.a_type=b1_0.b_type\nwhere\n    (\n        b1_0.b_id1,b1_0.b_id2\n    ) in ((?,?))\n</code></pre>\n<p>But if btype=2, then only:</p>\n<pre><code>select\n    b1_0.b_id1,\n    b1_0.b_id2,\n    b1_0.bType \nfrom\n    b_table b1_0 \nwhere\n    (\n        b1_0.b_id1,b1_0.b_id2\n    ) in ((?,?))\n</code></pre>\n",
+    "tags" : [ "java", "postgresql", "spring-boot", "jpa", "jpql" ],
+    "owner" : {
+      "account_id" : 6280829,
+      "reputation" : 317,
+      "user_id" : 5489294,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/0a50a3238ce3c4f5f33f82c49997dc68?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Guppy_00",
+      "link" : "https://stackoverflow.com/users/5489294/guppy-00"
+    },
+    "is_answered" : false,
+    "view_count" : 126,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1757980333,
+    "creation_date" : 1757817053,
+    "link" : "https://stackoverflow.com/questions/79764061/how-make-joincolumns-conditional",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79764763,
+    "question_id" : 79764061,
+    "body" : "<p>You cannot write query with conditional join like so</p>\n<pre><code>select * from someTable\nwhen someColumn = 2 then join someOtherTable\n</code></pre>\n<p>so i don't know what you mean by &quot;omit <code>join</code> for particular values&quot;.</p>\n<p>However, I can give you idea, how you can augment your join statement using <code>@JoinColumnOrFormula</code> and <code>@JoinColumnOrFormulas</code>:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@ManyToOne(fetch = FetchType.EAGER, optional = true)\n@JoinColumnsOrFormulas({\n        // regular key join: bId1 -&gt; aId1\n        @JoinColumnOrFormula(\n                column = @JoinColumn(name = &quot;b_id1&quot;, referencedColumnName = &quot;a_id1&quot;, insertable = false, updatable = false)\n        ),\n        // conditional join: only if bType != '2', join bType -&gt; aType\n        @JoinColumnOrFormula(\n                formula = @JoinFormula(\n                        value = &quot;CASE WHEN b_type &lt;&gt; '2' THEN b_type ELSE NULL END&quot;,\n                        referencedColumnName = &quot;a_type&quot;\n                )\n        )\n})\nprivate A aOfB;\n</code></pre>\n<p>It produces following query</p>\n<pre class=\"lang-sql prettyprint-override\"><code>select\n    b1_0.b_id1,\n    b1_0.b_id2,\n    a1_0.a_id1,\n    a1_0.a_id2,\n    a1_0.a_type,\n    b1_0.bType \nfrom\n    b_table b1_0 \nleft join\n    a_table a1_0 \n        on a1_0.a_id1=b1_0.b_id1 \n        and a1_0.a_type=CASE \n            WHEN b1_0.b_type &lt;&gt; '2' THEN b1_0.b_type \n            ELSE NULL \n        END \nwhere\n    (\n        b1_0.b_id1,b1_0.b_id2\n    ) in ((?,?))\n</code></pre>\n<p>But i am not sure if that's exactly what you want.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 9606741,
+      "reputation" : 41303,
+      "user_id" : 7132550,
+      "user_type" : "registered",
+      "accept_rate" : 75,
+      "profile_image" : "https://graph.facebook.com/1063981417044495/picture?type=large",
+      "display_name" : "Michał Turczyn",
+      "link" : "https://stackoverflow.com/users/7132550/micha%c5%82-turczyn"
+    },
+    "creation_date" : 1757913936,
+    "last_activity_date" : 1757913936,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140740058,
+    "post_id" : 79764061,
+    "body" : "Exactly what you are after cannot be done in the mapping - it is generic and must apply to ALL queries, even ones where you don&#39;t know the bType of the entity you are fetching. If you know there is no A for the B, you can control it yourself by fetching only the B entity (leaving A lazily fetched) and mapping it into a dto, keeping the A reference null. For all other queries, let it do the join - it would be over the PKs so should be indexed anyway, and you can add in the bType-&gt;aType join column mapping as well if you really need.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 231721,
+      "reputation" : 21335,
+      "user_id" : 496099,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/efa7510cf47d7bd79e80486246e7e39e?s=256&d=identicon&r=PG",
+      "display_name" : "Chris",
+      "link" : "https://stackoverflow.com/users/496099/chris"
+    },
+    "creation_date" : 1758036607,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140738576,
+    "post_id" : 79764061,
+    "body" : "I already have the data needed to obtain the specific element in B table. That is, I know the bId1 &amp; bId2 &amp; bType beforehand. But before fetching B (specifically other attributes of B), I can either JOIN it with A to obtain the associated A element if B does have an associated element or opt to not make the JOIN knowing that it won&#39;t have a matching entry on A (since bType=2).",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 6280829,
+      "reputation" : 317,
+      "user_id" : 5489294,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/0a50a3238ce3c4f5f33f82c49997dc68?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Guppy_00",
+      "link" : "https://stackoverflow.com/users/5489294/guppy-00"
+    },
+    "creation_date" : 1757999095,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140738564,
+    "post_id" : 79764061,
+    "body" : "Please provide <b>single query</b>, as Java will just generate single query... Otherwise, you can try writing your custom query and executing raw sql. I already told you that &quot;conditional inclusion of join&quot; is not possible in SQL, thus there&#39;s no way of doing so in JPQL.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 9606741,
+      "reputation" : 41303,
+      "user_id" : 7132550,
+      "user_type" : "registered",
+      "accept_rate" : 75,
+      "profile_image" : "https://graph.facebook.com/1063981417044495/picture?type=large",
+      "display_name" : "Michał Turczyn",
+      "link" : "https://stackoverflow.com/users/7132550/micha%c5%82-turczyn"
+    },
+    "creation_date" : 1757998539,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140738562,
+    "post_id" : 79764061,
+    "body" : "This does not make sense - what does it mean that bType&lt;&gt;2 - to know that, you have to go to database. How can you make a query based on data in database, without knowing it first? You have to make general query and there is no way for you to know whether bType is 2 or whatever. Moreover, it would make sense only if bType has the same value in all rows. Now i understand your problem even less.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 9606741,
+      "reputation" : 41303,
+      "user_id" : 7132550,
+      "user_type" : "registered",
+      "accept_rate" : 75,
+      "profile_image" : "https://graph.facebook.com/1063981417044495/picture?type=large",
+      "display_name" : "Michał Turczyn",
+      "link" : "https://stackoverflow.com/users/7132550/micha%c5%82-turczyn"
+    },
+    "creation_date" : 1757998447,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140738276,
+    "post_id" : 79764061,
+    "body" : "@Chris sorry I was trying to simplify the classes in my question but you&#39;re right. B should have additional attribute aId2 and aOfB should have additional @JoinColumn(name = aId2, referenceColumn = aId2).",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 6280829,
+      "reputation" : 317,
+      "user_id" : 5489294,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/0a50a3238ce3c4f5f33f82c49997dc68?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Guppy_00",
+      "link" : "https://stackoverflow.com/users/5489294/guppy-00"
+    },
+    "creation_date" : 1757980689,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140737971,
+    "post_id" : 79764061,
+    "body" : "A has a composite PK, so you need BOTH aId1 and aId2 referenced to point at a single A instance. B={01,02,1} will be pointing at many A instances {01,01,1}-&gt; {01,N,1}.  Yes, what you may want can be done, but you might want to rethink the problem to avoid needing to use funky behavior in your object model. B should just have a foreign key to A. If you can&#39;t change the reference, why map it in the entity?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 231721,
+      "reputation" : 21335,
+      "user_id" : 496099,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/efa7510cf47d7bd79e80486246e7e39e?s=256&d=identicon&r=PG",
+      "display_name" : "Chris",
+      "link" : "https://stackoverflow.com/users/496099/chris"
+    },
+    "creation_date" : 1757967204,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140735719,
+    "post_id" : 79764061,
+    "body" : "I want to omit the JOIN completely when bType=2. But if this is not possible, could you also share the syntax if using JoinColumnOrFormulas?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 6280829,
+      "reputation" : 317,
+      "user_id" : 5489294,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/0a50a3238ce3c4f5f33f82c49997dc68?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Guppy_00",
+      "link" : "https://stackoverflow.com/users/5489294/guppy-00"
+    },
+    "creation_date" : 1757898591,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140735518,
+    "post_id" : 79764061,
+    "body" : "I am not sure what is the goal here - do you want to omit <code>JOIN</code> in SQL query entirely? Or you aiming to achieve any special JOIN condition? I could augment the query by using <code>JoinColumnOrFormula</code> and <code>JoinColumnsOrFormulas</code>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 9606741,
+      "reputation" : 41303,
+      "user_id" : 7132550,
+      "user_type" : "registered",
+      "accept_rate" : 75,
+      "profile_image" : "https://graph.facebook.com/1063981417044495/picture?type=large",
+      "display_name" : "Michał Turczyn",
+      "link" : "https://stackoverflow.com/users/7132550/micha%c5%82-turczyn"
+    },
+    "creation_date" : 1757881126,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79764763" : [ {
+      "comment_id" : 140738596,
+      "post_id" : 79764763,
+      "body" : "Yes, so you can only do it by raw SQL. I think there is no way to achieve this with JPQL",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 9606741,
+        "reputation" : 41303,
+        "user_id" : 7132550,
+        "user_type" : "registered",
+        "accept_rate" : 75,
+        "profile_image" : "https://graph.facebook.com/1063981417044495/picture?type=large",
+        "display_name" : "Michał Turczyn",
+        "link" : "https://stackoverflow.com/users/7132550/micha%c5%82-turczyn"
+      },
+      "creation_date" : 1758000039,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140738583,
+      "post_id" : 79764763,
+      "body" : "Ok I understand perhaps what I am trying to do cannot be done by a single query.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 6280829,
+        "reputation" : 317,
+        "user_id" : 5489294,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/0a50a3238ce3c4f5f33f82c49997dc68?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Guppy_00",
+        "link" : "https://stackoverflow.com/users/5489294/guppy-00"
+      },
+      "creation_date" : 1757999479,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140738581,
+      "post_id" : 79764763,
+      "body" : "You have a JoinColumn inside JoinColumnOrFormula. What I mean is I have encountered this exact error when I combine formula and columns",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 6280829,
+        "reputation" : 317,
+        "user_id" : 5489294,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/0a50a3238ce3c4f5f33f82c49997dc68?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Guppy_00",
+        "link" : "https://stackoverflow.com/users/5489294/guppy-00"
+      },
+      "creation_date" : 1757999436,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140738573,
+      "post_id" : 79764763,
+      "body" : "But my approach uses only <code>JoinColumnsOrFormulas</code> and <code>JoinColumnsOrFormula</code>, it does not use <code>JoinColumn</code>",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 9606741,
+        "reputation" : 41303,
+        "user_id" : 7132550,
+        "user_type" : "registered",
+        "accept_rate" : 75,
+        "profile_image" : "https://graph.facebook.com/1063981417044495/picture?type=large",
+        "display_name" : "Michał Turczyn",
+        "link" : "https://stackoverflow.com/users/7132550/micha%c5%82-turczyn"
+      },
+      "creation_date" : 1757998941,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140738572,
+      "post_id" : 79764763,
+      "body" : "I has nothing to do with the naming. Actually, I have encountered this error before. Whenever I combine JoinColumn and JoinFormula",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 6280829,
+        "reputation" : 317,
+        "user_id" : 5489294,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/0a50a3238ce3c4f5f33f82c49997dc68?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Guppy_00",
+        "link" : "https://stackoverflow.com/users/5489294/guppy-00"
+      },
+      "creation_date" : 1757998867,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140738569,
+      "post_id" : 79764763,
+      "body" : "@Guppy_00 Well, it might be that i used slightly different column names or properties names. Please ensure everything is correct.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 9606741,
+        "reputation" : 41303,
+        "user_id" : 7132550,
+        "user_type" : "registered",
+        "accept_rate" : 75,
+        "profile_image" : "https://graph.facebook.com/1063981417044495/picture?type=large",
+        "display_name" : "Michał Turczyn",
+        "link" : "https://stackoverflow.com/users/7132550/micha%c5%82-turczyn"
+      },
+      "creation_date" : 1757998743,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140738566,
+      "post_id" : 79764763,
+      "body" : "@Guppy_00 You are right. But omitting join depending on rows value is simply invalid SQL.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 9606741,
+        "reputation" : 41303,
+        "user_id" : 7132550,
+        "user_type" : "registered",
+        "accept_rate" : 75,
+        "profile_image" : "https://graph.facebook.com/1063981417044495/picture?type=large",
+        "display_name" : "Michał Turczyn",
+        "link" : "https://stackoverflow.com/users/7132550/micha%c5%82-turczyn"
+      },
+      "creation_date" : 1757998663,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140738280,
+      "post_id" : 79764763,
+      "body" : "Also, when I tried your syntax, I am getting the following error message:     Caused by: org.hibernate.AssertionFailure: value involves formulas",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 6280829,
+        "reputation" : 317,
+        "user_id" : 5489294,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/0a50a3238ce3c4f5f33f82c49997dc68?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Guppy_00",
+        "link" : "https://stackoverflow.com/users/5489294/guppy-00"
+      },
+      "creation_date" : 1757980838,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140738261,
+      "post_id" : 79764763,
+      "body" : "Hello. Thank you very much for your answer. I have edited my question to include the exact SQL queries that I need. My only concern with your suggestion is that the JOIN will still be done despite bType=2 just that aType will be set to NULL ensuring no match will be found. Is my understanding correct? Performance wise, I just want to omit the processing time of looking for an entry in A with a1_0.a_id1=b1_0.b_id1 and a1_0.a_type=NULL (which I know for certain won&#39;t exist)",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 6280829,
+        "reputation" : 317,
+        "user_id" : 5489294,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/0a50a3238ce3c4f5f33f82c49997dc68?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Guppy_00",
+        "link" : "https://stackoverflow.com/users/5489294/guppy-00"
+      },
+      "creation_date" : 1757979853,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

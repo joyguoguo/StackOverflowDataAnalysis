@@ -1,0 +1,64 @@
+{
+  "question" : {
+    "question_id" : 79598897,
+    "title" : "Springboot refuses to utilise the custom RedisCacheManager",
+    "body" : "<p>So I have a bit of an issue with regards to Redis. It seems that SpringBoot refuses to utilise the custom RedisCacheManager bean that I've created despite using the approppriate annotations (&quot;@Bean&quot;, &quot;@Primary&quot;) and instead defaults to the generic one. This leads to the JsonSerializer that I have set in the custom cacheManager not being used and SpringBoot defaulting to utilising the DefaultSerializer as seen in the stack trace in the pastebin. The MainApplication class scans the basePackage so it is not a code structuring issue as all other configs in that same package are recognised. What might be the issue?</p>\n<p>The pastebins are below. Any help fixing will be appreciated.</p>\n<p><a href=\"https://pastebin.com/3mGPXFUr\" rel=\"nofollow noreferrer\">Classes and Logs</a></p>\n<p><a href=\"https://pastebin.com/VPquA426\" rel=\"nofollow noreferrer\">Stack Trace and sample methods</a></p>\n<pre><code>@Configuration\n@EnableCaching\npublic class RedisConfig {\n \n    @Bean\n    public RedisTemplate&lt;String, Object&gt; redisTemplate(RedisConnectionFactory redisConnectionFactory) {\n        Jackson2JsonRedisSerializer&lt;Object&gt; jacksonSerializer =\n                new Jackson2JsonRedisSerializer&lt;&gt;(Object.class);\n \n        ObjectMapper objectMapper = new ObjectMapper();\n        objectMapper.setVisibility(PropertyAccessor.ALL, JsonAutoDetect.Visibility.ANY);\n        objectMapper.activateDefaultTyping(\n                objectMapper.getPolymorphicTypeValidator(),\n                ObjectMapper.DefaultTyping.NON_FINAL\n        );\n        jacksonSerializer.setObjectMapper(objectMapper);\n        RedisTemplate&lt;String, Object&gt; redisTemplate = new RedisTemplate&lt;&gt;();\n        redisTemplate.setConnectionFactory(redisConnectionFactory);\n        redisTemplate.setKeySerializer(new StringRedisSerializer());\n        redisTemplate.setValueSerializer(jacksonSerializer);\n        redisTemplate.setHashKeySerializer(new StringRedisSerializer());\n        redisTemplate.setHashValueSerializer(jacksonSerializer);\n        redisTemplate.afterPropertiesSet();\n        return redisTemplate;\n    }\n \n    @Bean(name = &quot;cacheManager&quot;)\n    @Primary\n    public RedisCacheManager cacheManager(RedisTemplate&lt;String, Object&gt; redisTemplate) {\n        RedisCacheWriter redisCacheWriter = RedisCacheWriter.\n                nonLockingRedisCacheWriter(Objects.requireNonNull(redisTemplate.getConnectionFactory()));\n \n        RedisCacheConfiguration redisCacheConfiguration = RedisCacheConfiguration.defaultCacheConfig()\n                .serializeValuesWith\n                        (RedisSerializationContext.SerializationPair.\n                                fromSerializer(redisTemplate.getValueSerializer()));\n \n        return RedisCacheManager.builder()\n                .cacheWriter(redisCacheWriter)\n                .cacheDefaults(redisCacheConfiguration)\n                .withCacheConfiguration(&quot;bitcoin-balances&quot;,\n                        RedisCacheConfiguration.defaultCacheConfig()\n                                .entryTtl(Duration.ofMinutes(5)))\n                .withCacheConfiguration(&quot;ethereum-balances&quot;,\n                        RedisCacheConfiguration.defaultCacheConfig()\n                                .entryTtl(Duration.ofMinutes(5)))\n                .withCacheConfiguration(&quot;bitcoinTransactions&quot;,\n                        RedisCacheConfiguration.defaultCacheConfig()\n                                .entryTtl(Duration.ofHours(1)))\n                .withCacheConfiguration(&quot;ethereumTransactions&quot;,\n                        RedisCacheConfiguration.defaultCacheConfig()\n                                .entryTtl(Duration.ofHours(1)))\n                .build();\n    }\n}\n</code></pre>\n<p>Test logs that show the cacheManager used by Springboot:</p>\n<pre><code> private final ApplicationContext applicationContext;\n    private final CacheManager cacheManager;\n \n    @PostConstruct\n    public void printCacheManager() {\n        System.out.println(&quot;Using CacheManager: &quot; + cacheManager.getClass().getName());\n    }\n \n    @PostConstruct\n    public void listAllCacheManagers() {\n        String[] beans = applicationContext.getBeanNamesForType(CacheManager.class);\n        for (String bean : beans) {\n            System.out.println(&quot;CacheManager Bean: &quot; + bean + &quot; -&gt; &quot; + applicationContext.getBean(bean));\n        }\n    }\n</code></pre>\n<p>Results:</p>\n<pre><code>Using CacheManager: org.springframework.data.redis.cache.RedisCacheManager\nCacheManager Bean: cacheManager -&gt; org.springframework.data.redis.cache.RedisCacheManager@408bb173\n</code></pre>\n<p>The object being used as a return value:</p>\n<pre><code>@Data\n@Builder\n@AllArgsConstructor\n@NoArgsConstructor\npublic class WalletDto {\n    private String address;\n    private BigDecimal balance;\n}\n</code></pre>\n<p>Method used in the test:</p>\n<pre><code>@Cacheable(\n            value = &quot;ethereum-balances&quot;,\n            key = &quot;T(org.springframework.security.core.context.SecurityContextHolder).getContext().getAuthentication().getName()&quot;\n    )\n    public WalletDto getWalletBalance() {\n        User user = authService.getCurrentUser();\n \n        EthereumWallet ethereumWallet = ethereumWalletRepository.findByUser(user)\n                .orElseThrow(\n                        () -&gt; new EntityNotFoundException(&quot;User does not have an Ethereum wallet&quot;));\n \n        if (ethereumWallet.isTradingLocked()) {\n            throw new WalletLockedException(&quot;Wallet is currently in a transaction, try again later&quot;);\n        }\n \n        String address = ethereumWallet.getAddress();\n        BigInteger updatedBalanceWei = getBalance(address);\n        BigDecimal updatedBalanceEth = Converter.convertWeiToEth(updatedBalanceWei);\n \n        return WalletDto.builder()\n                .address(address)\n                .balance(updatedBalanceEth)\n                .build();\n \n    }\n</code></pre>\n<p>Stack trace sample:</p>\n<pre><code>org.springframework.data.redis.serializer.SerializationException: Cannot serialize; nested exception is org.springframework.core.serializer.support.SerializationFailedException: Failed to serialize object using DefaultSerializer; nested exception is java.lang.IllegalArgumentException: DefaultSerializer requires a Serializable payload but received an object of type [com.kollybistes.common.dtos.WalletDto]\n    at org.springframework.data.redis.serializer.JdkSerializationRedisSerializer.serialize(JdkSerializationRedisSerializer.java:96)\n    at org.springframework.data.redis.serializer.DefaultRedisElementWriter.write(DefaultRedisElementWriter.java:44)\n    at org.springframework.data.redis.serializer.RedisSerializationContext$SerializationPair.write(RedisSerializationContext.java:287)\n    at org.springframework.data.redis.cache.RedisCache.serializeCacheValue(RedisCache.java:282)\n    at org.springframework.data.redis.cache.RedisCache.put(RedisCache.java:168)\n    at org.springframework.cache.interceptor.AbstractCacheInvoker.doPut(AbstractCacheInvoker.java:87)\n    at org.springframework.cache.interceptor.CacheAspectSupport$CachePutRequest.apply(CacheAspectSupport.java:837)\n    at org.springframework.cache.interceptor.CacheAspectSupport.execute(CacheAspectSupport.java:430)\n    at org.springframework.cache.interceptor.CacheAspectSupport.execute(CacheAspectSupport.java:345)\n    at org.springframework.cache.interceptor.CacheInterceptor.invoke(CacheInterceptor.java:64)\n    at org.springframework.aop.framework.ReflectiveMethodInvocation.proceed(ReflectiveMethodInvocation.java:186)\n    at org.springframework.aop.framework.CglibAopProxy$CglibMethodInvocation.proceed(CglibAopProxy.java:753)\n    at org.springframework.aop.framework.CglibAopProxy$DynamicAdvisedInterceptor.intercept(CglibAopProxy.java:698)\n    at com.kollybistes.core.services.EthereumService$$EnhancerBySpringCGLIB$$c3c3bd41.getWalletBalance(&lt;generated&gt;)\n</code></pre>\n",
+    "tags" : [ "java", "spring", "spring-boot", "redis" ],
+    "owner" : {
+      "account_id" : 41689496,
+      "reputation" : 3,
+      "user_id" : 30406063,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/571b121ae9274801041ca14e20fe35b9?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Brown Niqqar",
+      "link" : "https://stackoverflow.com/users/30406063/brown-niqqar"
+    },
+    "is_answered" : true,
+    "view_count" : 162,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1746117926,
+    "creation_date" : 1745947470,
+    "link" : "https://stackoverflow.com/questions/79598897/springboot-refuses-to-utilise-the-custom-rediscachemanager",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79599197,
+    "question_id" : 79598897,
+    "body" : "<p>You configured each cache:</p>\n<pre class=\"lang-java prettyprint-override\"><code>.withCacheConfiguration(&quot;bitcoin-balances&quot;,\n        RedisCacheConfiguration.defaultCacheConfig()\n                .entryTtl(Duration.ofMinutes(5)))\n</code></pre>\n<p>with RedisCacheConfiguration.defaultCacheConfig() which serializes values with JdkSerializationRedisSerializer by default.</p>\n<p>Let's instead create a custom RedisCacheConfiguration and configure it to serialize values as JSON:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Bean\nRedisCacheConfiguration customRedisCacheConfiguration(CacheProperties cacheProperties) {\n  var objectMapper = Jackson2ObjectMapperBuilder.json().build();\n  objectMapper.activateDefaultTyping(\n      objectMapper.getPolymorphicTypeValidator(),\n      ObjectMapper.DefaultTyping.NON_FINAL,\n      JsonTypeInfo.As.PROPERTY);\n\n  var cacheConfiguration = RedisCacheConfiguration.defaultCacheConfig()\n      .serializeValuesWith(\n           RedisSerializationContext.SerializationPair.fromSerializer(\n               new GenericJackson2JsonRedisSerializer(objectMapper)));\n\n  CacheProperties.Redis redisProperties = cacheProperties.getRedis();\n  if (redisProperties.getTimeToLive() != null) {\n    cacheConfiguration = cacheConfiguration.entryTtl(redisProperties.getTimeToLive());\n  }\n\n  return cacheConfiguration;\n}\n</code></pre>\n<p>Instead of creating a custom RedisCacheManager, use the RedisCacheManager autoconfigured by Spring Boot.  You want to set the time to live on each cache, so let's hook into the callback that Spring Boot provides to customize the RedisCacheManager autoconfigured by Spring Boot:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Bean\nRedisCacheManagerBuilderCustomizer cacheManagerBuilderCustomizer(\n    RedisCacheConfiguration cacheConfiguration\n) {\n  return redisCacheManagerBuilder -&gt; redisCacheManagerBuilder\n      .withCacheConfiguration(\n          &quot;bitcoin-balances&quot;,\n          cacheConfiguration.entryTtl(Duration.ofMinutes(5)))\n      // ...\n}\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 23128,
+      "reputation" : 14130,
+      "user_id" : 57719,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/m2xJ2.png?s=256",
+      "display_name" : "Chin Huang",
+      "link" : "https://stackoverflow.com/users/57719/chin-huang"
+    },
+    "creation_date" : 1745960376,
+    "last_activity_date" : 1746117926,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79599197" : [ {
+      "comment_id" : 140389437,
+      "post_id" : 79599197,
+      "body" : "Thank you so much, I wonder why I hadn&#39;t noticed that I was resetting the cacheManager to default configs.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 41689496,
+        "reputation" : 3,
+        "user_id" : 30406063,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/571b121ae9274801041ca14e20fe35b9?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Brown Niqqar",
+        "link" : "https://stackoverflow.com/users/30406063/brown-niqqar"
+      },
+      "creation_date" : 1746176944,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

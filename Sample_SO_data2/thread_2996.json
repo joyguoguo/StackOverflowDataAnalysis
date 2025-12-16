@@ -1,0 +1,114 @@
+{
+  "question" : {
+    "question_id" : 79582226,
+    "title" : "Java Reflections and Meta Annotation Scanning",
+    "body" : "<p>I am working on a somewhat like spring DI framework, and I faced an issue scanning all classes annotated with a certain annotation.</p>\n<p>Here are the annotations:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Retention(RetentionPolicy.RUNTIME)\n@Target(ElementType.TYPE)\npublic @interface Component {}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>@Retention(RetentionPolicy.RUNTIME)\n@Target(ElementType.TYPE)\n@Component\npublic @interface View {}\n</code></pre>\n<p><code>@View</code> itself is annotated with <code>@Component</code> so that <code>ComponentScanner</code> can also scan <code>@View</code>.</p>\n<p>And Here is the <code>ComponentScanner</code>:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class ComponentScanner {\n\n    public static Set&lt;Class&lt;?&gt;&gt; scan(String basePackage) {\n        Reflections reflections = new Reflections(basePackage);\n        return reflections.getTypesAnnotatedWith(Component.class)\n                .stream().filter(component -&gt; !component.isAnnotation())\n                .collect(Collectors.toSet());\n    }\n}\n</code></pre>\n<p><code>ComponentScanner.scan()</code> is called when the <code>ApplicationContext</code> is initialized:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class ApplicationContext {\n\n    private final BeanContainer beanContainer = new BeanContainer();\n\n    public ApplicationContext(String basePackage) {\n\n        // scan components and inject dependencies\n        Set&lt;Class&lt;?&gt;&gt; components = ComponentScanner.scan(basePackage);\n        beanContainer.registerComponents(components);\n        for (Class&lt;?&gt; componentClass : components)\n            System.out.println(&quot;ComponentScanner found: &quot;+componentClass.getName());\n    }\n\n    public &lt;T&gt; T getBean(Class&lt;T&gt; tClass) {\n        return beanContainer.getBean(tClass);\n    }\n}\n</code></pre>\n<p>The issue is that this <code>ComponentScanner.scan()</code> works fine for test codes but not when in actual use...</p>\n<p>Use case:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class App {\n\n    public static void run(Class&lt;?&gt; mainClass, String[] args) {\n        final String BASE_PACKAGE = mainClass.getPackageName();\n        ApplicationContext context = new ApplicationContext(BASE_PACKAGE);\n        // other setting codes...\n    }\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>package com.example.test;\n\npublic class Main {\n    public static void main(String[] args) {\n        App.run(Main.class, args);\n    }\n}\n\n@Component\npublic class MyComponent {}\n\n@View\npublic class MyView {}\n</code></pre>\n<p>If I run the main method, <code>App.run()</code> is called and it initializes <code>ApplicationContext</code> so that all <strong>Components</strong> are automatically scanned. But when I checked the log, <code>MyComponent</code> was scanned but not <code>MyView</code>...</p>\n<pre class=\"lang-bash prettyprint-override\"><code>ComponentScanner found: com.example.test.MyComponent\n</code></pre>\n<p>This is my test code:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class WebTest {\n\n    static final String BASE_PACKAGE = &quot;com.johndoe.myproject&quot;;\n    static final String TEMPLATE_ROOT = &quot;src/test/resources/templates&quot;;\n    static ApplicationContext context = new ApplicationContext(BASE_PACKAGE);\n\n    @Test\n    public void testView() throws IOException {\n        TestView view = context.getBean(TestView.class);\n        Assertions.assertNotNull(view);\n        Assertions.assertEquals(&quot;hello&quot;, view.hello());\n\n    }\n}\n</code></pre>\n<p>This test actually <strong>passed</strong>. So, I believe this indicates that <code>ComponentScanner.scan()</code> actually <strong>scanned</strong> the View below:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@View\npublic class TestView {\n    public String hello() {\n        return &quot;hello&quot;;\n    }\n}\n</code></pre>\n<p><code>TestView</code> is under the same package with <code>WebTest</code>.</p>\n<p>I tried all the steps Open AIs told me to do and they all failed. So my question is; <strong>why does my test code work but not the actual code?</strong></p>\n<p>I am really sorry for the load of code blocks but I really wanted to explain the full situation. I tried my best to simplify the code so that you can only see the essentials\uD83D\uDE2D</p>\n",
+    "tags" : [ "java", "annotations", "reflections" ],
+    "owner" : {
+      "account_id" : 41490246,
+      "reputation" : 3,
+      "user_id" : 30314180,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/7b8cca613f193308c8fa1382827a31b1?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Standing_Ash",
+      "link" : "https://stackoverflow.com/users/30314180/standing-ash"
+    },
+    "is_answered" : true,
+    "view_count" : 114,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1745078512,
+    "creation_date" : 1745055139,
+    "link" : "https://stackoverflow.com/questions/79582226/java-reflections-and-meta-annotation-scanning",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79582458,
+    "question_id" : 79582226,
+    "body" : "<p>Reflections doesn't actually work; the entire model is completely broken. Reflection relies on unspecified implementation behaviours.</p>\n<p>Java's &quot;find a resource&quot; system is called a <code>ClassLoader</code>. It's a class; you can extend it. It's a pluggable model: You can make your own classloaders. The default classloader that the system uses is actually 2 of em:</p>\n<ul>\n<li><p>A bootstrap loader which is baked into the JVM itself (after all, <code>ClassLoader.class</code> itself is a class, how does the JVM find this class which it will have to do to even <em>have</em> a classloader). Starting with JDK9 it loads via modules stored directly in your JDK distribution.</p>\n</li>\n<li><p>One instance of <code>UrlClassLoader</code>, loaded by the system, with your classpath as 'list of paths' (from your jar's <code>Class-Path</code> entry, if launched via <code>-jar</code>. Otherwise, via the <code>-cp</code> parameter and if that's not present, the CLASSPATH system property). This classloader is then used to load whatever you specified as main class, and it goes from there. NOte that the classpath has no other function. This is the one thing it does: Serve as the base for the one UrlClassLoader made by the system and used to load your main class.</p>\n</li>\n</ul>\n<p>Even though the name is <code>ClassLoader</code>, it can load any kind of resource. class files are files that are created during compilation, they do not change, and are an inherent part of your app's distribution: If they aren't there your app cannot work. Hence, it's the right place for <em>all</em> files that have that property. For example, if you're a desktop app with a custom save icon, that icon's png fits that description just as well as a class file would, and should therefore be stored in the same place your class files are, and should be loaded via a classloader.</p>\n<p>Now we get to the crucial reason Reflections doesn't actually work:</p>\n<p>ClassLoader as a concept <strong>does not have a list directive</strong>. It simply does not exist. The only 2 methods it has is 'make a URL that represents this resource string' and 'give me an inputstream that provides the data contained in the resource identified by this resource string'. <strong>Some</strong> classloaders will allow you to ask for a path that identifies a 'directory' but the spec does not require this or even explain how that would work. In addition, when you ask a classloader to make a URL, it is plausible that this URL contains sufficient data to 'recreate' its process. For example, the UrlClassLoader, if you ask it to make a URL, will get you something like:</p>\n<pre><code>jar:/abs/path/to/the/lib.jar!relative/path/inside/the/jar/YourFile.png\n</code></pre>\n<p>With some string manipulation you can extract <code>/abs/path/to/the/lib.jar</code>, you can then open that with <code>JarInputStream</code> and friends, and that class <strong>does</strong> have a list directive.</p>\n<p>That's how the Reflections library does its job. However, if it sees a URL that it either does not know about, or which does not contain the information required to 'recreate' how the classloader loads, then it cannot do its job.</p>\n<p>Given the few things a ClassLoader must actually implement, you can make a classloader that loads classes from a database. Or downloads them on the fly. Or even creates them on the spot, or introduces randomness. A URL for such things might be <code>db:psql:localhost:1234/dbName/someUnid</code> which Reflections cannot do anything with.</p>\n<p>This is, presumably, what you're running into. Point is, there is no spec, so you'd have to disassemble the entire chain of everything you're doing, and debug reflections, in order to ever fix this. The model is broken.</p>\n<h2>The fix - SPI</h2>\n<p>As one might expect, if the ClassLoader spec <em>itself</em> does not actually allow 'list your contents', then either the OpenJDK never needed it, or found another solution. Indeed, it has found another solution. The OpenJDK does do things just like you are: There are JDBC drivers it wants to load (and in case all you've followed is 30 year old tutorials, no, you don't need to <code>Class.forName(&quot;org.foo.jdbc.Driver&quot;)</code> first), charset providers to list, and it has a pluggable security infrastructure.</p>\n<p>The solution is SPI.</p>\n<p>SPI gets around the problem of 'you cannot list any files' by having the build process <em>itself</em> list all relevant files, and to put that listing into a file with a hardcoded name. Now, to 'list files', you just load that hardcoded name which is a thing ClassLoader instances can do, and now you have a list of names to ask classloaders for.</p>\n<p>The file is by convention located in <code>META-INF/services/com.foo.fully.qualified.name.of.a.SuperType</code> and the contents of it are 1 class per line, each line a fully qualified type name. The JDK has a baked in way to retrieve these: <a href=\"https://docs.oracle.com/javase/8/docs/api/java/util/ServiceLoader.html\" rel=\"nofollow noreferrer\">ServiceLoader</a></p>\n<p>You can ask <em>every classloader</em> for a resource and go through <em>all</em> of them which is why this system 'works'. You can for example write a java-based photo editor app that allows plugins, and all you'd have to do to 'install' a plugin is to ensure it is on the classpath. The code in your java app can do:</p>\n<pre><code>// Actually, you'd use ServiceLoader,\n// but that class is plain jane java code, and it works based on:\nclassLoader.findResources(&quot;META-INF/services/com.standingash.photolicious.plugins.PhotoPlugin&quot;)\n</code></pre>\n<p>go through each resource that returns, read it all in as a string, loop through every line, and <code>classloader.loadClass</code> every one of them, <code>newInstance</code> what comes out. Voila - a pluggable system that can dynamically find classes with a certain property and load them, without the need to ask any classloader to 'list' things.</p>\n<p>If you're not interested in 'pluggably finding classes' but want to find other files, the exact same mechanism can be used. You don't have to use ServiceLoader, after all, you can simply use <code>findResources</code> instead.</p>\n<h2>The final missing piece - annotation processing</h2>\n<p>The one downside to the above process is that somebody is going to have to maintain that services file. Which is annoying. And doesn't match what you want, which is to 'find all classes annotated with X'.</p>\n<p>The solution is annotation processors. You can run, as part of the build, a processor that sees all those <code>@View</code> annotations and <em>generates that services file as part of the build</em>. Just like how your <code>MyCode.java</code> file requires compilation and that results in <code>MyCode.class</code> existing, the same process results in <code>META-INF/services/com.foo.my-list-of-classes-annotated-with-view</code>.</p>\n<p>Specifically for the SPI concept (the pluggable part being: Classes with a public no-args constructor that implement a 'plugin' base type) there are a few existing projects out there that are such an AP (it'd be a weekend job to write one at best, it's not all that complicated), but it sounds like you might have to write your own.</p>\n<p>The downside is, you have to re-engineer this part rather thoroughly: Away from the concept of 'At runtime, give me a list of all types that have this annotation' and into the combination of 'witness all types that have this annotation during compilation and list them out into a text file' + 'at runtime, read the text file'.</p>\n<p>You're going to have to do that. Or, rely on a concept that relies on unspecified implementation details, which means 'debugging' your issue requires pretty much a complete copy of your entire PC to debug, the details you provided in your question probably aren't enough to actually figure it out. It can depend on your JDK vendor, platform, architecture, JDK version, classloader situation, and so on.</p>\n",
+    "score" : 3,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 401843,
+      "reputation" : 107206,
+      "user_id" : 768644,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+      "display_name" : "rzwitserloot",
+      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+    },
+    "creation_date" : 1745070218,
+    "last_activity_date" : 1745070218,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140350263,
+    "post_id" : 79582226,
+    "body" : "@aran Could you give me more explanation on that, please?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 41490246,
+      "reputation" : 3,
+      "user_id" : 30314180,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/7b8cca613f193308c8fa1382827a31b1?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Standing_Ash",
+      "link" : "https://stackoverflow.com/users/30314180/standing-ash"
+    },
+    "creation_date" : 1745062228,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140350130,
+    "post_id" : 79582226,
+    "body" : "seems like classloader behavior issue between envs.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2465829,
+      "reputation" : 13627,
+      "user_id" : 2148953,
+      "user_type" : "registered",
+      "accept_rate" : 96,
+      "profile_image" : "https://i.sstatic.net/DVHoP84E.jpg?s=256",
+      "display_name" : "aran",
+      "link" : "https://stackoverflow.com/users/2148953/aran"
+    },
+    "creation_date" : 1745056842,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79582458" : [ {
+      "comment_id" : 140382519,
+      "post_id" : 79582458,
+      "body" : "Thank you a lot for your detailed answer. It really helped me learn deeper on how java class loading works.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 41490246,
+        "reputation" : 3,
+        "user_id" : 30314180,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/7b8cca613f193308c8fa1382827a31b1?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Standing_Ash",
+        "link" : "https://stackoverflow.com/users/30314180/standing-ash"
+      },
+      "creation_date" : 1745985979,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140352424,
+      "post_id" : 79582458,
+      "body" : "great answer, appreciated info",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2465829,
+        "reputation" : 13627,
+        "user_id" : 2148953,
+        "user_type" : "registered",
+        "accept_rate" : 96,
+        "profile_image" : "https://i.sstatic.net/DVHoP84E.jpg?s=256",
+        "display_name" : "aran",
+        "link" : "https://stackoverflow.com/users/2148953/aran"
+      },
+      "creation_date" : 1745160596,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

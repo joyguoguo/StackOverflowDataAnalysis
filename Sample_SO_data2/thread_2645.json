@@ -1,0 +1,82 @@
+{
+  "question" : {
+    "question_id" : 79608899,
+    "title" : "Drools upgrade spreadsheet issue",
+    "body" : "<p>I am upgrading Drools from an ancient version, which means I'm basically starting over. I have an existing spreadsheet that looks like this:</p>\n<p><a href=\"https://i.sstatic.net/zcKeRt5n.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/zcKeRt5n.png\" alt=\"enter image description here\" /></a></p>\n<p>Here is the unit test which I am running:</p>\n<pre><code>@Test\npublic void getKieContainer() {\n    PoolInfo poolInfo = PoolInfoTest.getPool();\n    poolInfo.setCourtLocation(&quot;001&quot;);\n\n    PostponementRequest postponementRequest = new PostponementRequest();\n    GregorianCalendar requestDate = new GregorianCalendar(2025, GregorianCalendar.MAY, 5);\n    postponementRequest.setRequestDate(requestDate);\n\n    assertEquals(&quot;001&quot;, poolInfo.getCourtLocation());\n    assertEquals(2, postponementRequest.getRequestedDayOfWeek());\n\n    KieContainer kieContainer = droolsUtil.getKieContainer(POSTPONE_RULES);\n    StatelessKieSession kieSession = kieContainer.newStatelessKieSession();\n    List&lt;Object&gt; parms = Arrays.asList(poolInfo, postponementRequest);\n    kieSession.execute(parms);\n    assertTrue(postponementRequest.isAllowed());\n}\n</code></pre>\n<p>The last <code>assertTrue</code> is failing in my test. Here's the code of <code>droolsUtil.getKieContainer()</code>:</p>\n<pre><code>public KieContainer getKieContainer(final String decisionTableFilename){\n    KieServices kieServices = KieServices.Factory.get();\n    Resource resource = ResourceFactory.newClassPathResource(decisionTableFilename, getClass());\n    KieFileSystem kieFileSystem = kieServices.newKieFileSystem().write(resource);\n    KieBuilder kieBuilder = kieServices.newKieBuilder(kieFileSystem);\n    kieBuilder.buildAll();\n    KieRepository kieRepository = kieServices.getRepository();\n    ReleaseId krDefaultReleaseId = kieRepository.getDefaultReleaseId();\n    KieContainer kieContainer = kieServices.newKieContainer(krDefaultReleaseId);\n    return kieContainer;\n}\n</code></pre>\n<p>This all looks correct to me, but clearly there's an issue.</p>\n<p>EDIT</p>\n<p>Based on research, I have added debug listeners as follows:</p>\n<pre><code>    StatelessKieSession kieSession = kieContainer.newStatelessKieSession();\n    kieSession.addEventListener( new DebugAgendaEventListener() );\n    kieSession.addEventListener( new DebugProcessEventListener() );\n    kieSession.addEventListener( new DebugRuleRuntimeEventListener() );\n    List&lt;Object&gt; parms = Arrays.asList(poolInfo, postponementRequest);\n</code></pre>\n<p>and then reran. This produced the following output:</p>\n<pre><code>[main] INFO org.drools.core.event.DebugRuleRuntimeEventListener - ==&gt;[ObjectInsertedEventImpl: getFactHandle()=[fact 0:1:488898339:1539934131:1:DEFAULT:NON_TRAIT:com.gs.jxx.bo.PoolInfo:Participant#:666666666|Pool#:444444444|Seq#:2165\nCourt Loc:001|Status:1|FTA:0|Deferral Count:0|SummonsDate:2025-06-07;07:21:01.660|Days B4 Summons:30|Division:1|Active:Y|PostponeDate:|PostponeDateRequest:], getObject()=Participant#:666666666|Pool#:444444444|Seq#:2165\nCourt Loc:001|Status:1|FTA:0|Deferral Count:0|SummonsDate:2025-06-07;07:21:01.660|Days B4 Summons:30|Division:1|Active:Y|PostponeDate:|PostponeDateRequest:, getKnowledgeRuntime()=KieSession[0], getPropagationContext()=PhreakPropagationContext [entryPoint=EntryPoint::DEFAULT, factHandle=[fact 0:1:488898339:1539934131:1:DEFAULT:NON_TRAIT:com.gs.jxx.bo.PoolInfo:Participant#:666666666|Pool#:444444444|Seq#:2165\nCourt Loc:001|Status:1|FTA:0|Deferral Count:0|SummonsDate:2025-06-07;07:21:01.660|Days B4 Summons:30|Division:1|Active:Y|PostponeDate:|PostponeDateRequest:], propagationNumber=2, rule=null, type=INSERTION]]\n[main] INFO org.drools.core.event.DebugRuleRuntimeEventListener - ==&gt;[ObjectInsertedEventImpl: getFactHandle()=[fact 0:2:550424075:550424075:2:DEFAULT:NON_TRAIT:com.gs.jxx.request.PostponementRequest:\nPool:666666666:Ford Prefect|PendingIndicator:null|reason:null\nRequestDate:5/5/2025|RequestTime:721|RequestDaysAfterSummons:-1|RequestedDayOfWeek:2|RequestedDayOfMonth:5], getObject()=\nPool:666666666:Ford Prefect|PendingIndicator:null|reason:null\nRequestDate:5/5/2025|RequestTime:721|RequestDaysAfterSummons:-1|RequestedDayOfWeek:2|RequestedDayOfMonth:5, getKnowledgeRuntime()=KieSession[0], getPropagationContext()=PhreakPropagationContext [entryPoint=EntryPoint::DEFAULT, factHandle=[fact 0:2:550424075:550424075:2:DEFAULT:NON_TRAIT:com.gs.jxx.request.PostponementRequest:\nPool:666666666:Ford Prefect|PendingIndicator:null|reason:null\nRequestDate:5/5/2025|RequestTime:721|RequestDaysAfterSummons:-1|RequestedDayOfWeek:2|RequestedDayOfMonth:5], propagationNumber=3, rule=null, type=INSERTION]]\n</code></pre>\n<p>I'm not sure how this helps.</p>\n<p>I have compiled the spreadsheet into drools using the following code:</p>\n<pre><code>    InputStream is = getClass().getClassLoader().getResourceAsStream(POSTPONE_RULES);\n    SpreadsheetCompiler compiler = new SpreadsheetCompiler();\n    String str = compiler.compile(is, InputType.XLS);\n    System.err.println(str);\n</code></pre>\n<p>and when I ran it, it produced:</p>\n<pre><code>package postponementRules;\n//generated from Decision Table\nimport com.gs.juror.bo.PoolInfo;\nimport com.gs.juror.request.PostponementRequest;\n// rule values at B10, header at B5\nrule &quot;postponePart_10&quot;\n    when\n        PoolInfo(courtLocation == &quot;001&quot;)\n        postponementRequest: PostponementRequest(requestedDayOfWeek &gt;= 2, requestedDayOfWeek &lt;= 2)\n    then\n        postponementRequest.setAllowed(true);\nend\n</code></pre>\n<p>Which, I think, looks like what I expected. So the problem must be in the code running it.</p>\n",
+    "tags" : [ "java", "drools", "drools-decisiontables" ],
+    "owner" : {
+      "account_id" : 938881,
+      "reputation" : 15320,
+      "user_id" : 967330,
+      "user_type" : "registered",
+      "accept_rate" : 90,
+      "profile_image" : "https://www.gravatar.com/avatar/b731ee0bd2400959e9d13737e42c6418?s=256&d=identicon&r=PG",
+      "display_name" : "Thom",
+      "link" : "https://stackoverflow.com/users/967330/thom"
+    },
+    "is_answered" : true,
+    "view_count" : 58,
+    "answer_count" : 1,
+    "score" : -2,
+    "last_activity_date" : 1746718499,
+    "creation_date" : 1746541082,
+    "link" : "https://stackoverflow.com/questions/79608899/drools-upgrade-spreadsheet-issue",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79612739,
+    "question_id" : 79608899,
+    "body" : "<p>Well, again, a lot of this issue was classpath issues that aren't reported as classpath issues.</p>\n<p>Once I got through them, I had an issue I found here with the resolution: <a href=\"https://stackoverflow.com/questions/75483277/no-files-found-for-kiebase-defaultkiebase-drool-8-33-0-final\">No files found for KieBase defaultKieBase - Drool-8.33.0.Final</a> about the answer here: <a href=\"https://docs.drools.org/8.37.0.Final/drools-docs/docs-website/drools/release-notes/index.html#_spreadsheet_decision_tables_file_extensions\" rel=\"nofollow noreferrer\">https://docs.drools.org/8.37.0.Final/drools-docs/docs-website/drools/release-notes/index.html#_spreadsheet_decision_tables_file_extensions</a></p>\n<p>So I renamed the spreadsheet to *.drl.xls and it started working.</p>\n",
+    "score" : 0,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 938881,
+      "reputation" : 15320,
+      "user_id" : 967330,
+      "user_type" : "registered",
+      "accept_rate" : 90,
+      "profile_image" : "https://www.gravatar.com/avatar/b731ee0bd2400959e9d13737e42c6418?s=256&d=identicon&r=PG",
+      "display_name" : "Thom",
+      "link" : "https://stackoverflow.com/users/967330/thom"
+    },
+    "creation_date" : 1746718499,
+    "last_activity_date" : 1746718499,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140407571,
+    "post_id" : 79608899,
+    "body" : "I&#39;m not sure what you mean. It should be returning true and is not is my point. How do I verify if the decision table is loaded?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 938881,
+      "reputation" : 15320,
+      "user_id" : 967330,
+      "user_type" : "registered",
+      "accept_rate" : 90,
+      "profile_image" : "https://www.gravatar.com/avatar/b731ee0bd2400959e9d13737e42c6418?s=256&d=identicon&r=PG",
+      "display_name" : "Thom",
+      "link" : "https://stackoverflow.com/users/967330/thom"
+    },
+    "creation_date" : 1746707567,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140401887,
+    "post_id" : 79608899,
+    "body" : "Does it make a difference if the action is <code>true</code> (eg cell D10) ? Have you verified that the decision table is actually loaded as expected?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 183966,
+      "reputation" : 15288,
+      "user_id" : 419705,
+      "user_type" : "registered",
+      "accept_rate" : 67,
+      "profile_image" : "https://i.sstatic.net/cvuY8.png?s=256",
+      "display_name" : "Roddy of the Frozen Peas",
+      "link" : "https://stackoverflow.com/users/419705/roddy-of-the-frozen-peas"
+    },
+    "creation_date" : 1746565138,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

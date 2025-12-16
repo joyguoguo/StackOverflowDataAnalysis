@@ -1,0 +1,168 @@
+{
+  "question" : {
+    "question_id" : 79648504,
+    "title" : "How do I set the SystemId for an XSLT stylesheet in memory",
+    "body" : "<p>(Inspired by <a href=\"https://stackoverflow.com/questions/4814116/xslt-document-function-doesnt-work\">an old question</a>)</p>\n<p>I have some stylesheets that use the anonymous document('') function to implement look-up tables.</p>\n<pre class=\"lang-xml prettyprint-override\"><code>&lt;!-- example the lookup table data --&gt;\n&lt;ref:data xmlns:ref=&quot;urn:inline-data&quot;&gt;\n    &lt;phrasebook&gt;\n        &lt;!-- English --&gt;\n        &lt;lang code=&quot;en&quot;&gt;\n            &lt;phrase code=&quot;USD_PREFIX&quot;&gt;$ &lt;/phrase&gt;\n            &lt;phrase code=&quot;GBP_PREFIX&quot;&gt;£&lt;/phrase&gt;\n            &lt;phrase code=&quot;EUR_PREFIX&quot;&gt;€&lt;/phrase&gt;\n            &lt;phrase code=&quot;JPY_PREFIX&quot;&gt;¥&lt;/phrase&gt;\n        &lt;/lang&gt;\n        ...\n    &lt;/phrasebook&gt;\n&lt;/ref:data&gt;\n\n&lt;!-- the lookup table variable I can use elsewhere --&gt;\n&lt;xsl:variable name=&quot;phrasebook&quot; select=&quot;document('')/xsl:stylesheet/ref:data/phrasebook&quot; xmlns:ref=&quot;urn:inline-data&quot;/&gt;\n</code></pre>\n<p>(the ref namespace is actually in the stylesheet definition, but included here for brevity)</p>\n<p>The problem is that running such a stylesheet with a String <code>StreamSource</code> fails, but a File <code>StreamSource</code> works.</p>\n<p>From this <a href=\"https://stackoverflow.com/a/4815739/204295\">comment</a>, I understand that it's because the <code>SystemId</code> is not set on the <code>StreamSource</code> for the <code>Transformer</code> to obtain. But to what should I set the <code>SystemId</code> for a String in memory, rather than a <code>File</code>?</p>\n",
+    "tags" : [ "java", "xml", "xslt", "saxon" ],
+    "owner" : {
+      "account_id" : 70456,
+      "reputation" : 182,
+      "user_id" : 204295,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/bZnCxHIU.jpg?s=256",
+      "display_name" : "Ben Ketteridge",
+      "link" : "https://stackoverflow.com/users/204295/ben-ketteridge"
+    },
+    "is_answered" : true,
+    "view_count" : 111,
+    "answer_count" : 2,
+    "score" : 0,
+    "last_activity_date" : 1748879055,
+    "creation_date" : 1748857806,
+    "link" : "https://stackoverflow.com/questions/79648504/how-do-i-set-the-systemid-for-an-xslt-stylesheet-in-memory",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79648714,
+    "question_id" : 79648504,
+    "body" : "<p>You'll need to implement a custom <a href=\"https://docs.oracle.com/javase/8/docs/api/javax/xml/transform/URIResolver.html\" rel=\"nofollow noreferrer\">URIResolver</a></p>\n<pre class=\"lang-java prettyprint-override\"><code>Source xmlSource = ...\n\nString xslt = &quot;&lt;xsl:stylesheet&gt;...&lt;/xsl:stylesheet&gt;&quot;;\n\n// use a supplier here to avoid duplication but ensure we get a new Reader each time\nSupplier&lt;Source&gt; xsltSourceSupplier = () -&gt; {\n   Source xsltSource = new InputSource(new StringReader(xslt));\n   xsltSource.setSystemId(&quot;foo.xslt&quot;); // always be sure to set systemId!\n   return xsltSource;\n};\n\nTransformerFactory transformerFactory = TransformerFactory.newInstance();\nTransformer transformer = transformerFactory.newTransformer(xsltSourceSupplier.get());\ntransformer.setURIResolver(new URIResolver() {\n   public Source resolve(String href, String base) {\n      System.out.println(String.format(&quot;resolve: href=%s, base=%s&quot;, href, base));\n      if (&quot;&quot;.equals(href)) {\n         return xsltSourceSupplier.get();\n      }\n      throw new RuntimeException(&quot;TODO: Add support for resolving &quot; + href);\n   }\n}); \n\nStreamResult result = new StreamResult(&quot;output.html&quot;);\ntransformer.transform(xmlSource, result);\n</code></pre>\n",
+    "score" : 3,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 1096470,
+      "reputation" : 29424,
+      "user_id" : 1089967,
+      "user_type" : "registered",
+      "accept_rate" : 59,
+      "profile_image" : "https://www.gravatar.com/avatar/1f256b904ff621d678598d8fa49f86c5?s=256&d=identicon&r=PG",
+      "display_name" : "lance-java",
+      "link" : "https://stackoverflow.com/users/1089967/lance-java"
+    },
+    "creation_date" : 1748867338,
+    "last_activity_date" : 1748879055,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79649895,
+    "question_id" : 79648504,
+    "body" : "<p>Although you can set a base URI and define a URIResolver in the way that @lance-java suggests, it's better to examine why you are trying to read the stylesheet as a document, and solve the requirement some other way. Very often it's being done because of some restriction in XSLT 1.0 that has long since disappeared.</p>\n<p>In your example, a much better approach would be to put that reference data in a global variable, for example:</p>\n<pre><code>&lt;xsl:variable name=&quot;phrasebook&quot;&gt;\n    &lt;phrasebook&gt;\n        &lt;!-- English --&gt;\n        &lt;lang code=&quot;en&quot;&gt;\n            &lt;phrase code=&quot;USD_PREFIX&quot;&gt;$ &lt;/phrase&gt;\n            &lt;phrase code=&quot;GBP_PREFIX&quot;&gt;£&lt;/phrase&gt;\n            &lt;phrase code=&quot;EUR_PREFIX&quot;&gt;€&lt;/phrase&gt;\n            &lt;phrase code=&quot;JPY_PREFIX&quot;&gt;¥&lt;/phrase&gt;\n        &lt;/lang&gt;\n        ...\n    &lt;/phrasebook&gt;\n&lt;/xsl:variable&gt;\n</code></pre>\n<p>That didn't work in XSLT 1.0 because the variable would be a result tree fragment, which was subject to all sorts of restrictions, but in 2.0+ it is a regular document node, making use of <code>document('')</code> unnecessary.</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 529122,
+      "reputation" : 164983,
+      "user_id" : 415448,
+      "user_type" : "registered",
+      "accept_rate" : 33,
+      "profile_image" : "https://i.sstatic.net/P2vVZ.png?s=256",
+      "display_name" : "Michael Kay",
+      "link" : "https://stackoverflow.com/users/415448/michael-kay"
+    },
+    "creation_date" : 1748876614,
+    "last_activity_date" : 1748876614,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140479043,
+    "post_id" : 79648504,
+    "body" : "Even in XSLT 1.0 you can use a variable to store the lookup data, provided you convert it into a node-set. (Strictly speaking, such conversion is not part of the XSLT 1.0 specification, but practically every XSLT 1.0 processor supports it as an extension function.)",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3616427,
+      "reputation" : 117637,
+      "user_id" : 3016153,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/CWA7Z.png?s=256",
+      "display_name" : "michael.hor257k",
+      "link" : "https://stackoverflow.com/users/3016153/michael-hor257k"
+    },
+    "creation_date" : 1748863743,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140478818,
+    "post_id" : 79648504,
+    "body" : "If that is a current version of Saxon (e.g. 12) it supports XSLT 3 so perhaps just use a normal XSLT parameter or variable with that lookup data instead of relying on that XSLT 1.0 specific attempt to have to load the stylesheet as a tree to select some data. In XSLT 2.0 and later you can just use a parameter or variable holding your XML data.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 91947,
+      "reputation" : 168833,
+      "user_id" : 252228,
+      "user_type" : "registered",
+      "accept_rate" : 80,
+      "profile_image" : "https://www.gravatar.com/avatar/3ea75023c3c487f36257090d420b7c50?s=256&d=identicon&r=PG",
+      "display_name" : "Martin Honnen",
+      "link" : "https://stackoverflow.com/users/252228/martin-honnen"
+    },
+    "creation_date" : 1748858459,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79648714" : [ {
+      "comment_id" : 140480826,
+      "post_id" : 79648714,
+      "body" : "Yes, you can set the systemId to whatever you like here. Whatever you use as systemId will be passed back to you in the resolve method as the &quot;base&quot; value (I think)",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1096470,
+        "reputation" : 29424,
+        "user_id" : 1089967,
+        "user_type" : "registered",
+        "accept_rate" : 59,
+        "profile_image" : "https://www.gravatar.com/avatar/1f256b904ff621d678598d8fa49f86c5?s=256&d=identicon&r=PG",
+        "display_name" : "lance-java",
+        "link" : "https://stackoverflow.com/users/1089967/lance-java"
+      },
+      "creation_date" : 1748880328,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140480757,
+      "post_id" : 79648714,
+      "body" : "<code>document(&#39;&#39;)</code> is a special case which returns a pointer to the xslt itself. I&#39;ve updated my answer to have a special case when <code>&quot;&quot;.equals(href)</code>",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1096470,
+        "reputation" : 29424,
+        "user_id" : 1089967,
+        "user_type" : "registered",
+        "accept_rate" : 59,
+        "profile_image" : "https://www.gravatar.com/avatar/1f256b904ff621d678598d8fa49f86c5?s=256&d=identicon&r=PG",
+        "display_name" : "lance-java",
+        "link" : "https://stackoverflow.com/users/1089967/lance-java"
+      },
+      "creation_date" : 1748878945,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140479530,
+      "post_id" : 79648714,
+      "body" : "Thanks. Are you saying that I can set the systemId to just about anything? And then, which Reader am I implementing in the URIResolver? A Reader for the source XML?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 70456,
+        "reputation" : 182,
+        "user_id" : 204295,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/bZnCxHIU.jpg?s=256",
+        "display_name" : "Ben Ketteridge",
+        "link" : "https://stackoverflow.com/users/204295/ben-ketteridge"
+      },
+      "creation_date" : 1748872489,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79649895" : [ {
+      "comment_id" : 140480787,
+      "post_id" : 79649895,
+      "body" : "Thanks for that. I can (and will) implement this for newer templates, but I also have to continue to support some very old templates that were written for XSLT 1.0. (Perhaps this should have been mentioned in my question ;) )",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 70456,
+        "reputation" : 182,
+        "user_id" : 204295,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/bZnCxHIU.jpg?s=256",
+        "display_name" : "Ben Ketteridge",
+        "link" : "https://stackoverflow.com/users/204295/ben-ketteridge"
+      },
+      "creation_date" : 1748879551,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

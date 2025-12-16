@@ -1,0 +1,148 @@
+{
+  "question" : {
+    "question_id" : 79672720,
+    "title" : "ZonedDateTime to XMLGregorianCalendar and back does not match the original",
+    "body" : "<p>Why doesn't this work?</p>\n<pre class=\"lang-java prettyprint-override\"><code>    @Test\n    public void test_calendar() throws DatatypeConfigurationException {\n        ZonedDateTime zdt = ZonedDateTime.now();\n        GregorianCalendar gc = GregorianCalendar.from(zdt);\n        XMLGregorianCalendar xgc = DatatypeFactory.newInstance().newXMLGregorianCalendar(gc);\n        assertThat(gc.toZonedDateTime(), comparesEqualTo(zdt));\n        assertThat(xgc.toGregorianCalendar(), comparesEqualTo(gc));\n        assertThat(xgc.toGregorianCalendar().toZonedDateTime(), comparesEqualTo(zdt)); // &lt;== fails here\n    }\n</code></pre>\n<p>The above code fails with:</p>\n<pre><code>Expected: a value equal to &lt;2025-06-19T18:13:44.885-05:00[America/Chicago]&gt;\n     but: &lt;2025-06-19T18:13:44.885-05:00[GMT-05:00]&gt; was greater than &lt;2025-06-19T18:13:44.885-05:00[America/Chicago]&gt;\n</code></pre>\n<p>I see that the time zones don't match, but why don't the gc to zdt and xgc to gc fail?</p>\n<p>Edit: removed superfluous code.</p>\n",
+    "tags" : [ "java", "gregorian-calendar", "xmlgregoriancalendar" ],
+    "owner" : {
+      "account_id" : 1457901,
+      "reputation" : 504,
+      "user_id" : 1373031,
+      "user_type" : "registered",
+      "accept_rate" : 75,
+      "profile_image" : "https://www.gravatar.com/avatar/59e3b33d831437b3fcb6576ae39df152?s=256&d=identicon&r=PG",
+      "display_name" : "Peter",
+      "link" : "https://stackoverflow.com/users/1373031/peter"
+    },
+    "is_answered" : true,
+    "view_count" : 103,
+    "answer_count" : 1,
+    "score" : 3,
+    "last_activity_date" : 1750601001,
+    "creation_date" : 1750374069,
+    "link" : "https://stackoverflow.com/questions/79672720/zoneddatetime-to-xmlgregoriancalendar-and-back-does-not-match-the-original",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79672761,
+    "question_id" : 79672720,
+    "body" : "<h2>TL;DR</h2>\n<p>XMLGregorianCalendar truncates fractional seconds and also returns the <a href=\"https://docs.oracle.com/javase/8/docs/api/java/time/ZoneId.html\" rel=\"nofollow noreferrer\">second type of ZoneId while ZonedDateTime returns the third type</a>.<br />\nThe comparison could fail in either of both in <a href=\"https://github.com/JetBrains/jdk8u_jdk/blob/94318f9185757cc33d2b8d527d36be26ac6b7582/src/share/classes/java/time/chrono/ChronoZonedDateTime.java#L569\" rel=\"nofollow noreferrer\">that order</a>.</p>\n<h2>Details</h2>\n<p>First, <a href=\"https://hamcrest.org/JavaHamcrest/javadoc/1.3/org/hamcrest/Matchers.html#comparesEqualTo(T)\" rel=\"nofollow noreferrer\"><code>comparesEqualTo</code></a> uses <code>comparesTo</code> of the <code>ZonedDateTime</code> object</p>\n<blockquote>\n<p>comparesEqualTo<br />\npublic static &lt;T extends java.lang.Comparable&gt; Matcher comparesEqualTo(T value)<br />\nCreates a matcher of Comparable object that matches when the examined object is equal to the specified value, as reported by the compareTo method of the examined object.</p>\n</blockquote>\n<p><code>ZonedDateTime.compareTo()</code> inherits from <a href=\"https://docs.oracle.com/javase/8/docs/api/java/time/chrono/ChronoZonedDateTime.html#compareTo-java.time.chrono.ChronoZonedDateTime-\" rel=\"nofollow noreferrer\"><code>ChronoZonedDateTime.compareTo()</code></a></p>\n<blockquote>\n<p>The comparison is based first on the instant, then on the local date-time, then on the zone ID, then on the chronology.</p>\n</blockquote>\n<h2>With code</h2>\n<p>The comparison fails at instant level in this case but would also fail on zoneId level as can be seen on <a href=\"https://github.com/JetBrains/jdk8u_jdk/blob/94318f9185757cc33d2b8d527d36be26ac6b7582/src/share/classes/java/time/chrono/ChronoZonedDateTime.java#L569\" rel=\"nofollow noreferrer\">JetBrain source code</a> or <a href=\"https://github.com/AdoptOpenJDK/openjdk-jdk11/blob/19fb8f93c59dfd791f62d41f332db9e306bc1422/src/java.base/share/classes/java/time/chrono/ChronoZonedDateTime.java#L576\" rel=\"nofollow noreferrer\">OpenJdk source code</a>.</p>\n<pre><code>import java.time.ZonedDateTime;\nimport java.time.temporal.ChronoField;\nimport java.util.GregorianCalendar;\n\nimport javax.xml.datatype.DatatypeConfigurationException;\nimport javax.xml.datatype.DatatypeFactory;\nimport javax.xml.datatype.XMLGregorianCalendar;\n\npublic class XmlDateTest {\n\n    public static void main(String[] args) throws DatatypeConfigurationException {\n        ZonedDateTime zdt = ZonedDateTime.now();\n        GregorianCalendar gc = GregorianCalendar.from(zdt);\n        XMLGregorianCalendar xgc = DatatypeFactory.newInstance().newXMLGregorianCalendar(gc);\n        System.out.println(&quot;zdt\\t&quot; + zdt);\n\n        System.out.println(&quot;zdt_fraction\\t&quot; + zdt.getLong(ChronoField.NANO_OF_SECOND) / 1E9);\n\n        System.out.println(&quot;xgc_fraction\\t&quot; + xgc.getFractionalSecond());\n                // zero if equal\n        System.out.println(\n                &quot;zdt equals xgc? &quot; + zdt.toInstant().compareTo(xgc.toGregorianCalendar().toZonedDateTime().toInstant()));\n\n                // zone id is also reported as a different string even if both are logically equivalent\n                System.out.println(&quot;zdt zone id\\t&quot; + zdt.getZone().getId());\n                System.out.println(&quot;xgc zone id\\t&quot; + xgc.toGregorianCalendar().toZonedDateTime().getZone().getId());\n\n        System.out.println(System.getProperty(&quot;os.name&quot;));\n        System.out.println(System.getProperty(&quot;java.runtime.name&quot;));\n        System.out.println(System.getProperty(&quot;java.version&quot;));\n\n    }\n}\n</code></pre>\n<p>Result</p>\n<pre><code>zdt 2025-06-19T21:37:32.676844595-03:00[America/Argentina/Mendoza]\nzdt_fraction    0.676844595\nxgc_fraction    0.676\nzdt equals xgc? 844595\n\n\nzdt zone id America/Argentina/Mendoza\nxgc zone id GMT-03:00\n</code></pre>\n<p>As an special use case, there's no difference at start of day since there are no fractional seconds involved but <code>compareTo</code> might be triggering on ZoneId.</p>\n<p><code>zdt = ZonedDateTime.of(LocalDate.now().atStartOfDay(), ZoneId.systemDefault());</code></p>\n<pre><code>zdt 2025-06-20T00:00-03:00[America/Argentina/Mendoza]\nzdt_nanos   0.0\nxgc_nanos   0.000\nzdt equals xgc? 0\n\n\nzdt zone id America/Argentina/Mendoza\nxgc zone id GMT-03:00\n</code></pre>\n<p>Test env</p>\n<pre><code>Linux\nOpenJDK Runtime Environment\n22.0.1\n\nLinux\nOpenJDK Runtime Environment\n17.0.15\n</code></pre>\n<p>NOTE: time precision might depend on <a href=\"https://stackoverflow.com/questions/52029920/localdatetime-now-has-different-levels-of-precision-on-windows-and-mac-machine/52030034#52030034\">OS and JVM version</a></p>\n",
+    "score" : 2,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 3377022,
+      "reputation" : 14393,
+      "user_id" : 2834978,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/ff9af10001f37bc0de566ca2caf2f558?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "LMC",
+      "link" : "https://stackoverflow.com/users/2834978/lmc"
+    },
+    "creation_date" : 1750379389,
+    "last_activity_date" : 1750427623,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140529736,
+    "post_id" : 79672720,
+    "body" : "Updated the answer with source code links that show it&#39;s failing on ZoneId for you. Also, the test error message shows that both zoneId are different.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3377022,
+      "reputation" : 14393,
+      "user_id" : 2834978,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/ff9af10001f37bc0de566ca2caf2f558?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "LMC",
+      "link" : "https://stackoverflow.com/users/2834978/lmc"
+    },
+    "creation_date" : 1750427937,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79672761" : [ {
+      "comment_id" : 140530603,
+      "post_id" : 79672761,
+      "body" : "as you said, my real problem is using compareTo with ZonedDateTime because of the differing ZoneIds. <a href=\"https://stackoverflow.com/a/48506892/1373031\">This answer explains it</a>. Thank you for your  help.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 1457901,
+        "reputation" : 504,
+        "user_id" : 1373031,
+        "user_type" : "registered",
+        "accept_rate" : 75,
+        "profile_image" : "https://www.gravatar.com/avatar/59e3b33d831437b3fcb6576ae39df152?s=256&d=identicon&r=PG",
+        "display_name" : "Peter",
+        "link" : "https://stackoverflow.com/users/1373031/peter"
+      },
+      "creation_date" : 1750450822,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140528445,
+      "post_id" : 79672761,
+      "body" : "@Peter compareTo might be triggering on ZoneId. Added that to the answer.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 3377022,
+        "reputation" : 14393,
+        "user_id" : 2834978,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/ff9af10001f37bc0de566ca2caf2f558?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "LMC",
+        "link" : "https://stackoverflow.com/users/2834978/lmc"
+      },
+      "creation_date" : 1750391629,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140528412,
+      "post_id" : 79672761,
+      "body" : "@Peter OP&#39;s system seems to be similar to yours. I wonder if it&#39;s something related to JVM vendor.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 3377022,
+        "reputation" : 14393,
+        "user_id" : 2834978,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/ff9af10001f37bc0de566ca2caf2f558?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "LMC",
+        "link" : "https://stackoverflow.com/users/2834978/lmc"
+      },
+      "creation_date" : 1750390029,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140528400,
+      "post_id" : 79672761,
+      "body" : "Secondly, my system only seems to have millisecond precision, so your test runs fine.  <code>zdt\t2025-06-19T21:55:31.827-05:00[America&#47;Chicago] zdt_fraction\t0.827 xgc_fraction\t0.827 zdt equals xgc? 0</code>",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1457901,
+        "reputation" : 504,
+        "user_id" : 1373031,
+        "user_type" : "registered",
+        "accept_rate" : 75,
+        "profile_image" : "https://www.gravatar.com/avatar/59e3b33d831437b3fcb6576ae39df152?s=256&d=identicon&r=PG",
+        "display_name" : "Peter",
+        "link" : "https://stackoverflow.com/users/1373031/peter"
+      },
+      "creation_date" : 1750388876,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140528380,
+      "post_id" : 79672761,
+      "body" : "I don&#39;t think that is it, or at the minimum it isn&#39;t the whole problem. The same problem is there if you initialize zdt with <code>zdt = ZonedDateTime.of(LocalDate.now().atStartOfDay(), ZoneId.systemDefault());</code>",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1457901,
+        "reputation" : 504,
+        "user_id" : 1373031,
+        "user_type" : "registered",
+        "accept_rate" : 75,
+        "profile_image" : "https://www.gravatar.com/avatar/59e3b33d831437b3fcb6576ae39df152?s=256&d=identicon&r=PG",
+        "display_name" : "Peter",
+        "link" : "https://stackoverflow.com/users/1373031/peter"
+      },
+      "creation_date" : 1750388041,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

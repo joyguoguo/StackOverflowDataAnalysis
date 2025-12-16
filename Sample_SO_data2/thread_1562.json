@@ -1,0 +1,193 @@
+{
+  "question" : {
+    "question_id" : 79698240,
+    "title" : "Repeatable annotations",
+    "body" : "<p>I have a custom annotation <code>@myAnno</code> that I want repeatable. This <code>@myAnno</code> annotation is marked with another annotation called <code>@Constraint</code>. When I process an object I look for all annotations that are marked with the <code>@Constraint</code> annotation and process them.</p>\n<p>Now, if I use the <code>@Repeatable</code> annotation on <code>@myAnno</code> I have to define a container annotation and <code>@myAnno</code> is actually removed from the object and gets replaced by the container annotation.</p>\n<p>This means I now seemingly have no way to find all my annotation marked with <code>@Constraint</code> as they all got replaced with the container annotations that I do not know when processing.</p>\n<p>I do not know them as there can be any new custom defined repeatable annotations with <code>@Constraint</code>.</p>\n<p>How do I find the repeated versions of all annotations annotated with <code>@Constraint</code> on an object?</p>\n<p>All Google searches only point to solutions where I either know the annotation type or the annotations container type.</p>\n<p>UPDATE:\nIt is about runtime processing. Let me try again explaining the issue in other words:</p>\n<p>The problems is that i am looking for repeatable annotation of an UNKNOWN type. The type is unknown because i  provide a framework similar to bean validtion where you can define your own annotations (by adding the annotation constraint to your custom annotation type).</p>\n<p>Now, the problem is when scanning for annotations, it is easy to find those where their type was annotated by my constraint annotation but this is not the case for repeatable annotation as they get wrapped by a container annotation that can be arbitrary.</p>\n<p>Hence, i cannot use getAnnotationsByType as i do not know the annotation type using by constrain and is not listed in getAnnotations either (you only find the container annotation in there).</p>\n<p>My current workaround is looking for annotations in getAnnotations that contain as only method &quot;Something extends Annotation[] value()&quot; and that something is defined with my Constraint annotation. Then i can either use the array directly or call the getAnnotationsByType with &quot;something&quot;.</p>\n<p>But this feels kinda stupid. When they added the shortcut getAnnotationsByType which resolve the container of repeating annotations they could just add thos to getAnnotations instead of the containers. The design seems just unnecessary complicated and not usefull.</p>\n",
+    "tags" : [ "java", "annotations" ],
+    "owner" : {
+      "account_id" : 6467617,
+      "reputation" : 43,
+      "user_id" : 5008929,
+      "user_type" : "registered",
+      "profile_image" : "https://lh4.googleusercontent.com/-lNEMtoXD1To/AAAAAAAAAAI/AAAAAAAAADc/ggbmkBflG20/s256-rj/photo.jpg",
+      "display_name" : "A User",
+      "link" : "https://stackoverflow.com/users/5008929/a-user"
+    },
+    "is_answered" : true,
+    "view_count" : 124,
+    "closed_date" : 1752433770,
+    "answer_count" : 1,
+    "score" : -3,
+    "last_activity_date" : 1752483802,
+    "creation_date" : 1752232009,
+    "link" : "https://stackoverflow.com/questions/79698240/repeatable-annotations",
+    "closed_reason" : "Needs details or clarity"
+  },
+  "answers" : [ {
+    "answer_id" : 79698816,
+    "question_id" : 79698240,
+    "body" : "<p>Annotation Processing is <em>completely</em> different between doing it at runtime, e.g. with <code>someClass.getAnnotations()</code>, vs. doing it at compile time, by being an annotation processor and asking <code>RoundEnvironment</code> and <code>ProcessingEnvironment</code> for type mirrors.</p>\n<p>However, it sounds like you're asking a question about runtime processing (given that you mention 'an object' which are nonsensical to talk about at compile time). The principle laid out in the answer works for both; the code snippets will be for runtime processing.</p>\n<p>First, ask for <em>all</em> annotations.</p>\n<p>You were doing this already, and checking each annotation thusly:</p>\n<ol>\n<li>What's your annotation type (go from the <code>Foo</code> in <code>@Foo class AnnotatedThing {}</code> to the <code>Foo</code> in <code>public @interface Foo { .. }</code>).</li>\n<li>Ask <em>that</em> annotation type for its <code>@Constraint</code> annotation.</li>\n</ol>\n<p>To also deal with repeatables, you'd do the same thing, with some tweaks:</p>\n<p>For each annotation you find, do:</p>\n<ol>\n<li>What's your annotation type (same as before).</li>\n<li>Ask <em>that</em> annotation type for its <code>@Constraint</code> annotation, same as before. If it is there, process it as you do now. But, now, keep going to deal with repeatables:</li>\n<li>Ask <em>that</em> annotation type for its <code>value()</code> method. If it does not exist, move on; this isn't a container.</li>\n<li>Check that the return type of that <code>value()</code> method is an array whose component type is non-primitive. If it isn't an array or its component type is primitive, this isn't a container, so move on.</li>\n<li>Check that the component type is an annotation (and not, for example, <code>String</code>).</li>\n<li>Ask the component type for its <code>@Repeatable</code> annotation.</li>\n<li>If it's not so annotated, move on.</li>\n<li>Check that the <code>value()</code> of that <code>@Repeatable</code> annotation is the annotation you just 'came from'. If not, move on.</li>\n<li>... if we get this far we have established that the annotatable thing you started out with is annotated with a container.</li>\n<li>Loop through each value returned by <code>thatContainer.value()</code> and start back at item 1 in this list.</li>\n</ol>\n<p>In other words, given these types:</p>\n<pre><code>@Constaint(&quot;Purple&quot;)\n@Repeatable(Foos.class)\npublic @interface Foo {\n  int value();\n}\n\npublic @interface Foos {\n  Foo[] value();\n}\n\npublic class Example {\n  @Foo(1) @Foo(2) public void method() {}\n}\n</code></pre>\n<p>Then, when introspecting method <code>method</code>, you would  in order:</p>\n<ol>\n<li>List all annotations on it. This finds only one annotation, of type <code>Foos</code> (because of the weird magic that repeatable annotations do).</li>\n<li>You'd then go from <code>@Foos({@Foo(1), @Foo(2)}</code> to the definition of Foos which is available, and notice that it has a <code>value()</code> method, and that it returns <code>Foo[]</code>, and that this is [A] an array and [B] of a non-primitive type. You then go to the component type definition (the definition of Foo).</li>\n<li>You would be able to check that Foo is an annotation type, and that it has a <code>@Repeatable</code> annotation, and that its value is <code>Foos</code> which is where we came from.</li>\n<li>You therefore loop through each <code>value()</code> of the <code>@Foos</code> annotation and treat them as if they were directly annotating the member.</li>\n<li>(We're now back to the code you already have) you go from <code>@Foo(1)</code> to the type <code>Foo</code>.</li>\n<li>It has a <code>@Constraint</code> annotation which you process accordingly.</li>\n</ol>\n<p>It's a bit of a song and dance routine but this works reliably; repeatable annotations are fairly strictly defined, and <code>@Repeatable</code> has runtime retention so you can 'see' it.</p>\n<p>An analogous principle can be applied at compile time, but IIRC, at compile time, repeatable annotations aren't boxed into their repeatable yet, so you just see each <code>@Foo</code> separately.</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 401843,
+      "reputation" : 107206,
+      "user_id" : 768644,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+      "display_name" : "rzwitserloot",
+      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+    },
+    "creation_date" : 1752266653,
+    "last_activity_date" : 1752266653,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140589531,
+    "post_id" : 79698240,
+    "body" : "@Holger I will grant that is an important distinction",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 14914414,
+      "reputation" : 1185,
+      "user_id" : 10808904,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Ts8fIsJj.png?s=256",
+      "display_name" : "Xavier Pedraza",
+      "link" : "https://stackoverflow.com/users/10808904/xavier-pedraza"
+    },
+    "creation_date" : 1752536849,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140587925,
+    "post_id" : 79698240,
+    "body" : "@WasabiThumbs that’s not correct. See for example <a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/lang/reflect/AnnotatedElement.html#getAnnotationsByType(java.lang.Class)\" rel=\"nofollow noreferrer\"><code>getAnnotationsByType(…)</code></a>: “<i>The difference between this method and getAnnotation(Class) is that this method detects if its argument is a</i> repeatable <i>annotation type (JLS 9.6), and if so, attempts to find one or more annotations of that type by &quot;looking through&quot; a container annotation.</i>” The only thing that’s missing is a method to unwrap all containers at once.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 3211603,
+      "reputation" : 301001,
+      "user_id" : 2711488,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+      "display_name" : "Holger",
+      "link" : "https://stackoverflow.com/users/2711488/holger"
+    },
+    "creation_date" : 1752494307,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140587607,
+    "post_id" : 79698240,
+    "body" : "&quot;Container annotations need to be explicitly processed, they will never be auto-unwrapped by the standard library.&quot;? Makes no sense to have repeatable annotations forced into a container so that you cannot find unknown repeatable annotations created for a framework. Would be trivial to fix.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 6467617,
+      "reputation" : 43,
+      "user_id" : 5008929,
+      "user_type" : "registered",
+      "profile_image" : "https://lh4.googleusercontent.com/-lNEMtoXD1To/AAAAAAAAAAI/AAAAAAAAADc/ggbmkBflG20/s256-rj/photo.jpg",
+      "display_name" : "A User",
+      "link" : "https://stackoverflow.com/users/5008929/a-user"
+    },
+    "creation_date" : 1752483926,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140583139,
+    "post_id" : 79698240,
+    "body" : "Container annotations need to be explicitly processed, they will never be auto-unwrapped by the standard library.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 14914414,
+      "reputation" : 1185,
+      "user_id" : 10808904,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Ts8fIsJj.png?s=256",
+      "display_name" : "Xavier Pedraza",
+      "link" : "https://stackoverflow.com/users/10808904/xavier-pedraza"
+    },
+    "creation_date" : 1752254767,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140582420,
+    "post_id" : 79698240,
+    "body" : "You can not annotate an annotation. You probably mean that the declaration of the annotation type has an annotation. So you want to get all annotations of an element, whose type has that annotation, is that correct? And what annotation processing facility are you using, a compile-time annotation processor, runtime reflection or a 3rd party library?",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 3211603,
+      "reputation" : 301001,
+      "user_id" : 2711488,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+      "display_name" : "Holger",
+      "link" : "https://stackoverflow.com/users/2711488/holger"
+    },
+    "creation_date" : 1752237907,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79698816" : [ {
+      "comment_id" : 140590274,
+      "post_id" : 79698816,
+      "body" : "That’s the best you can get with the current API. And well, a convenience method doing this for all annotations at once would have to do a similar thing internally. On the other hand, this can be optimized by doing the check of step 6 together with the check in step 3, so you don’t need to iterate over the individual annotations when the marker is not present.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 3211603,
+        "reputation" : 301001,
+        "user_id" : 2711488,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+        "display_name" : "Holger",
+        "link" : "https://stackoverflow.com/users/2711488/holger"
+      },
+      "creation_date" : 1752568927,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140588319,
+      "post_id" : 79698816,
+      "body" : "@AUser Oracle being oracle: [A] we had a different proposal about annotations sent in earlier but that was denied as &#39;being too close to the deadline&#39;, [B] this repeatable annotations thing was written by an oracle-payroll engineer (Alex Buckley IIRC) <i>after</i> our proposal, and [C] our feedback on Alex&#39;s proposal was denied because &#39;there is no time; we are too close to the deadline&#39;. And Oracle wonders why non-oracle employees tend not to want to contribute. At any rate - why is it weird - well, because oracle decided to force this down the throat without proper review.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 401843,
+        "reputation" : 107206,
+        "user_id" : 768644,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+        "display_name" : "rzwitserloot",
+        "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+      },
+      "creation_date" : 1752501689,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140588316,
+      "post_id" : 79698816,
+      "body" : "@AUser Reading your update, this answer <i>is the answer</i>. You say: &quot;But.. the thing marked with Constraint is UNKNOWN&quot; - this answer is specifically catering to that very situation. I think you might be confused or should re-read it. If this doesn&#39;t help you, explain what&#39;s missing. Is your question &quot;why is annotation processing stupid in this fashion&quot;, I have an interesting answer for you: I and a friend are the only two who realised this when the proposal was written, we said as much, we sent in an alternative implementation that wouldn&#39;t be this stupid, and it was denied. Why? Oracle being o",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 401843,
+        "reputation" : 107206,
+        "user_id" : 768644,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+        "display_name" : "rzwitserloot",
+        "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+      },
+      "creation_date" : 1752501578,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140587605,
+      "post_id" : 79698816,
+      "body" : "Damn stackoverflow, couldn&#39;t answer as too long. then couldn&#39;t change the comment as comment editing only allowed every 5 min... anyway, updated my op.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 6467617,
+        "reputation" : 43,
+        "user_id" : 5008929,
+        "user_type" : "registered",
+        "profile_image" : "https://lh4.googleusercontent.com/-lNEMtoXD1To/AAAAAAAAAAI/AAAAAAAAADc/ggbmkBflG20/s256-rj/photo.jpg",
+        "display_name" : "A User",
+        "link" : "https://stackoverflow.com/users/5008929/a-user"
+      },
+      "creation_date" : 1752483876,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

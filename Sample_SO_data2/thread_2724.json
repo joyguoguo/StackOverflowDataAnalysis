@@ -1,0 +1,140 @@
+{
+  "question" : {
+    "question_id" : 79602620,
+    "title" : "Optimistic locking does not work in Hibernate",
+    "body" : "<p>I have a problem when working with optimistic locking, it pretends to work, even raises the version in the database, and throws OptimisticLockException in case of anything, that is, the most expected behavior. I have implemented a system where expected errors are caught and we try to perform actions while the lock is in place. But I see duplicates, and missing files, a race condition is obvious. Does anyone know what I should do to make the lock work correctly?</p>\n<p>Here is a method that does retries and handles all errors, which ones can be retried and which ones can't.</p>\n<pre><code>public void updateIdsVariableInProcess(String processId, String processInstanceId, String objectKey, boolean insertFlag) {\n        log.info(&quot;Adding ID variable to process. processId={}, processInstanceId={}, objectKey={}&quot;, new Object[]{processId, processInstanceId, objectKey});\n        boolean lockAndVarsInContextUpdated = false;\n\n        while(!lockAndVarsInContextUpdated) {\n            try {\n                this.processLockService.updateVariableWithLock2(processId, processInstanceId, objectKey, insertFlag);\n                lockAndVarsInContextUpdated = true;\n            } catch (ArcUndeclaredThrowableException | PersistenceException var8) {\n                RuntimeException expected = var8;\n                log.warn(&quot;Error while setting lock and updating process variable. processId={}, processInstanceId={}, objectKey={}, error={}&quot;, new Object[]{processId, processInstanceId, objectKey, expected.getMessage(), expected});\n            } catch (Exception var9) {\n                Exception unexpected = var9;\n                log.error(&quot;Unexpected error while updating variable. processId={}, processInstanceId={}, cause={}&quot;, new Object[]{processId, processInstanceId, unexpected.getMessage(), unexpected});\n                throw new RuntimeException(&quot;Unexpected error while updating variable&quot;, unexpected);\n            }\n\n            if (!lockAndVarsInContextUpdated) {\n                try {\n                    Thread.sleep(50L);\n                } catch (InterruptedException var7) {\n                    InterruptedException e = var7;\n                    Thread.currentThread().interrupt();\n                    throw new RuntimeException(&quot;Thread interrupted while waiting to retry&quot;, e);\n                }\n            }\n        }\n\n        log.info(&quot;SyncInteractionProcessService.addIdsVariableInProcess - Retrying ProcessId: {}, ProcessInstanceId: {}, ObjectKey: {}&quot;, new Object[]{processId, processInstanceId, objectKey});\n    }\n</code></pre>\n<p>And this is the main Transactional method itself, which must do all the work or throw an error.</p>\n<pre><code>@Transactional\n    public Boolean updateVariableWithLock2(String processId, String processInstanceId, String fileId, boolean insertFlag) {\n        if (!this.processLockRepository.existsByProcessIdAndProcessInstanceId(processId, processInstanceId)) {\n            this.createNewLock(processId, processInstanceId);\n        }\n\n        int version;\n        try {\n            ProcessLockEntity processLockEntity = this.processLockRepository.getByProcessIdAndProcessInstanceId(processId, processInstanceId);\n            version = processLockEntity.getVersion();\n            log.info(&quot;Existing lock found. Updating processLockEntity. ProcessId: {}, ProcessInstanceId: {}, Version: {}&quot;, new Object[]{processId, processInstanceId, version});\n            Map&lt;String, Object&gt; variables = this.processInteractionService.getVariables(processId, processInstanceId);\n            S3ObjectIds s3ObjectIds = (S3ObjectIds)variables.get(&quot;s3ObjectIds&quot;);\n            if (s3ObjectIds == null) {\n                s3ObjectIds = new S3ObjectIds();\n            }\n\n            if (s3ObjectIds.getIdS() == null) {\n                s3ObjectIds.setIdS(new ArrayList());\n            }\n\n            List&lt;String&gt; filesIds = new ArrayList(s3ObjectIds.getIdS());\n            if (insertFlag) {\n                filesIds.add(fileId);\n            } else {\n                filesIds.remove(fileId);\n            }\n\n            s3ObjectIds.setIdS(filesIds);\n            // WE ARE UPDATING CONTEXT OF PROCESS HERE, WE DO NOT WRITE TO DB HERE, ONLY CONTEXT HERE\n            this.patchIdsVariableInProcess(processId, processInstanceId, s3ObjectIds);\n            this.updateVersionLock(processLockEntity);\n        } catch (Exception var10) {\n            Exception e = var10;\n            log.error(&quot;Failed to update variable with lock&quot;, e);\n            throw e;\n        }\n\n        log.info(&quot;Finished lock update. ProcessId: {}, ProcessInstanceId: {}, Version: {}&quot;, new Object[]{processId, processInstanceId, version});\n        return true;\n    }\n</code></pre>\n<p>Here we take the current context (the place where we store a list of something) and put a lock</p>\n<pre><code>public ProcessLockEntity getByProcessIdAndProcessInstanceId(String processId, String processInstanceId) {\n        CriteriaBuilder cb = this.entityManager.getCriteriaBuilder();\n        CriteriaQuery&lt;ProcessLockEntity&gt; query = cb.createQuery(ProcessLockEntity.class);\n        Root&lt;ProcessLockEntity&gt; root = query.from(ProcessLockEntity.class);\n        query.select(root).where(cb.and(cb.equal(root.get(&quot;processId&quot;), processId), cb.equal(root.get(&quot;processInstanceId&quot;), processInstanceId)));\n        TypedQuery&lt;ProcessLockEntity&gt; typedQuery = this.entityManager.createQuery(query).setLockMode(LockModeType.OPTIMISTIC);\n        ProcessLockEntity processLockEntity = (ProcessLockEntity)typedQuery.getSingleResult();\n        log.info(&quot;Retrieved ProcessLockEntity. ProcessId: {}, ProcessInstanceId: {}, Entity: {}&quot;, new Object[]{processId, processInstanceId, processLockEntity});\n        return processLockEntity;\n    }\n</code></pre>\n<p>And here we will say we are finishing the lock</p>\n<pre><code>private void updateVersionLock(ProcessLockEntity version) {\n        this.processLockRepository.updateProcessInstanceVersion(version);\n    }\npublic void updateProcessInstanceVersion(ProcessLockEntity version) {\n        log.info(&quot;ProcessLockCriteriaRepository class, updateProcessInstanceVersion: processId={}, processInstanceId={}, version={}&quot;, new Object[]{version.getProcessId(), version.getProcessInstanceId(), version.getVersion()});\n        version.setLastUpdated(Instant.now());\n    }\n</code></pre>\n<p>Our Entity class</p>\n<pre><code>@Entity\n@Table(name = &quot;process_lock&quot;, schema = &quot;public&quot;, uniqueConstraints = {\n        @UniqueConstraint(columnNames = {&quot;process_id&quot;, &quot;process_instance_id&quot;})\n})\n@Getter\n@Setter\n@Builder\n@NoArgsConstructor\n@AllArgsConstructor\npublic class ProcessLockEntity {\n\n    /**\n     * Unique identifier for the context version.\n     */\n    @Id\n    @GeneratedValue\n    private UUID id;\n\n    /**\n     * Identifier of the process. (for example ServiceDeskRequestRegistration)\n     */\n    @Column(name = &quot;process_id&quot;)\n    private String processId;\n\n    /**\n     * Identifier of the process instance.\n     */\n    @Column(name = &quot;process_instance_id&quot;)\n    private String processInstanceId;\n\n    /**\n     * TIMESTAMP of the last update.\n     */\n    @Column(name = &quot;last_updated&quot;)\n    private Instant lastUpdated;\n\n    /**\n     * Version number of the context.\n     */\n    @Version\n    private Integer version;\n\n}\n</code></pre>\n<p>I tried to send 5 requests for publication with IDs at the same time. And this is what I see in the DB and logs afterwards\n<a href=\"https://i.sstatic.net/6HNj4NHB.png\" rel=\"nofollow noreferrer\">enter image description here</a></p>\n<p>Last log</p>\n<pre><code>{&quot;timestamp&quot;:&quot;2025-05-02T00:04:58.107+03:00&quot;,&quot;sequence&quot;:5076,&quot;loggerClassName&quot;:&quot;org.slf4j.impl.Slf4jLogger&quot;,&quot;loggerName&quot;:&quot;ru.logic.bpm.service.lock.service.ProcessLockServiceImpl&quot;,&quot;level&quot;:&quot;INFO&quot;,&quot;message&quot;:&quot;S3OBJECT +ru.logic.bpm.service.s3.interactingprocess.model.S3ObjectIds@5183aeee VALUES CLASS + class java.util.ArrayList VALUES + [a5cc34ca-c276-419b-be90-b6e2e484c68c, 11159010-a303-4b59-8df4-81bf3cc0e1e8, 763bca97-d3ea-4786-ad8b-0880015792e6, 11159010-a303-4b59-8df4-81bf3cc0e1e8, 5c21bc3d-d278-47b9-b06c-693cbaede836]&quot;,&quot;threadName&quot;:&quot;executor-thread-0&quot;,&quot;threadId&quot;:264,&quot;mdc&quot;:{&quot;spanId&quot;:&quot;e6a6e47a224e0724&quot;,&quot;parentId&quot;:&quot;d0de6776d305095d&quot;,&quot;traceId&quot;:&quot;faad8e083cc24ccd952c2908f76b8d82&quot;,&quot;sampled&quot;:&quot;true&quot;},&quot;ndc&quot;:&quot;&quot;,&quot;hostName&quot;:&quot;msi&quot;,&quot;processName&quot;:&quot;sd-request-registration-dev.jar&quot;,&quot;processId&quot;:24832}\n</code></pre>\n",
+    "tags" : [ "java", "spring", "hibernate", "jpa", "quarkus" ],
+    "owner" : {
+      "account_id" : 41730181,
+      "reputation" : 21,
+      "user_id" : 30424272,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/7eac9e2fb11520d9fec78602df97bb70?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Arseniy Porfirev",
+      "link" : "https://stackoverflow.com/users/30424272/arseniy-porfirev"
+    },
+    "is_answered" : false,
+    "view_count" : 114,
+    "answer_count" : 0,
+    "score" : 2,
+    "last_activity_date" : 1746138657,
+    "creation_date" : 1746138657,
+    "link" : "https://stackoverflow.com/questions/79602620/optimistic-locking-does-not-work-in-hibernate",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140396631,
+    "post_id" : 79602620,
+    "body" : "Good afternoon, the thread race is just about the patchVariables method, we use a bpmn system that has a context, and the whole point is to edit it under lock, but the context is not atomic, it cannot be rolled back to the old version (because it is not written) and it turns out that with the current Entity Entity for lock - it will not be possible to resolve the thread conflict for editing the same context from bpmn (we replace the context with a new instance each time, rather than editing the current one)",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 41730181,
+      "reputation" : 21,
+      "user_id" : 30424272,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/7eac9e2fb11520d9fec78602df97bb70?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Arseniy Porfirev",
+      "link" : "https://stackoverflow.com/users/30424272/arseniy-porfirev"
+    },
+    "creation_date" : 1746444384,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140394959,
+    "post_id" : 79602620,
+    "body" : "What race condition are you worried about exactly? Your DB transaction should commit first before you send &#39;external&#39; notifications. Its a common problem with messaging systems; the &#39;success&#39; is logged before it is really a success and the transaction can still rollback. Don&#39;t update the context until the transaction is actually completed or you are making changes visible in the context that aren&#39;t yet in the database. I can&#39;t tell how this affects your app - but a smaller test case would show that locking is absolutely working (though you don&#39;t need to add it to the query, it is automatic)",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 231721,
+      "reputation" : 21335,
+      "user_id" : 496099,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/efa7510cf47d7bd79e80486246e7e39e?s=256&d=identicon&r=PG",
+      "display_name" : "Chris",
+      "link" : "https://stackoverflow.com/users/496099/chris"
+    },
+    "creation_date" : 1746380834,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140393216,
+    "post_id" : 79602620,
+    "body" : "@AndreyB.Panfilov I think you are not quite correct, the version is compared and in case of anything an OptimistickLockException is thrown, the basic implementation of hibernate optimistick lock is used. It just seems that there is some interval between updateLock and patchVariables, into which changes from another thread can squeeze in",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 41730181,
+      "reputation" : 21,
+      "user_id" : 30424272,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/7eac9e2fb11520d9fec78602df97bb70?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Arseniy Porfirev",
+      "link" : "https://stackoverflow.com/users/30424272/arseniy-porfirev"
+    },
+    "creation_date" : 1746296622,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140393120,
+    "post_id" : 79602620,
+    "body" : "<code>Optimistic Locking</code> is not a feature that could be enabled via single annotation, <code>Optimistic Locking</code> is more like a protocol which protects system from loosing updates, unfortunately you are actually not using <code>Optimistic Locking</code> anywhere in your code: your client does not send version stamps and you do not verify version stamps as well",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 4181375,
+      "reputation" : 6263,
+      "user_id" : 3426309,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/v58O6.jpg?s=256",
+      "display_name" : "Andrey B. Panfilov",
+      "link" : "https://stackoverflow.com/users/3426309/andrey-b-panfilov"
+    },
+    "creation_date" : 1746292616,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140391586,
+    "post_id" : 79602620,
+    "body" : "@Chris And then we won&#39;t have a risk of race condition? It turns out that the context change operation is not atomic, and it turns out that it will be outside the transaction, which means there are no guarantees for protection against overwriting, or did I misunderstand?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 41730181,
+      "reputation" : 21,
+      "user_id" : 30424272,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/7eac9e2fb11520d9fec78602df97bb70?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Arseniy Porfirev",
+      "link" : "https://stackoverflow.com/users/30424272/arseniy-porfirev"
+    },
+    "creation_date" : 1746221435,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140390836,
+    "post_id" : 79602620,
+    "body" : "Anything that needs to be done only if the transaction commits should be done &#39;outside&#39; the transactional method",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 231721,
+      "reputation" : 21335,
+      "user_id" : 496099,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/efa7510cf47d7bd79e80486246e7e39e?s=256&d=identicon&r=PG",
+      "display_name" : "Chris",
+      "link" : "https://stackoverflow.com/users/496099/chris"
+    },
+    "creation_date" : 1746203501,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140389712,
+    "post_id" : 79602620,
+    "body" : "Most likely the problem is in the patchIdsVariableInProcess method - it updates the context, and after that the lock is checked, and even if the lock returns an error, then the method of changing the context in the context (patchIdsVariableInProcess) has already passed. And if you first check the lock, and only then change the context by the method (patchIdsVariableInProcess), then there is still a period of time to change the data, that&#39;s the assumption",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 41730181,
+      "reputation" : 21,
+      "user_id" : 30424272,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/7eac9e2fb11520d9fec78602df97bb70?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Arseniy Porfirev",
+      "link" : "https://stackoverflow.com/users/30424272/arseniy-porfirev"
+    },
+    "creation_date" : 1746182597,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

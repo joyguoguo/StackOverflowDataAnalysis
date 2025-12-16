@@ -1,0 +1,112 @@
+{
+  "question" : {
+    "question_id" : 79638022,
+    "title" : "Handling optional search parameters in Criteria API",
+    "body" : "<p>Imagine I have optional search parameters that can be null.</p>\n<p>Is there a more concise alternative for checking each of them explicitly before adding a <code>jakarta.persistence.criteria.Predicate</code> to some local <code>List</code>?</p>\n<p>I mean this almost looks nice, fairly readable (though, Criteria is never really pretty):</p>\n<pre class=\"lang-java prettyprint-override\"><code>import org.springframework.data.jpa.domain.Specification;\n\n//...\n\n    private static Specification&lt;User&gt; buildSpecification(FindUserRequestDto userRequestDto) {\n        return (root, query, criteriaBuilder) -&gt; {\n            var nameBeginsWith = criteriaBuilder.like(root.get(&quot;name&quot;), userRequestDto.getName() + &quot;%&quot;);\n            var ageGreaterThan = criteriaBuilder.greaterThan(root.get(&quot;dateOfBirth&quot;), userRequestDto.getDateOfBirth());\n            var hasEmail = criteriaBuilder.equal(root.join(&quot;emailData&quot;).get(&quot;email&quot;), userRequestDto.getEmail());\n            var hasPhone = criteriaBuilder.equal(root.join(&quot;phoneData&quot;).get(&quot;phone&quot;), userRequestDto.getPhone());\n            return criteriaBuilder.and(nameBeginsWith, ageGreaterThan, hasEmail, hasPhone);\n</code></pre>\n<p>But if I introduce an explicit <code>null</code> check for each optional parameter, it'll get uglier, more verbose.</p>\n<pre class=\"lang-java prettyprint-override\"><code>// like so\n    private static Specification&lt;User&gt; buildSpecification(FindUserRequestDto userRequestDto) {\n        return (root, query, criteriaBuilder) -&gt; {\n            var nameBeginsWith = criteriaBuilder.like(root.get(&quot;name&quot;), userRequestDto.getName() + &quot;%&quot;);\n            var bornAfter = criteriaBuilder.greaterThan(root.get(&quot;dateOfBirth&quot;), userRequestDto.getDateOfBirth());\n            var hasEmail = criteriaBuilder.equal(root.join(&quot;emailData&quot;).get(&quot;email&quot;), userRequestDto.getEmail());\n            var hasPhone = criteriaBuilder.equal(root.join(&quot;phoneData&quot;).get(&quot;phone&quot;), userRequestDto.getPhone());\n\n            List&lt;jakarta.persistence.criteria.Predicate&gt; predicates = new ArrayList&lt;&gt;();\n            if (userRequestDto.getName() != null) predicates.add(nameBeginsWith);\n            if (userRequestDto.getDateOfBirth() != null) predicates.add(bornAfter);\n            if (userRequestDto.getEmail() != null) predicates.add(hasEmail);\n            if (userRequestDto.getPhone() != null) predicates.add(hasPhone);\n            return criteriaBuilder.and(predicates.toArray(new jakarta.persistence.criteria.Predicate[0]));\n        };\n    }\n</code></pre>\n<p>You could argue it's a lost cause to try and make Criteria <em>not</em> verbose and ugly. But since I'm not very familiar with Criteria, I may be unaware of something. I wish Jakarta's <code>Predicate</code>s had some <code>or()</code> method.</p>\n<p>Here are my (simplified) entities:</p>\n<pre class=\"lang-java prettyprint-override\"><code>import jakarta.persistence.CascadeType;\nimport jakarta.persistence.Column;\nimport jakarta.persistence.Entity;\nimport jakarta.persistence.FetchType;\nimport jakarta.persistence.GeneratedValue;\nimport jakarta.persistence.GenerationType;\nimport jakarta.persistence.Id;\nimport jakarta.persistence.OneToMany;\nimport jakarta.persistence.Table;\nimport lombok.Getter;\nimport lombok.Setter;\n\nimport java.util.List;\n\n@Entity\n@Getter\n@Setter\n@Table(name = &quot;\\&quot;user\\&quot;&quot;)\npublic class User {\n\n    @Id\n    @GeneratedValue(strategy = GenerationType.IDENTITY)\n    private Long id;\n    private String name;\n    @OneToOne(mappedBy = &quot;user&quot;)\n    @OneToMany(mappedBy = &quot;user&quot;, fetch = FetchType.EAGER,\n            cascade = CascadeType.ALL, orphanRemoval = true)\n    private List&lt;EmailData&gt; emailData;\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>import jakarta.persistence.Entity;\nimport jakarta.persistence.GeneratedValue;\nimport jakarta.persistence.GenerationType;\nimport jakarta.persistence.Id;\nimport jakarta.persistence.JoinColumn;\nimport jakarta.persistence.ManyToOne;\nimport jakarta.persistence.Table;\nimport lombok.Getter;\nimport lombok.Setter;\n\n@Entity\n@Getter\n@Setter\n@Table(name = &quot;email_data&quot;)\npublic class EmailData {\n\n    @Id\n    @GeneratedValue(strategy = GenerationType.IDENTITY)\n    private Long id;\n    @ManyToOne\n    @JoinColumn(name = &quot;user_id&quot;)\n    private User user;\n    private String email;\n}\n</code></pre>\n",
+    "tags" : [ "java", "hibernate", "jpa", "spring-data", "criteria" ],
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2683,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "is_answered" : false,
+    "view_count" : 67,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1748208267,
+    "creation_date" : 1748203176,
+    "link" : "https://stackoverflow.com/questions/79638022/handling-optional-search-parameters-in-criteria-api",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79638089,
+    "question_id" : 79638022,
+    "body" : "<p>or() is supported by CriteriaBuilder, see the details there: <a href=\"https://www.baeldung.com/jpa-and-or-criteria-predicates\" rel=\"nofollow noreferrer\">https://www.baeldung.com/jpa-and-or-criteria-predicates</a></p>\n<pre><code>public List&lt;User&gt; searchUsers(String name, Integer age, Boolean active,\n      boolean matchAny) {\nCriteriaBuilder cb = entityManager.getCriteriaBuilder();\nCriteriaQuery&lt;User&gt; query = cb.createQuery(User.class);\nRoot&lt;User&gt; root = query.from(User.class);\n\nList&lt;Predicate&gt; predicates = new ArrayList&lt;&gt;();\n\nif (name != null &amp;&amp; !name.isEmpty()) {\n    predicates.add(cb.like(cb.lower(root.get(&quot;name&quot;)), &quot;%&quot; + name.toLowerCase() + &quot;%&quot;));\n}\n\nif (age != null) {\n    predicates.add(cb.equal(root.get(&quot;age&quot;), age));\n}\n\nif (active != null) {\n    predicates.add(cb.equal(root.get(&quot;active&quot;), active));\n}\n\nif (!predicates.isEmpty()) {\n    Predicate finalPredicate = matchAny\n        ? cb.or(predicates.toArray(new Predicate[0]))\n        : cb.and(predicates.toArray(new Predicate[0]));\n    query.where(finalPredicate);\n}\n\nreturn entityManager.createQuery(query).getResultList();\n</code></pre>\n<p>}</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 20087954,
+      "reputation" : 441,
+      "user_id" : 14729128,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/3asE3.jpg?s=256",
+      "display_name" : "Maria",
+      "link" : "https://stackoverflow.com/users/14729128/maria"
+    },
+    "creation_date" : 1748208267,
+    "last_activity_date" : 1748208267,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140459824,
+    "post_id" : 79638022,
+    "body" : "You have to deal with null, either in the criteria query or in the database. By pushing it to the DB, you are complicating the SQL generation and pushing more processing to the DB for the only benefit of not seeing null handling in the code. There are reasons to do that, such as having a single cacheable statement that can be more generic, but the push to not see null checks in code always perplexes me. You can use an or statement to check for null in the criteria query, but they generally use query parameters - you are passing in modified strings inline.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 231721,
+      "reputation" : 21335,
+      "user_id" : 496099,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/efa7510cf47d7bd79e80486246e7e39e?s=256&d=identicon&r=PG",
+      "display_name" : "Chris",
+      "link" : "https://stackoverflow.com/users/496099/chris"
+    },
+    "creation_date" : 1748268094,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140459732,
+    "post_id" : 79638022,
+    "body" : "There is no conceptually-different way of dynamic building of the Criteria. You can implement some generic utility methods that hide null checks inside, but it would be just sort of syntactic sugar",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2563377,
+      "reputation" : 7637,
+      "user_id" : 2224047,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/UZ83S.jpg?s=256",
+      "display_name" : "Nikolai  Shevchenko",
+      "link" : "https://stackoverflow.com/users/2224047/nikolai-shevchenko"
+    },
+    "creation_date" : 1748266635,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79638089" : [ {
+      "comment_id" : 140460033,
+      "post_id" : 79638089,
+      "body" : "okay, then I just did not get your question, I thought you&#39;re wondering about having or(), sorry @SergeyZolotarev",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 20087954,
+        "reputation" : 441,
+        "user_id" : 14729128,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/3asE3.jpg?s=256",
+        "display_name" : "Maria",
+        "link" : "https://stackoverflow.com/users/14729128/maria"
+      },
+      "creation_date" : 1748271914,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140458599,
+      "post_id" : 79638089,
+      "body" : "Your snippet still contains null checks",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10187542,
+        "reputation" : 2683,
+        "user_id" : 20692967,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+        "display_name" : "Sergey Zolotarev",
+        "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+      },
+      "creation_date" : 1748242738,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

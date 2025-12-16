@@ -1,0 +1,459 @@
+{
+  "question" : {
+    "question_id" : 79667827,
+    "title" : "tomcat multipart upload for many attachments (&gt;10) not working after update to 9.0.106",
+    "body" : "<p>Awe have upgraded our Tomcat version from 9.0.102 to 9.0.106. Since then, it is no longer possible to upload more than 10 files in a single POST request, which is from the client's side initiated by:</p>\n<pre><code>&lt;form ... enctype=&quot;multipart/form-data&quot; method=&quot;post&quot;&gt;\n  &lt;input type=&quot;file&quot; name=&quot;attachments&quot; multiple=&quot;1&quot;&gt;\n</code></pre>\n<p>Before the update, it was possible to upload many files in one POST request without any issue. Now, if the user uploads more files, we receive the following exception:</p>\n<pre><code>org.apache.tomcat.util.http.fileupload.impl.FileCountLimitExceededException\n</code></pre>\n<p>This happens while evaluating in the servlet's doPost method:</p>\n<pre><code>Log.println(&quot;upload: parts=&quot; + request.getParts().size() + &quot; contentLength=&quot; + request.getContentLength());\n</code></pre>\n<p>So it seems that something has changed in Tomcat between version 9.0.102 and 9.0.106 related to the property:</p>\n<pre><code>FileUploadBase.fileCountMax\n</code></pre>\n<p>However, when checking the source code, the default value is still initialized with -1 (which should mean &quot;unlimited&quot;), but in the deployment environment it somehow behaves as if it was set to 10.</p>\n<p>We have downloaded the Tomcat binary directly from Apache.org and are not using any packaged version provided by the Linux distribution.</p>\n<p>Even explicitly setting</p>\n<pre><code>org.apache.tomcat.util.http.fileupload.FileUploadBase.fileCountMax=200\n</code></pre>\n<p>in catalina.properties has no effect.</p>\n<p>Any ideas where this new default limit might be coming from?</p>\n",
+    "tags" : [ "java", "file-upload", "tomcat9" ],
+    "owner" : {
+      "account_id" : 6892252,
+      "reputation" : 516,
+      "user_id" : 5295284,
+      "user_type" : "registered",
+      "accept_rate" : 67,
+      "profile_image" : "https://lh3.googleusercontent.com/-Svwr5dpIcGU/AAAAAAAAAAI/AAAAAAAAAHE/hmZ18QEWihg/s256-rj/photo.jpg",
+      "display_name" : "tombo_189",
+      "link" : "https://stackoverflow.com/users/5295284/tombo-189"
+    },
+    "is_answered" : true,
+    "view_count" : 5999,
+    "answer_count" : 5,
+    "score" : 10,
+    "last_activity_date" : 1755749371,
+    "creation_date" : 1750085840,
+    "link" : "https://stackoverflow.com/questions/79667827/tomcat-multipart-upload-for-many-attachments-10-not-working-after-update-to-9",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79668017,
+    "question_id" : 79667827,
+    "body" : "<p>After looking through the <a href=\"https://tomcat.apache.org/tomcat-9.0-doc/changelog.html\" rel=\"nofollow noreferrer\">Apache Tomcat 9.0.106 Change Log</a> I found that a new configuration was introduced and needed to be set correctly. Also after helping OP (in the comments) test the configurations I found.</p>\n<p>Essentially the new attribute which is on their code docs:</p>\n<pre><code>&lt;attribute name=&quot;maxPartCount&quot; required=&quot;false&quot;&gt;\n  &lt;p&gt;The maximum total number of parts permitted in a request where the\n  content type is &lt;code&gt;multipart/form-data&lt;/code&gt;. This limit is in\n  addition to &lt;code&gt;maxParameterCount&lt;/code&gt;. Requests that exceed this\n  limit will be rejected. A value of less than 0 means no limit. If not\n  specified, a default of 10 is used.&lt;/p&gt;\n&lt;/attribute&gt;\n</code></pre>\n<p>So it needs to be added to the Connector configuration in the server.xml file.</p>\n<p>The current code will also allow <code>-1</code> as unlimited. So:</p>\n<pre><code>&lt;Connector ..... maxPartCount=&quot;-1&quot;/&gt;\n</code></pre>\n",
+    "score" : 11,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 209503,
+      "reputation" : 23867,
+      "user_id" : 460557,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/b4565f97815833390c9c880e9e8522e4?s=256&d=identicon&r=PG",
+      "display_name" : "Jorge Campos",
+      "link" : "https://stackoverflow.com/users/460557/jorge-campos"
+    },
+    "creation_date" : 1750095934,
+    "last_activity_date" : 1750782262,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79685333,
+    "question_id" : 79667827,
+    "body" : "<p>I would like to give more informations about this new parameter, because for many dev has been a pain to debug: there are some related issue tickets and pull requests for PrimeFaces on github and some Tomcat tickets.</p>\n<p>The good news is that on Tomcat 9.0.107, 10.1.43 and 11.0.9 the default value of <code>maxPartCount</code> will be <code>50</code>. This will be enough for the majority of webapps.</p>\n<p><strong>JSF (Faces) - Mojarra, MyFaces also with PrimeFaces</strong></p>\n<p>For those who use JSF (Faces) there are even more problems, to recap, the situation is the following:</p>\n<ol>\n<li><p><code>maxPartCount</code> is not the number of uploaded files but the number of all the request parameters submitted with a form with enctype multipart/form-data</p>\n</li>\n<li><p>JSF and PrimeFaces (if you use it) both add other request parameters so the multipart request parameter count is higher then expected</p>\n</li>\n<li><p>With JSF this specific Tomcat Exception will not get logged (at least on Tomcat 10.1)</p>\n</li>\n<li><p>Using ajax what you get is only a generic error 500 (visible in chrome dev tools)</p>\n</li>\n<li><p>This is the official Tomcat ticket about this thing (only for registered users):<br />\n<a href=\"https://bz.apache.org/bugzilla/show_bug.cgi?id=69710\" rel=\"nofollow noreferrer\">https://bz.apache.org/bugzilla/show_bug.cgi?id=69710</a></p>\n</li>\n</ol>\n<p><strong>Configuration &amp; Memory Usage</strong></p>\n<p>The configuration and the math to calculate the max amount of memory for multipart request,<br />\nis the following: for example, if you configure a Connector inside <code>server.xml</code>:</p>\n<pre><code>&lt;Connector maxConnections=&quot;1000&quot; maxPartCount=&quot;100&quot; maxPartHeaderSize=&quot;1024&quot;  /&gt;\n</code></pre>\n<p>with these values, the theoretical Tomcat 10.1 and 11 max memory usage is:</p>\n<p>1000 x 100 x 1KB x 2 =~ 200MB</p>\n",
+    "score" : 5,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 8348737,
+      "reputation" : 111,
+      "user_id" : 7757526,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/An9K6.jpg?s=256",
+      "display_name" : "pizzi",
+      "link" : "https://stackoverflow.com/users/7757526/pizzi"
+    },
+    "creation_date" : 1751321730,
+    "last_activity_date" : 1751979766,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79678857,
+    "question_id" : 79667827,
+    "body" : "<p>I've got that problem after updating spring to version 3.5.3.</p>\n<p>There is tomcat version 10.1.42 and the simplest thing to fix it was to add a property into application.properties:</p>\n<pre><code>server.tomcat.max-part-count=30\n</code></pre>\n",
+    "score" : 4,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 42707246,
+      "reputation" : 41,
+      "user_id" : 30883421,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/ee13aa8b16559d3c19091765b0e5bb73?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Adam Jędrzejko",
+      "link" : "https://stackoverflow.com/users/30883421/adam-j%c4%99drzejko"
+    },
+    "creation_date" : 1750846541,
+    "last_activity_date" : 1750846541,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79691069,
+    "question_id" : 79667827,
+    "body" : "<pre><code>package luwangcha.triserviceposignal.config;\nimport org.springframework.boot.web.embedded.tomcat.TomcatServletWebServerFactory;\nimport org.springframework.boot.web.server.WebServerFactoryCustomizer;\nimport org.springframework.context.annotation.Configuration;\n\n@Configuration\npublic class TomcatConfig implements WebServerFactoryCustomizer&lt;TomcatServletWebServerFactory&gt; {\n\n    @Override\n    public void customize(TomcatServletWebServerFactory factory) {\n        factory.addConnectorCustomizers(connector -&gt; {\n            connector.setMaxPartCount(1000);\n            \n            // Other relevant Tomcat settings\n            connector.setProperty(&quot;maxPostSize&quot;, String.valueOf(2L * 1024 * 1024 * 1024)); // 2GB\n            connector.setProperty(&quot;maxSwallowSize&quot;, String.valueOf(2L * 1024 * 1024 * 1024)); // 2GB\n        });\n    }\n}\n</code></pre>\n<p>for spring boot:</p>\n<pre><code>connector.setMaxPartCount(1000);  // -1 for unlimited\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 6019769,
+      "reputation" : 1,
+      "user_id" : 4727291,
+      "user_type" : "registered",
+      "profile_image" : "https://graph.facebook.com/442810732549182/picture?type=large",
+      "display_name" : "Roben Salam",
+      "link" : "https://stackoverflow.com/users/4727291/roben-salam"
+    },
+    "creation_date" : 1751721231,
+    "last_activity_date" : 1751721231,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79741810,
+    "question_id" : 79667827,
+    "body" : "<p>Adding those configurations to `application.properties` just worked as advised in this <a href=\"https://github.com/spring-projects/spring-boot/issues/45881#issuecomment-3089738647\" rel=\"nofollow noreferrer\">Github issue.</a></p>\n<pre><code>server.tomcat.max-part-count=50\nserver.tomcat.max-part-header-size=2048\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 4400136,
+      "reputation" : 890,
+      "user_id" : 3586084,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/O7jmn.png?s=256",
+      "display_name" : "alierdogan7",
+      "link" : "https://stackoverflow.com/users/3586084/alierdogan7"
+    },
+    "creation_date" : 1755749371,
+    "last_activity_date" : 1755749371,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140527660,
+    "post_id" : 79667827,
+    "body" : "Hi there. If the answer helped you out please consider in marking it as accepted (it is the V mark on the left) it helps me and the community :).",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 209503,
+      "reputation" : 23867,
+      "user_id" : 460557,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/b4565f97815833390c9c880e9e8522e4?s=256&d=identicon&r=PG",
+      "display_name" : "Jorge Campos",
+      "link" : "https://stackoverflow.com/users/460557/jorge-campos"
+    },
+    "creation_date" : 1750359232,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140518226,
+    "post_id" : 79667827,
+    "body" : "Awesome! I&#39;ve added an answer for you! Glad to be of help.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 209503,
+      "reputation" : 23867,
+      "user_id" : 460557,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/b4565f97815833390c9c880e9e8522e4?s=256&d=identicon&r=PG",
+      "display_name" : "Jorge Campos",
+      "link" : "https://stackoverflow.com/users/460557/jorge-campos"
+    },
+    "creation_date" : 1750095961,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140518040,
+    "post_id" : 79667827,
+    "body" : "Sorry, setting the maxPartCount=&quot;-1&quot; in the connector does work. I can confirm that. I had it configured wrongly before. So you could now answer this question officially ;-)",
+    "score" : 3,
+    "owner" : {
+      "account_id" : 6892252,
+      "reputation" : 516,
+      "user_id" : 5295284,
+      "user_type" : "registered",
+      "accept_rate" : 67,
+      "profile_image" : "https://lh3.googleusercontent.com/-Svwr5dpIcGU/AAAAAAAAAAI/AAAAAAAAAHE/hmZ18QEWihg/s256-rj/photo.jpg",
+      "display_name" : "tombo_189",
+      "link" : "https://stackoverflow.com/users/5295284/tombo-189"
+    },
+    "creation_date" : 1750091786,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140517949,
+    "post_id" : 79667827,
+    "body" : "Actually is not a bug... it is just confusing. it process both parameters <code>partLimit</code> and <code>maxPartCount</code> if partLimit is not set to -1 it will use whatever value on it (regardless of <code>maxPartCount</code> being -1), I guess thats the bug?, if both are -1 it will use the default <code>maxParameterCount</code> which is set to 10000.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 209503,
+      "reputation" : 23867,
+      "user_id" : 460557,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/b4565f97815833390c9c880e9e8522e4?s=256&d=identicon&r=PG",
+      "display_name" : "Jorge Campos",
+      "link" : "https://stackoverflow.com/users/460557/jorge-campos"
+    },
+    "creation_date" : 1750089541,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140517929,
+    "post_id" : 79667827,
+    "body" : "And I would report this on their board...",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 209503,
+      "reputation" : 23867,
+      "user_id" : 460557,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/b4565f97815833390c9c880e9e8522e4?s=256&d=identicon&r=PG",
+      "display_name" : "Jorge Campos",
+      "link" : "https://stackoverflow.com/users/460557/jorge-campos"
+    },
+    "creation_date" : 1750089105,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140517927,
+    "post_id" : 79667827,
+    "body" : "I don&#39;t think they allowed that on that version... the code has a comment that says: <code>1. The limit based on parameters. This is maxParameterCount less the number of parameters already processed.; 2. The limit based on parts. This is maxPartCount.; Note: Either of both limits may be set to -1 (unlimited).&quot;</code> but the code doesn&#39;t do anything if the actual value is <code>-1</code> so this is definitely a bug... Try using <code>2147483646</code> int max minus 1",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 209503,
+      "reputation" : 23867,
+      "user_id" : 460557,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/b4565f97815833390c9c880e9e8522e4?s=256&d=identicon&r=PG",
+      "display_name" : "Jorge Campos",
+      "link" : "https://stackoverflow.com/users/460557/jorge-campos"
+    },
+    "creation_date" : 1750089096,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140517910,
+    "post_id" : 79667827,
+    "body" : "no doesn help. I&#39;ve amended my question-text on how I did it (Connector ...)",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 6892252,
+      "reputation" : 516,
+      "user_id" : 5295284,
+      "user_type" : "registered",
+      "accept_rate" : 67,
+      "profile_image" : "https://lh3.googleusercontent.com/-Svwr5dpIcGU/AAAAAAAAAAI/AAAAAAAAAHE/hmZ18QEWihg/s256-rj/photo.jpg",
+      "display_name" : "tombo_189",
+      "link" : "https://stackoverflow.com/users/5295284/tombo-189"
+    },
+    "creation_date" : 1750088801,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140517865,
+    "post_id" : 79667827,
+    "body" : "it is supposed to be something like: <code>&lt;Connector ..... maxPartCount=&quot;20&quot; &#47;&gt;</code> let me know if it works and I will and an answer for you",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 209503,
+      "reputation" : 23867,
+      "user_id" : 460557,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/b4565f97815833390c9c880e9e8522e4?s=256&d=identicon&r=PG",
+      "display_name" : "Jorge Campos",
+      "link" : "https://stackoverflow.com/users/460557/jorge-campos"
+    },
+    "creation_date" : 1750088033,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140517845,
+    "post_id" : 79667827,
+    "body" : "Based on the code (I downloaded it here) It is supposed to be on the server.xml in the http connector configuration. In the code (since you downloaded) it is described in the file <code>http.xml</code> under <code>webapps&#47;docs&#47;config</code>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 209503,
+      "reputation" : 23867,
+      "user_id" : 460557,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/b4565f97815833390c9c880e9e8522e4?s=256&d=identicon&r=PG",
+      "display_name" : "Jorge Campos",
+      "link" : "https://stackoverflow.com/users/460557/jorge-campos"
+    },
+    "creation_date" : 1750087787,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140517823,
+    "post_id" : 79667827,
+    "body" : "Do you know where to set an individual value for the maxPartCount? May be in the catalina.properties? Or somewhere in the server.xml-config?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 6892252,
+      "reputation" : 516,
+      "user_id" : 5295284,
+      "user_type" : "registered",
+      "accept_rate" : 67,
+      "profile_image" : "https://lh3.googleusercontent.com/-Svwr5dpIcGU/AAAAAAAAAAI/AAAAAAAAAHE/hmZ18QEWihg/s256-rj/photo.jpg",
+      "display_name" : "tombo_189",
+      "link" : "https://stackoverflow.com/users/5295284/tombo-189"
+    },
+    "creation_date" : 1750087320,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140517792,
+    "post_id" : 79667827,
+    "body" : "Actually the entry on the Coyote seems suspicious: <code>Provide finer grained control of multi-part request processing via two new attributes on the Connector element. maxPartCount limits the total number of parts in a multi-part request and maxPartHeaderSize limits the size of the headers provided with each part. Add support for these new attributes to the ParameterLimitValve. (markt)</code>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 209503,
+      "reputation" : 23867,
+      "user_id" : 460557,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/b4565f97815833390c9c880e9e8522e4?s=256&d=identicon&r=PG",
+      "display_name" : "Jorge Campos",
+      "link" : "https://stackoverflow.com/users/460557/jorge-campos"
+    },
+    "creation_date" : 1750086783,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140517787,
+    "post_id" : 79667827,
+    "body" : "The changeLog has nothing indicating that any change was made on that, so this might as well be an introduced bug: <a href=\"https://tomcat.apache.org/tomcat-9.0-doc/changelog.html\" rel=\"nofollow noreferrer\">tomcat.apache.org/tomcat-9.0-doc/changelog.html</a>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 209503,
+      "reputation" : 23867,
+      "user_id" : 460557,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/b4565f97815833390c9c880e9e8522e4?s=256&d=identicon&r=PG",
+      "display_name" : "Jorge Campos",
+      "link" : "https://stackoverflow.com/users/460557/jorge-campos"
+    },
+    "creation_date" : 1750086697,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79691069" : [ {
+      "comment_id" : 140567045,
+      "post_id" : 79691069,
+      "body" : "As it’s currently written, your answer is unclear. Please <a href=\"https://stackoverflow.com/posts/79691069/edit\">edit</a> to add additional details that will help others understand how this addresses the question asked. You can find more information on how to write good answers <a href=\"/help/how-to-answer\">in the help center</a>.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : -1,
+        "reputation" : 1,
+        "user_id" : -1,
+        "user_type" : "moderator",
+        "profile_image" : "https://www.gravatar.com/avatar/a007be5a61f6aa8f3e85ae2fc18dd66e?s=256&d=identicon&r=PG",
+        "display_name" : "Community",
+        "link" : "https://stackoverflow.com/users/-1/community"
+      },
+      "creation_date" : 1751729554,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79678857" : [ {
+      "comment_id" : 140577160,
+      "post_id" : 79678857,
+      "body" : "I added that config to the <code>application.properties</code> and it works in development but when I build an image via <code>bootBuildImage</code> it does not work when deployed ... very strange",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 14894,
+        "reputation" : 9089,
+        "user_id" : 30967,
+        "user_type" : "registered",
+        "accept_rate" : 67,
+        "profile_image" : "https://www.gravatar.com/avatar/724e23783c2df384427be92ac6d043bb?s=256&d=identicon&r=PG",
+        "display_name" : "Thomas Einwaller",
+        "link" : "https://stackoverflow.com/users/30967/thomas-einwaller"
+      },
+      "creation_date" : 1752071884,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140560427,
+      "post_id" : 79678857,
+      "body" : "This works if using embedded tomcat. For external tomcat, user needs to add it to Connector (usually 8080 or 8443) in server.xml:      &lt;Connector port=&quot;8080&quot; protocol=&quot;HTTP/1.1&quot;                connectionTimeout=&quot;20000&quot;                maxParameterCount=&quot;5000&quot;                maxPartCount=&quot;50&quot;                URIEncoding=&quot;UTF-8&quot;                /&gt;",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 1042691,
+        "reputation" : 573,
+        "user_id" : 1048376,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/417c0aafba70fa08d6ac0fc8972f093c?s=256&d=identicon&r=PG",
+        "display_name" : "splashout",
+        "link" : "https://stackoverflow.com/users/1048376/splashout"
+      },
+      "creation_date" : 1751503471,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79685333" : [ {
+      "comment_id" : 140555259,
+      "post_id" : 79685333,
+      "body" : "@tandraschko Yeah, the problem was that in 10.1.42 with a default value of maxPartCount=10 is some circumstances was not even possible to upload a single file! ... btw the intent of my reply is only to help other devs to not waste too much time on this and to understand the impact of Connector parameters on JVM memory",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 8348737,
+        "reputation" : 111,
+        "user_id" : 7757526,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/An9K6.jpg?s=256",
+        "display_name" : "pizzi",
+        "link" : "https://stackoverflow.com/users/7757526/pizzi"
+      },
+      "creation_date" : 1751361865,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140554939,
+      "post_id" : 79685333,
+      "body" : "I would like that add, that PrimeFaces partial submit will only post processed inputs, so the post parameter count should be very small.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 4166540,
+        "reputation" : 2376,
+        "user_id" : 3415398,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/eb6d8ccebcbbda6aa807c073aecbb13d?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "tandraschko",
+        "link" : "https://stackoverflow.com/users/3415398/tandraschko"
+      },
+      "creation_date" : 1751354593,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79668017" : [ {
+      "comment_id" : 140560318,
+      "post_id" : 79668017,
+      "body" : "I&#39;m here after a day of banging my head against the wall... No errors whatsoever until I set org.springframework.security log level to TRACE. Then I saw: &quot;InvalidCsrfTokenException: Invalid CSRF Token &#39;null&#39;&quot; from Spring (nothing from Tomcat). Finally figured out it was a combo of enctype=&quot;multipart/form-data&quot; and Tomcat 10.1.42... More head banging and found this thread w/ the buzilla ticket: <a href=\"https://bz.apache.org/bugzilla/show_bug.cgi?id=69710\" rel=\"nofollow noreferrer\">bz.apache.org/bugzilla/show_bug.cgi?id=69710</a>. And now I know.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 1042691,
+        "reputation" : 573,
+        "user_id" : 1048376,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/417c0aafba70fa08d6ac0fc8972f093c?s=256&d=identicon&r=PG",
+        "display_name" : "splashout",
+        "link" : "https://stackoverflow.com/users/1048376/splashout"
+      },
+      "creation_date" : 1751499186,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140538451,
+      "post_id" : 79668017,
+      "body" : "Happy to be of help! De nada :)",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 209503,
+        "reputation" : 23867,
+        "user_id" : 460557,
+        "user_type" : "registered",
+        "accept_rate" : 100,
+        "profile_image" : "https://www.gravatar.com/avatar/b4565f97815833390c9c880e9e8522e4?s=256&d=identicon&r=PG",
+        "display_name" : "Jorge Campos",
+        "link" : "https://stackoverflow.com/users/460557/jorge-campos"
+      },
+      "creation_date" : 1750773055,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140537629,
+      "post_id" : 79668017,
+      "body" : "FYI, they also changed this for <a href=\"https://tomcat.apache.org/tomcat-10.1-doc/changelog.html\" rel=\"nofollow noreferrer\">Tomcat 10.1.42</a> (as well as <a href=\"https://tomcat.apache.org/tomcat-11.0-doc/changelog.html\" rel=\"nofollow noreferrer\">Tomcat 11</a> and maybe others?) on the same day. Was not so easy to diagnose why we were suddenly hitting an exception until I found this post. Obrigado :)",
+      "score" : 3,
+      "owner" : {
+        "account_id" : 18431372,
+        "reputation" : 23,
+        "user_id" : 13426403,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/13f5caddb0e4a4c12ca28acbf6317d29?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "JoseAlmeida",
+        "link" : "https://stackoverflow.com/users/13426403/josealmeida"
+      },
+      "creation_date" : 1750757020,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

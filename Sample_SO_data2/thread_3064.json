@@ -1,0 +1,112 @@
+{
+  "question" : {
+    "question_id" : 79576835,
+    "title" : "Forward a message to an arbitrary list of addresses in ActiveMQ Artemis",
+    "body" : "<p>I want to create a <em>fan-out</em> on ActiveMQ Artemis.</p>\n<p>This is the scenario:</p>\n<ol>\n<li>The producer sends a message on the dedicated address (example: <code>inputMsg</code>).</li>\n<li>Artemis forwards the message to all consumers that respect a specific pattern (e.g.: <code>bc.*</code> such as <code>bc.service1</code>, <code>bc.client2</code>, ...). The divert does not know the complete list of the consumers because can change dynamically.</li>\n</ol>\n<p>I saw that the <a href=\"https://activemq.apache.org/components/artemis/documentation/latest/diverts.html#composite-divert\" rel=\"nofollow noreferrer\">composite-divert</a> should be good for me but it requires to know the complete list of consumers.</p>\n<p>I tried to use <a href=\"https://activemq.apache.org/components/artemis/documentation/latest/wildcard-syntax.html#wildcard-syntax\" rel=\"nofollow noreferrer\">wildcard-syntax</a> as filter and forwarding-address with the following configuration on the broker.xml but it seems to not work properly:</p>\n<pre class=\"lang-xml prettyprint-override\"><code>&lt;divert name=&quot;fan-out-divert&quot;&gt;\n    &lt;address&gt;inputMsg&lt;/address&gt;\n    &lt;forwarding-address&gt;bc.*&lt;/forwarding-address&gt;\n    &lt;filter string=&quot;route='broadcast'&quot;/&gt;\n    &lt;exclusive&gt;false&lt;/exclusive&gt;\n&lt;/divert&gt;\n&lt;divert name=&quot;wildcard-divert&quot;&gt;\n    &lt;address&gt;inputMsg&lt;/address&gt;\n    &lt;forwarding-address&gt;wildcardconsumer&lt;/forwarding-address&gt;\n    &lt;filter string=&quot;route='bc.#'&quot;/&gt;\n    &lt;exclusive&gt;false&lt;/exclusive&gt;\n&lt;/divert&gt;\n</code></pre>\n<p>Is there a way to configure this behavior?</p>\n",
+    "tags" : [ "java", "jms", "activemq-artemis" ],
+    "owner" : {
+      "account_id" : 19670476,
+      "reputation" : 209,
+      "user_id" : 14399829,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/0c5e41a27fcb417d8c8e712d00b2023f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "effedici",
+      "link" : "https://stackoverflow.com/users/14399829/effedici"
+    },
+    "is_answered" : true,
+    "view_count" : 106,
+    "answer_count" : 2,
+    "score" : 0,
+    "last_activity_date" : 1745836514,
+    "creation_date" : 1744795944,
+    "link" : "https://stackoverflow.com/questions/79576835/forward-a-message-to-an-arbitrary-list-of-addresses-in-activemq-artemis",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79577447,
+    "question_id" : 79576835,
+    "body" : "<p>A <code>divert</code> does not support the ability to send messages to an arbitrary list of addresses. Generally speaking, wild-card routing isn't supported for producers. It is only supported for consumers.</p>\n<p>The way you're attempting to use the <code>filter</code> on a <code>divert</code> doesn't really make sense. The filter is applied to messages coming <em>into</em> the divert. Any message sent to the divert which doesn't match the filter will not be forwarded. You can't use it to determine where specifically messages are routed.</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 11434008,
+      "reputation" : 36292,
+      "user_id" : 8381946,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-ORs8fPNVzDU/AAAAAAAAAAI/AAAAAAAADBs/F3IsdsProVY/s256-rj/photo.jpg",
+      "display_name" : "Justin Bertram",
+      "link" : "https://stackoverflow.com/users/8381946/justin-bertram"
+    },
+    "creation_date" : 1744814643,
+    "last_activity_date" : 1744814643,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79588286,
+    "question_id" : 79576835,
+    "body" : "<p>The internal ActiveMQ Artemis <a href=\"https://activemq.apache.org/components/artemis/documentation/latest/address-model.html\" rel=\"nofollow noreferrer\">address model</a> is based on addresses, queues and routing types. When a message is sent to an address it is routed to one or more of its queues based on the configured routing type. The messages are consumed from a queue that is bound to an address.</p>\n<p>You can use the <a href=\"https://activemq.apache.org/components/artemis/documentation/latest/address-model.html#multicast\" rel=\"nofollow noreferrer\">multicast</a> routing type and the <a href=\"https://activemq.apache.org/components/artemis/documentation/latest/address-model.html#fully-qualified-queue-names\" rel=\"nofollow noreferrer\">FQQNs</a> to send messages to a single queue or all the queues bounded to an address, i.e.</p>\n<pre><code>&lt;address name=&quot;test&quot;&gt;\n   &lt;multicast&gt;\n      &lt;queue name=&quot;q1&quot; /&gt;\n      &lt;queue name=&quot;q2&quot; /&gt;\n      &lt;queue name=&quot;q3&quot; /&gt;\n   &lt;/multicast&gt;\n&lt;/address&gt;\n</code></pre>\n<pre><code>./broker/bin/artemis producer --verbose --destination topic://test::q1 --user admin --password admin --protocol core --message-count 1\n\n|NAME              |ADDRESS           |CONSUMER|MESSAGE|MESSAGES|DELIVERING|MESSAGES|SCHEDULED| ROUTING |INTERNAL|\n|                  |                  | COUNT  | COUNT | ADDED  |  COUNT   | ACKED  |  COUNT  |  TYPE   |        |\n|q1                |test              |   0    |   1   |   2    |    0     |   0    |    0    |MULTICAST| false  |\n|q2                |test              |   0    |   0   |   1    |    0     |   0    |    0    |MULTICAST| false  |\n|q3                |test              |   0    |   0   |   1    |    0     |   0    |    0    |MULTICAST| false  |\n</code></pre>\n<pre><code>./broker/bin/artemis producer --verbose --destination topic://test --user admin --password admin --protocol core --message-count 1\n\n|NAME              |ADDRESS           |CONSUMER|MESSAGE|MESSAGES|DELIVERING|MESSAGES|SCHEDULED| ROUTING |INTERNAL|\n|                  |                  | COUNT  | COUNT | ADDED  |  COUNT   | ACKED  |  COUNT  |  TYPE   |        |\n|q1                |test              |   0    |   2   |   1    |    0     |   0    |    0    |MULTICAST| false  |\n|q2                |test              |   0    |   1   |   1    |    0     |   0    |    0    |MULTICAST| false  |\n|q3                |test              |   0    |   1   |   1    |    0     |   0    |    0    |MULTICAST| false  |\n</code></pre>\n<pre><code>./broker/bin/artemis consumer --verbose --destination queue://test::q1 --user admin --password admin --protocol core --message-count 1\n\n|NAME              |ADDRESS           |CONSUMER|MESSAGE|MESSAGES|DELIVERING|MESSAGES|SCHEDULED| ROUTING |INTERNAL|\n|                  |                  | COUNT  | COUNT | ADDED  |  COUNT   | ACKED  |  COUNT  |  TYPE   |        |\n|q1                |test              |   0    |   1   |   2    |    0     |   1    |    0    |MULTICAST| false  |\n|q2                |test              |   0    |   1   |   1    |    0     |   0    |    0    |MULTICAST| false  |\n|q3                |test              |   0    |   1   |   1    |    0     |   0    |    0    |MULTICAST| false  |\n</code></pre>\n<pre><code>./broker/bin/artemis consumer --verbose --destination queue://test::q2 --user admin --password admin --protocol core --message-count 1\n\n|NAME              |ADDRESS           |CONSUMER|MESSAGE|MESSAGES|DELIVERING|MESSAGES|SCHEDULED| ROUTING |INTERNAL|\n|                  |                  | COUNT  | COUNT | ADDED  |  COUNT   | ACKED  |  COUNT  |  TYPE   |        |\n|q1                |test              |   0    |   1   |   2    |    0     |   1    |    0    |MULTICAST| false  |\n|q2                |test              |   0    |   0   |   1    |    0     |   0    |    0    |MULTICAST| false  |\n|q3                |test              |   0    |   1   |   1    |    0     |   0    |    0    |MULTICAST| false  |\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 9398418,
+      "reputation" : 2444,
+      "user_id" : 6982270,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/rU2yt.jpg?s=256",
+      "display_name" : "Domenico Francesco Bruscino",
+      "link" : "https://stackoverflow.com/users/6982270/domenico-francesco-bruscino"
+    },
+    "creation_date" : 1745401236,
+    "last_activity_date" : 1745836514,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140347341,
+    "post_id" : 79576835,
+    "body" : "@DomenicoFrancescoBruscino I am creating an architecture where each consumer has only one queue where receives its own messages and also the &quot;broadcast&quot; messages from the fan-out divert. I think this solution allows me to simplify the integration of any service and keep the complexity in one place: the broker.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 19670476,
+      "reputation" : 209,
+      "user_id" : 14399829,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/0c5e41a27fcb417d8c8e712d00b2023f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "effedici",
+      "link" : "https://stackoverflow.com/users/14399829/effedici"
+    },
+    "creation_date" : 1744965780,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140347071,
+    "post_id" : 79576835,
+    "body" : "You don&#39;t need a divert to send the same messages to multiple consumers. You only need a multicast address with multiple queues, am I missing something?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 9398418,
+      "reputation" : 2444,
+      "user_id" : 6982270,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/rU2yt.jpg?s=256",
+      "display_name" : "Domenico Francesco Bruscino",
+      "link" : "https://stackoverflow.com/users/6982270/domenico-francesco-bruscino"
+    },
+    "creation_date" : 1744957507,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140341024,
+    "post_id" : 79576835,
+    "body" : "Are the client applications stuck consuming from a specific queue or could they be changed to consume to something else?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 11434008,
+      "reputation" : 36292,
+      "user_id" : 8381946,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-ORs8fPNVzDU/AAAAAAAAAAI/AAAAAAAADBs/F3IsdsProVY/s256-rj/photo.jpg",
+      "display_name" : "Justin Bertram",
+      "link" : "https://stackoverflow.com/users/8381946/justin-bertram"
+    },
+    "creation_date" : 1744811803,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

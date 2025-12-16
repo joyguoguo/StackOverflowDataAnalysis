@@ -1,0 +1,96 @@
+{
+  "question" : {
+    "question_id" : 79566157,
+    "title" : "Java spring boot Hibernate - [type.A] Did not match Query selection type [type.A] multiple selections: use Tuple or array",
+    "body" : "<p>I moved a Hibrenate implementation to another project. From <strong>com.mvc.data</strong> to <strong>com.mvc.frontend</strong>. After moving I get the following exception when trying to fetch data.</p>\n<pre><code>org.hibernate.query.QueryTypeMismatchException: Specified result type \n[com.mvc.frontend.enteties.Customer] did not match Query selection type \n[com.mvc.frontend.enteties.Customer] - multiple selections: use Tuple or array\n</code></pre>\n<p>Notice that it's the same type. If I, as suggested by the exception, change the result type to a array, it, as expect, throws the same mismatch exception but with actually mismatching types.</p>\n<pre><code>[[Lcom.mvc.frontend.enteties.Customer;] did not match Query selection type \n[com.mvc.frontend.enteties.Customer]\n</code></pre>\n<p>If I change the result type to Tuple, I get a result and it even maps it to the correct type Customer with all 4 variables correctly mapped</p>\n<pre><code>list = {ArrayList@12043}  size = 4\n 0 = {TupleImpl@12052} &quot;[com.mvc.frontend.enteties.Customer@5fff6af5]&quot;\n  tupleMetadata = {TupleMetadata@12134} \n  row = {Object[1]@12135} \n   0 = {Customer@12136} \n    id = {UUID@12137} &quot;95a2adce-7a84-4bda-836d-7de5f135be44&quot;\n    name = &quot;Anders Andersson&quot;\n    credit = 5000\n    created = {Timestamp@12139} &quot;2025-04-09 12:49:58.396667&quot;\n</code></pre>\n<p>Result from the old project with Tuple first and then with Customer as result type, the second result is the desired type.</p>\n<pre><code>list = {ArrayList@11076}  size = 4\n 0 = {TupleImpl@11083} &quot;[com.mvc.data.enteties.Customer@7ad0ec0e]&quot;\n  tupleMetadata = {TupleMetadata@14249} \n  row = {Object[1]@14250} \n   0 = {Customer@14251} \n    id = {UUID@14252} &quot;95a2adce-7a84-4bda-836d-7de5f135be44&quot;\n    name = &quot;Anders Andersson&quot;\n    credit = 5000\n    created = {Timestamp@14254} &quot;2025-04-09 12:49:58.396667&quot;\n\nlist = {ArrayList@14435}  size = 4\n 0 = {Customer@14428} \n  id = {UUID@14429} &quot;95a2adce-7a84-4bda-836d-7de5f135be44&quot;\n  name = &quot;Anders Andersson&quot;\n  credit = 5000\n  created = {Timestamp@14431} &quot;2025-04-09 12:49:58.396667&quot;\n</code></pre>\n<p>This is how I attempt to fetch the data</p>\n<pre><code>public List&lt;Customer&gt; getCustomers() {\n  assert Main.sessionFactory != null;\n\n  var session = Main.sessionFactory.openSession();\n  if (session != null) {\n    var list = session.createSelectionQuery(&quot;FROM Customer ORDER BY name&quot;, Customer.class).getResultList();\n    session.close();\n    return list;\n  }\n  return new ArrayList&lt;&gt;();\n}\n</code></pre>\n<p>The class I'm trying to fetch looks like this. It looks exactly the same in the other project with the only exception of the package name.</p>\n<pre><code>package com.mvc.data.enteties;\n\nimport java.util.Date;\nimport java.util.UUID;\n\nimport jakarta.persistence.*;\n\n@Entity\n@Table(name=&quot;T_Customer&quot;)\npublic class Customer {\n\n  @Id\n  @GeneratedValue\n  private UUID id;\n\n  private String name;\n  private int credit;\n  private Date created;\n\n  // Getters and setters omitted\n}\n</code></pre>\n<p>I've tried deleting all tables in the database to let Hibernate regenerate them in the new project and it worked as expected with the same structure being created.</p>\n<p>The new project includes MvcConfig, WebSecurityConfig, Devtools, Thymeleaf but I don't see how those packages can affect mapping for Hibernate.</p>\n<ul>\n<li>Maven</li>\n<li>Spring boot 3.4.4</li>\n<li>JDK 24</li>\n<li>Hibernate 6.6.13</li>\n<li>JDBC SQL Server</li>\n</ul>\n",
+    "tags" : [ "java", "spring-boot", "hibernate", "type-mismatch" ],
+    "owner" : {
+      "account_id" : 21530956,
+      "reputation" : 21,
+      "user_id" : 15870423,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/dd8367a67893426bd7dccc239dded722?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Charlie",
+      "link" : "https://stackoverflow.com/users/15870423/charlie"
+    },
+    "is_answered" : true,
+    "view_count" : 472,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1744286474,
+    "creation_date" : 1744274932,
+    "link" : "https://stackoverflow.com/questions/79566157/java-spring-boot-hibernate-type-a-did-not-match-query-selection-type-type-a",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79566578,
+    "question_id" : 79566157,
+    "body" : "<p>So the problem was that I was using spring-boot-devtools which has a restart function. The restart class loader couldn't find the classes.</p>\n<p>I got the hint when I tried to make a temporary workaround to cast the content of the Tuple to the correct type.</p>\n<pre><code>private &lt;T&gt; T getObject(Tuple tuple, T c) {\n  return (T) tuple.get(0);\n}\n</code></pre>\n<p>Then I used it like this</p>\n<pre><code>var customer = session.createQuery(&quot;FROM Customer&quot;, Tuple.class).getSingleResultOrNull();\nreturn getObject(customer, new Customer());\n</code></pre>\n<p>Which threw a class loader exception which then led me to the following post with the solution.<br />\n<a href=\"https://stackoverflow.com/questions/57750294/class-loader-error-unnamed-module-of-loader-org-springframework-boot-devtools\">Class loader error - unnamed module of loader org.springframework.boot.devtools.restart.classloader.RestartClassLoader</a><br />\nDisabling the restart function didn't work for me so I simply removed devtools from Maven.</p>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 21530956,
+      "reputation" : 21,
+      "user_id" : 15870423,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/dd8367a67893426bd7dccc239dded722?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Charlie",
+      "link" : "https://stackoverflow.com/users/15870423/charlie"
+    },
+    "creation_date" : 1744286474,
+    "last_activity_date" : 1744286474,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140319875,
+    "post_id" : 79566157,
+    "body" : "@FlorianH. Thanks for answering, I updated the post with the query",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 21530956,
+      "reputation" : 21,
+      "user_id" : 15870423,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/dd8367a67893426bd7dccc239dded722?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Charlie",
+      "link" : "https://stackoverflow.com/users/15870423/charlie"
+    },
+    "creation_date" : 1744280716,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140319766,
+    "post_id" : 79566157,
+    "body" : "How looks your query?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 9784322,
+      "reputation" : 375,
+      "user_id" : 7251133,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/fb4cd0be7bd5bbb1f6f820df69b79c5c?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Florian H.",
+      "link" : "https://stackoverflow.com/users/7251133/florian-h"
+    },
+    "creation_date" : 1744278726,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79566578" : [ {
+      "comment_id" : 140335459,
+      "post_id" : 79566578,
+      "body" : "Well done! I did not come to that idea about Dev Tools. I notice that the class loader problem is mentionned in the doc: <a href=\"https://docs.spring.io/spring-boot/reference/using/devtools.html\" rel=\"nofollow noreferrer\">docs.spring.io/spring-boot/reference/using/devtools.html</a>",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 9784322,
+        "reputation" : 375,
+        "user_id" : 7251133,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/fb4cd0be7bd5bbb1f6f820df69b79c5c?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Florian H.",
+        "link" : "https://stackoverflow.com/users/7251133/florian-h"
+      },
+      "creation_date" : 1744696990,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

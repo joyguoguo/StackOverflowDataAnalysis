@@ -1,0 +1,67 @@
+{
+  "question" : {
+    "question_id" : 79744738,
+    "title" : "Optimizing batch processing with similarity constraint an materialized view refreshes",
+    "body" : "<p>I have a list of reports that I want to process in batches. However, the reports within each batch should not be too similar to each other - similarity is measured using a specific metric. If two reports are too similar, they should not be included in the same batch.</p>\n<p>Additionally, between processing each batch, I need to refresh a materialized view, which adds extra overhead. This makes it important to ensure that each batch is as full as possible without violating similarity constraint.</p>\n<p>The problem is that in the worst case, especially when many similar reports appear consecutively in the list, batches can become very small.</p>\n<pre class=\"lang-java prettyprint-override\"><code>Deque&lt;Long&gt; queue = new ArrayDeque&lt;&gt;(ids);\n\nwhile (!queue.isEmpty()) {\n\n    List&lt;Long&gt; batchIds = new ArrayList&lt;&gt;();\n    for (int i = 0; i &lt; BATCH_SIZE &amp;&amp; !queue.isEmpty(); i++) {\n        batchIds.add(queue.pollFirst());\n    }\n\n    List&lt;Report&gt; reportsInBatch = fetchReports(batchIds);\n\n    BatchResult result = kickOutRelatedReportsFromBatch(reportsInBatch);\n\n    for (Report report : result.clearedReports()) {\n        processReport(report);\n    }\n\n    List&lt;Long&gt; rejected = result.rejectedIds();\n    for (int i = rejected.size() - 1; i &gt;= 0; i--) {\n        queue.addFirst(rejected.get(i));\n    }\n}\n</code></pre>\n<p>How can I efficiently create batches where the reports within each batch are as dissimilar as possible?</p>\n",
+    "tags" : [ "java", "batch-processing" ],
+    "owner" : {
+      "account_id" : 9757929,
+      "reputation" : 764,
+      "user_id" : 7233978,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/UXDvT.jpg?s=256",
+      "display_name" : "The 5th column mouse",
+      "link" : "https://stackoverflow.com/users/7233978/the-5th-column-mouse"
+    },
+    "is_answered" : true,
+    "view_count" : 178,
+    "closed_date" : 1756034109,
+    "answer_count" : 1,
+    "score" : -1,
+    "last_activity_date" : 1756034033,
+    "creation_date" : 1756022815,
+    "link" : "https://stackoverflow.com/questions/79744738/optimizing-batch-processing-with-similarity-constraint-an-materialized-view-refr",
+    "closed_reason" : "Needs details or clarity"
+  },
+  "answers" : [ {
+    "answer_id" : 79744805,
+    "question_id" : 79744738,
+    "body" : "<p>A way to cope with this is to have a functionality called <code>getSimilarityHash</code> which would</p>\n<ul>\n<li>get a report as input</li>\n<li>analyze the report</li>\n<li>infer the main properties of the report</li>\n<li>generate a hash</li>\n<li>this hash should be the output of all reports that are similar to the current one</li>\n</ul>\n<p>Let's suppose you have a <code>queue</code> you get your reports from as well as a <code>List&lt;List&lt;Report&gt;&gt;</code> representing the batches and a <code>Map&lt;String, Integer&gt;</code> that will store pairs:</p>\n<ul>\n<li>the <code>String</code> key represents the hash</li>\n<li>the <code>Integer</code> represents the latest batch this key is part of</li>\n<li>if for example a key has a value of 5, that means that batches 0, 1, 2, 3, 4 are already contain a <code>Report</code> similar to the hash unless they reached their limit prior to evaluating this item</li>\n<li>in more general terms, if <code>i</code> is the <code>Integer</code> value, then all the available batches having the index of j &lt;= i already have a similar <code>Report</code></li>\n<li>so when you take a <code>Report</code> into account you will need to look for the hash in the map\n<ul>\n<li>if found, then\n<ul>\n<li>increment the value</li>\n<li>if a next batch exists\n<ul>\n<li>then add the <code>Report</code> to it</li>\n<li>else create a new batch with this report as its first element</li>\n</ul>\n</li>\n</ul>\n</li>\n<li>else add it to the first batch</li>\n</ul>\n</li>\n</ul>\n<p>Sure thing, if you have a limit for batch sizes, then you will need to always skip the full batches.</p>\n<p>Something like this:</p>\n<pre><code>//firstAvailableBatch represents the index of the first batch where you can still add a report\n//report is a Report you have popped from the queue and are actively processing\n//batchMap is your Map&lt;String, Integer&gt;\n//batches is your List&lt;List&lt;Report&gt;&gt;\n//service is a service object where you prefer getSimilarityHash to belong to\nString hash = service.getSimilarityHash(report);\nInteger index = batchMap.get(hash);\nif (index == null) { //no similar batch found\n    //We need a new batch\n    if (bacthes.size() == firstAvailableBatch) {\n        //I'm using ArrayList here, but you can use something else if you want\n        batch.add(new ArrayList&lt;Report&gt;());\n    }\n    batchMap.put(hash, firstAvailableBatch); //we add it to the first available batch\n    batches.get(firstAvailableBatch).add(report);\n    //if that makes this batch full, increment firstAvailableBatch\n    if (service.isFullBatch(batches, firstAvailableBatch)) {\n        firstAvailableBatch++;\n    }\n} else {\n    //We increment the index and adjust the map value\n    batchMap.replace(hash, index++);\n    if (batches.size() == index) {\n        batches.add(new ArrayList&lt;Report&gt;());\n    }\n    batches.get(index).add(report);\n}\n</code></pre>\n",
+    "score" : 2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 194308,
+      "reputation" : 80530,
+      "user_id" : 436560,
+      "user_type" : "registered",
+      "accept_rate" : 87,
+      "profile_image" : "https://i.sstatic.net/2GESV.jpg?s=256",
+      "display_name" : "Lajos Arpad",
+      "link" : "https://stackoverflow.com/users/436560/lajos-arpad"
+    },
+    "creation_date" : 1756032750,
+    "last_activity_date" : 1756034033,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79744805" : [ {
+      "comment_id" : 140688310,
+      "post_id" : 79744805,
+      "body" : "I have not been working with Java for quite a long time and the code above is not tested, so if there is anything incorrect or invalid in syntax, please let me know, I am happy to edit and/or adjust if anything is not up to the standards. Thank you.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 194308,
+        "reputation" : 80530,
+        "user_id" : 436560,
+        "user_type" : "registered",
+        "accept_rate" : 87,
+        "profile_image" : "https://i.sstatic.net/2GESV.jpg?s=256",
+        "display_name" : "Lajos Arpad",
+        "link" : "https://stackoverflow.com/users/436560/lajos-arpad"
+      },
+      "creation_date" : 1756034115,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

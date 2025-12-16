@@ -1,0 +1,97 @@
+{
+  "question" : {
+    "question_id" : 79689066,
+    "title" : "How to test for JDK - OpenJFX compatibility in a headless unit test?",
+    "body" : "<p>My Maven multimodule project is built using JDK 21, and one of the modules is a tiny JavaFX app on OpenJFX 23.0.2.</p>\n<p>I want to write a simple and fast unit test, that can be executed by my Gitlab CI runner during builds, checking for compatibility of the JavaFX dependency. So if someone were to run a CI pipeline with e.g. JavaFX 24, that requires JDK 22+, the unit test would fail.\nSince this unit test needs to be run in a headless CI, I really don't want to start the Toolkit, or the JavaFX Platform in the unit tests.</p>\n<p>What are my options? I though I could simply try loading one of the <code>fxml</code> files:</p>\n<pre class=\"lang-java prettyprint-override\"><code>FXMLLoader fxmlLoader = new FXMLLoader(getClass().getClassLoader().getResource(&quot;MainWindow.fxml&quot;));\nParent root = fxmlLoader.load();\n</code></pre>\n<p>But even that seems excessive. I'd rather have something truly lightweight.\nI also tried creating a new Button:</p>\n<pre class=\"lang-java prettyprint-override\"><code>Button button = new Button(&quot;Test&quot;);\nAssertions.assertNotNull(button);\n</code></pre>\n<p>But that fails with <code>java.lang.IllegalStateException: Toolkit not initialized</code>.</p>\n<p>Is there a safe method call, or an object to instantiate in JavaFX, that would allow me to test the JDK compatibility in a truly headless mode?</p>\n",
+    "tags" : [ "java", "maven", "unit-testing", "javafx", "openjfx" ],
+    "owner" : {
+      "account_id" : 3552273,
+      "reputation" : 1069,
+      "user_id" : 3340829,
+      "user_type" : "registered",
+      "accept_rate" : 62,
+      "profile_image" : "https://www.gravatar.com/avatar/c03cc5746d06531934ac1817708f6454?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Leprechaun",
+      "link" : "https://stackoverflow.com/users/3340829/leprechaun"
+    },
+    "is_answered" : true,
+    "view_count" : 133,
+    "answer_count" : 1,
+    "score" : 2,
+    "last_activity_date" : 1751603103,
+    "creation_date" : 1751554958,
+    "link" : "https://stackoverflow.com/questions/79689066/how-to-test-for-jdk-openjfx-compatibility-in-a-headless-unit-test",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79689396,
+    "question_id" : 79689066,
+    "body" : "<h1>Build System</h1>\n<p>Putting this sort of logic in the build system seems more appropriate to me than a unit test. For instance, you can use the <a href=\"https://maven.apache.org/enforcer/maven-enforcer-plugin/index.html\" rel=\"nofollow noreferrer\">Maven Enforcer Plugin</a>. There are a couple rules that may fit your needs out-of-the-box.</p>\n<ul>\n<li><p><a href=\"https://maven.apache.org/enforcer/enforcer-rules/requireJavaVersion.html\" rel=\"nofollow noreferrer\">requireJavaVersion</a> (built-in rule) - make sure you're using the expected Java version (might not be effective if using toolchains).</p>\n</li>\n<li><p><a href=\"https://maven.apache.org/enforcer/enforcer-rules/requireSameVersions.html\" rel=\"nofollow noreferrer\">requireSameVersion</a> (built-in rule) - make sure all JavaFX modules have the same version.</p>\n</li>\n<li><p><a href=\"https://www.mojohaus.org/extra-enforcer-rules/enforceBytecodeVersion.html\" rel=\"nofollow noreferrer\">enforceBytecodeVersion</a> (third-party rule) - make sure none of the JavaFX dependencies were compiled for a newer version of Java.</p>\n</li>\n</ul>\n<p>You can write your own rule implementation if needed.</p>\n<hr />\n<h1>Unit Test</h1>\n<p>If you still want or need to implement this via a unit test then there are at least a couple options.</p>\n<h2>By Class File Version</h2>\n<p>When JavaFX says it requires Java N+, that means the source code was compiled to target Java N. An <code>UnsupportedClassVersionError</code> error is thrown when loading a class that targets Java N on Java M &lt; N. Making use of this fact seems sufficient for your use case.</p>\n<p>Any class from the <code>javafx.base</code> module would do. That module is required by all other JavaFX modules, so it will always be present. And none of the classes in that module require the platform to be running.</p>\n<pre class=\"lang-java prettyprint-override\"><code>import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;\n\nimport javafx.util.Pair;\nimport org.junit.jupiter.api.Test;\n\nclass JfxCompatTest {\n\n  @Test\n  void testCanLoadJfx() {\n    assertDoesNotThrow(() -&gt; new Pair&lt;&gt;(null, null));\n  }\n}\n</code></pre>\n<h2>By JavaFX Version</h2>\n<p>If you want to get the version of JavaFX then the <code>javafx.base</code> module has a <code>javafx.properties</code> resource that you can load. Though I don't know if that resource is guaranteed to exist or what properties it's guaranteed to contain. At least in JavaFX 24 the resource contains:</p>\n<ul>\n<li><p><code>javafx.version</code> (e.g., &quot;24.0.1&quot;)</p>\n</li>\n<li><p><code>javafx.runtime.version</code> (e.g., &quot;24.0.1+4&quot;)</p>\n</li>\n<li><p><code>javafx.runtime.build</code> (e.g., &quot;4&quot;)</p>\n</li>\n</ul>\n<p>You can also try to get the <code>javafx.version</code> value from the system properties. However, that system property is only set if the internal <a href=\"https://github.com/openjdk/jfx/blob/0270847b85ab6d4701abb201ec4b2aeee96129dd/modules/javafx.base/src/main/version-info/VersionInfo.java#L121C37-L121C58\" rel=\"nofollow noreferrer\"><code>VersionInfo::setupSystemProperties()</code></a> method has been invoked. I'm not sure if there's any public API you can invoke to ensure the JavaFX system properties have been setup without at least <em>initializing</em> the toolkit.</p>\n<p>You could of course access the <code>VersionInfo</code> class directly or via reflection, but note that will require an appropriate <code>--add-exports</code> argument if <code>javafx.base</code> is a named module. It's also internal API so it may change between releases without notice.</p>\n<p>Once you have the version then you can test to make sure it's not too recent.</p>\n<pre class=\"lang-java prettyprint-override\"><code>import static org.junit.jupiter.api.Assertions.fail;\n\nimport java.io.IOException;\nimport java.util.Properties;\nimport org.junit.jupiter.api.Test;\n\nclass JfxCompatTest {\n\n  private static final int MAX_SUPPORTED_JFX_VERSION = 23;\n\n  static int getJfxFeatureVersion() throws IOException {\n    var props = new Properties();\n    try (var in = JfxCompatTest.class.getResourceAsStream(&quot;/javafx.properties&quot;)) {\n      props.load(in);\n    }\n\n    var version = props.getProperty(&quot;javafx.version&quot;);\n    return Runtime.Version.parse(version).feature();\n  }\n\n  @Test\n  void testJfxVersion() throws IOException {\n    int featureVersion = getJfxFeatureVersion();\n    if (featureVersion &gt; MAX_SUPPORTED_JFX_VERSION) {\n      fail(&quot;Unsupported JavaFX version: &quot; + featureVersion);\n    }\n  }\n}\n</code></pre>\n<p>You would have to manually update the <code>MAX_SUPPORTED_JFX_VERSION</code> value when you target a new Java version. Or you can keep a map of JavaFX versions to minimum Java versions and use <code>Runtime::version()</code> to get the current Java version. Though you would still need to manually update the map as new versions of JavaFX are released (fail the test if an unknown version of JavaFX is on the class-path/module-path).</p>\n",
+    "score" : 2,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 8532578,
+      "reputation" : 49904,
+      "user_id" : 6395627,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Slaw",
+      "link" : "https://stackoverflow.com/users/6395627/slaw"
+    },
+    "creation_date" : 1751571714,
+    "last_activity_date" : 1751603103,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140563129,
+    "post_id" : 79689066,
+    "body" : "@Slaw You misunderstood the whole premise. No, I need the exact opposite of what you suggest. I don&#39;t want to check the Java version. I want to check whether the JavaFX provided classpath is compatible with the currently running JDK version. Now that I think about it, the suggestion to call <code>System.getProperty(&quot;javafx.version&quot;)</code> makes even less sense than before, because for that property to be anything non-null, the classes have to be loaded first, which just brings us to my original question - what is a safe &quot;thing&quot; to load or instantiate from JavaFX in a headless unit test.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3552273,
+      "reputation" : 1069,
+      "user_id" : 3340829,
+      "user_type" : "registered",
+      "accept_rate" : 62,
+      "profile_image" : "https://www.gravatar.com/avatar/c03cc5746d06531934ac1817708f6454?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Leprechaun",
+      "link" : "https://stackoverflow.com/users/3340829/leprechaun"
+    },
+    "creation_date" : 1751569376,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140562665,
+    "post_id" : 79689066,
+    "body" : "@James_D The problem with the System property approach is I would have to maintain the compat lists myself, and as you said that&#39;s not very robust. Regarding jpackage, that&#39;s very much unrelated. I don&#39;t care about runtime failures. I care about fail-fast CI. To give you a more specific example, we have a Dependabot set up, that is creating new merge requests for each new JavaFX version available. The MR pipelines are always green, even though the updated JavaFX is actually incompatible with the JDK used to compile the module. A simple unit test would solve this.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3552273,
+      "reputation" : 1069,
+      "user_id" : 3340829,
+      "user_type" : "registered",
+      "accept_rate" : 62,
+      "profile_image" : "https://www.gravatar.com/avatar/c03cc5746d06531934ac1817708f6454?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Leprechaun",
+      "link" : "https://stackoverflow.com/users/3340829/leprechaun"
+    },
+    "creation_date" : 1751558202,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140562583,
+    "post_id" : 79689066,
+    "body" : "You can just check the version numbers of each (<code>System.getProperty(&quot;java.version&quot;)</code> and <code>System.getProperty(&quot;javafx.version&quot;)</code>) and check that the JDK version is at least the minimum required by the JavaFX version. A list of minimum JDK versions is provided <a href=\"https://gluonhq.com/products/javafx/\" rel=\"nofollow noreferrer\">here</a>. A more robust way to ensure this, though, is to ship the project as a native bundle (e.g. with <code>jpackage</code>). That way you control the JDK and JavaFX versions the user is using, instead of relying on them providing their own versions.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2518243,
+      "reputation" : 210916,
+      "user_id" : 2189127,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/e8e6e627b4b90ec816c5c7aa04cbcc26?s=256&d=identicon&r=PG",
+      "display_name" : "James_D",
+      "link" : "https://stackoverflow.com/users/2189127/james-d"
+    },
+    "creation_date" : 1751556663,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

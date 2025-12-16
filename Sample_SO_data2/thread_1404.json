@@ -1,0 +1,46 @@
+{
+  "question" : {
+    "question_id" : 79714062,
+    "title" : "Why does Spring WebFlux use CharSequenceEncoder instead of KotlinSerializationJsonEncoder when returning a Kotlin data class?",
+    "body" : "<p>I'm building a Spring WebFlux API with Kotlin and using Kotlinx Serialization for JSON serialization.</p>\n<p>build.gradle.kts</p>\n<pre><code>plugins {\n    alias(libs.plugins.kotlin.jvm)\n    alias(libs.plugins.kotlin.serialization)\n    alias(libs.plugins.kotlin.spring)\n    alias(libs.plugins.spring.boot)\n    alias(libs.plugins.spring.dependency.management)\n}\ndependencies {\n\nimplementation(&quot;org.springframework.boot:spring-boot-starter-webflux:3.5.3&quot;)\n    {\n        exclude(group = &quot;com.fasterxml.jackson.core&quot;, module = &quot;jackson-databind&quot;)\n        exclude(group = &quot;com.fasterxml.jackson.module&quot;, module = &quot;jackson-module-kotlin&quot;)\n    }\nimplementation(libs.kotlinX.serialization)\n}\n</code></pre>\n<p>libs.version.toml-</p>\n<pre><code>[versions]\nspring = &quot;3.5.3&quot;\nkotlin = &quot;2.2.0&quot;\nserialization = &quot;1.9.0&quot;\n\nkotlinX-serialization = {module = &quot;org.jetbrains.kotlinx:kotlinx-serialization-json&quot;, version.ref = &quot;serialization&quot; }\n\n\n[plugins]\nkotlin-jvm = { id = &quot;org.jetbrains.kotlin.jvm&quot;, version.ref = &quot;kotlin&quot; }\nkotlin-spring = { id = &quot;org.jetbrains.kotlin.plugin.spring&quot;, version.ref = &quot;kotlin&quot; }\nkotlin-serialization = { id = &quot;org.jetbrains.kotlin.plugin.serialization&quot;, version.ref = &quot;kotlin&quot; }\n\nspring-boot = { id = &quot;org.springframework.boot&quot;, version.ref = &quot;spring&quot; }\nspring-dependency-management = { id = &quot;io.spring.dependency-management&quot;, version = &quot;1.1.7&quot; }\n</code></pre>\n<p>My controller method looks like this:</p>\n<pre><code>    @GetMapping(&quot;/trainSch&quot;, produces = [MediaType.APPLICATION_JSON_VALUE])\nsuspend fun getTrainSch(\n    @RequestParam(&quot;trainNo&quot;) trainNumber: String\n): ResponseEntity&lt;TrainDetails&gt; {\n    return ResponseEntity.ok(\n        TrainDetails(\n            no = trainNumber,\n            na = &quot;Superfast Express&quot;,\n            typ = 1,\n            zn = 5,\n            dly = 10,\n            rake = &quot;LHB&quot;,\n            classes = 3,\n            upd = &quot;10:45 AM&quot;\n        )\n    )\n}\n</code></pre>\n<p>TrainDetails is a Kotlin data class:</p>\n<pre><code>@Serializable\ndata class TrainDetails(\n    val no: String,\n    val na: String,\n    val typ: Int,\n    val zn: Int,\n    val dly: Int,\n    val rake: String,\n    val classes: Int,\n    val upd: String\n)\n</code></pre>\n<p>I have registered the Kotlinx Serialization encoder/decoder with a WebFluxConfigurer bean:</p>\n<pre><code>@Bean\nfun webFluxConfigurer(\n    encoder: KotlinSerializationJsonEncoder,\n    decoder: KotlinSerializationJsonDecoder\n): WebFluxConfigurer = object : WebFluxConfigurer {\n    override fun configureHttpMessageCodecs(configurer: ServerCodecConfigurer) {\n        configurer.defaultCodecs().kotlinSerializationJsonEncoder(encoder)\n        configurer.defaultCodecs().kotlinSerializationJsonDecoder(decoder)\n    }\n}\n</code></pre>\n<p>Problem:\nWhen I make a GET request to /trainSch?trainNo=12345, the debug logs show:</p>\n<pre><code>TRACE ... CharSequenceEncoder : Writing &quot;{\\&quot;no\\&quot;:\\&quot;12345\\&quot;,\\&quot;na\\&quot;:\\&quot;Superfast Express\\&quot;,...}&quot;\n</code></pre>\n<p>Instead of:</p>\n<pre><code>TRACE ... KotlinSerializationJsonEncoder : Writing {...}\n</code></pre>\n<p>It seems Spring is using CharSequenceEncoder (which encodes Strings) instead of my Kotlinx JSON encoder.</p>\n<p>Response in Postman-</p>\n<pre><code>Content-Type:application/json\ncontent-encoding:gzip\ncontent-length:123\n\n{\n    &quot;no&quot;: &quot;12232&quot;,\n    &quot;na&quot;: &quot;Superfast Express&quot;,\n    &quot;typ&quot;: 1,\n    &quot;dly&quot;: 10,\n    &quot;zn&quot;: 5,\n    &quot;rake&quot;: &quot;LHB&quot;,\n    &quot;classes&quot;: 3,\n    &quot;upd&quot;: &quot;10:45 AM&quot;\n}\n</code></pre>\n",
+    "tags" : [ "java", "spring", "spring-boot", "kotlin", "spring-webflux" ],
+    "owner" : {
+      "account_id" : 31465149,
+      "reputation" : 447,
+      "user_id" : 24288188,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/566fe2105a97fb0c851cf7ef0ce234a6?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Pawandeep Singh",
+      "link" : "https://stackoverflow.com/users/24288188/pawandeep-singh"
+    },
+    "is_answered" : true,
+    "view_count" : 128,
+    "answer_count" : 1,
+    "score" : 2,
+    "last_activity_date" : 1753440610,
+    "creation_date" : 1753401525,
+    "link" : "https://stackoverflow.com/questions/79714062/why-does-spring-webflux-use-charsequenceencoder-instead-of-kotlinserializationjs",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79714604,
+    "question_id" : 79714062,
+    "body" : "<p>Actually, there is no issue. <code>CharSequenceEncoder</code> by itself cannot serialize anything to JSON. It can only write a <code>CharSequence</code> to a <code>DataBuffer</code>.</p>\n<p>What happens is that Spring WebFlux uses <code>KotlinSerializationJsonEncoder</code> to serialize the class to a <code>String</code>, and then delegates to <code>CharSequenceEncoder</code> to encode that <code>String</code> into a <code>DataBuffer</code>. You can see this in the <a href=\"https://github.com/spring-projects/spring-framework/blob/5e338ef1b873e931c14774f655963215a970f181/spring-web/src/main/java/org/springframework/http/codec/KotlinSerializationStringEncoder.java#L145\" rel=\"nofollow noreferrer\">source code</a> of <code>KotlinSerializationStringEncoder</code>, which is the superclass of <code>KotlinSerializationJsonEncoder</code>:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Override\npublic DataBuffer encodeValue(Object value, DataBufferFactory bufferFactory,\n       ResolvableType valueType, @Nullable MimeType mimeType,\n       @Nullable Map&lt;String, Object&gt; hints) {\n\n    KSerializer&lt;Object&gt; serializer = serializer(valueType);\n    if (serializer == null) {\n       throw new EncodingException(&quot;Could not find KSerializer for &quot; + valueType);\n    }\n    String string = format().encodeToString(serializer, value);\n    return this.charSequenceEncoder.encodeValue(string, bufferFactory, valueType, mimeType, null);\n}\n</code></pre>\n<p>There’s even a <a href=\"https://github.com/spring-projects/spring-framework/blob/5e338ef1b873e931c14774f655963215a970f181/spring-web/src/main/java/org/springframework/http/codec/KotlinSerializationStringEncoder.java#L60\" rel=\"nofollow noreferrer\">comment</a> about this:</p>\n<pre class=\"lang-java prettyprint-override\"><code>// CharSequence encoding needed for now, see https://github.com/Kotlin/kotlinx.serialization/issues/204 for more details\nprivate final CharSequenceEncoder charSequenceEncoder = CharSequenceEncoder.allMimeTypes();\n</code></pre>\n<p>By the way, in Spring Boot 3.5.x, you don’t need to manually exclude Jackson to make Kotlin Serialization work. You just need to have <code>kotlinx.serialization.json.Json</code> on the classpath (which you already do), and Spring will register <code>KotlinSerializationJsonEncoder</code> with a higher priority than Jackson. That means this part in your <code>build.gradle.kts</code> is redundant:</p>\n<pre class=\"lang-kotlin prettyprint-override\"><code>    {\n        exclude(group = &quot;com.fasterxml.jackson.core&quot;, module = &quot;jackson-databind&quot;)\n        exclude(group = &quot;com.fasterxml.jackson.module&quot;, module = &quot;jackson-module-kotlin&quot;)\n    }\n</code></pre>\n<p>Note that this behavior <a href=\"https://github.com/spring-projects/spring-framework/issues/34410\" rel=\"nofollow noreferrer\">will change</a> in Spring Boot 4.0.x.</p>\n",
+    "score" : 3,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 11524553,
+      "reputation" : 169,
+      "user_id" : 8445410,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/bq3ND.jpg?s=256",
+      "display_name" : "Dmitry Sulman",
+      "link" : "https://stackoverflow.com/users/8445410/dmitry-sulman"
+    },
+    "creation_date" : 1753440610,
+    "last_activity_date" : 1753440610,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : { }
+}

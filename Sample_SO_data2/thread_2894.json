@@ -1,0 +1,212 @@
+{
+  "question" : {
+    "question_id" : 79589612,
+    "title" : "How to make a Java static function, which returns an instance of its parent class, generic?",
+    "body" : "<p>I have some code that I'd like to make more generic - at the moment it uses one enum (which I've loaded up with various other fields and static objects) and I'd like to be able to extend it to use another enum (or, sure, an class that hides the enum-ness). One of the features of the current enum is a static list of some of its values, and I'm having trouble getting that to work in a generic manner.</p>\n<p>A concrete example: One enum for letters, with a static function:</p>\n<pre><code>package example;\npublic enum Alpha { \n    A,\n    B,\n    C;\n    static Alpha first() {return A;}\n}\n</code></pre>\n<p>And another for numbers, with a similarly-typed static function</p>\n<pre><code>package example;\npublic enum Number {\n    ONE,\n    TWO,\n    THREE;  \n    static Number first() {return ONE;}\n\n}\n</code></pre>\n<p>I can write a class to use this function</p>\n<pre><code>package example;\npublic class AlphaFirstFinder {\n    public static void main(String[] args) {\n        System.out.println(&quot;Found it! &quot;+ Alpha.first());\n    }\n}\n</code></pre>\n<p>And a NumberFirstFinder similarly - how would I write a class (and rewrite / wrap the enums) so that it could take either one via a generic?</p>\n<p>So I could rewrite this as</p>\n<pre><code>package example;\npublic class AlphaFirstFinder extends FirstFinder&lt;AlphaContainer&gt; {\n    public static void main(String[] args) {\n        System.out.println(&quot;Found it! &quot;+ foundFirst());\n    }\n}\n</code></pre>\n<p>What would AlphaContainer or FirstFinder.foundFirst need to look like?\nfoundFirst would have to return a class or interface of some kind - unfortunately a String won't do it :)</p>\n",
+    "tags" : [ "java", "generics" ],
+    "owner" : {
+      "account_id" : 4714559,
+      "reputation" : 35,
+      "user_id" : 3814116,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/a7c4f1f53cf9124bdaf7af66c5088921?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "afarrell",
+      "link" : "https://stackoverflow.com/users/3814116/afarrell"
+    },
+    "is_answered" : true,
+    "view_count" : 146,
+    "answer_count" : 2,
+    "score" : 0,
+    "last_activity_date" : 1745506319,
+    "creation_date" : 1745449007,
+    "link" : "https://stackoverflow.com/questions/79589612/how-to-make-a-java-static-function-which-returns-an-instance-of-its-parent-clas",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79589640,
+    "question_id" : 79589612,
+    "body" : "<p>Java does not provide the means to enforce that a class (<code>enum</code> and <code>record</code> included) contain a specific <code>static</code> method. In this case, you're looking for a way to define a type of <code>enum</code>s that have <code>first()</code> as a <em>static</em> method. You could make an interface like</p>\n<pre class=\"lang-java prettyprint-override\"><code>public interface Firstable&lt;T&gt; {\n  T first();\n}\n</code></pre>\n<p>and have <code>Alpha implements Firstable&lt;Alpha&gt;</code>, but then the <code>first()</code> method can only be accessed through <code>Alpha.A.first()</code>, which is obviously not the desired solution. You would also still need to manually write the <code>first()</code> method on everything implementing it (although that means that it can also be implemented by things that are not enums).</p>\n<p>Your problem can be solved with a little bit of finagling with class objects, though:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class EnumFirstFinder {\n\n  public static &lt;T extends Enum&lt;T&gt;&gt; T first(Class&lt;T&gt; enumClass) {\n    // returns null if not an enum class, but compiler \n    // is checking that only enum class objects can be used \n    // as a parameter anyway\n    T[] values = enumClass.getEnumConstants(); \n    if (values == null || values.length == 0) {\n      return null;\n    }\n    return values[0];\n  }\n\n  public static void main(String[] args) {\n    System.out.println(&quot;First member of Alpha is: &quot; + first(Alpha.class));\n  }\n}\n</code></pre>\n<p>The angle brackets in <code>first()</code>'s method signature are what make it generic to any enum. It says &quot;I work for any type T, so long as it is a subclass of Enum&quot;. All <code>enum</code>s implicitly extend <code>Enum&lt;T&gt;</code>, so all you need now is the <code>Class</code> object for that type, which can be accessed with <code>Alpha.class</code> or <code>Number.class</code>.</p>\n<p>I will caution that if you're resorting to these methods when handling enums, it may be a sign that another way of structuring your constants might be needed. Consider just having a constant field:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public final class Constants {\n  // private constructor prevents users from creating a &quot;Constants&quot; object,\n  // only static members can be accessed\n  private Constants() {}\n  public static final List&lt;Character&gt; alphabet = List.of('A', 'B', 'C',...);\n  // lists for numbers, etc.\n}\n</code></pre>\n<p>Which you can then access as a typical (but unmodifiable!) list: <code>Constants.alphabet.get(0)</code></p>\n",
+    "score" : 8,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 26384984,
+      "reputation" : 418,
+      "user_id" : 20037647,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/9nb18CcK.png?s=256",
+      "display_name" : "EarthTurtle",
+      "link" : "https://stackoverflow.com/users/20037647/earthturtle"
+    },
+    "creation_date" : 1745452176,
+    "last_activity_date" : 1745506319,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79589636,
+    "question_id" : 79589612,
+    "body" : "<p>You need to exit static-land in order to entertain the idea of &quot;generification&quot; or inheritance in general. Here's an example in line with your pseudocode:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public interface FirstFinder&lt;T extends Enum&lt;T&gt;&gt; {\n\n    FirstFinder&lt;Alpha&gt; ALPHA = new AlphaFirstFinder();\n\n    FirstFinder&lt;Number&gt; NUMBER = new NumberFirstFinder();\n    \n    //\n    \n    /** Provides the &quot;first&quot; enum value of type T */\n    T findFirst();\n\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>final class AlphaFirstFinder implements FirstFinder&lt;Alpha&gt; {\n\n    @Override\n    public Alpha findFirst() {\n        return Alpha.first();\n    }\n\n}\n</code></pre>\n<pre><code>final class NumberFirstFinder implements FirstFinder&lt;Number&gt; {\n\n    @Override\n    public Number findFirst() {\n        return Number.first();\n    }\n\n}\n</code></pre>\n<p>The implementation of the interface itself is not static (that isn't possible), but an instance of each implementation is created and then stored statically in the <code>FirstFinder</code> class. To make this example a little less contrived, here's an auto-finder:</p>\n<pre class=\"lang-java prettyprint-override\"><code>import java.lang.reflect.InvocationTargetException;\nimport java.lang.reflect.Method;\nimport java.lang.reflect.Modifier;\n\npublic final class AutoFirstFinder&lt;T extends Enum&lt;T&gt;&gt; implements FirstFinder&lt;T&gt; {\n\n    private final Class&lt;T&gt; enumClass;\n    \n    public AutoFirstFinder(Class&lt;T&gt; enumClass) {\n        this.enumClass = enumClass;\n    }\n\n    //\n\n    @Override\n    public T findFirst() {\n        Method m = null;\n        Throwable err = null;\n        try {\n            m = this.enumClass.getDeclaredMethod(&quot;first&quot;);\n        } catch (NoSuchMethodException e) {\n            err = e;\n        }\n        if (m == null || !Modifier.isStatic(m.getModifiers())) {\n            throw new IllegalStateException(&quot;Enum has no static method #first()&quot;, err);\n        }\n\n        Object out;\n        try {\n            out = m.invoke(null);\n        } catch (InvocationTargetException e) {\n            Throwable cause = e.getCause();\n            if (cause instanceof RuntimeException) throw (RuntimeException) cause;\n            if (cause == null) cause = e;\n            throw new IllegalArgumentException(this.enumClass.getName() + &quot;#first() raised an unexpected error&quot;, cause);\n        } catch (ReflectiveOperationException | SecurityException e) {\n            throw new RuntimeException(e);\n        }\n\n        return this.enumClass.cast(out);\n    }\n\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>FirstFinder&lt;Alpha&gt; alphaFinder = new AutoFirstFinder&lt;&gt;(Alpha.class);\nalphaFinder.findFirst(); // Alpha.A\n\nFirstFinder&lt;Number&gt; numberFinder = new AutoFirstFinder&lt;&gt;(Number.class);\nnumberFinder.findFirst(); // Number.ONE\n</code></pre>\n",
+    "score" : 2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 14914414,
+      "reputation" : 1185,
+      "user_id" : 10808904,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Ts8fIsJj.png?s=256",
+      "display_name" : "Xavier Pedraza",
+      "link" : "https://stackoverflow.com/users/10808904/xavier-pedraza"
+    },
+    "creation_date" : 1745452059,
+    "last_activity_date" : 1745452059,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140367583,
+    "post_id" : 79589612,
+    "body" : "@pebbleunit - I am probably missing something, but if this is code for a class of the form <code>FirstFinder&lt;T extends Enum&lt;T&gt;&gt;</code> Then I don&#39;t know how to use .values() for a generic T - it&#39;ll work fine for a specific Enum but not generically, I believe? @DuncG - this was a cut-down version, possibly too cut-down. What I was trying to find was a way of rewriting code that uses a specific enum class, so that it can use alternate enum classes (or, as mentioned, an interface that wraps them), but keeping the ability to say &quot;here&#39;s a static function that returns instances of the class&quot;",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 4714559,
+      "reputation" : 35,
+      "user_id" : 3814116,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/a7c4f1f53cf9124bdaf7af66c5088921?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "afarrell",
+      "link" : "https://stackoverflow.com/users/3814116/afarrell"
+    },
+    "creation_date" : 1745544150,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140365210,
+    "post_id" : 79589612,
+    "body" : "It&#39;s not clear what you gain by defining a new class just to find the first enum value. Why would <code>AlphaFirstFinder</code> be simpler than referencing <code>Alpha.values()</code> or calling a static method mentioned in answer which derives the first for any enum such as <code>first(SomeEnum.class)</code> or first(SomeEnum.values());",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 5998820,
+      "reputation" : 16284,
+      "user_id" : 4712734,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f6e922a2cb7e2da59286f27b162aaca5?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "DuncG",
+      "link" : "https://stackoverflow.com/users/4712734/duncg"
+    },
+    "creation_date" : 1745495771,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140363878,
+    "post_id" : 79589612,
+    "body" : "That&#39;s the cool thing: you can&#39;t.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 465573,
+      "reputation" : 200423,
+      "user_id" : 869736,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/ae7bb06b9a23a4dd7eea69e853d47d12?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Louis Wasserman",
+      "link" : "https://stackoverflow.com/users/869736/louis-wasserman"
+    },
+    "creation_date" : 1745471743,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140363651,
+    "post_id" : 79589612,
+    "body" : "maybe you could give the enum <code>.values()</code> method a try and take the first index as the implementation.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 21724606,
+      "reputation" : 1441,
+      "user_id" : 16034206,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/MRBdT.jpg?s=256",
+      "display_name" : "pebble unit",
+      "link" : "https://stackoverflow.com/users/16034206/pebble-unit"
+    },
+    "creation_date" : 1745461863,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79589640" : [ {
+      "comment_id" : 140367554,
+      "post_id" : 79589640,
+      "body" : "Yes, exactly, I looked at an interface (though I looked at it as a surrounding generic interface rather than one that the Enum implemented), but as you say, the you need to be able to be able to produce one instance of the type in the first place, you need Alpha.A, or B, etc, to be able to call, for it to inform you that &#39;A&#39; is the first one.  And of course of one the reasons to make it generic is so that others can implement their own versions. I wasn&#39;t aware of Class.getEnumConstants, that&#39;s a solid basis to build on, thank you very much!",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 4714559,
+        "reputation" : 35,
+        "user_id" : 3814116,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/a7c4f1f53cf9124bdaf7af66c5088921?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "afarrell",
+        "link" : "https://stackoverflow.com/users/3814116/afarrell"
+      },
+      "creation_date" : 1745542832,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140363489,
+      "post_id" : 79589640,
+      "body" : "Returning an <code>Optional</code> is still forcing the caller to deal with illegal state. I suppose <a href=\"https://docs.oracle.com/en/java/javase/21/docs/api/java.base/java/util/Optional.html#orElseThrow()\" rel=\"nofollow noreferrer\">Optional#orElseThrow</a> makes this a bit better, but the error message would be subpar.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 14914414,
+        "reputation" : 1185,
+        "user_id" : 10808904,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/Ts8fIsJj.png?s=256",
+        "display_name" : "Xavier Pedraza",
+        "link" : "https://stackoverflow.com/users/10808904/xavier-pedraza"
+      },
+      "creation_date" : 1745452829,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140363485,
+      "post_id" : 79589640,
+      "body" : "@WasabiThumbs true, or edit the method signature to return an <code>Optional&lt;T&gt;</code> instead of marking as nullable",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 26384984,
+        "reputation" : 418,
+        "user_id" : 20037647,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/9nb18CcK.png?s=256",
+        "display_name" : "EarthTurtle",
+        "link" : "https://stackoverflow.com/users/20037647/earthturtle"
+      },
+      "creation_date" : 1745452672,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140363474,
+      "post_id" : 79589640,
+      "body" : "About returning null in that 2nd snippet, a simple <code>assert values != null;</code> would convey the fact that it should be impossible for the array to be null. However, it&#39;s technically legal for an enum to have 0 enum constants, so this method as-is could return null for legal enums. That means that the contract of this method is nullable, and callers would have to deal with the null case for no reason. It would be better to throw IllegalArgumentException if the caller provided an enum class with 0 enum constants.",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 14914414,
+        "reputation" : 1185,
+        "user_id" : 10808904,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/Ts8fIsJj.png?s=256",
+        "display_name" : "Xavier Pedraza",
+        "link" : "https://stackoverflow.com/users/10808904/xavier-pedraza"
+      },
+      "creation_date" : 1745452440,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79589636" : [ {
+      "comment_id" : 140367593,
+      "post_id" : 79589636,
+      "body" : "Thank you for this, it seems to successfully look past my example of &quot;finding the first&quot;, to something more flexible, that will even work with interfaces? I&#39;m hoping to go with the simpler answer specific to enums if I can get it to work, but I appreciated the answer and the effort behind it.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 4714559,
+        "reputation" : 35,
+        "user_id" : 3814116,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/a7c4f1f53cf9124bdaf7af66c5088921?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "afarrell",
+        "link" : "https://stackoverflow.com/users/3814116/afarrell"
+      },
+      "creation_date" : 1745545225,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

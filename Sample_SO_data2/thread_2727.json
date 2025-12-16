@@ -1,0 +1,151 @@
+{
+  "question" : {
+    "question_id" : 79602286,
+    "title" : "What is the right way of aborting an HTTP request?",
+    "body" : "<p>I have a server program where on receiving a request, I make a RPC call via HTTP for which I cannot spend more than, let's say 10 ms. If the request does not finish within 10 ms, I need to abort, mark the RPC call as failed and continue with rest of request processing.</p>\n<p>For sending the HTTP request I am using Apache HttpComponents library. The library (AFAIK) does not provide any way to abort a request if it doesn't finish within some time-limits. There are some timeouts available, e.g. <a href=\"https://hc.apache.org/httpcomponents-client-5.4.x/current/apidocs/org/apache/hc/client5/http/config/ConnectionConfig.Builder.html\" rel=\"nofollow noreferrer\">socket timeout, connect-timeout</a> , etc. but none of them enforce a timeout on the total duration of the request.</p>\n<p>In order to enforce a hard timeout, I have a logic of the sort :</p>\n<pre><code>    ScheduledExecutorService httpHardTimeoutScheduler = Executors.newScheduledThreadPool(totalTokenCount);\n\n...\n...\n\n  public static void postWithHardTimeout(String url, byte[] bytes, ContentType contentType, FutureCallback&lt;SimpleHttpResponse&gt; callback) {\n    final SimpleHttpRequest request = SimpleRequestBuilder.post(url).build();\n    request.setBody(bytes, contentType);\n\n    Future&lt;SimpleHttpResponse&gt; future = send(request, callback);\n\n    httpHardTimeoutScheduler.schedule(() -&gt; {\n      if (!future.isDone() &amp;&amp; !future.isCancelled()) {\n        future.cancel(true);\n      }\n    }, HARD_TIMEOUT_MILLIS, TimeUnit.MILLISECONDS);\n  }\n\n</code></pre>\n<p>This works but I am seeing an increase in latencies in requests that do succeed and I am trying to debug it. My hypothesis is that since the client simply stops listening, the server keeps waiting for response from the client and keeps and open connection for long.</p>\n<p>My question is :</p>\n<ul>\n<li>What is the right way to abort a request of this sort ? Should the client send an RST packet to the server, so that the server stops waiting for the client ?</li>\n<li>How can I debug why request latencies are higher on the server side ?</li>\n</ul>\n",
+    "tags" : [ "java", "apache-httpcomponents" ],
+    "owner" : {
+      "account_id" : 151036,
+      "reputation" : 2754,
+      "user_id" : 364651,
+      "user_type" : "registered",
+      "accept_rate" : 64,
+      "profile_image" : "https://www.gravatar.com/avatar/afc1d8eb5424334e190597535b1d8df9?s=256&d=identicon&r=PG",
+      "display_name" : "johngreen",
+      "link" : "https://stackoverflow.com/users/364651/johngreen"
+    },
+    "is_answered" : false,
+    "view_count" : 116,
+    "answer_count" : 1,
+    "score" : 2,
+    "last_activity_date" : 1746152211,
+    "creation_date" : 1746120916,
+    "link" : "https://stackoverflow.com/questions/79602286/what-is-the-right-way-of-aborting-an-http-request",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79602696,
+    "question_id" : 79602286,
+    "body" : "<p>I would set the read and connect timeouts to get the client socket to give back control (through an exception) so I could close down after either time out expires.  Then properly close the connection in a finally / try-resource block.   You can use your existing mechanism using futures to give up on the results after 10ms to keep your latency low on your side of the wire.  By setting the timeouts it basically allows the socket to be shutdown properly and send the close to the server, but it'll be after the future gave up on it which doesn't matter that much because there isn't a dramatic difference in time between the two events.</p>\n<p>Even if you successfully send a close to the server it's doing the same thing your code is doing which is accepting connections, spinning up resources to respond to the request, then sending a response.  And it's not until the server goes to send the response will it get an exception because the socket is closed.  So servers won't kill a thread or green thread just because the socket closed.  The server is going to keep chugging along answering the request.</p>\n<p>By having such a low time out value you are enabling your server to pound this other server into oblivion.  It's like a child pulling on Mom's dress saying &quot;momma, momma, momma, momma, momma....&quot; before she can even respond before another &quot;momma&quot; shows up.  The client can't expect to get work done faster than the server can go.  Maybe the server you're calling needs to scale up to meet your demands, or you might need to slow done to get more throughput.</p>\n<p>If you can control both sides of the architecture this is where an asynchronous messaging architecture might help out.  You can drop requests on a queue and wait for responses when the server can get to it.  You can also handle back pressure and cancel requests if the queue is piling up too fast to handle them.  Again you can't force a server work faster than it can go, but you might have more graceful degradation with a messaging style than request-response.  Messaging might work better if you are simply polling for updates for example.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 51881,
+      "reputation" : 39410,
+      "user_id" : 155020,
+      "user_type" : "registered",
+      "accept_rate" : 80,
+      "profile_image" : "https://i.sstatic.net/fEqVo.png?s=256",
+      "display_name" : "chubbsondubs",
+      "link" : "https://stackoverflow.com/users/155020/chubbsondubs"
+    },
+    "creation_date" : 1746147393,
+    "last_activity_date" : 1746152211,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140388767,
+    "post_id" : 79602286,
+    "body" : "10mS is absurdly low for a transaction timeout. A couple of seconds would be more like it.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 71739,
+      "reputation" : 311888,
+      "user_id" : 207421,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/5cfe5f7d64f44be04f147295f5c7b88e?s=256&d=identicon&r=PG",
+      "display_name" : "user207421",
+      "link" : "https://stackoverflow.com/users/207421/user207421"
+    },
+    "creation_date" : 1746151984,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140388468,
+    "post_id" : 79602286,
+    "body" : "&quot;the server keeps waiting for response from the client&quot; What response is that?",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 116746,
+      "reputation" : 12898,
+      "user_id" : 306030,
+      "user_type" : "registered",
+      "accept_rate" : 70,
+      "profile_image" : "https://i.sstatic.net/y053l.jpg?s=256",
+      "display_name" : "forty-two",
+      "link" : "https://stackoverflow.com/users/306030/forty-two"
+    },
+    "creation_date" : 1746137184,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140388091,
+    "post_id" : 79602286,
+    "body" : "The only reasonable way the client has to signal that it is giving up is to close the connection, but you probably shouldn&#39;t / couldn&#39;t do that with your particular technology stack.  And even if you did, what the server does in response is a separate matter. It might or might not abort processing the request, but more likely not.  The application layer on that side probably does not notice that the connection is closed until it tries to write the response.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2792262,
+      "reputation" : 190832,
+      "user_id" : 2402272,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+      "display_name" : "John Bollinger",
+      "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+    },
+    "creation_date" : 1746127998,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140387861,
+    "post_id" : 79602286,
+    "body" : "<code>SimpleRequestBuilder</code> might not support setting the connect and socket (read) timeout, but <a href=\"https://stackoverflow.com/a/19836903/6650475\">this</a> might help.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 8909811,
+      "reputation" : 2861,
+      "user_id" : 6650475,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/fe85994d05ad7aaaa1c47d638b37bc45?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Andrew S",
+      "link" : "https://stackoverflow.com/users/6650475/andrew-s"
+    },
+    "creation_date" : 1746122994,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79602696" : [ {
+      "comment_id" : 140388769,
+      "post_id" : 79602696,
+      "body" : "@user207421 Exactly, and if you read the next sentence you&#39;d see I said exactly that. &quot;Then properly close the connection in a finally / try-resource block.&quot;",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 51881,
+        "reputation" : 39410,
+        "user_id" : 155020,
+        "user_type" : "registered",
+        "accept_rate" : 80,
+        "profile_image" : "https://i.sstatic.net/fEqVo.png?s=256",
+        "display_name" : "chubbsondubs",
+        "link" : "https://stackoverflow.com/users/155020/chubbsondubs"
+      },
+      "creation_date" : 1746152083,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140388765,
+      "post_id" : 79602696,
+      "body" : "&quot;I would set the read and connect timeouts to get the client socket to close down after 10 ms&quot;: these timeouts don&#39;t close the socket: they throw exceptions. You have to ensure the socket is closed yourself.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 71739,
+        "reputation" : 311888,
+        "user_id" : 207421,
+        "user_type" : "registered",
+        "accept_rate" : 82,
+        "profile_image" : "https://www.gravatar.com/avatar/5cfe5f7d64f44be04f147295f5c7b88e?s=256&d=identicon&r=PG",
+        "display_name" : "user207421",
+        "link" : "https://stackoverflow.com/users/207421/user207421"
+      },
+      "creation_date" : 1746151960,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "question" : {
+    "question_id" : 79636092,
+    "title" : "Fetching records matching multiple joined attributes",
+    "body" : "<p>I need to return <code>User</code> records that:</p>\n<ol>\n<li>Have an email matching <code>email</code> strictly <em>and</em></li>\n<li>Have a phone matching <code>phone</code> strictly</li>\n</ol>\n<p>All of those are optional. That is, the request may contain only an email, for example.</p>\n<p>Here's my attempt.</p>\n<pre class=\"lang-java prettyprint-override\"><code>import com.example.pixel_user_api.data.entity.User;\nimport org.springframework.data.jpa.repository.Query;\nimport org.springframework.data.repository.RepositoryDefinition;\nimport org.springframework.data.repository.query.Param;\n\nimport java.util.List;\n\n@RepositoryDefinition(domainClass = User.class, idClass = Long.class)\npublic interface UserRepository {\n\n    @Query(&quot;&quot;&quot;\n            SELECT User u\n            JOIN FETCH PhoneDate pd\n            JOIN EmailData ed\n            AND (:phone IS NULL OR pd.phone = :phone)\n            AND (:email IS NULL OR ed.email = :email)\n            &quot;&quot;&quot;)\n    List&lt;User&gt; find(@Param(&quot;phone&quot;) String phone,\n                    @Param(&quot;email&quot;) String email);\n}\n</code></pre>\n<p>Apparently, two joins in a single JPQL query are illegal (due to the Cartesian product issue, I reckon). My app fails on startup:</p>\n<pre><code>Caused by: org.springframework.data.jpa.repository.query.BadJpqlGrammarException: At 2:0 and token 'JOIN', mismatched input 'JOIN', expecting one of the following tokens: &lt;EOF&gt;, ',', EXCEPT, FROM, GROUP, HAVING, INTERSECT, ORDER, UNION, WHERE;\n</code></pre>\n<p>So how do I conduct a search involving more than one associated &quot;to-many&quot; entity – given a relational data store?</p>\n<p>My entities (simplified):</p>\n<pre class=\"lang-java prettyprint-override\"><code>import jakarta.persistence.CascadeType;\nimport jakarta.persistence.Column;\nimport jakarta.persistence.Entity;\nimport jakarta.persistence.FetchType;\nimport jakarta.persistence.GeneratedValue;\nimport jakarta.persistence.GenerationType;\nimport jakarta.persistence.Id;\nimport jakarta.persistence.OneToMany;\nimport jakarta.persistence.Table;\nimport lombok.Getter;\nimport lombok.Setter;\n\nimport java.util.List;\n\n@Entity\n@Getter\n@Setter\n@Table(name = &quot;\\&quot;user\\&quot;&quot;)\npublic class User {\n\n    @Id\n    @GeneratedValue(strategy = GenerationType.IDENTITY)\n    private Long id;\n    @OneToOne(mappedBy = &quot;user&quot;)\n    @OneToMany(mappedBy = &quot;user&quot;, fetch = FetchType.EAGER,\n            cascade = CascadeType.ALL, orphanRemoval = true)\n    private List&lt;EmailData&gt; emailData;\n    @OneToMany(mappedBy = &quot;user&quot;, fetch = FetchType.EAGER,\n            cascade = CascadeType.ALL, orphanRemoval = true)\n    private List&lt;PhoneData&gt; phoneData;\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>import jakarta.persistence.Entity;\nimport jakarta.persistence.GeneratedValue;\nimport jakarta.persistence.GenerationType;\nimport jakarta.persistence.Id;\nimport jakarta.persistence.JoinColumn;\nimport jakarta.persistence.ManyToOne;\nimport jakarta.persistence.Table;\nimport lombok.Getter;\nimport lombok.Setter;\n\n@Entity\n@Getter\n@Setter\n@Table(name = &quot;phone_data&quot;)\npublic class PhoneData {\n\n    @Id\n    @GeneratedValue(strategy = GenerationType.IDENTITY)\n    private Long id;\n    @ManyToOne\n    @JoinColumn(name = &quot;user_id&quot;)\n    private User user;\n    private String phone;\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>import jakarta.persistence.Entity;\nimport jakarta.persistence.GeneratedValue;\nimport jakarta.persistence.GenerationType;\nimport jakarta.persistence.Id;\nimport jakarta.persistence.JoinColumn;\nimport jakarta.persistence.ManyToOne;\nimport jakarta.persistence.Table;\nimport lombok.Getter;\nimport lombok.Setter;\n\n@Entity\n@Getter\n@Setter\n@Table(name = &quot;email_data&quot;)\npublic class EmailData {\n\n    @Id\n    @GeneratedValue(strategy = GenerationType.IDENTITY)\n    private Long id;\n    @ManyToOne\n    @JoinColumn(name = &quot;user_id&quot;)\n    private User user;\n    private String email;\n}\n</code></pre>\n",
+    "tags" : [ "java", "hibernate", "jpa", "spring-data" ],
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2683,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "is_answered" : true,
+    "view_count" : 46,
+    "answer_count" : 1,
+    "score" : -1,
+    "last_activity_date" : 1748101098,
+    "creation_date" : 1748028136,
+    "link" : "https://stackoverflow.com/questions/79636092/fetching-records-matching-multiple-joined-attributes",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79636932,
+    "question_id" : 79636092,
+    "body" : "<p>This JPQL will do the trick</p>\n<pre><code>@Query(&quot;&quot;&quot;\n        SELECT u\n        FROM User u\n        WHERE (:email IS NULL OR EXISTS (\n            SELECT 1 FROM EmailData ed WHERE ed.user = u AND ed.email = :email\n        ))\n        AND (:phone IS NULL OR EXISTS (\n            SELECT 1 FROM PhoneData pd WHERE pd.user = u AND pd.phone = :phone\n        ))\n        &quot;&quot;&quot;)\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2683,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "creation_date" : 1748101098,
+    "last_activity_date" : 1748101098,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : { }
+}

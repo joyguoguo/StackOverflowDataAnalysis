@@ -1,0 +1,166 @@
+{
+  "question" : {
+    "question_id" : 79551666,
+    "title" : "Proper way to handle JOINS with CrudRepository REST",
+    "body" : "<p>I am new to developing REST using CrudRepository. I was wondering the proper way to handle JOINs?</p>\n<p>I have three classes, three repo classes and three service classes.\nStress, Mood, User.\nStressRepo, MoodRepo, UserRepo.\nStressService, MoodService, UserService</p>\n<p>An example of my service class:</p>\n<pre><code>@Service\npublic class MoodService {\n\n    @Autowired\n    private MoodRepository moodRepository;\n\n    public Mood createMood(Mood mood) {\n        return moodRepository.save(mood);\n    }\n\n    public Mood getMoodById(Long id) {\n        return moodRepository.findById(id).orElse(null);\n    }\n\n    public List&lt;Mood&gt; getAllMoods() {\n        return (List&lt;Mood&gt;) moodRepository.findAll();\n    }\n\n    public void deleteMood(Long id) {\n        moodRepository.deleteById(id);\n    }\n\n     public Mood updateMood(Long id, Mood updateMood) {\n        Mood existingMood = moodRepository.findById(id).orElse(null);\n        if (existingMood != null) {\n            Mood newMood = new Mood(updateMood.getUserId(), updateMood.getDate(), updateMood.getMood(), updateMood.getDescription());\n            return moodRepository.save(newMood);\n        }\n        return null;\n    }\n\n}\n</code></pre>\n<p>If I was to do this in SQL to query the DB, I would do something like this..</p>\n<pre><code>SELECT * FROM USERS u \nLEFT JOIN MOODS m ON u.id = m.USER_ID\nLEFT JOIN STRESS s ON u.id = s.USER_ID\nWHERE (m.MOOD = 1 OR m.MOOD = 2) AND (m.MOOD = 3 AND (s.STRESS = 4 OR s.STRESS = 5))\n</code></pre>\n<p>I assume I would need a custom controller that would handle this request, but do I need to incorporate the Mood and Stress class inside of the User class?</p>\n<pre><code>@Getter\n@Setter\n@Entity\n@NoArgsConstructor\n@Table(name = &quot;users&quot;)\npublic class User {\n    @Id\n    @GeneratedValue(strategy = GenerationType.IDENTITY)\n    private long id;\n\n    @Column(length = 100)\n    private String name;\n\n    @Column(length = 100)\n    private String userName;\n\n    @Column(length = 100)\n    private String zipCode;\n\n    User(String userName, String name, String zipCode) {\n        this.name = name;\n        this.userName = userName;\n        this.zipCode = zipCode;\n    }\n\n    @ManyToMany\n    Stress stress;\n    \n    @ManyToMany\n    Mood mood;\n}\n</code></pre>\n",
+    "tags" : [ "java", "spring-boot", "crud-repository" ],
+    "owner" : {
+      "account_id" : 11174172,
+      "reputation" : 3106,
+      "user_id" : 8200290,
+      "user_type" : "registered",
+      "accept_rate" : 56,
+      "profile_image" : "https://i.sstatic.net/we0BN.png?s=256",
+      "display_name" : "letsCode",
+      "link" : "https://stackoverflow.com/users/8200290/letscode"
+    },
+    "is_answered" : false,
+    "view_count" : 54,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1743640182,
+    "creation_date" : 1743631903,
+    "link" : "https://stackoverflow.com/questions/79551666/proper-way-to-handle-joins-with-crudrepository-rest",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79551771,
+    "question_id" : 79551666,
+    "body" : "<p>Your example query implies that <code>Mood</code> has a user id and that <code>Stress</code> also has a user id, so I assume that inside your entity models for mood and stress, there is some pointer to a particular user. Or in other words, a given mood or stress row in the database points to only one (not many) users.  So your user model should be using <code>@OneToMany</code> on both mood and stress.</p>\n<pre><code>@OneToMany(mappedBy = &quot;user&quot;, cascade = CascadeType.ALL, orphanRemoval = true)\nprivate List&lt;Stress&gt; stressList;\n\n@OneToMany(mappedBy = &quot;user&quot;, cascade = CascadeType.ALL, orphanRemoval = true)\nprivate List&lt;Mood&gt; moodList;\n</code></pre>\n<p>Conversely your mood and stress models should be using</p>\n<pre><code>@ManyToOne(fetch = FetchType.LAZY)\n@JoinColumn(name = &quot;user_id&quot;)\nprivate User user;\n</code></pre>\n<p>on the user reference.</p>\n<p>I assume that is causing a problem for you. That being said, if you want a custom query in a JPA repository, you can just add the query to a text block. For example, in your <code>MoodRepository</code> you can have something like this:</p>\n<pre><code>@Query(&quot;&quot;&quot;\n  SELECT DISTINCT u FROM User u\n  LEFT JOIN u.moodList m\n  LEFT JOIN u.stressList s\n  WHERE (m.mood = 1 OR m.mood = 2)\n  AND (m.mood = 3 AND (s.stress = 4 OR s.stress = 5))&quot;&quot;&quot;)\nList&lt;User&gt; findUsersWithMoodAndStressConditions();\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 8305927,
+      "reputation" : 1397,
+      "user_id" : 7571925,
+      "user_type" : "registered",
+      "profile_image" : "https://lh5.googleusercontent.com/-O0gSNlEGM6I/AAAAAAAAAAI/AAAAAAAAAcA/O1UAh_d850s/s256-rj/photo.jpg",
+      "display_name" : "Blake",
+      "link" : "https://stackoverflow.com/users/7571925/blake"
+    },
+    "creation_date" : 1743640182,
+    "last_activity_date" : 1743640182,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140292548,
+    "post_id" : 79551666,
+    "body" : "Also, please, check your update method. It is not the best idea to create a new object each time. You also lost an ID. You can just try to update the existing one and save it: <code>return moodRepository.findById(id).map(existingMood -&gt; {     existingMood.setDate(updatedMood.getDate()); &#47;&#47; etc.     return moodRepository.save(existingMood); }).orElseThrow(() -&gt; new EntityNotFoundException(&quot;Mood not found with id &quot; + id));</code> And... Instead of passing the entire <code>Mood</code> entity object from the controller, you could use a <code>MoodUpdateDto</code> with only the fields that should be editable.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 15531552,
+      "reputation" : 116,
+      "user_id" : 12393728,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/93a6dd2e7ba9a8bff8aa92d5f1fd2daf?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Mykola",
+      "link" : "https://stackoverflow.com/users/12393728/mykola"
+    },
+    "creation_date" : 1743635279,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140292523,
+    "post_id" : 79551666,
+    "body" : "Hello, definitely yes. If you want to use an ORM for JOINs, check a ref for <code>@OneToMany</code> and <code>@ManyToMany</code> annotations (e.g.: <a href=\"https://www.baeldung.com/jpa-hibernate-associations\" rel=\"nofollow noreferrer\">baeldung.com/jpa-hibernate-associations</a>, and <a href=\"https://www.baeldung.com/hibernate-one-to-many\" rel=\"nofollow noreferrer\">baeldung.com/hibernate-one-to-many</a>). In this case, you can avoid a lot of queries, because ORM will JOIN and map collections for you. You still can use a native query, if performance really matters for you in this project. Check out JPQL and JPA Native Query.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 15531552,
+      "reputation" : 116,
+      "user_id" : 12393728,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/93a6dd2e7ba9a8bff8aa92d5f1fd2daf?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Mykola",
+      "link" : "https://stackoverflow.com/users/12393728/mykola"
+    },
+    "creation_date" : 1743634697,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79551771" : [ {
+      "comment_id" : 140303317,
+      "post_id" : 79551771,
+      "body" : "@OneToMany(mappedBy = &quot;userId&quot;, cascade = CascadeType.ALL, orphanRemoval = true) private List&lt;Mood&gt; moodList;",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 11174172,
+        "reputation" : 3106,
+        "user_id" : 8200290,
+        "user_type" : "registered",
+        "accept_rate" : 56,
+        "profile_image" : "https://i.sstatic.net/we0BN.png?s=256",
+        "display_name" : "letsCode",
+        "link" : "https://stackoverflow.com/users/8200290/letscode"
+      },
+      "creation_date" : 1743883587,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140303316,
+      "post_id" : 79551771,
+      "body" : "@OneToMany(mappedBy = &quot;userId&quot;, cascade = CascadeType.ALL, orphanRemoval = true) private List&lt;Stress&gt; stressList;",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 11174172,
+        "reputation" : 3106,
+        "user_id" : 8200290,
+        "user_type" : "registered",
+        "accept_rate" : 56,
+        "profile_image" : "https://i.sstatic.net/we0BN.png?s=256",
+        "display_name" : "letsCode",
+        "link" : "https://stackoverflow.com/users/8200290/letscode"
+      },
+      "creation_date" : 1743883579,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140303315,
+      "post_id" : 79551771,
+      "body" : "This is in my user.java",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 11174172,
+        "reputation" : 3106,
+        "user_id" : 8200290,
+        "user_type" : "registered",
+        "accept_rate" : 56,
+        "profile_image" : "https://i.sstatic.net/we0BN.png?s=256",
+        "display_name" : "letsCode",
+        "link" : "https://stackoverflow.com/users/8200290/letscode"
+      },
+      "creation_date" : 1743883572,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140303314,
+      "post_id" : 79551771,
+      "body" : "org.springframework.beans.factory.BeanCreationException: Error creating bean with name &#39;entityManagerFactory&#39; defined in class path resource [org/springframework/boot/autoconfigure/orm/jpa/HibernateJpa&zwnj;&#8203;Configuration.class]&zwnj;&#8203;: Could not determine recommended JdbcType for Java type &#39;com.oddball.challenges.user.User&#39;",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 11174172,
+        "reputation" : 3106,
+        "user_id" : 8200290,
+        "user_type" : "registered",
+        "accept_rate" : 56,
+        "profile_image" : "https://i.sstatic.net/we0BN.png?s=256",
+        "display_name" : "letsCode",
+        "link" : "https://stackoverflow.com/users/8200290/letscode"
+      },
+      "creation_date" : 1743883554,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140303313,
+      "post_id" : 79551771,
+      "body" : "im getting errors here with this code.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 11174172,
+        "reputation" : 3106,
+        "user_id" : 8200290,
+        "user_type" : "registered",
+        "accept_rate" : 56,
+        "profile_image" : "https://i.sstatic.net/we0BN.png?s=256",
+        "display_name" : "letsCode",
+        "link" : "https://stackoverflow.com/users/8200290/letscode"
+      },
+      "creation_date" : 1743883549,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

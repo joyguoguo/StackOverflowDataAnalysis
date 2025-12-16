@@ -1,0 +1,598 @@
+{
+  "question" : {
+    "question_id" : 79735396,
+    "title" : "Can you set value of a private final variable in Java 21?",
+    "body" : "<p>This used to be easy in Java 8 and I want to know if it's still possible in Java 21. I've seen a bunch of old posts, all giving different methods for this, none of which worked. I'm hoping for a universal solution, but I'll include details of my use case too.</p>\n<p><em>What do I need it for and what can I control?</em><br />\nI am making a Minecraft plugin - that means my code is in a <code>jar</code> file and is not loaded instantly alongside the server, that happens a few seconds later using a class loader. This being a plugin also means I can't control environment variables or parameters when JVM is started.<br />\nI want to change the value of a <code>private final</code> <code>commandMap</code> variable in <code>org.bukkit.plugin.SimplePluginManager</code> class. It's not primitive.</p>\n<p><em>What have I tried?</em><br />\nI cannot use just <code>field.setAccessible(true);</code>, because modern java throws <code>IllegalArgumentException: Can not set final field</code>.<br />\nI cannot make the field non-final using <code>modifiers</code> field (code below), since <a href=\"https://bugs.openjdk.org/browse/JDK-8210522\" rel=\"nofollow noreferrer\"><code>java.lang.reflect.Field</code> fields have been hidden</a>.</p>\n<pre><code>field.setAccessible(true);\nField modifiersField = field.getClass().getDeclaredField(&quot;modifiers&quot;);\nmodifiersField.setAccessible(true);\nmodifiersField.setInt(field, field.getModifiers() &amp; ~Modifier.FINAL);\n</code></pre>\n<p>I tried <code>org.apache.commons.lang3.reflect.FieldUtils</code> only to realize it uses the same trick as above.<br />\nI tried using <code>sun.misc.Unsafe</code> from <a href=\"https://stackoverflow.com/a/71465198/21550046\">this answer</a> but I don't know how to apply it to a non-static variable. The comments say this works on Java 21.</p>\n",
+    "tags" : [ "java", "reflection", "final", "spigot" ],
+    "owner" : {
+      "account_id" : 28195297,
+      "reputation" : 170,
+      "user_id" : 21550046,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/AGNmyxYteMBojPQfR3HvmDzoOgwQhCkZxrZhTAXh2MXQ=k-s256",
+      "display_name" : "Nathalie Kitty",
+      "link" : "https://stackoverflow.com/users/21550046/nathalie-kitty"
+    },
+    "is_answered" : true,
+    "view_count" : 501,
+    "answer_count" : 3,
+    "score" : 4,
+    "last_activity_date" : 1757335255,
+    "creation_date" : 1755174233,
+    "link" : "https://stackoverflow.com/questions/79735396/can-you-set-value-of-a-private-final-variable-in-java-21",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79758887,
+    "question_id" : 79735396,
+    "body" : "<p>Since modifying a non-static final field is not forbidden (unlike static final fields), you can do it using Reflection in the first place. Manipulating the <code>Field</code> instance was never necessary.</p>\n<pre class=\"lang-java prettyprint-override\"><code>import java.lang.reflect.Field;\n\npublic class Test {\n    private final String x;\n  \n    Test() {\n        x = &quot;original&quot;;\n    }\n  \n    public static void main(String[] args) throws ReflectiveOperationException {\n        Test test = new Test();\n        System.out.println(&quot;value of x: &quot; +test.x);\n        Field f = Test.class.getDeclaredField(&quot;x&quot;);\n        f.setAccessible(true);\n        f.set(test, &quot;new value&quot;);\n        System.out.println(&quot;value of x: &quot; +test.x);\n    }\n}\n</code></pre>\n<pre class=\"lang-none prettyprint-override\"><code>value of x: original\nvalue of x: new value\n</code></pre>\n<p>This does not work for fields of records or hidden classes. If your class is in a different module than the field’s declaring class, you’ll need to add an appropriate <code>--add-opens</code> directive to the startup options.</p>\n",
+    "score" : 3,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 3211603,
+      "reputation" : 301001,
+      "user_id" : 2711488,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+      "display_name" : "Holger",
+      "link" : "https://stackoverflow.com/users/2711488/holger"
+    },
+    "creation_date" : 1757335255,
+    "last_activity_date" : 1757335255,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79735487,
+    "question_id" : 79735396,
+    "body" : "<p>Yes, you can change the value of a final field on an object using Unsafe. However, the fact that this is now prevented even through the reflection API has a strong reason: the JVM is allowed to use any optimization it sees fit that relies on the assumption that final fields never change. You can read the full detail and reasoning behind this in <a href=\"https://openjdk.org/jeps/8349536\" rel=\"nofollow noreferrer\">JEP 8349536</a>.</p>\n<p>Here's some code that proves both that, yes, you can change the field, and no, the JVM won't care unless you use the Reflection API to read the field:</p>\n<pre class=\"lang-java prettyprint-override\"><code>import sun.misc.Unsafe;\nimport java.lang.reflect.Field;\n\npublic class Test {\n\n    private final String x = &quot;x&quot;;\n\n    public static void main(String[] args) throws Exception {\n        Unsafe unsafe = unsafe();\n\n        Test test = new Test();\n        Field field = Test.class.getDeclaredField(&quot;x&quot;);\n        long offset = unsafe.objectFieldOffset(field);\n        System.out.println(&quot;Before: &quot; + test.x);\n        unsafe.putObject(test, offset, &quot;modified&quot;);\n        System.out.println(&quot;After, regular access: &quot; + test.x);\n        System.out.println(&quot;After, using reflection: &quot; + field.get(test));\n    }\n\n    private static Unsafe unsafe() throws Exception {\n        // Get Unsafe instance\n        Field unsafeField = Unsafe.class.getDeclaredField(&quot;theUnsafe&quot;);\n        unsafeField.setAccessible(true);\n        return (Unsafe) unsafeField.get(null);\n    }\n}\n</code></pre>\n<p>The output on my machine is:</p>\n<pre class=\"lang-none prettyprint-override\"><code>Before: x\nAfter, regular access: x\nAfter, using reflection: modified\n</code></pre>\n<p>I tried out some variations, like making <code>test</code> a volatile variable, using <code>volatile test2</code> and assigning after the change, using a new thread to read the field. Nothing worked.</p>\n<p>You can try the above and maybe it works for you, but it will at best be a brittle and error-prone solution.</p>\n<p>I will add that the mere fact that, in this particular code, the change is seen through reflection but not direct access, doesn't tell us anything deep about reflection and final fields. It's just an artifact of optimizations existing for direct field access, and access by reflection goes around them. After the optimization known as <a href=\"https://stackoverflow.com/questions/10082523/java-what-is-jitcs-reflection-inflation\"><em>accessor inflation</em></a> kicks in, the JVM will have generated bytecode to directly access the field, and then you may see the same issue again.</p>\n",
+    "score" : 2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 4760688,
+      "reputation" : 1921,
+      "user_id" : 3848148,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/CTCkZ.png?s=256",
+      "display_name" : "William F. Jameson",
+      "link" : "https://stackoverflow.com/users/3848148/william-f-jameson"
+    },
+    "creation_date" : 1755178758,
+    "last_activity_date" : 1755336407,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79736291,
+    "question_id" : 79735396,
+    "body" : "<p>The previous respondent's answer was already very close to the correct solution. I've made some subtle adjustments to their code:</p>\n<pre class=\"lang-java prettyprint-override\"><code>import sun.misc.Unsafe;\nimport java.lang.reflect.Field;\n\npublic class TestMain {\n\n    private final String x = &quot;a&quot;;\n\n    public static void main(String[] args) throws Exception {\n        Unsafe unsafe = unsafe();\n\n        var test = new TestMain();\n        Field field = TestMain.class.getDeclaredField(&quot;x&quot;);\n        long offset = unsafe.objectFieldOffset(field);\n        System.out.println(&quot;Before: &quot; + test.x);\n        unsafe.putObject(test, offset, &quot;modified&quot;);\n        System.out.println(&quot;After, regular access: &quot; + field.get(test));\n        System.out.println(&quot;After, using reflection: &quot; + field.get(test));\n    }\n\n    private static Unsafe unsafe() throws Exception {\n        // Get Unsafe instance\n        Field unsafeField = Unsafe.class.getDeclaredField(&quot;theUnsafe&quot;);\n        unsafeField.setAccessible(true);\n        return (Unsafe) unsafeField.get(null);\n    }\n}\n</code></pre>\n<p>Running this code will give you the following output:</p>\n<pre><code>Before: a\nAfter, regular access: modified\nAfter, using reflection: modified\n</code></pre>\n<p>As you can see, the value of <code>x</code> has been modified. Looking carefully at this code, you'll notice I only changed how we read the value of <code>x</code> (from directly using <code>test.x</code> to reading it through reflection).</p>\n<p>In reality, javac performs &quot;constant propagation&quot; optimization for <code>final</code> constants. During compilation, it inlines basic types, <code>String</code>, and <code>null</code> type <code>final</code> constants directly into their usage locations. (For simplicity, I'm describing <code>null</code> as a type here.) That's why directly using <code>test.x</code> would output the pre-modified content, because the compiler has already replaced it with the string literal <code>&quot;a&quot;</code> during compilation.</p>\n<p>There are three ways to solve this issue:</p>\n<ol>\n<li>Use reflection or similar methods to read the constant, bypassing javac's constant propagation</li>\n<li>Set the constant's initial value to something the compiler cannot calculate</li>\n<li>Make the field store a type that doesn't support constant propagation to disable this optimization for that field, like in this code:</li>\n</ol>\n<pre class=\"lang-java prettyprint-override\"><code>import sun.misc.Unsafe;\nimport java.lang.reflect.Field;\n\npublic class TestMain {\n\n    private final Object x = new Object();\n\n    public static void main(String[] args) throws Exception {\n        Unsafe unsafe = unsafe();\n\n        var test = new TestMain();\n        Field field = TestMain.class.getDeclaredField(&quot;x&quot;);\n        long offset = unsafe.objectFieldOffset(field);\n        System.out.println(&quot;Before: &quot; + test.x);\n        unsafe.putObject(test, offset, &quot;modified&quot;);\n        System.out.println(&quot;After, regular access: &quot; + test.x);\n        System.out.println(&quot;After, using reflection: &quot; + field.get(test));\n    }\n\n    private static Unsafe unsafe() throws Exception {\n        // Get Unsafe instance\n        Field unsafeField = Unsafe.class.getDeclaredField(&quot;theUnsafe&quot;);\n        unsafeField.setAccessible(true);\n        return (Unsafe) unsafeField.get(null);\n    }\n}\n</code></pre>\n<p>The output of this code is:</p>\n<pre><code>Before: java.lang.Object@682a0b20\nAfter, regular access: modified\nAfter, using reflection: modified\n</code></pre>\n<p>This is because javac doesn't perform constant propagation optimization on object types.</p>\n<p>Additionally, you can verify what I've explained by examining the bytecode.</p>\n<p>Finally, please note! Any method of modifying <code>final</code> fields is dangerous! It will make your code more complex, harder to understand, and more prone to issues! In all cases, you should prioritize using other approaches to achieve your desired functionality!</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 36772059,
+      "reputation" : 59,
+      "user_id" : 27909701,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/cb67853486307b4c0d8b90401c1c78d9?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "user27909701",
+      "link" : "https://stackoverflow.com/users/27909701/user27909701"
+    },
+    "creation_date" : 1755250022,
+    "last_activity_date" : 1756698962,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140665823,
+    "post_id" : 79735396,
+    "body" : "Well it &gt;is&lt; going away.  You need to accept it (i.e. accept that you shouldn&#39;t / can&#39;t do this kind of thing anymore) or stick with Java 8.",
+    "score" : 4,
+    "owner" : {
+      "account_id" : 47283,
+      "reputation" : 723470,
+      "user_id" : 139985,
+      "user_type" : "registered",
+      "accept_rate" : 69,
+      "profile_image" : "https://www.gravatar.com/avatar/147c5a9cc1feec049c50da791ac7d144?s=256&d=identicon&r=PG",
+      "display_name" : "Stephen C",
+      "link" : "https://stackoverflow.com/users/139985/stephen-c"
+    },
+    "creation_date" : 1755184241,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140665646,
+    "post_id" : 79735396,
+    "body" : "I am just finding that out, yeah.. <a href=\"https://openjdk.org/jeps/8349536\" rel=\"nofollow noreferrer\">openjdk.org/jeps/8349536</a> I was very used to this being easy in Java 8 so I didn&#39;t expect this &#39;feature&#39; to go away",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 28195297,
+      "reputation" : 170,
+      "user_id" : 21550046,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/AGNmyxYteMBojPQfR3HvmDzoOgwQhCkZxrZhTAXh2MXQ=k-s256",
+      "display_name" : "Nathalie Kitty",
+      "link" : "https://stackoverflow.com/users/21550046/nathalie-kitty"
+    },
+    "creation_date" : 1755181340,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140665645,
+    "post_id" : 79735396,
+    "body" : "Example: Your app is an installer that finds the jar that contains the class file that acontains the CommandMap infrastructure and changes <i>that</i>, or possibly simply injects one tiny little extra bit (for example, it just removes the <code>final</code> modifier in the class file itself). The installer makes that edit to the jar on disk, and exits again. Asking the user for all requisite permissions if your installer isn&#39;t allowed access to that part of the disk. That works today, and should work essentially forever.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 401843,
+      "reputation" : 107206,
+      "user_id" : 768644,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+      "display_name" : "rzwitserloot",
+      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+    },
+    "creation_date" : 1755181337,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140665635,
+    "post_id" : 79735396,
+    "body" : "What you&#39;re doing is something the OpenJDK team explicitly wants to make impossible. That means: Whatever trick you find, <b>will soon no longer work</b>. You&#39;re on the clock and it is ticking. What OpenJDK wants you to do is for the &#39;operator&#39; of the system to explicitly grant approval to such an action. Multiple options: By having an agent that twiddles the bytecode, by having explicit <code>--add-opens</code> style command switches, or by you simply changing the class files on disk prior to firing up the JVM. You should look into changing the parameters of your question, in other words.",
+    "score" : 5,
+    "owner" : {
+      "account_id" : 401843,
+      "reputation" : 107206,
+      "user_id" : 768644,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+      "display_name" : "rzwitserloot",
+      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+    },
+    "creation_date" : 1755181237,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140665487,
+    "post_id" : 79735396,
+    "body" : "They don&#39;t want me to change it, but I want to patch/mod this part of their code anyway - I want to inject my own implementation of CommandMap that&#39;s more optimized and handles some things differently. I understand it&#39;s my responsibility to not break anything when doing this.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 28195297,
+      "reputation" : 170,
+      "user_id" : 21550046,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/AGNmyxYteMBojPQfR3HvmDzoOgwQhCkZxrZhTAXh2MXQ=k-s256",
+      "display_name" : "Nathalie Kitty",
+      "link" : "https://stackoverflow.com/users/21550046/nathalie-kitty"
+    },
+    "creation_date" : 1755178336,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140665397,
+    "post_id" : 79735396,
+    "body" : "Do you want to set the variable to a different map, or do you want to change the contents of the existing map? If you only want to change the contents of the existing map, final is irrelevant here and you should remove any mentioning of final from the question, because it will cause confusion.",
+    "score" : 3,
+    "owner" : {
+      "account_id" : 1888781,
+      "reputation" : 2498,
+      "user_id" : 1707427,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/4d1a2608ee35e2df7d2400a02e62bb20?s=256&d=identicon&r=PG",
+      "display_name" : "S&#246;ren",
+      "link" : "https://stackoverflow.com/users/1707427/s%c3%b6ren"
+    },
+    "creation_date" : 1755177141,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140665268,
+    "post_id" : 79735396,
+    "body" : "They didn&#39;t mhide the java.lang.reflect stuff for laughs... it was a serious security issue. You shouldn&#39;t want to modify code like this and if the people who made Bukkit made that field final, they don&#39;t want you to modify it to begin with. This reads like trying to solve a problem the wrong way, making this essentially an X/Y problem.",
+    "score" : 8,
+    "owner" : {
+      "account_id" : 187094,
+      "reputation" : 5301,
+      "user_id" : 424903,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/8oHZF.png?s=256",
+      "display_name" : "Gimby",
+      "link" : "https://stackoverflow.com/users/424903/gimby"
+    },
+    "creation_date" : 1755174928,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140665260,
+    "post_id" : 79735396,
+    "body" : "You can&#39;t do it with reflection. You <b>can</b> maybe do it with <a href=\"https://asm.ow2.io/\" rel=\"nofollow noreferrer\">byte code manipulation</a>.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 3557625,
+      "reputation" : 201916,
+      "user_id" : 2970947,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/HLTev.png?s=256",
+      "display_name" : "Elliott Frisch",
+      "link" : "https://stackoverflow.com/users/2970947/elliott-frisch"
+    },
+    "creation_date" : 1755174747,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79736291" : [ {
+      "comment_id" : 140721905,
+      "post_id" : 79736291,
+      "body" : "In fact, the language specification allows reflective changes of (non-static) final fields in some cases. The support for those cases is unlikely to disappear soon, but the method <i>does</i> matter. While using Unsafe may break, using ordinary Reflection in the intended way, will keep working.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 3211603,
+        "reputation" : 301001,
+        "user_id" : 2711488,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+        "display_name" : "Holger",
+        "link" : "https://stackoverflow.com/users/2711488/holger"
+      },
+      "creation_date" : 1757335783,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140721896,
+      "post_id" : 79736291,
+      "body" : "@WilliamF.Jameson The rules for compile-time constants apply to all variables, regardless of whether they are static, instance, or even local. Their type must be primitive or <code>String</code> and their initializer must be a compile-time constant. That’s it. This implies that the simplest fix would have been <code>private final String x = &quot;a&quot;.toString();</code>, then, it’s not a compile-time constant anymore.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 3211603,
+        "reputation" : 301001,
+        "user_id" : 2711488,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+        "display_name" : "Holger",
+        "link" : "https://stackoverflow.com/users/2711488/holger"
+      },
+      "creation_date" : 1757335542,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140692566,
+      "post_id" : 79736291,
+      "body" : "@user27909701 And that is besides the point that at some point Minecraft plugins might be verified more carefully and you really do not want to create plugins that do shady malware-alike things such as breaking open deliberately locked down APIs. You don&#39;t want to have your name attached to such a plugin when it becomes public.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 187094,
+        "reputation" : 5301,
+        "user_id" : 424903,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/8oHZF.png?s=256",
+        "display_name" : "Gimby",
+        "link" : "https://stackoverflow.com/users/424903/gimby"
+      },
+      "creation_date" : 1756195125,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140672979,
+      "post_id" : 79736291,
+      "body" : "@WilliamF.Jameson Yes, code that relies on modifying final fields is fragile. Here I&#39;m just refining your answer and providing some additional information. We cannot guarantee that any JVM in current or future versions won&#39;t inline final fields during JIT optimization. If it does, any method of modifying final fields will lead to disaster.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 36772059,
+        "reputation" : 59,
+        "user_id" : 27909701,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/cb67853486307b4c0d8b90401c1c78d9?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "user27909701",
+        "link" : "https://stackoverflow.com/users/27909701/user27909701"
+      },
+      "creation_date" : 1755506571,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140672844,
+      "post_id" : 79736291,
+      "body" : "There seems to be an issue with bytocode viewer, it showed me an outdated version. It does indeed hardcode the <code>&quot;x&quot;</code>. However, the larger point still stands -- you replaced &quot;direct access&quot; output with reflection access output, which is beside the point. The correct thing to point out is that, when avoiding <code>String</code> specifically as the accessed object, this constant folding doesn&#39;t happen. The larger point I&#39;m making still does stand -- relying on correct observation of <code>final</code> reassignment is brittle and may break at any point on a future JVM.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 4760688,
+        "reputation" : 1921,
+        "user_id" : 3848148,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/CTCkZ.png?s=256",
+        "display_name" : "William F. Jameson",
+        "link" : "https://stackoverflow.com/users/3848148/william-f-jameson"
+      },
+      "creation_date" : 1755502211,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140672559,
+      "post_id" : 79736291,
+      "body" : "@WilliamF I wonder if you&#39;ve verified your claims. Consider this Java code:    <code>java  public class TestMain {      final int N = 1000;            public static void main(String[] args) {          var a = new TestMain();          System.out.println(a.N);      }  }  </code>    Looking at the compiled bytecode for the main method:    ```  // Shortened bytecode  NEW TestMain  // ...other instructions...  SIPUSH 1000  INVOKEVIRTUAL java/io/PrintStream.println (I)V  ```    Notice how it directly pushes the constant 1000 rather than reading from the object. The same would happen if N were static.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 36772059,
+        "reputation" : 59,
+        "user_id" : 27909701,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/cb67853486307b4c0d8b90401c1c78d9?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "user27909701",
+        "link" : "https://stackoverflow.com/users/27909701/user27909701"
+      },
+      "creation_date" : 1755493171,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140668289,
+      "post_id" : 79736291,
+      "body" : "What <code>javac</code> does understand are <i>compile-time constants</i>, and inlines their values into use sites. A <code>final</code> instance field is not an example of a compile-time constant.",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 4760688,
+        "reputation" : 1921,
+        "user_id" : 3848148,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/CTCkZ.png?s=256",
+        "display_name" : "William F. Jameson",
+        "link" : "https://stackoverflow.com/users/3848148/william-f-jameson"
+      },
+      "creation_date" : 1755269100,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140668257,
+      "post_id" : 79736291,
+      "body" : "Have you checked the actual bytecode? <code>javac</code> doesn&#39;t perform constant propagation. The bytecode has <code>GETFIELD Test.x : LValue;</code> in it.",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 4760688,
+        "reputation" : 1921,
+        "user_id" : 3848148,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/CTCkZ.png?s=256",
+        "display_name" : "William F. Jameson",
+        "link" : "https://stackoverflow.com/users/3848148/william-f-jameson"
+      },
+      "creation_date" : 1755267923,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79735487" : [ {
+      "comment_id" : 140736170,
+      "post_id" : 79735487,
+      "body" : "To demonstrate it practically, see <a href=\"https://ideone.com/UAEiC0\" rel=\"nofollow noreferrer\">ideone.com/UAEiC0</a> which uses each of them as a <code>case</code> label, which can only be done with compile-time constants.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 3211603,
+        "reputation" : 301001,
+        "user_id" : 2711488,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+        "display_name" : "Holger",
+        "link" : "https://stackoverflow.com/users/2711488/holger"
+      },
+      "creation_date" : 1757922332,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140736151,
+      "post_id" : 79735487,
+      "body" : "That’s a tenacious myth. See <a href=\"https://docs.oracle.com/javase/specs/jls/se24/html/jls-4.html#jls-4.12.4\" rel=\"nofollow noreferrer\">JLS &#167;4.12.4</a> “<i>A constant variable is a final variable of primitive type or type String that is initialized with a constant expression (&#167;15.29). Whether a variable is a constant variable or not may have implications with respect to class initialization (&#167;12.4.1), binary compatibility (&#167;13.1), reachability (&#167;14.22), and definite assignment (&#167;16.1.1).</i>” Note that there is no mentioning of a <code>static</code> modifier. Any variable, be it static, instance, or even local, can be a compile-time constant.",
+      "score" : 3,
+      "owner" : {
+        "account_id" : 3211603,
+        "reputation" : 301001,
+        "user_id" : 2711488,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+        "display_name" : "Holger",
+        "link" : "https://stackoverflow.com/users/2711488/holger"
+      },
+      "creation_date" : 1757922005,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140735419,
+      "post_id" : 79735487,
+      "body" : "@Holger The <a href=\"https://openjdk.org/jeps/8349536\" rel=\"nofollow noreferrer\">JEP</a> linked in the post indicates that the mutation of final instance fields through reflection will be disabled in an upcoming Java version. You&#39;ll need special JVM incantations to make it work.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 4760688,
+        "reputation" : 1921,
+        "user_id" : 3848148,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/CTCkZ.png?s=256",
+        "display_name" : "William F. Jameson",
+        "link" : "https://stackoverflow.com/users/3848148/william-f-jameson"
+      },
+      "creation_date" : 1757877101,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140735414,
+      "post_id" : 79735487,
+      "body" : "@Holger <code>&quot;x&quot;</code> is a compile-time constant, but <code>this.x</code> isn&#39;t. There&#39;s a special additional rule for static final constants whose initializer is a compile-time constant. Their value gets inlined into the use site. There is no such specification-level rule for inlining the value of a final instance field.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 4760688,
+        "reputation" : 1921,
+        "user_id" : 3848148,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/CTCkZ.png?s=256",
+        "display_name" : "William F. Jameson",
+        "link" : "https://stackoverflow.com/users/3848148/william-f-jameson"
+      },
+      "creation_date" : 1757876938,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140721866,
+      "post_id" : 79735487,
+      "body" : "<code>private final String x = &quot;x&quot;;</code> creates a <b>compile-time constant</b>, hence, read access to <code>x</code> is replaced by the constant value at compile-time already. That’s why nothing you do with <code>test</code> or threads has any impact. Just declare <code>private final String x = &quot;x&quot;.toString();</code> and it’s not a compile-time constant anymore. By the way, stunts with <code>Unsafe</code> are unnecessary. Modifying non-static <code>final</code> variables is legal and can be done simply with Reflection with access override. Even the OP’s attempt was unnecessarily complicated.",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 3211603,
+        "reputation" : 301001,
+        "user_id" : 2711488,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+        "display_name" : "Holger",
+        "link" : "https://stackoverflow.com/users/2711488/holger"
+      },
+      "creation_date" : 1757334609,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140669476,
+      "post_id" : 79735487,
+      "body" : "@William If you could add a little more about objects usually being affected by reflection and a little about this JEP (<a href=\"https://openjdk.org/jeps/8349536\" rel=\"nofollow noreferrer\">openjdk.org/jeps/8349536</a>) then I&#39;ll mark your answer as solution",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 28195297,
+        "reputation" : 170,
+        "user_id" : 21550046,
+        "user_type" : "registered",
+        "profile_image" : "https://lh3.googleusercontent.com/a/AGNmyxYteMBojPQfR3HvmDzoOgwQhCkZxrZhTAXh2MXQ=k-s256",
+        "display_name" : "Nathalie Kitty",
+        "link" : "https://stackoverflow.com/users/21550046/nathalie-kitty"
+      },
+      "creation_date" : 1755326980,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140667825,
+      "post_id" : 79735487,
+      "body" : "It shows that the value seen by any part of the program that calls <b>getX()</b> will be the original value. However, there is a bit of a catch here: if <b>x</b> had been created with <b>x = new String( “x” );</b>, the change would be reflected. For me, this is an inconsistency in the language; it shouldn&#39;t be like that, but that&#39;s just my opinion.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10843443,
+        "reputation" : 924,
+        "user_id" : 20882864,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+        "display_name" : "Marce Puente",
+        "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+      },
+      "creation_date" : 1755255880,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140667474,
+      "post_id" : 79735487,
+      "body" : "@MarcePuente I did try with <code>getX() { return this.x; }</code>, and it returned the same value as the direct expression <code>test.x</code>. Does that prove anything? I&#39;m still struggling to see how your line of argument proves that seeing <code>After, using reflectuion: modified</code> does not cast any doubt on the claim that the field hasn&#39;t changed its value to <code>modified</code>.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 4760688,
+        "reputation" : 1921,
+        "user_id" : 3848148,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/CTCkZ.png?s=256",
+        "display_name" : "William F. Jameson",
+        "link" : "https://stackoverflow.com/users/3848148/william-f-jameson"
+      },
+      "creation_date" : 1755245560,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140666436,
+      "post_id" : 79735487,
+      "body" : "&quot;If the underlying field is final, the method throws an IllegalAccessException     unless setAccessible(true) has succeeded for this Field object and the field     is non-static. Setting a final field in this way is meaningful only during     deserialization or reconstruction of instances of classes with blank final     fields, before they are made available for access by other parts of a program.     Use in any other context may have unpredictable effects, including cases in     which other parts of a program continue to use the original value of this     field.&quot;",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10843443,
+        "reputation" : 924,
+        "user_id" : 20882864,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+        "display_name" : "Marce Puente",
+        "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+      },
+      "creation_date" : 1755199388,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140666435,
+      "post_id" : 79735487,
+      "body" : "@William F. Jameson, sorry, I made a mistake. Add a <b>getX()</b> method and print what its call returns. I think you should see [here](“<a href=\"https://docs.oracle.com/javase/8/docs/api/java/lang/reflect/Field.html#set-java.lang.Object-java.lang.Object-\" rel=\"nofollow noreferrer\">docs.oracle.com/javase/8/docs/api/java/lang/reflect/&zwnj;&#8203;&hellip;</a>”), especially where it says: &quot;",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10843443,
+        "reputation" : 924,
+        "user_id" : 20882864,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+        "display_name" : "Marce Puente",
+        "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+      },
+      "creation_date" : 1755199381,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140665958,
+      "post_id" : 79735487,
+      "body" : "@NathalieKitty Yes, I tried your approach and it also changed with regular access. However, as I said, this is guaranteed to be confusing because it is the explicit intention of the Java specification that final fields never change, and that the runtime can do with that fact whatever it sees fit.",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 4760688,
+        "reputation" : 1921,
+        "user_id" : 3848148,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/CTCkZ.png?s=256",
+        "display_name" : "William F. Jameson",
+        "link" : "https://stackoverflow.com/users/3848148/william-f-jameson"
+      },
+      "creation_date" : 1755187204,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140665937,
+      "post_id" : 79735487,
+      "body" : "@MarcePuente I did, it printed <code>modified</code>. Thanks.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 4760688,
+        "reputation" : 1921,
+        "user_id" : 3848148,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/CTCkZ.png?s=256",
+        "display_name" : "William F. Jameson",
+        "link" : "https://stackoverflow.com/users/3848148/william-f-jameson"
+      },
+      "creation_date" : 1755186950,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140665792,
+      "post_id" : 79735487,
+      "body" : "I got the same output with your code snippet, but when using a custom class variable (not a String constant) <code>After, regular access</code> shows the new changed value. But when I&#39;m trying the same code on my target - the <code>SimpleCommandMap</code> - then it doesn&#39;t work :&lt; This is confusing",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 28195297,
+        "reputation" : 170,
+        "user_id" : 21550046,
+        "user_type" : "registered",
+        "profile_image" : "https://lh3.googleusercontent.com/a/AGNmyxYteMBojPQfR3HvmDzoOgwQhCkZxrZhTAXh2MXQ=k-s256",
+        "display_name" : "Nathalie Kitty",
+        "link" : "https://stackoverflow.com/users/21550046/nathalie-kitty"
+      },
+      "creation_date" : 1755183729,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140665764,
+      "post_id" : 79735487,
+      "body" : "add <b>Field fields[] = ModificaCampoFinal.class.getDeclaredFields();       System.out.println( fields[ 0 ] );</b> and run again...",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10843443,
+        "reputation" : 924,
+        "user_id" : 20882864,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+        "display_name" : "Marce Puente",
+        "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+      },
+      "creation_date" : 1755183215,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140665737,
+      "post_id" : 79735487,
+      "body" : "And what does the output <code>After, using reflection: modified</code> prove beyond any doubt? This is plain Java reflection access. You can also start a debugger and see what it says about it.",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 4760688,
+        "reputation" : 1921,
+        "user_id" : 3848148,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/CTCkZ.png?s=256",
+        "display_name" : "William F. Jameson",
+        "link" : "https://stackoverflow.com/users/3848148/william-f-jameson"
+      },
+      "creation_date" : 1755182728,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140665724,
+      "post_id" : 79735487,
+      "body" : "Hello Willian, the fact that the second line you print is “After, regular access: x” shows beyond any doubt that you have NOT modified the value of <b>x</b> (on the other hand, you are using methods that are marked for removal, <b>objectFieldOffset()</b>, <b>putObject()</b>).",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 10843443,
+        "reputation" : 924,
+        "user_id" : 20882864,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+        "display_name" : "Marce Puente",
+        "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+      },
+      "creation_date" : 1755182592,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

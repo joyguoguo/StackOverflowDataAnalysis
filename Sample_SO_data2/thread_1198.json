@@ -1,0 +1,46 @@
+{
+  "question" : {
+    "question_id" : 79736852,
+    "title" : "Unable to switch back to vertx event loop thread pool after switching to executor thread pool",
+    "body" : "<pre><code>@GET\n@Path(&quot;/p1&quot;)\npublic Uni&lt;Response&gt; p1() {\n    Log.info(&quot;Entry (event loop)&quot;);\n\n    return Uni.createFrom()\n            .item(&quot;input&quot;)\n            .onItem().transform(input -&gt; {\n                Log.info(&quot;Light transform&quot;);\n                return input.toUpperCase();\n            })\n            .emitOn(Infrastructure.getDefaultWorkerPool()) // ← Switch to worker\n            .onItem().transform(data -&gt; {\n                Log.info(&quot;Heavy work (worker)&quot;);\n                try {\n                    Thread.sleep(1000);\n                } catch (InterruptedException ignored) {\n                }\n                return &quot;Processed: &quot; + data;\n            })\n            .emitOn(Infrastructure.getDefaultExecutor()) // doesn't work\n            .onItem().transform(result -&gt; {\n                Log.info(&quot;Back on event loop&quot;);\n                return Response.ok(result).build();\n            });\n}\n</code></pre>\n<pre>\n<code>2025-08-11 04:13:58,404 INFO [com.exa.ExampleResource] (vert.x-eventloop-thread-1) Entry (event loop)\n2025-08-11 04:13:58,405 INFO [com.exa.ExampleResource] (vert.x-eventloop-thread-1) Light transform\n2025-08-11 04:13:58,405 INFO [com.exa.ExampleResource] (executor-thread-1) Heavy work (worker)\n2025-08-11 04:13:59,407 INFO [com.exa.ExampleResource] (executor-thread-1) Back on event loop</code></pre>\n<p>\nI am unable to switch back to the event loop thread by using \n<code>emitOn(Infrastructure.getDefaultExecutor())</code>.<br>\nWhat am I doing wrong?\n<br>How can I go back to the event loop after doing \nCPU-intensive work inthe worker thread pool?\n</p>\n",
+    "tags" : [ "java", "multithreading", "quarkus", "vert.x", "mutiny" ],
+    "owner" : {
+      "account_id" : 19710308,
+      "reputation" : 11,
+      "user_id" : 22802038,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-dJPkZvtOenE/AAAAAAAAAAI/AAAAAAAAAAA/AMZuuck-ok6HeNUb5v5sp8iAu7Lwa-DsKA/s96-c/s256-rj/photo.jpg",
+      "display_name" : "ozzy",
+      "link" : "https://stackoverflow.com/users/22802038/ozzy"
+    },
+    "is_answered" : false,
+    "view_count" : 94,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1757762967,
+    "creation_date" : 1755293438,
+    "link" : "https://stackoverflow.com/questions/79736852/unable-to-switch-back-to-vertx-event-loop-thread-pool-after-switching-to-executo",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79763683,
+    "question_id" : 79736852,
+    "body" : "<p>According to the following documentation, you can use the Context Switching strategy</p>\n<p><a href=\"https://quarkus.io/guides/vertx-reference#use-a-vert-x-context-aware-scheduler\" rel=\"nofollow noreferrer\">https://quarkus.io/guides/vertx-reference#use-a-vert-x-context-aware-scheduler</a></p>\n<blockquote>\n<p>That being said, there are cases where you need to make sure that an operation is run on a Vert.x (duplicated) context and not just on any random thread.</p>\n<p>The <code>io.smallrye.mutiny.vertx.core.ContextAwareScheduler</code> interface offers an API to obtain context-aware schedulers. Such a scheduler is configured with:</p>\n<ol>\n<li><p>a delegate <code>ScheduledExecutorService</code> of your choice (hint: you can reuse <code>Infrastructure.getDefaultWorkerPool()</code>), and</p>\n</li>\n<li><p>a context fetching strategy among:</p>\n<ul>\n<li><p>an explicit <code>Context</code>, or</p>\n</li>\n<li><p>calling <code>Vertx::getOrCreateContext()</code> either on the current thread or later when the scheduling request happens, or</p>\n</li>\n<li><p>calling <code>Vertx::currentContext()</code>, which fails if the current thread is not a Vert.x thread.</p>\n</li>\n</ul>\n</li>\n</ol>\n</blockquote>\n<p>Both of the below would work:</p>\n<pre><code>.emitOn(ContextAwareScheduler.delegatingTo(Infrastructure.getDefaultWorkerPool())\n.withCurrentContext())\n</code></pre>\n<p>or</p>\n<pre><code>@Inject\nVertx vertx;\n\n// switch back to Vert.x event loop\n.emitOn(command -&gt; vertx.getOrCreateContext().runOnContext(v -&gt; command.run()))\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>package com.acme;\n\n\nimport io.smallrye.mutiny.Uni;\nimport io.smallrye.mutiny.infrastructure.Infrastructure;\nimport io.smallrye.mutiny.vertx.core.ContextAwareScheduler;\nimport io.vertx.core.Vertx;\nimport jakarta.inject.Inject;\nimport jakarta.ws.rs.GET;\nimport jakarta.ws.rs.Path;\nimport jakarta.ws.rs.core.Response;\nimport org.jboss.logging.Logger;\n\n\n@Path(&quot;/compute&quot;)\npublic class ComputeResource {\n\n    private static final Logger LOG = Logger.getLogger(ComputeResource.class);\n\n    @Inject\n    Vertx vertx;\n\n    @GET\n    public Uni&lt;Response&gt; heavyCpuWork() {\n\n        LOG.info(&quot; Entry (event loop)&quot;);\n\n        return Uni.createFrom()\n                .item(() -&gt; {\n                    // CPU-heavy workload: lots of square root computations\n                    double result = 0.0;\n                    for (long i = 1; i &lt; 50_000_000L; i++) {\n                        result += Math.sqrt(i) * Math.sqrt(i + 1);\n                    }\n                    return &quot; Computation result = &quot; + result;\n                })\n                .onItem().transform(input -&gt; {\n                    LOG.info(&quot;  Light Transform&quot;);\n                    return input.toUpperCase();\n                })\n                .emitOn(Infrastructure.getDefaultWorkerPool()) // ← Switch to worker\n                .onItem().transform(data -&gt; {\n                    LOG.info(&quot;  Heavy work (worker)&quot;);\n                    try {\n                        Thread.sleep(1000);\n                    } catch (InterruptedException ignored) {\n                    }\n                    return &quot;Processed: &quot; + data;\n                })\n                // switch back to Vert.x event loop\n                .emitOn(ContextAwareScheduler.delegatingTo(Infrastructure.getDefaultWorkerPool()).withCurrentContext())\n                .onItem().transform(result -&gt; {\n                    LOG.info(&quot; Back on event loop&quot;);\n                    return Response.ok(result).build();\n                });\n\n    }\n\n}\n</code></pre>\n<pre class=\"lang-console prettyprint-override\"><code>\n2025-09-13 13:26:19,410 [Quarkus Main Thread] [34773] INFO  [io.quarkus] () code-with-quarkus 1.0.0-SNAPSHOT on JVM (powered by Quarkus 3.26.3) started in 1.055s. Listening on: http://localhost:8080\n2025-09-13 13:26:19,411 [Quarkus Main Thread] [34773] INFO  [io.quarkus] () Profile dev activated. Live Coding activated.\n2025-09-13 13:26:19,411 [Quarkus Main Thread] [34773] INFO  [io.quarkus] () Installed features: [cdi, rest, rest-jackson, smallrye-context-propagation, vertx]\n2025-09-13 13:26:23,452 [vert.x-eventloop-thread-0] [34773] INFO  [co.ac.ComputeResource] ()  Entry (event loop)\n2025-09-13 13:26:23,535 [vert.x-eventloop-thread-0] [34773] INFO  [co.ac.ComputeResource] ()   Light Transform\n2025-09-13 13:26:23,536 [executor-thread-1] [34773] INFO  [co.ac.ComputeResource] ()   Heavy work (worker)\n2025-09-13 13:26:24,543 [vert.x-eventloop-thread-0] [34773] INFO  [co.ac.ComputeResource] ()  Back on event loop\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 9504657,
+      "reputation" : 8623,
+      "user_id" : 7064617,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Q17Fg.png?s=256",
+      "display_name" : "jcompetence",
+      "link" : "https://stackoverflow.com/users/7064617/jcompetence"
+    },
+    "creation_date" : 1757762967,
+    "last_activity_date" : 1757762967,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : { }
+}

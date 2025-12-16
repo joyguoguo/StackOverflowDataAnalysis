@@ -1,0 +1,342 @@
+{
+  "question" : {
+    "question_id" : 79744109,
+    "title" : "How to get partial results with Java structured concurrency in a timeout scenario?",
+    "body" : "<p>I have a scenario where I need to send two parallel requests, where they should have a combined timeout of 2 seconds. However if one of the requests times out, I would like to see the partial result of the other request. And partial result can be a result or an exception. So I do not want to shutdown on failures. I had tried to solve it like this with StructuredConcurrency:</p>\n<pre><code>import java.time.Instant;\nimport java.util.concurrent.StructuredTaskScope;\nimport java.util.concurrent.TimeoutException;\n\npublic class Main {\n    public static void main(String[] myData) {\n        try (var scope = new StructuredTaskScope&lt;String&gt;()) {\n\n             var subtask1 = scope.fork(() -&gt; {\n                Thread.sleep(3000);\n                return &quot;slow&quot;;\n            });\n             var subtask2 = scope.fork(() -&gt; {\n                Thread.sleep(1000);\n                return &quot;fast&quot;;\n            });\n\n            try {\n                scope.joinUntil(Instant.now().plusMillis(2000));\n            } catch (TimeoutException te) {\n                System.out.println(&quot;Timeout occurred&quot;);\n            }\n\n            switch (subtask1.state()) {\n                case SUCCESS -&gt; System.out.println(&quot;1s&quot;+subtask1.get());\n                case FAILED -&gt; System.out.println(&quot;1f&quot;);\n                case UNAVAILABLE -&gt; System.out.println(&quot;1u&quot;);\n                case null, default -&gt; System.out.println(&quot;1w&quot;);\n            }\n\n            switch (subtask2.state()) {\n                case SUCCESS -&gt; System.out.println(&quot;2s&quot;+subtask2.get());\n                case FAILED -&gt; System.out.println(&quot;2f&quot;);\n                case UNAVAILABLE -&gt; System.out.println(&quot;2u&quot;);\n                case null, default -&gt; System.out.println(&quot;2w&quot;);\n            }\n\n        } catch (InterruptedException e) {\n            throw new RuntimeException(e);\n        }\n    }\n}\n</code></pre>\n<p>So this is the output:</p>\n<pre><code>Timeout occurred\n1u\nException in thread &quot;main&quot; java.lang.IllegalStateException: Owner did not join after forking subtasks\n    at java.base/java.util.concurrent.StructuredTaskScope.newIllegalStateExceptionNoJoin(StructuredTaskScope.java:439)\n    at java.base/java.util.concurrent.StructuredTaskScope.ensureJoinedIfOwner(StructuredTaskScope.java:477)\n    at java.base/java.util.concurrent.StructuredTaskScope$SubtaskImpl.get(StructuredTaskScope.java:917)\n    at org.example.Main.main(Main.java:34)\n</code></pre>\n<p>So slow task's state is UNAVAILABLE. Fast task's state is SUCCESS, but not able to call get on it. It is throwing IllegalStateException. What is the best way to capture the results that each subtask emits? Updating outer variables from the subtasks?</p>\n",
+    "tags" : [ "java", "concurrency", "structured-concurrency" ],
+    "owner" : {
+      "account_id" : 2585378,
+      "reputation" : 63,
+      "user_id" : 2241215,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/acdbc77bffb3ff01997bea959eeb89b0?s=256&d=identicon&r=PG",
+      "display_name" : "Mehmet Atakan Serin",
+      "link" : "https://stackoverflow.com/users/2241215/mehmet-atakan-serin"
+    },
+    "is_answered" : true,
+    "view_count" : 317,
+    "answer_count" : 3,
+    "score" : 4,
+    "last_activity_date" : 1760111620,
+    "creation_date" : 1755937343,
+    "link" : "https://stackoverflow.com/questions/79744109/how-to-get-partial-results-with-java-structured-concurrency-in-a-timeout-scenari",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79744168,
+    "question_id" : 79744109,
+    "body" : "<p>I've been looking at the new API, but I'm not sure this is possible in the way that Oracle intended. You'd need a custom <a href=\"https://download.java.net/java/early_access/jdk25/docs/api/java.base/java/util/concurrent/StructuredTaskScope.Joiner.html\" rel=\"nofollow noreferrer\">StructuredTaskScope.Joiner</a>, but that can only tell the scope to stop waiting after a task has completed. You can configure a timeout, but then <code>scope.join()</code> will throw an exception and you can't get the results. You also need to configure the <a href=\"https://download.java.net/java/early_access/jdk25/docs/api/java.base/java/util/concurrent/StructuredTaskScope.Configuration.html\" rel=\"nofollow noreferrer\">StructuredTaskScope.Configuration</a> to define the timeout.</p>\n<p>The following hack stills work though. The first thing you need is a thread-safe <code>Joiner</code>. Thread-safe, because the results will not be used in the way that Oracle intended.</p>\n<pre class=\"lang-java prettyprint-override\"><code>class MyJoiner implements StructuredTaskScope.Joiner&lt;String, List&lt;String&gt;&gt; {\n\n    private final List&lt;String&gt; results = new ArrayList&lt;&gt;();\n\n    @Override\n    public boolean onComplete(StructuredTaskScope.Subtask&lt;? extends String&gt; subtask) {\n        String result = subtask.get();\n        synchronized (results) {\n            results.add(result);\n        }\n        // don't cancel the scope\n        return false;\n    }\n\n    @Override\n    public List&lt;String&gt; result() {\n        synchronized (results) {\n            return List.copyOf(results);\n        }\n    }\n}\n</code></pre>\n<p>Using it is now where the hack comes in: we're not using the result of <code>scope.join()</code> if a timeout occurs but instead ask the <code>Joiner</code> for the results.</p>\n<pre class=\"lang-java prettyprint-override\"><code>var joiner = new MyJoiner();\ntry (var scope = StructuredTaskScope.open(joiner, config -&gt; config.withTimeout(Duration.ofSeconds(2)))) {\n    scope.fork(() -&gt; {\n        Thread.sleep(3000);\n        return &quot;slow&quot;;\n    });\n    scope.fork(() -&gt; {\n        Thread.sleep(1000);\n        return &quot;fast&quot;;\n    });\n\n    List&lt;String&gt; result;\n    try {\n        result = scope.join();\n    } catch (StructuredTaskScope.TimeoutException _) {\n        result = joiner.result();\n    }\n    System.out.printf(&quot;Result: %s%n&quot;, result);\n} (catch InterruptedException e) {\n    // It's common practice do this when the thread isn't finished\n    Thread.currentThread().interrupt();\n    throw new RuntimeException(e);\n}\n</code></pre>\n<p>In this example I store the subtask results, but you can store the entire subtask if you want. Whenever <code>joiner.result()</code> is called, either directly or through <code>scope.join()</code>, it will only contain completed tasks. That may be a bit safer, because my custom joiner will fail if a task fails before the timeout (<code>subtask.get()</code> may only be called on successfully completed subtasks).</p>\n",
+    "score" : 2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 1211967,
+      "reputation" : 9964,
+      "user_id" : 1180351,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/pKB8y.png?s=256",
+      "display_name" : "Rob Spoor",
+      "link" : "https://stackoverflow.com/users/1180351/rob-spoor"
+    },
+    "creation_date" : 1755945816,
+    "last_activity_date" : 1755945816,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79744199,
+    "question_id" : 79744109,
+    "body" : "<pre><code>// This seems to be working. Eliminates the need of a custom joiner\n\nimport io.vavr.control.Try;\nimport java.time.Instant;\nimport java.util.concurrent.StructuredTaskScope;\nimport java.util.concurrent.TimeoutException;\nimport java.util.concurrent.atomic.AtomicReference;\n\npublic class Main {\n    public static void main(String[] myData) {\n        AtomicReference&lt;Try&lt;String&gt;&gt; slow = new AtomicReference&lt;&gt;();\n        AtomicReference&lt;Try&lt;String&gt;&gt; fast = new AtomicReference&lt;&gt;();\n\n        try (var scope = new StructuredTaskScope&lt;Void&gt;()) {\n            scope.fork(() -&gt; {\n                Thread.sleep(3000);\n                slow.set(Try.success(&quot;slow&quot;));\n                return null; // ignored\n            });\n            scope.fork(() -&gt; {\n                Thread.sleep(1000);\n                fast.set(Try.failure(new Exception(&quot;exception fast&quot;)));\n                return null; // ignored\n            });\n\n            scope.joinUntil(Instant.now().plusMillis(2000));\n\n        } catch (TimeoutException te)  {\n            System.out.println(&quot;Timeout occurred&quot;);\n        } catch (InterruptedException e) {\n            Thread.currentThread().interrupt();\n        }\n\n        Try&lt;String&gt; slowResult = slow.get();\n        Try&lt;String&gt; fastResult = fast.get();\n\n        if (slowResult == null) {\n            System.out.println(&quot;Slow task did not finish in time.&quot;);\n        } else if (slowResult.isFailure()) {\n            System.out.println(&quot;Slow task failed: &quot; + slowResult.getCause());\n        } else {\n            System.out.println(&quot;Slow result: &quot; + slowResult.get());\n        }\n\n        if (fastResult == null) {\n            System.out.println(&quot;Fast task did not finish in time.&quot;);\n        } else if (fastResult.isFailure()) {\n            System.out.println(&quot;Fast task failed: &quot; + fastResult.getCause());\n        } else {\n            System.out.println(&quot;Fast result: &quot; + fastResult.get());\n        }\n\n        System.out.println(&quot;Done.&quot;);\n    }\n}\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 2585378,
+      "reputation" : 63,
+      "user_id" : 2241215,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/acdbc77bffb3ff01997bea959eeb89b0?s=256&d=identicon&r=PG",
+      "display_name" : "Mehmet Atakan Serin",
+      "link" : "https://stackoverflow.com/users/2241215/mehmet-atakan-serin"
+    },
+    "creation_date" : 1755949989,
+    "last_activity_date" : 1755953628,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79763154,
+    "question_id" : 79744109,
+    "body" : "<p>Speaking of <code>StructuredTaskScope</code> version &lt; 25, yes, it seems there is no way to get a result from a <code>Subtask</code> which completed successfully if <code>join</code> threw a timeout, other than capturing the result in the task (<code>Callable</code>) itself as @forty-two correctly <a href=\"https://stackoverflow.com/questions/79744109/how-to-get-partial-results-with-java-structured-concurrency-in-a-timeout-scenari#comment140686590_79744109\">pointed out in the outset</a>.</p>\n<p>If this is inevitable, then I'd choose to wrap a task in a Java Concurrency <a href=\"https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/concurrent/FutureTask.html\" rel=\"nofollow noreferrer\"><code>FutureTask</code></a> , at the same time overriding <code>fork</code> method in a special subclass (which is a recommended method for implementing a specialized behavior of Task Scope).</p>\n<pre class=\"lang-java prettyprint-override\"><code>import java.util.concurrent.Callable;\nimport java.util.concurrent.Future;\nimport java.util.concurrent.StructuredTaskScope;\nimport java.util.concurrent.FutureTask;\n\npublic class PartialResultTaskScope&lt;T&gt; extends StructuredTaskScope&lt;T&gt; {\n    \n    private static class FutureCallable&lt;T&gt; implements Callable&lt;T&gt; {\n        \n    private final FutureTask&lt;T&gt; future; \n        \n    private FutureCallable(Callable&lt;T&gt; task) {\n        future = new FutureTask&lt;&gt;(task);\n    }\n\n    @Override\n    public T call() throws Exception {\n        future.run();\n        return future.get();\n    }\n\n    private FutureTask&lt;T&gt; getFuture() {\n        return future;\n    }\n        \n    }\n    \n    @Override\n    public &lt;U extends T&gt; Subtask&lt;U&gt; fork(Callable&lt;? extends U&gt; task) {\n        return super.fork(new FutureCallable&lt;&gt;(task));\n    }\n    \n    @SuppressWarnings(&quot;unchecked&quot;)\n    public static &lt;U&gt; Future&lt;U&gt; toFuture(Subtask&lt;U&gt; task) {\n        return ((FutureCallable&lt;U&gt;)task.task()).getFuture();\n    }\n\n}\n</code></pre>\n<p>Usage of <code>FutureTask</code> gives you rich set of features like (timed) waiting, cancellation, interruption,  <code>Future.State</code> etc.</p>\n<p>Then your code will look like</p>\n<pre class=\"lang-java prettyprint-override\"><code>try (var scope = new PartialResultTaskScope&lt;&gt;()) {\n\n    var subtask1 = scope.fork(() -&gt; {\n    Thread.sleep(3000);\n        return &quot;slow&quot;;\n    });\n    var subtask2 = scope.fork(() -&gt; {\n        Thread.sleep(1000);\n    return &quot;fast&quot;;\n    });\n\n    try {\n        scope.joinUntil(Instant.now().plusMillis(2000));\n    } catch (TimeoutException te) {\n        System.out.println(&quot;Timeout occurred&quot;);\n    }\n\n    System.out.println(&quot;1s&quot; + PartialResultTaskScope.toFuture(subtask1).get());\n    System.out.println(&quot;2s&quot; + PartialResultTaskScope.toFuture(subtask2).get());\n\n} catch (InterruptedException e) {\n    throw new RuntimeException(e);\n}\n</code></pre>\n<p>and you get a result of <code>subtask1</code> even in the case of timeout. Next line <code>PartialResultTaskScope.toFuture(subtask2).get()</code> will wait for completion of <code>subtask2</code>.</p>\n<p>It is easy to see that such a design is a sheer violation of Structured Concurrency paradigm, note that <code>Subtask.get</code> <em>intentionally</em> prohibits returning a result in the case of timeout of entire Scope <em>even if</em> the particular task succeeded. That's why <code>PartialResultTaskScope</code> class does not have <code>Structured</code> in its name. One could argue that  it won't make sense to use Structured Concurrency, if the <code>Future</code> (or <code>Try</code>, does not matter) is used directly, but you still have the rich features of <code>StructuredTaskScope</code> like <code>ScopedValue</code>, nesting etc.</p>\n<p><code>StructuredTaskScope</code> version 25 is quite different beast.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 2745991,
+      "reputation" : 2794,
+      "user_id" : 2366397,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/24ee2b89e9791e936235b16af77ebda4?s=256&d=identicon&r=PG",
+      "display_name" : "igor.zh",
+      "link" : "https://stackoverflow.com/users/2366397/igor-zh"
+    },
+    "creation_date" : 1757693248,
+    "last_activity_date" : 1757693248,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140732086,
+    "post_id" : 79744109,
+    "body" : "Good question, which shed a light on Structured Concurrency.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2745991,
+      "reputation" : 2794,
+      "user_id" : 2366397,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/24ee2b89e9791e936235b16af77ebda4?s=256&d=identicon&r=PG",
+      "display_name" : "igor.zh",
+      "link" : "https://stackoverflow.com/users/2366397/igor-zh"
+    },
+    "creation_date" : 1757693331,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140686630,
+    "post_id" : 79744109,
+    "body" : "Also, your switch expressions can omit the <code>case null, default</code> because the state will never be <code>null</code>, and your switch expressions are already covering all possible enum values.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1211967,
+      "reputation" : 9964,
+      "user_id" : 1180351,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/pKB8y.png?s=256",
+      "display_name" : "Rob Spoor",
+      "link" : "https://stackoverflow.com/users/1180351/rob-spoor"
+    },
+    "creation_date" : 1755945906,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140686603,
+    "post_id" : 79744109,
+    "body" : "You need to update your code, the API changed quite a bit in Java 25, see <a href=\"https://download.java.net/java/early_access/jdk25/docs/api/java.base/java/util/concurrent/StructuredTaskScope.html\" rel=\"nofollow noreferrer\">download.java.net/java/early_access/jdk25/docs/api/java.base&zwnj;&#8203;/&hellip;</a>.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1211967,
+      "reputation" : 9964,
+      "user_id" : 1180351,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/pKB8y.png?s=256",
+      "display_name" : "Rob Spoor",
+      "link" : "https://stackoverflow.com/users/1180351/rob-spoor"
+    },
+    "creation_date" : 1755944224,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140686590,
+    "post_id" : 79744109,
+    "body" : "I guess the success or failure of a task has to be captured in the task itself, so that the result can be retrieved when all tasks are completed",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 116746,
+      "reputation" : 12898,
+      "user_id" : 306030,
+      "user_type" : "registered",
+      "accept_rate" : 70,
+      "profile_image" : "https://i.sstatic.net/y053l.jpg?s=256",
+      "display_name" : "forty-two",
+      "link" : "https://stackoverflow.com/users/306030/forty-two"
+    },
+    "creation_date" : 1755943374,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79744199" : [ {
+      "comment_id" : 140732104,
+      "post_id" : 79744199,
+      "body" : "I wouldn&#39;t use non-concurrent <code>Try</code>. Your <code>AtomicReference</code> to it is good (probably can be replaced with <code>volatile</code>), but <code>Try</code> does not hold a result in a <code>volatile</code> variable. Probably in this exact code it is not that critical, because <code>scope.joinUntil</code> provides enough memory barriers :thinking_face: , but in general <code>Try</code> is, IMHO, not a right thing for this purpose.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2745991,
+        "reputation" : 2794,
+        "user_id" : 2366397,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/24ee2b89e9791e936235b16af77ebda4?s=256&d=identicon&r=PG",
+        "display_name" : "igor.zh",
+        "link" : "https://stackoverflow.com/users/2366397/igor-zh"
+      },
+      "creation_date" : 1757693839,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140686825,
+      "post_id" : 79744199,
+      "body" : "It&#39;s a solution that works with Java 24 and can work with Java 25 without too much refactoring.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 1211967,
+        "reputation" : 9964,
+        "user_id" : 1180351,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/pKB8y.png?s=256",
+        "display_name" : "Rob Spoor",
+        "link" : "https://stackoverflow.com/users/1180351/rob-spoor"
+      },
+      "creation_date" : 1755954135,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140686720,
+      "post_id" : 79744199,
+      "body" : "@rob-spoor What do you think about this one?",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 2585378,
+        "reputation" : 63,
+        "user_id" : 2241215,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/acdbc77bffb3ff01997bea959eeb89b0?s=256&d=identicon&r=PG",
+        "display_name" : "Mehmet Atakan Serin",
+        "link" : "https://stackoverflow.com/users/2241215/mehmet-atakan-serin"
+      },
+      "creation_date" : 1755950507,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79744168" : [ {
+      "comment_id" : 140789352,
+      "post_id" : 79744168,
+      "body" : "Checking the documentation a bit more, allUntil(_ -&gt; false) seems like its going to do the trick for this scenario?",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 2585378,
+        "reputation" : 63,
+        "user_id" : 2241215,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/acdbc77bffb3ff01997bea959eeb89b0?s=256&d=identicon&r=PG",
+        "display_name" : "Mehmet Atakan Serin",
+        "link" : "https://stackoverflow.com/users/2241215/mehmet-atakan-serin"
+      },
+      "creation_date" : 1760130951,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140788730,
+      "post_id" : 79744168,
+      "body" : "That&#39;s great that they will implement it. I wrote these hardships to the Loom maillist. Alan replied and wrote he will see if there is enough demand for this. If yes, then they will implement it. I guess they are implementing in jdk26",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2585378,
+        "reputation" : 63,
+        "user_id" : 2241215,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/acdbc77bffb3ff01997bea959eeb89b0?s=256&d=identicon&r=PG",
+        "display_name" : "Mehmet Atakan Serin",
+        "link" : "https://stackoverflow.com/users/2241215/mehmet-atakan-serin"
+      },
+      "creation_date" : 1760108811,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140764076,
+      "post_id" : 79744168,
+      "body" : "Understood. No binaries/code itself yet. I still prefer to see <i>in the code</i> what the overrider can and cannot do in the terms of synchronization and such. Anyway, thanks again for keeping us updated!",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2745991,
+        "reputation" : 2794,
+        "user_id" : 2366397,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/24ee2b89e9791e936235b16af77ebda4?s=256&d=identicon&r=PG",
+        "display_name" : "igor.zh",
+        "link" : "https://stackoverflow.com/users/2366397/igor-zh"
+      },
+      "creation_date" : 1759001519,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140763794,
+      "post_id" : 79744168,
+      "body" : "@iqor.zh: I found a link in the history of the JEP: <a href=\"https://openjdk.org/jeps/525\" rel=\"nofollow noreferrer\">openjdk.org/jeps/525</a>",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 1211967,
+        "reputation" : 9964,
+        "user_id" : 1180351,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/pKB8y.png?s=256",
+        "display_name" : "Rob Spoor",
+        "link" : "https://stackoverflow.com/users/1180351/rob-spoor"
+      },
+      "creation_date" : 1758987232,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140763742,
+      "post_id" : 79744168,
+      "body" : "Great! Looks like Alan Bateman <i>himself</i> read exactly this thread :) But where did you get this JDK from? I downloaded 26 from <a href=\"https://jdk.java.net/26/\" rel=\"nofollow noreferrer\">OpenJDK JDK 26 Early-Access Builds</a> and <code>StructuredTaskScope.Joiner</code> <a href=\"https://download.java.net/java/early_access/jdk26/docs/api/java.base/java/util/concurrent/StructuredTaskScope.Joiner.html\" rel=\"nofollow noreferrer\">there does not have</a> <code>onTimeout</code> method.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2745991,
+        "reputation" : 2794,
+        "user_id" : 2366397,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/24ee2b89e9791e936235b16af77ebda4?s=256&d=identicon&r=PG",
+        "display_name" : "igor.zh",
+        "link" : "https://stackoverflow.com/users/2366397/igor-zh"
+      },
+      "creation_date" : 1758985460,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140762294,
+      "post_id" : 79744168,
+      "body" : "@igor.zh I just noticed that in Java 26 this is still in preview, but most of the above becomes unnecessary. <code>Joiner</code> gets a new method: <a href=\"https://cr.openjdk.org/~alanb/sc-jdk26/api/java.base/java/util/concurrent/StructuredTaskScope.Joiner.html#onTimeout()\" rel=\"nofollow noreferrer\">cr.openjdk.org/~alanb/sc-jdk26/api/java.base/java/util/&hellip;</a>. The default is to throw, but it can be overridden to do something else, like not fail at all. The call to <code>join</code> would then not throw an exception but instead allow the partial results to be returned.",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 1211967,
+        "reputation" : 9964,
+        "user_id" : 1180351,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/pKB8y.png?s=256",
+        "display_name" : "Rob Spoor",
+        "link" : "https://stackoverflow.com/users/1180351/rob-spoor"
+      },
+      "creation_date" : 1758903597,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140732122,
+      "post_id" : 79744168,
+      "body" : "Thanks for informing us about <code>StructuredTaskScope</code> version 25! Your <code>Joiner</code> is, IMHO,  perfectly thread-safe, yet Concurrency pundits might frown at your <code>synchronized</code> blocks. If something advanced like <code>ConcurrentSkipListSet</code> instead of  <code>ArrayList</code> (might require wrapping of <code>String</code>) is too much, then guard the <code>ArrayList</code> with good ole <code>ReentrantLock</code>.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 2745991,
+        "reputation" : 2794,
+        "user_id" : 2366397,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/24ee2b89e9791e936235b16af77ebda4?s=256&d=identicon&r=PG",
+        "display_name" : "igor.zh",
+        "link" : "https://stackoverflow.com/users/2366397/igor-zh"
+      },
+      "creation_date" : 1757694392,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140686814,
+      "post_id" : 79744168,
+      "body" : "@MehmetAtakanSerin You can get an early-access build from <a href=\"https://jdk.java.net/25/\" rel=\"nofollow noreferrer\">jdk.java.net/25</a>. But your version works similarly to mine - you capture the results and get them without using the <code>StructuredTaskScope</code>&#39;s own methods.",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 1211967,
+        "reputation" : 9964,
+        "user_id" : 1180351,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/pKB8y.png?s=256",
+        "display_name" : "Rob Spoor",
+        "link" : "https://stackoverflow.com/users/1180351/rob-spoor"
+      },
+      "creation_date" : 1755954023,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140686698,
+      "post_id" : 79744168,
+      "body" : "Thanks for your answers! I am still on jdk24 not sure where to download jdk25 from. I am sort of converging on another solution @rob-spoor. I am wondering your opinion.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2585378,
+        "reputation" : 63,
+        "user_id" : 2241215,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/acdbc77bffb3ff01997bea959eeb89b0?s=256&d=identicon&r=PG",
+        "display_name" : "Mehmet Atakan Serin",
+        "link" : "https://stackoverflow.com/users/2241215/mehmet-atakan-serin"
+      },
+      "creation_date" : 1755949699,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

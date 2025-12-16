@@ -1,0 +1,110 @@
+{
+  "question" : {
+    "question_id" : 79641937,
+    "title" : "How to get displayed tooltip height (not tooltip.getHeight)",
+    "body" : "<p>I want to show tooltip while clicking one button.</p>\n<p><a href=\"https://i.sstatic.net/JpsyHH72.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/JpsyHH72.png\" alt=\"My Application Pic\" /></a></p>\n<p>Relative position between this button and tooltip looks like:</p>\n<p><a href=\"https://i.sstatic.net/OldRYoM1.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/OldRYoM1.png\" alt=\"Relative Position\" /></a></p>\n<p>I calculate the coordinates of <em>Point B</em> by:</p>\n<pre><code>B.y = (Button.minY + Button.maxY) / 2 - Tooltip.height / 2\n</code></pre>\n<p>I found that the value obtained by <code>tooltip.getHeight()</code> is larger than the actual height of the displayed tooltip.</p>\n<p><code>tooltip.getHeight()</code> seems to be the height of the Window, but what I actually want is the height of the displayed tip.</p>\n<p><a href=\"https://i.sstatic.net/HlcYiU4O.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/HlcYiU4O.png\" alt=\"enter image description here\" /></a></p>\n<p>Following is the simple code, you can use it by calling <code>showTooltip(Button)</code> method:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public void showTooltip(Button btn) {\n    btn.setOnAction(event -&gt; {\n        Tooltip tooltip = new Tooltip();\n        tooltip.setText(&quot;TestTooltip&quot;);\n        tooltip.setAutoHide(true);\n        tooltip.setOnShown(windowEvent -&gt; {\n            Point2D anchor = anchor(btn, tooltip);\n            tooltip.setX(anchor.getX());\n            tooltip.setY(anchor.getY());\n        });\n        tooltip.show(btn.getScene().getWindow());\n    });\n}\n\nprivate static Point2D anchor(final Node node, final Tooltip tooltip) {\n    final Bounds bounds = node.localToScreen(node.getBoundsInLocal());\n    final double tipHeight = tooltip.getHeight();\n    final int xOffset = 2;\n\n    double x = bounds.getMaxX() + xOffset;\n    double y = (bounds.getMinY() + bounds.getMaxY()) / 2 - tipHeight / 2;\n    // Not Correct\n    System.out.println(tipHeight);\n\n    return new Point2D(Math.max(x, 0), Math.max(y, 0));\n}\n</code></pre>\n<p><a href=\"https://i.sstatic.net/wicQKaHY.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/wicQKaHY.png\" alt=\"Run Code Result\" /></a></p>\n",
+    "tags" : [ "java", "javafx", "tooltip" ],
+    "owner" : {
+      "account_id" : 29183914,
+      "reputation" : 77,
+      "user_id" : 22357486,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/AAcHTtcNVjsLNpMtfpE_--jSU4faooVOALBokK0N1Xc0vBHx-SM=k-s256",
+      "display_name" : "Meltryllis",
+      "link" : "https://stackoverflow.com/users/22357486/meltryllis"
+    },
+    "is_answered" : true,
+    "view_count" : 148,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1748508931,
+    "creation_date" : 1748425284,
+    "link" : "https://stackoverflow.com/questions/79641937/how-to-get-displayed-tooltip-height-not-tooltip-getheight",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79643273,
+    "question_id" : 79641937,
+    "body" : "<p>There's two things causing the misalignment:</p>\n<ol>\n<li><p>The default <a href=\"https://openjfx.io/javadoc/24/javafx.graphics/javafx/stage/PopupWindow.html#anchorLocationProperty\" rel=\"nofollow noreferrer\">anchor location</a> of a tooltip is <code>CONTENT_TOP_LEFT</code>.</p>\n</li>\n<li><p>The default application user-agent stylesheet (modena.css) <a href=\"https://github.com/openjdk/jfx/blob/5d3675308865c6e1cefc4978557165939566f01f/modules/javafx.controls/src/main/resources/com/sun/javafx/scene/control/skin/modena/modena.css#L2583\" rel=\"nofollow noreferrer\">gives tooltips</a> a drop shadow with a non-zero <a href=\"https://openjfx.io/javadoc/24/javafx.graphics/javafx/scene/effect/DropShadow.html#offsetYProperty\" rel=\"nofollow noreferrer\">y-offset</a>.</p>\n</li>\n</ol>\n<p>Neither of those two points are documented, as far as I can tell.</p>\n<p>To properly center the tooltip you need to set the anchor location to <code>WINDOW_TOP_LEFT</code> and you need to account for the y-offset of the drop shadow. Here's a proof-of-concept:</p>\n<pre class=\"lang-java prettyprint-override\"><code>import java.util.function.Function;\nimport javafx.application.Application;\nimport javafx.geometry.Bounds;\nimport javafx.scene.Scene;\nimport javafx.scene.control.Button;\nimport javafx.scene.control.Tooltip;\nimport javafx.scene.layout.StackPane;\nimport javafx.scene.paint.Color;\nimport javafx.scene.shape.Line;\nimport javafx.stage.PopupWindow.AnchorLocation;\nimport javafx.stage.Stage;\n\npublic class Main extends Application {\n\n  @Override\n  public void start(Stage primaryStage) {\n    var button = new Button(&quot;Test&quot;);\n\n    var tooltip = new Tooltip(&quot;Test button's tooltip.&quot;);\n    tooltip.setAnchorLocation(AnchorLocation.WINDOW_TOP_LEFT);\n    tooltip.setOnShown(\n        _ -&gt; {\n          var bounds = button.localToScreen(button.getBoundsInLocal());\n          tooltip.setAnchorX(bounds.getMaxX() + 5);\n          // '3' accounts for the y-offset of the tooltip's drop shadow\n          tooltip.setAnchorY(bounds.getCenterY() - tooltip.getHeight() / 2 + 3);\n        });\n    button.setTooltip(tooltip);\n\n    // these lines only exist to help see the alignment\n    var topLine = createLine(Color.RED, button, Bounds::getMinY);\n    var centerLine = createLine(Color.GREEN, button, Bounds::getCenterY);\n    var bottomLine = createLine(Color.RED, button, Bounds::getMaxY);\n\n    var root = new StackPane(topLine, centerLine, bottomLine, button);\n    var scene = new Scene(root, 300, 150);\n    primaryStage.setScene(scene);\n    primaryStage.show();\n  }\n\n  private Line createLine(Color stroke, Button button, Function&lt;Bounds, Double&gt; mapper) {\n    var line = new Line();\n    line.endXProperty().bind(button.sceneProperty().map(Scene::getWidth));\n    line.startYProperty().bind(button.boundsInParentProperty().map(mapper));\n    line.endYProperty().bind(line.startYProperty());\n    line.setStroke(stroke);\n    line.setStrokeWidth(2);\n    line.setManaged(false);\n    return line;\n  }\n}\n</code></pre>\n<p>Output:</p>\n<p><a href=\"https://i.sstatic.net/82itAIFT.jpg\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/82itAIFT.jpg\" alt=\"Screenshot of running proof-of-concept.\" /></a></p>\n<p>This code adds <code>3</code> to the y-anchor of the tooltip to account for the y-offset of the drop shadow. The value of <code>3</code> was taken from modena.css. It may be different across different versions of JavaFX. I tested on JavaFX 24.0.1. A more robust approach would probably be to get the effect from the tooltip. Note it's the <em>label</em> within the tooltip that actually has the drop shadow effect. Of course, there's no guarantee the effect will remain a drop shadow in future versions of JavaFX.</p>\n<p>You could also customize the styling of the tooltip. That way you know exactly what you need to account for. For instance, you could remove the effect entirely.</p>\n<p>Or you could use your own <code>Popup</code> or <code>PopupControl</code>. That might make more sense semantically. Plus, <code>Tooltip</code> comes with functionality you may not need.</p>\n",
+    "score" : 4,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 8532578,
+      "reputation" : 49904,
+      "user_id" : 6395627,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/af0f9bfe593f36642a032cd7ea611e7d?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Slaw",
+      "link" : "https://stackoverflow.com/users/6395627/slaw"
+    },
+    "creation_date" : 1748491809,
+    "last_activity_date" : 1748492206,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140467526,
+    "post_id" : 79641937,
+    "body" : "Likely an <a href=\"https://xyproblem.info\" rel=\"nofollow noreferrer\">xy problem</a>.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 1180113,
+      "reputation" : 160487,
+      "user_id" : 1155209,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/5192e7cbcf2f72a847d6fb0d1552f049?s=256&d=identicon&r=PG",
+      "display_name" : "jewelsea",
+      "link" : "https://stackoverflow.com/users/1155209/jewelsea"
+    },
+    "creation_date" : 1748465882,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140467070,
+    "post_id" : 79641937,
+    "body" : "I found that <code>Popup</code> is better component to achieve what I want. It does not cause this problem. Here is the <a href=\"https://stackoverflow.com/a/18687993/22357486\">relevant information</a>.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 29183914,
+      "reputation" : 77,
+      "user_id" : 22357486,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a/AAcHTtcNVjsLNpMtfpE_--jSU4faooVOALBokK0N1Xc0vBHx-SM=k-s256",
+      "display_name" : "Meltryllis",
+      "link" : "https://stackoverflow.com/users/22357486/meltryllis"
+    },
+    "creation_date" : 1748454974,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140466088,
+    "post_id" : 79641937,
+    "body" : "Can you create a complete <a href=\"https://stackoverflow.com/help/minimal-reproducible-example\">minimal reproducible example</a> that demonstrates the issue? There are many possible reasons this might not work correctly (for example getting the height of the tooltip before layout has been calculated on it).",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 2518243,
+      "reputation" : 210916,
+      "user_id" : 2189127,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/e8e6e627b4b90ec816c5c7aa04cbcc26?s=256&d=identicon&r=PG",
+      "display_name" : "James_D",
+      "link" : "https://stackoverflow.com/users/2189127/james-d"
+    },
+    "creation_date" : 1748437579,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140465884,
+    "post_id" : 79641937,
+    "body" : "Tooltip inherits from Window, so perhaps you can check the height of its Scene.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 2053598,
+      "reputation" : 44991,
+      "user_id" : 1831987,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/38b1c37530189ec4471a43a618e33f67?s=256&d=identicon&r=PG",
+      "display_name" : "VGR",
+      "link" : "https://stackoverflow.com/users/1831987/vgr"
+    },
+    "creation_date" : 1748434026,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

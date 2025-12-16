@@ -1,0 +1,78 @@
+{
+  "question" : {
+    "question_id" : 79652435,
+    "title" : "How to execute Quartz jobs in virtual threads",
+    "body" : "<p>How can I leverage virtual threads to execute I/O-bound Quartz jobs within a Quarkus microservice, handling programmatic job triggering without cron-based scheduling?\nWe are considering Quartz for our Quarkus microservice that will perform I/O bound, long running jobs (basically, a lot of HTTP requests over a period of time). We would like to use virtual threads for these jobs, but Quartz doesn't seem to have any first class support for them. These jobs will be triggered programmatically by users, not by a cron-like scheduling, so we can't rely on Quarkus' @Scheduled. Is there a standard approach to this?</p>\n<p>We have considered a custom thread pool (<a href=\"https://www.quartz-scheduler.org/documentation/quartz-2.3.0/configuration/ConfigThreadPool.html\" rel=\"nofollow noreferrer\">https://www.quartz-scheduler.org/documentation/quartz-2.3.0/configuration/ConfigThreadPool.html</a>) but the documentation is very sparse and barely mentions it.</p>\n",
+    "tags" : [ "java", "task", "scheduling", "quartz", "virtual-threads" ],
+    "owner" : {
+      "account_id" : 16426249,
+      "reputation" : 101,
+      "user_id" : 11866222,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/c439d65de956d4bf45d74b07b4728923?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "LAP",
+      "link" : "https://stackoverflow.com/users/11866222/lap"
+    },
+    "is_answered" : true,
+    "view_count" : 335,
+    "answer_count" : 1,
+    "score" : 2,
+    "last_activity_date" : 1751249941,
+    "creation_date" : 1749027560,
+    "link" : "https://stackoverflow.com/questions/79652435/how-to-execute-quartz-jobs-in-virtual-threads",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79670975,
+    "question_id" : 79652435,
+    "body" : "<h5>Quartz custom virtual thread &quot;pool&quot;</h5>\n<p>Simple implementation of Quartz' <code>org.quartz.spi.ThreadPool</code>, which can be configured as custom thread pool in <code>org.quartz.threadPool.class</code> property of Quartz configuration file, like the <a href=\"https://www.quartz-scheduler.org/documentation/quartz-2.3.0/configuration/ConfigThreadPool.html\" rel=\"nofollow noreferrer\">documentation you mentioned</a> specifies, could be very simple:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class SimpleVirtualThreadRunner implements ThreadPool {\n\n    private final AtomicLong threadOrdinal = new AtomicLong();\n    private String schedName;\n\n    @Override\n    public boolean runInThread(Runnable runnable) {\n        Thread.ofVirtual()\n            .name(schedName + &quot;-virtual-#&quot; + threadOrdinal.incrementAndGet())\n            .start(runnable);\n        return true;\n    }\n\n    @Override\n    public int blockForAvailableThreads() {\n        return Integer.MAX_VALUE;\n    }\n\n    @Override\n    public void initialize() throws SchedulerConfigException {\n    }\n\n    @Override\n    public void shutdown(boolean waitForJobsToComplete) {\n    }\n\n    @Override\n    public int getPoolSize() {\n        return Integer.MAX_VALUE;\n    }\n\n    @Override\n    public void setInstanceId(String schedInstId) {\n    }\n\n    @Override\n    public void setInstanceName(String schedName) {\n        this.schedName = schedName;\n    }\n\n}\n</code></pre>\n<p>Notice that the implementation <em>is not actually a thread pool</em> as <a href=\"https://docs.oracle.com/en/java/javase/21/core/virtual-threads.html#GUID-8AEDDBE6-F783-4D77-8786-AC5A79F517C0\" rel=\"nofollow noreferrer\">virtual threads are not advised to be pooled</a>. The implementation counts on unlimited amount of virtual threads that can be created, therefore method <code>blockForAvailableThreads</code> never blocks and method <code>runInThread</code> always succeeds and returns true. I believe this fits most of the scenarios, especially when Scheduling is concerned, but if the amount of virtual threads still needs to be restricted, a full-blown implementation of <code>org.quartz.spi.ThreadPool</code>, which limits the amount of virtual threads to a certain threshold and also provides a graceful shutdown of virtual threads, <a href=\"https://github.com/eager-zh/quartz-virtual-thread-pool/\" rel=\"nofollow noreferrer\">is available at github</a>.</p>\n<h5>Barebone Quartz</h5>\n<p>This implementation will work if the Jobs are scheduled programmatically in a way Quartz  examples <a href=\"https://www.quartz-scheduler.org/documentation/quartz-2.2.2/examples/Example1.html\" rel=\"nofollow noreferrer\">suggest</a>.</p>\n<h5>Quarkus-managed Quartz, Jobs scheduled on Quartz threads</h5>\n<p>Quarkus configuration property <code>quarkus.quartz.run-blocking-scheduled-method-on-quartz-thread</code> is set to true. Although Quarkus <a href=\"https://quarkus.io/guides/quartz\" rel=\"nofollow noreferrer\">does provide</a> <code>quarkus.quartz.thread-pool-class</code> configuration property, it anyway hardcodes default Quartz thread pool, <code>org.quartz.simpl.SimpleThreadPool</code> , and, it seems, there is no easy, configurable way to alter this behavior.</p>\n<h5>Quarkus-managed Quartz, Job scheduled on Quarkus threads</h5>\n<p>Quarkus configuration property <code>quarkus.quartz.run-blocking-scheduled-method-on-quartz-thread</code> is not set or set to false. In this case Quarkus will use its own thread management.\nIf standard <code>@Scehduled</code>-based way:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@RunOnVirtualThread\n@Scheduled(every = &quot;30s&quot;, identity = &quot;task-job&quot;)\npublic void executeJob() {\n    logger.info(&quot;Virtual thread? &quot; + Thread.currentThread().isVirtual());\n}\n</code></pre>\n<p>cannot be used, Quartz Job could be scheduled programmatically as the chapter <a href=\"https://quarkus.io/guides/scheduler-reference#programmatic_scheduling\" rel=\"nofollow noreferrer\">Programmatic Scheduling</a> of Quarkus' Scheduler Reference Guide recommends:</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Inject\nprivate io.quarkus.scheduler.Scheduler scheduler;\n\nprivate void addMyJob() {\n    scheduler\n        .newJob(&quot;myJob&quot;)\n        .setCron(&quot;0/10 * * * * ?&quot;)\n    .setTask(executionContext -&gt; {\n            logger.info(&quot;Virtual thread? &quot; + Thread.currentThread().isVirtual());\n    }, true)\n    .schedule();\n}\n</code></pre>\n<p>, where second argument of <code>setTask</code> method instructs Quarkus to schedule the Job on virtual thread.</p>\n<p>Unfortunately, the question does not specify what does &quot;programmatic triggering by user&quot; exactly mean and it is difficult to give more concrete answer.</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 2745991,
+      "reputation" : 2794,
+      "user_id" : 2366397,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/24ee2b89e9791e936235b16af77ebda4?s=256&d=identicon&r=PG",
+      "display_name" : "igor.zh",
+      "link" : "https://stackoverflow.com/users/2366397/igor-zh"
+    },
+    "creation_date" : 1750262771,
+    "last_activity_date" : 1751249941,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140491036,
+    "post_id" : 79652435,
+    "body" : "Why are you using Quartz when the jobs are triggered by users? A few years ago, I developed an application that included a job for sending email reminders to customers with outstanding bills. The execution of this job was fully configurable, users could either trigger it manually via a button click or schedule it to run automatically at a specific time each day. The job ran in a separate thread, and users were notified once the system had finished sending all the emails. Is this the kind of behavior you&#39;re aiming for in your application?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 16860149,
+      "reputation" : 181,
+      "user_id" : 12191150,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/fec9a6154254eb5fd901f4a0045c0b1f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Yasin Ahmed",
+      "link" : "https://stackoverflow.com/users/12191150/yasin-ahmed"
+    },
+    "creation_date" : 1749142662,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140488715,
+    "post_id" : 79652435,
+    "body" : "Could you clarify your statement &quot;These jobs will be triggered programmatically by users&quot;?  Code snippet for that action would be even better. The problem I have with your question is: As far as I know Quartz is nothing more than a scheduler, and you don&#39;t use <code>@Scheduled</code> but just call a method (am I wrong here?), then what for Quartz is? What do I miss in the picture? Once again, relevant pieces of code/configuration are very welcome.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2745991,
+      "reputation" : 2794,
+      "user_id" : 2366397,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/24ee2b89e9791e936235b16af77ebda4?s=256&d=identicon&r=PG",
+      "display_name" : "igor.zh",
+      "link" : "https://stackoverflow.com/users/2366397/igor-zh"
+    },
+    "creation_date" : 1749087037,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

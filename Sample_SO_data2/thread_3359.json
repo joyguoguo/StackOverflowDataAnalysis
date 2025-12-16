@@ -1,0 +1,181 @@
+{
+  "question" : {
+    "question_id" : 79555977,
+    "title" : "Java 24 Preview Features Not able to access",
+    "body" : "<p>I am trying to access to Java 24 features. But not able to access. I am using below program</p>\n<pre><code>public static void main(String[] args) {\n        Stream.of(&quot;apple&quot;, &quot;banana&quot;, &quot;kiwi&quot;)\n              .gather((word, out) -&gt; {\n                  for (char ch : word.toCharArray()) {\n                      if (Character.isLowerCase(ch)) {\n                          out.accept(ch); // emit each lowercase letter\n                      }\n                  }\n              })\n              .forEach(System.out::println);\n    }\n</code></pre>\n<p>But its giving me below compile time exception</p>\n<pre><code>The method gather(Gatherer&lt;? super String,?,R&gt;) in the type Stream&lt;String&gt; is not applicable for the arguments ((&lt;no type&gt; word, &lt;no type&gt; out) -&gt; {})\n\nException in thread &quot;main&quot; java.lang.Error: Unresolved compilation problems: \n    The method gather(Gatherer&lt;? super String,?,R&gt;) in the type Stream&lt;String&gt; is not applicable for the arguments ((&lt;no type&gt; word, &lt;no type&gt; out) -&gt; {})\n    Lambda expression's signature does not match the signature of the functional interface method integrator()\n</code></pre>\n<p>I have enable preview features from properties</p>\n<p><a href=\"https://i.sstatic.net/xFkFTSSi.png\" rel=\"nofollow noreferrer\"><img src=\"https://i.sstatic.net/xFkFTSSi.png\" alt=\"enter image description here\" /></a></p>\n<p>But still not able to run preview features. Am I missing anything here?</p>\n<p>I ma using eclipse latest version 2025-03, 4.35</p>\n",
+    "tags" : [ "java", "eclipse" ],
+    "owner" : {
+      "account_id" : 5672211,
+      "reputation" : 4418,
+      "user_id" : 4969916,
+      "user_type" : "registered",
+      "accept_rate" : 35,
+      "profile_image" : "https://lh6.googleusercontent.com/-QNfz4LV_I8A/AAAAAAAAAAI/AAAAAAAAAD0/lvTyKboHs6s/s256-rj/photo.jpg",
+      "display_name" : "Shiladittya Chakraborty",
+      "link" : "https://stackoverflow.com/users/4969916/shiladittya-chakraborty"
+    },
+    "is_answered" : true,
+    "view_count" : 152,
+    "answer_count" : 2,
+    "score" : 0,
+    "last_activity_date" : 1743864811,
+    "creation_date" : 1743788567,
+    "link" : "https://stackoverflow.com/questions/79555977/java-24-preview-features-not-able-to-access",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79556003,
+    "question_id" : 79555977,
+    "body" : "<p>Gatherers are not a preview feature anymore in Java 24. The issue is that you're using a non-compatible lambda.</p>\n<p><a href=\"https://docs.oracle.com/en/java/javase/24/docs/api/java.base/java/util/stream/Gatherer.html\" rel=\"nofollow noreferrer\">Gatherer</a> is a functional interface, but the single method you must implement is <code>integrator()</code>. That requires no arguments. The integrator itself can also be defined as a lambda and takes not 2 but 3 arguments: the intermediate state, the element, and the downstream. In other words (and since the intermediate state is not used, let's make that clear using <code>_</code>):</p>\n<pre class=\"lang-java prettyprint-override\"><code>Stream.of(&quot;apple&quot;, &quot;banana&quot;, &quot;kiwi&quot;).gather(() -&gt; (_, word, downstream) -&gt; {\n    for (char ch : word.toCharArray()) {\n        if (Character.isLowerCase(ch)) {\n            downstream.push(ch);\n        }\n    }\n    return true;\n}).forEach(System.out::println);\n</code></pre>\n<p>Slightly improved to make more use of a possible <code>false</code> return of <code>downstream.push</code> (no need to push if the downstream doesn't want more data):</p>\n<pre class=\"lang-java prettyprint-override\"><code>Stream.of(&quot;apple&quot;, &quot;banana&quot;, &quot;kiwi&quot;).gather(() -&gt; (_, word, downstream) -&gt; word.chars()\n        .filter(Character::isLowerCase)\n        .allMatch(ch -&gt; downstream.push((char) ch))\n).forEach(System.out::println);\n</code></pre>\n<p>Now, that doesn't look pretty with the nested lambda, so I'd use the static factory method:</p>\n<pre class=\"lang-java prettyprint-override\"><code>Stream.of(&quot;apple&quot;, &quot;banana&quot;, &quot;kiwi&quot;).gather(Gatherer.of((_, word, downstream) -&gt; word.chars()\n        .filter(Character::isLowerCase)\n        .allMatch(ch -&gt; downstream.push((char) ch))\n)).forEach(System.out::println);\n</code></pre>\n<p>(Note that I'm not using <code>Integrator.of</code> because I don't see much use in it here. I'm also not making the integrator greedy because it simply doesn't need to be.)</p>\n",
+    "score" : 4,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 1211967,
+      "reputation" : 9964,
+      "user_id" : 1180351,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/pKB8y.png?s=256",
+      "display_name" : "Rob Spoor",
+      "link" : "https://stackoverflow.com/users/1180351/rob-spoor"
+    },
+    "creation_date" : 1743789724,
+    "last_activity_date" : 1743789724,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79557045,
+    "question_id" : 79555977,
+    "body" : "<h2>flatMapToInt()</h2>\n<p>While stream gatherers are great and solve many problems, in your particular case you get clearer code when <em>not</em> using them. Just like we shouldn’t streamify everything, we also shouldn’t gatherify every stream operation.</p>\n<pre><code>    Stream.of(&quot;apple&quot;, &quot;banana&quot;, &quot;kiwi&quot;)\n            .flatMapToInt(String::codePoints)\n            .filter(Character::isLowerCase)\n            .mapToObj(Character::toChars)\n            .forEach(System.out::println);\n</code></pre>\n<p>Output:</p>\n<pre class=\"lang-none prettyprint-override\"><code>a\np\np\nl\ne\nb\na\nn\na\nn\na\nk\ni\nw\ni\n</code></pre>\n<p>For your particular strings <code>String::chars</code> would work the same as <code>String::codePoints</code>. I chose the latter to take all Unicode characters into account. To print a code point I use <code>Character.toChars()</code> to convert to an array of <code>char</code> values (in our case an array of just 1 <code>char</code>). The overloaded <code>System.out.println(char[])</code> then prints the symbol.</p>\n<p>If you have a reason for getting a stream of <code>Character</code> objects, you need to use <code>String::chars</code>:</p>\n<pre><code>    Stream.of(&quot;apple&quot;, &quot;banana&quot;, &quot;kiwi&quot;)\n            .flatMapToInt(String::chars)\n            .mapToObj(ch -&gt; (char) ch)\n            .filter(Character::isLowerCase)\n            .forEach(System.out::println);\n</code></pre>\n<p>Output is the same as before.</p>\n<p>Since the library doesn’t offer any <code>CharStream</code> type, <code>chars()</code> (like <code>codePoints()</code>) returns <code>IntStream</code>. In the latter snippet we convert from primitive <code>int</code> to <code>Character</code> objects using <code>.mapToObj(ch -&gt; (char) ch)</code> and autoboxing.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 41148271,
+      "reputation" : 31,
+      "user_id" : 30145237,
+      "user_type" : "unregistered",
+      "profile_image" : "https://www.gravatar.com/avatar/df204cab11a0b498bea33f13e0599e45?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Zofia W&#225;ng",
+      "link" : "https://stackoverflow.com/users/30145237/zofia-w%c3%a1ng"
+    },
+    "creation_date" : 1743860745,
+    "last_activity_date" : 1743864811,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140301323,
+    "post_id" : 79555977,
+    "body" : "The <code>char</code> type has been essentially broken since Java 2, and legacy since Java 5. As a 16-bit value, <code>char</code> is physically incapable of representing most characters. Use code points instead. See Wikipedia.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 322981,
+      "reputation" : 347089,
+      "user_id" : 642706,
+      "user_type" : "registered",
+      "accept_rate" : 58,
+      "profile_image" : "https://i.sstatic.net/ZWEI3.jpg?s=256",
+      "display_name" : "Basil Bourque",
+      "link" : "https://stackoverflow.com/users/642706/basil-bourque"
+    },
+    "creation_date" : 1743808614,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140300664,
+    "post_id" : 79555977,
+    "body" : "( <code>Stream.of(&quot;Apple&quot;, &quot;Banana&quot;, &quot;Kiwi&quot;) .flatMapToInt(String::codePoints) .filter(Character::isLowerCase) .mapToObj(Character::toString) .forEach(System.out::println)</code> -- I slightly changed the test data so it is a bit more <i>fun</i>! Also note that this works Unicode code points and not <code>char</code> )",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 31180,
+      "reputation" : 29752,
+      "user_id" : 85421,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/kKvXH.gif?s=256",
+      "display_name" : "user85421",
+      "link" : "https://stackoverflow.com/users/85421/user85421"
+    },
+    "creation_date" : 1743791329,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140300615,
+    "post_id" : 79555977,
+    "body" : "the error message &quot;<i>not applicable for the arguments</i>&quot; indicates that the method was found - it is available - but the argument type(s) is (are) wrong -- anyway, I have a <i>feeling</i> that <code>Gatherer</code> is not the best choice here....",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 31180,
+      "reputation" : 29752,
+      "user_id" : 85421,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/kKvXH.gif?s=256",
+      "display_name" : "user85421",
+      "link" : "https://stackoverflow.com/users/85421/user85421"
+    },
+    "creation_date" : 1743790618,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79557045" : [ {
+      "comment_id" : 140307540,
+      "post_id" : 79557045,
+      "body" : "Instead of mapping to <code>Character</code>, you can use the lower case filter step directly after the <code>flatMapToInt</code> call. The <code>forEach</code> is then the step that must convert the <code>int</code> to <code>char</code> before printing.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1211967,
+        "reputation" : 9964,
+        "user_id" : 1180351,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/pKB8y.png?s=256",
+        "display_name" : "Rob Spoor",
+        "link" : "https://stackoverflow.com/users/1180351/rob-spoor"
+      },
+      "creation_date" : 1744026097,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79556003" : [ {
+      "comment_id" : 140304667,
+      "post_id" : 79556003,
+      "body" : "Hm, passing a stateful predicate to a library method that according to its doc requires a stateless predicate is not literally the only way you can abort the stream when that predicate returns <code>false</code>. I admit that any other way would probably be wordier.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 7612423,
+        "reputation" : 87409,
+        "user_id" : 5772882,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Anonymous",
+        "link" : "https://stackoverflow.com/users/5772882/anonymous"
+      },
+      "creation_date" : 1743943838,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140303347,
+      "post_id" : 79556003,
+      "body" : "@Anonymous the stream is in order as long as it&#39;s not made parallel. It&#39;s indeed not documented, but <code>word.chars().spliterator().characteristics()</code> includes <code>Spliterator.ORDERED</code>. (Also, it would be <i>really</i> odd to not make it ordered.) About the statelessness of the predicate, sometimes you have to be pragmatic. This is the only way to abort the stream if <code>push</code> returns false. And again, as long as the stream is not parallel there&#39;s no harm.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1211967,
+        "reputation" : 9964,
+        "user_id" : 1180351,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/pKB8y.png?s=256",
+        "display_name" : "Rob Spoor",
+        "link" : "https://stackoverflow.com/users/1180351/rob-spoor"
+      },
+      "creation_date" : 1743884557,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140302643,
+      "post_id" : 79556003,
+      "body" : "Nice that you improve the OP’s construct beyond making it work. The <code>.allMatch(ch -&gt; downstream.push((char) ch))</code> is not really to my liking. I see no guarantee in the docs that the elements are tested in order, but we probably would like them to be pushed in order. Also the predicate passed to <code>allMatch()</code> should be stateless, and I am not sure <code>downstream.push()</code> counts as stateless. Still certainly a knowledgeable answer.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 7612423,
+        "reputation" : 87409,
+        "user_id" : 5772882,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Anonymous",
+        "link" : "https://stackoverflow.com/users/5772882/anonymous"
+      },
+      "creation_date" : 1743865729,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

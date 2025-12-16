@@ -1,0 +1,64 @@
+{
+  "question" : {
+    "question_id" : 79558149,
+    "title" : "Jackson deserialize enum case insensitive",
+    "body" : "<p>I would like to decode lowercase and uppercase values for a Java Enum in both plain values and Array.</p>\n<p>I have tried this piece of code:</p>\n<pre><code>public enum FooBarEnum {\n    FOO,\n    BAR\n}\n</code></pre>\n<p>the following POJOs to deserialize things:</p>\n<pre><code>public record Aaa(String something, FooBarEnum foobar)\n\n</code></pre>\n<pre><code>public record Bbb(String something, List&lt;FooBarEnum&gt; foobarList)\n</code></pre>\n<p>When trying to get the object via HTTP request:</p>\n<pre><code>@GetExchange(&quot;/api/test1&quot;)\nAaa getAaa(@PathVariable int key);\n</code></pre>\n<p>For this, it works, no matter if the server responds to an object with FOO, foo, BAR, or bar, it works.</p>\n<p>However, I have this:</p>\n<pre><code>@GetExchange(&quot;/api/test2&quot;)\nBbb getBbb(@PathVariable int key);\n</code></pre>\n<p>When it is in lower case, I will encounter this exception:</p>\n<pre><code>JSON decoding error: Cannot deserialize value of type `com.FooBarEnum` from String &quot;foo&quot;: not one of the values accepted for Enum class: [FOO, BAR]\n\n[...]\nCaused by: com.fasterxml.jackson.databind.exc.InvalidFormatException: Cannot deserialize value of type `com.FooBarEnum` from String &quot;foo&quot;: not one of the values accepted for Enum class: [FOO, BAR]\n\n at [Source: REDACTED (`StreamReadFeature.INCLUDE_SOURCE_IN_LOCATION` disabled); line: 1, column: 996] (through reference chain: com.Bbb[&quot;fooBarList&quot;]-java.util.ArrayList[0])\n    at com.fasterxml.jackson.databind.exc.InvalidFormatException.from(InvalidFormatException.java:67) ~[jackson-databind-2.18.3.jar:2.18.3]\n</code></pre>\n<p>I even tried to add</p>\n<pre><code>@JsonFormat(with = {JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES, JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_VALUES})\n</code></pre>\n<p>but no luck.</p>\n<p>Is there a way to handle the ignore case for array as well?</p>\n",
+    "tags" : [ "java", "json", "enums", "jackson", "jackson-databind" ],
+    "owner" : {
+      "account_id" : 14482834,
+      "reputation" : 5478,
+      "user_id" : 10461625,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/fgo5D.jpg?s=256",
+      "display_name" : "PatPanda",
+      "link" : "https://stackoverflow.com/users/10461625/patpanda"
+    },
+    "is_answered" : true,
+    "view_count" : 206,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1744009152,
+    "creation_date" : 1743939756,
+    "link" : "https://stackoverflow.com/questions/79558149/jackson-deserialize-enum-case-insensitive",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79558285,
+    "question_id" : 79558149,
+    "body" : "<blockquote>\n<p>no matter if the server responds to an object with FOO, foo, BAR, or bar, it works!</p>\n</blockquote>\n<p>This is an odd behavior. By default, Jackson serializes and deserializes enum values with the name of the corresponding constant. This is why <code>FOO</code> and <code>BAR</code> are the only values produced during serialization, and the only ones accepted at deserialization. Here is an <a href=\"https://onecompiler.com/java/43e22h487\" rel=\"nofollow noreferrer\">example</a> to showcase the behavior. In your case, there must be a missing configuration that makes the endpoint <code>getAaa()</code> work. Instead, <code>getBbb()</code> behaves as expected.</p>\n<p>As you've already mentioned, the annotation <code>@JsonFormat</code> along with the features <code>ACCEPT_CASE_INSENSITIVE_PROPERTIES</code> and <code>ACCEPT_CASE_INSENSITIVE_VALUES</code> would deserialize regardless of the case. However, it must annotate the enum fields. I don't know if perhaps you used a class instead of a record and annotated something else. It's not clear how you used the annotation from the question's post. Here is a <a href=\"https://onecompiler.com/java/43e23wmhb\" rel=\"nofollow noreferrer\">demo</a> with the desired behavior.</p>\n<pre><code>record Aaa(String something,\n           @JsonFormat(with = {JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES, JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_VALUES}) FooBarEnum foo) {\n\n}\n\nrecord Bbb(String something,\n           @JsonFormat(with = {JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_PROPERTIES, JsonFormat.Feature.ACCEPT_CASE_INSENSITIVE_VALUES}) List&lt;FooBarEnum&gt; foo) {\n\n}\n\npublic class Main {\n    public static void main(String[] args) throws JsonProcessingException {\n        ObjectMapper mapper = new ObjectMapper();\n\n        Aaa aaa = new Aaa(&quot;test&quot;, FooBarEnum.FOO);\n        String json = mapper.writeValueAsString(aaa);\n        System.out.println(json);\n        json = json.replace(&quot;FOO&quot;, &quot;foo&quot;);\n        System.out.println(json);\n\n        aaa = mapper.readValue(json, Aaa.class);\n        System.out.println(aaa);\n\n        Bbb bbb = new Bbb(&quot;test&quot;, List.of(FooBarEnum.FOO, FooBarEnum.BAR));\n        json = mapper.writeValueAsString(bbb);\n        System.out.println(json);\n        json = json.replace(&quot;FOO&quot;, &quot;foo&quot;).replace(&quot;BAR&quot;, &quot;bar&quot;);\n        System.out.println(json);\n\n        bbb = mapper.readValue(json, Bbb.class);\n        System.out.println(bbb);\n    }\n}\n</code></pre>\n<p>Another alternative is to define a custom deserializer and register it with a module on the <code>ObjectMapper</code>. Here is <a href=\"https://onecompiler.com/java/43e24cdj6\" rel=\"nofollow noreferrer\">another demo</a>.</p>\n<pre><code>class FooBarDeserializer extends StdDeserializer&lt;FooBarEnum&gt; {\n    public FooBarDeserializer() {\n        this(null);\n    }\n\n    public FooBarDeserializer(Class&lt;FooBarEnum&gt; clazz) {\n        super(clazz);\n    }\n\n    @Override\n    public FooBarEnum deserialize(JsonParser p, DeserializationContext ctxt) throws IOException, JacksonException {\n        JsonNode node = p.getCodec().readTree(p);\n        return Arrays.stream(FooBarEnum.values())\n                .filter(e -&gt; e.name().equalsIgnoreCase(node.asText()))\n                .findFirst()\n                .orElseThrow(() -&gt; new RuntimeException(&quot;No enum found for value &quot; + node.asText()));\n    }\n}\n\npublic class Main {\n    public static void main(String[] args) throws JsonProcessingException {\n        ObjectMapper mapper = new ObjectMapper();\n\n        SimpleModule module = new SimpleModule();\n        module.addDeserializer(FooBarEnum.class, new FooBarDeserializer());\n        mapper.registerModule(module);\n\n        Aaa aaa = new Aaa(&quot;test&quot;, FooBarEnum.FOO);\n        String json = mapper.writeValueAsString(aaa);\n        System.out.println(json);\n        json = json.replace(&quot;FOO&quot;, &quot;foo&quot;);\n        System.out.println(json);\n\n        aaa = mapper.readValue(json, Aaa.class);\n        System.out.println(aaa);\n\n        Bbb bbb = new Bbb(&quot;test&quot;, List.of(FooBarEnum.FOO, FooBarEnum.BAR));\n        json = mapper.writeValueAsString(bbb);\n        System.out.println(json);\n        json = json.replace(&quot;FOO&quot;, &quot;foo&quot;).replace(&quot;BAR&quot;, &quot;bar&quot;);\n        System.out.println(json);\n\n        bbb = mapper.readValue(json, Bbb.class);\n        System.out.println(bbb);\n    }\n}\n</code></pre>\n",
+    "score" : 2,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 5569841,
+      "reputation" : 8674,
+      "user_id" : 4415625,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/0ea1713807527aa1cf52e40579e35ec4?s=256&d=identicon&r=PG",
+      "display_name" : "dani-vta",
+      "link" : "https://stackoverflow.com/users/4415625/dani-vta"
+    },
+    "creation_date" : 1743946978,
+    "last_activity_date" : 1743947838,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79558285" : [ {
+      "comment_id" : 140305848,
+      "post_id" : 79558285,
+      "body" : "This is what I was hoping for. Thanks @dani-vta . Upvoted and accepted. Good day!",
+      "score" : 1,
+      "owner" : {
+        "account_id" : 14482834,
+        "reputation" : 5478,
+        "user_id" : 10461625,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/fgo5D.jpg?s=256",
+        "display_name" : "PatPanda",
+        "link" : "https://stackoverflow.com/users/10461625/patpanda"
+      },
+      "creation_date" : 1743978665,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

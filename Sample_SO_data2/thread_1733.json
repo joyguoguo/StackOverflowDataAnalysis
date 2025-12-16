@@ -1,0 +1,248 @@
+{
+  "question" : {
+    "question_id" : 79683272,
+    "title" : "Improve performance on merging 2 lists in one with Java",
+    "body" : "<p>I have two lists of classes:</p>\n<pre><code>MyClass1 {\n    String var1;\n    String var2;\n    String var3;\n}\n\nMyClass2 {\n    String var1;\n    String var2;\n    String var3;\n}\n</code></pre>\n<p>Each of them contains:</p>\n<pre><code>MyClass1 = [{&quot;one&quot;, &quot;3&quot;, &quot;6&quot;},{&quot;two&quot;, &quot;6&quot;, &quot;1&quot;}]\n\nMyClass2 = [{&quot;one&quot;, &quot;7&quot;, &quot;7&quot;}, {&quot;four&quot;, &quot;2&quot;, &quot;9&quot;}]\n</code></pre>\n<p>I want to obtain as result:</p>\n<pre><code>MyClass1 = [{&quot;one&quot;, &quot;7&quot;, &quot;7&quot;}, {&quot;two&quot;, &quot;6&quot;, &quot;1&quot;}, {&quot;four&quot;, &quot;2&quot;, &quot;9&quot;}]\n</code></pre>\n<p>So, I implemented this method:</p>\n<pre><code>public void mergeListWithRemotely(List&lt;MyClass1&gt; list, List&lt;MyClass2&gt; remotedList) \n{\n    try {\n        while (remotedList.iterator().hasNext()) {\n            AtomicInteger position = new AtomicInteger(-1);\n            MyClass1 el = (MyClass1) remotedList.iterator().next();\n\n            Optional&lt;MyClass1&gt; e = list.stream()\n                    .peek(x -&gt; position.incrementAndGet())\n                    .filter(x -&gt; x.getVar1() == el.getVar1())\n                    .findFirst();\n            if (e.isPresent())\n                list.set(position.get(), el);\n            else\n                list.add(el);\n        }\n    } catch (Exception e) {\n        e.printStackTrace();\n    }\n}\n</code></pre>\n<p>When I execute this function, it doesn't look performant because it seems hanging even it doesn't catch any error. Is there a possible way to improve performance to complete the merge and obtain result?</p>\n",
+    "tags" : [ "java", "list" ],
+    "owner" : {
+      "account_id" : 1608382,
+      "reputation" : 779,
+      "user_id" : 1487979,
+      "user_type" : "registered",
+      "accept_rate" : 68,
+      "profile_image" : "https://www.gravatar.com/avatar/2464ba37794a5ea2b2afcbd9c54987a3?s=256&d=identicon&r=PG",
+      "display_name" : "Luigino",
+      "link" : "https://stackoverflow.com/users/1487979/luigino"
+    },
+    "is_answered" : true,
+    "view_count" : 139,
+    "answer_count" : 2,
+    "score" : -4,
+    "last_activity_date" : 1751203206,
+    "creation_date" : 1751138073,
+    "link" : "https://stackoverflow.com/questions/79683272/improve-performance-on-merging-2-lists-in-one-with-java",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79683382,
+    "question_id" : 79683272,
+    "body" : "<p>There a bunch of misconceptions and mistakes here; your problem isn't just one thing.</p>\n<h2>The 'hanging'</h2>\n<p><code>list.iterator()</code> <strong>makes</strong> an iterator. A new one. Every time you invoke it.</p>\n<p>This:</p>\n<pre><code>List list = List.of(&quot;Hello&quot;);\nwhile (list.iterator().hasNext()) {\n  list.iterator().next();\n}\n</code></pre>\n<p>Runs forever. <code>list.iterator()</code> makes a new iterator every time you call it (which will iterate a single element - <code>Hello</code>), and this new iterator does have a next element.</p>\n<p>What you wanted is this:</p>\n<pre><code>List list = List.of(&quot;Hello&quot;);\nvar it = list.iterator();\nwhile (it.hasNext()) {\n it.next();\n}\n</code></pre>\n<p>This exits near instantly; that while loop runs once and exits. Because we only call <code>list.iterator()</code> once, whereas in the snippet before, we call it every time we loop.</p>\n<h2>Misconception: That's not how you loop</h2>\n<p>You've made things needlessly complicated. You can just do:</p>\n<pre><code>for (var elem : remotedList) {\n  doStuffWith(elem);\n}\n</code></pre>\n<p>Instead of:</p>\n<pre><code>var it = remotedList.iterator();\nwhile (it.hasNext()) {\n  var elem = it.next();\n  doStuffWith(elem);\n}\n</code></pre>\n<h2>Misconception: That's not what casts do</h2>\n<p>You're 'casting' a Class1 instance to a Class2 instance. This is not possible. At all. Nothing in java allows you to do this.</p>\n<p>Yes, in your example, <code>Class1</code> and <code>Class2</code> are structurally identical; they have the exact same fields. Same types, same names. Nevertheless, a Class1 instance is not a Class2 instance. A cast operation just <strong>asserts a type</strong> - it does <strong>nothing</strong> if the thing you are casting is indeed what you assert it is, other than tell the compiler that it is this thing, and throws a ClassCastException if the thing you aren't casting isn't of the right type. <strong>It does not convert. Ever.</strong>.</p>\n<p>Unfortunately, the cast operator is used for 3 pretty much completely unrelated things. Just like <code>5 + 2</code> is 7, but <code>&quot;Hello&quot; + &quot;World&quot;</code> is &quot;HelloWorld&quot; - two <em>completely</em> different things (String concatenation vs numeric addition) that so happen to both use the <code>+</code> operator, the cast operator does <em>3</em> different things.</p>\n<p>If the type you are casting to is a primitive, it converts:</p>\n<pre><code>double v = 5.5;\nint x = (int) v; // converts 5.5 to 5.\n</code></pre>\n<p>If the type you are casting isn't a primitive, then it typechecks:</p>\n<pre><code>Object x = &quot;5&quot;;\nInteger y = (Integer) x; // fails\n</code></pre>\n<p>This does not make <code>y</code> '5'. This fails: It checks if the thing <code>x</code> is pointing at is an instance of integer. It is not, therefore, fails.</p>\n<p>If you are casting generics, it does absolutely nothing at all, other than tell the compiler to just assume you are right and that the programmer accepts the problems that <em>will</em> occur if the assertion is incorrect. It's a &quot;compiler, shut up, I know what I am doing, just compile it already&quot; operator. It literally generates zero bytecode:</p>\n<pre><code>List list = new ArrayList();\nlist.add(&quot;Hello&quot;);\nList&lt;Integer&gt; numbers = (List&lt;Integer&gt;) list;\n</code></pre>\n<p>the above code compiles and runs fine with no errors. However, if you attempt to interact with the <code>numbers</code> list, you will get a <code>ClassCastException</code> when you attempt to e.g. read an entry from it (<code>Integer i = numbers.get(0);</code> for example), even though there is no cast on the line that throws.</p>\n<h2>So how do I convert a Class1 to a Class2?</h2>\n<p>You don't. Java does not have anything baked into it that lets you. And that is intentional. Imagine it did. You'd blow your friend's face off. Imagine you'd have these 2 types:</p>\n<pre><code>public class Camera {\n  Person target;\n  void shoot() [\n    // makes a picture of the target\n  }\n}\n\npublic class Gun {\n  Person target;\n\n  void shoot() {\n    // kills the target\n  }\n}\n</code></pre>\n<p>These 2 classes are <em>structurally</em> identical. Languages that engage in structural typing would let you treat a camera as a gun and vice versa. And thus, you'd blow your friend's face off. Java is not such a language. It simply <strong>has no way to convert a Camera to a Gun</strong>. Casts cannot do it, nor can anything else. You can, of course, write this:</p>\n<pre><code>void spyCraftMurder(Camera c) {\n  Gun gun = new Gun();\n  gun.setPerson(c.getPerson());\n  gun.shoot();\n}\n</code></pre>\n<p>i.e. you manually write code that converts a Class1 instance to a Class2 instance, dutifully copying each and every field. You're free to do that. But, you have 2 classes that are structurally identical that you wish to treat as equivalent... that means you should be having just the one class and not both of them. The real place to fix your code isn't here, the mistake is already made: Why do you have 2 classes? You shouldn't be having this.</p>\n<h2>Misconception: Not how you equals</h2>\n<p>You want <code>a.equals(b)</code>, not <code>x.getVar1() == el.getVar1()</code></p>\n<h2>Misconception: Lambda abuse</h2>\n<p>&quot;Functional&quot; style has benefits and drawbacks. You use the right tool. This usage of lambdas is disastrously bad, don't use it here. You have to futz about with AtomicIntegers just to count, and you have created a sequential requirement of sorts by having 2 related things (peeking and filtering), when generally the point of the functional stuff is that each element is independent. For example, if the 5th element is a match out of a list of 10 elements, then if this is done in parallel, you might end up with a count of 5, 6, 7, 8, 9, or 10, depending on the phase of the moon. This probably won't happen but <em>the point</em> of this functional stuff is that the collection types are free to optimize or not depending on their whim, and thus you've written broken code. You just wanted:</p>\n<pre><code>boolean replaced = false;\nfor (int i = 0; i &lt; list.size(); i++) {\n  if (list.get(i).getVar1().equals(el.getVar1())) {\n    list.set(i, el);\n    replaced = true;\n    break;\n  }\n}\nif (!replaced) list.add(el);\n</code></pre>\n<h2>Exception abuse</h2>\n<p>Do not catch exceptions unless you either [A] handle them or [B] throw them onwards, possibly wrapped or modified to add relevant state.</p>\n<p>Logging an exception is not handling it (except in rare circumstances).</p>\n<p>You should just add <code>throws</code> to your method and throw what you need. If you can't do that, for example because you're implementing an interface or extending a class and you can't, then the correct content of a catch block is:</p>\n<pre><code>catch (Exception iCannotBeBotheredToThingAboutThisRightNow) {\n  throw new RuntimeException(&quot;unhandled&quot;, iCannotBeBotheredToThingAboutThisRightNow);\n}\n</code></pre>\n<p>Never <code>e.printStackTrace();</code>. This causes any failure to result in 85 stack traces or so (because your code just keeps going and returns bogo results, your system is pretty much by definition in a state the programmer never considered, so of course more exceptions will occur then. If all exceptions are dealt with using the 'log it and continue' paradigm, then they <em>all</em> print a stack trace and continue the domino effect of errors.</p>\n<h2>Performance</h2>\n<p>For each element in list1, you check every element in list 2 - that means yur algorithm has a performance characteristic of <code>O(n^2)</code> - which roughly means: A chart that charts 'size of input' against 'time taken to produce a result' looks like <code>y = x^2</code> - that's not great: As input grows linearly, your time taken grows exponentially.</p>\n<p>For example, if both lists are '10' large, you need 100 operations. Double the list sizes to 20 and now you need 400 operations. Make it lists of 10,000 each and you now need 100,000,000, which will actually take noticable time (about a second, probably less, but not quite instant anymore).</p>\n<p>Your algorithm has the advantage that the input lists do not need to be sorted and no lookup code is required, and can 'resolve duplicates' regardless of where they are. But the downside is, well, the <code>O(n^2)</code> characteristic.</p>\n<p>You can fix this, but this requires either [A] that both lists are sorted and you go through in sorted fashion, or [B] an <code>O(1)</code> or <code>O(log n)</code> lookup system. For example, by using <code>HashMap</code>. Your description is too vague to give any more pointers than this.</p>\n<p>However, unless your input size are <strong>higher</strong> than 1000 elements, this isn't relevant, and any system can near instantly run this algorithm.</p>\n",
+    "score" : 3,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 401843,
+      "reputation" : 107206,
+      "user_id" : 768644,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+      "display_name" : "rzwitserloot",
+      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+    },
+    "creation_date" : 1751152330,
+    "last_activity_date" : 1751203206,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79683280,
+    "question_id" : 79683272,
+    "body" : "<p>There is an infinite loop in the way you iterate using iterator</p>\n<pre><code>public void mergeListWithRemotely(List&lt;MyClass1&gt; list, List&lt;MyClass2&gt; remotedList) \n{\n    try {\n        // while (remotedList.iterator().hasNext()) { // will always be true, since you are not reassigning the remotedList or updating its value.\n        // Get the bookmark ONCE before the loop.\n        Iterator&lt;MyClass2&gt; iterator = remotedList.iterator();\n        while (iterator.hasNext()) {\n            AtomicInteger position = new AtomicInteger(-1);\n            MyClass1 el = (MyClass1) iterator.next(); //change here as well.\n\n            Optional&lt;MyClass1&gt; e = list.stream()\n                    .peek(x -&gt; position.incrementAndGet())\n                    .filter(x -&gt; x.getVar1() == el.getVar1())\n                    .findFirst();\n            if (e.isPresent())\n                list.set(position.get(), el);\n            else\n                list.add(el);\n        }\n    } catch (Exception e) {\n        e.printStackTrace();\n    }\n}\n\n</code></pre>\n<p>In terms of optimisation, use merge sort or GenAI and it should give you results.</p>\n",
+    "score" : -6,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 9006963,
+      "reputation" : 37,
+      "user_id" : 6713267,
+      "user_type" : "registered",
+      "profile_image" : "https://lh4.googleusercontent.com/-0pAVvIcPR9Y/AAAAAAAAAAI/AAAAAAAAPDo/RlbLkwmdqPU/s256-rj/photo.jpg",
+      "display_name" : "Danish Khan",
+      "link" : "https://stackoverflow.com/users/6713267/danish-khan"
+    },
+    "creation_date" : 1751138918,
+    "last_activity_date" : 1751138918,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140550674,
+    "post_id" : 79683272,
+    "body" : "@Luigino The thing you misunderstood is <code>iterator()</code>, not necessarily <code>hasNext()</code> (though a for-each is easier here).",
+    "score" : 3,
+    "owner" : {
+      "account_id" : 213468,
+      "reputation" : 110280,
+      "user_id" : 466862,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/d873f397779db38cd510d9ee5416fd43?s=256&d=identicon&r=PG",
+      "display_name" : "Mark Rotteveel",
+      "link" : "https://stackoverflow.com/users/466862/mark-rotteveel"
+    },
+    "creation_date" : 1751185180,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140550113,
+    "post_id" : 79683272,
+    "body" : "@DuncG , okay maybe I misunderstood about <code>.hasNext()</code> stuff , I changed with <code>for ( el : remotedList )</code>  as you suggested and it worked like charm... Thank you !!!! You got a fresh beer! :-)",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1608382,
+      "reputation" : 779,
+      "user_id" : 1487979,
+      "user_type" : "registered",
+      "accept_rate" : 68,
+      "profile_image" : "https://www.gravatar.com/avatar/2464ba37794a5ea2b2afcbd9c54987a3?s=256&d=identicon&r=PG",
+      "display_name" : "Luigino",
+      "link" : "https://stackoverflow.com/users/1487979/luigino"
+    },
+    "creation_date" : 1751144243,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140550090,
+    "post_id" : 79683272,
+    "body" : "<code>remotedList.iterator().hasNext()</code> will always return the same value - false if list is empty, otherwise it will always be true.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 5998820,
+      "reputation" : 16284,
+      "user_id" : 4712734,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f6e922a2cb7e2da59286f27b162aaca5?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "DuncG",
+      "link" : "https://stackoverflow.com/users/4712734/duncg"
+    },
+    "creation_date" : 1751143175,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140550056,
+    "post_id" : 79683272,
+    "body" : "No, you start iterating the list every time.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2843847,
+      "reputation" : 57516,
+      "user_id" : 2442804,
+      "user_type" : "registered",
+      "accept_rate" : 80,
+      "profile_image" : "https://i.sstatic.net/51a3aQOH.jpg?s=256",
+      "display_name" : "luk2302",
+      "link" : "https://stackoverflow.com/users/2442804/luk2302"
+    },
+    "creation_date" : 1751142099,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140550023,
+    "post_id" : 79683272,
+    "body" : "@DuncG , thanks for your answer,.... I thought just because it was checking the iterator having next node with <code>.hasNext()</code> which should give true if the scanner has next token... maybe it&#39;s the way I use that <code>.hasNext()</code> that&#39;s wrong?...",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1608382,
+      "reputation" : 779,
+      "user_id" : 1487979,
+      "user_type" : "registered",
+      "accept_rate" : 68,
+      "profile_image" : "https://www.gravatar.com/avatar/2464ba37794a5ea2b2afcbd9c54987a3?s=256&d=identicon&r=PG",
+      "display_name" : "Luigino",
+      "link" : "https://stackoverflow.com/users/1487979/luigino"
+    },
+    "creation_date" : 1751141075,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140550008,
+    "post_id" : 79683272,
+    "body" : "<code>remotedList.iterator()</code> starts a new iterator every time so this code will never make any progress. use `for(var el : remotedList) { ...",
+    "score" : 5,
+    "owner" : {
+      "account_id" : 5998820,
+      "reputation" : 16284,
+      "user_id" : 4712734,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f6e922a2cb7e2da59286f27b162aaca5?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "DuncG",
+      "link" : "https://stackoverflow.com/users/4712734/duncg"
+    },
+    "creation_date" : 1751140418,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140549971,
+    "post_id" : 79683272,
+    "body" : "Please <a href=\"https://stackoverflow.com/posts/79683272/edit\">edit</a> your question to include a more detailed description by what logic the elements in the two lists should be placed in the resulting list.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 108033,
+      "reputation" : 20089,
+      "user_id" : 286934,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f16a184d26b72795ff243464d715cffe?s=256&d=identicon&r=PG",
+      "display_name" : "Progman",
+      "link" : "https://stackoverflow.com/users/286934/progman"
+    },
+    "creation_date" : 1751138868,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79683382" : [ {
+      "comment_id" : 140551130,
+      "post_id" : 79683382,
+      "body" : "@Luigino There is no particular reason you need two classes then; marshall your JSON into the same class. That might be more difficult / too difficult to take on right now, but that&#39;d definitely improve the quality and readability of your code.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 401843,
+        "reputation" : 107206,
+        "user_id" : 768644,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+        "display_name" : "rzwitserloot",
+        "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+      },
+      "creation_date" : 1751207255,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140551081,
+      "post_id" : 79683382,
+      "body" : "Because with one class I manage remote data I get in JSON format and second class I manage data saved in a local JSON file",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1608382,
+        "reputation" : 779,
+        "user_id" : 1487979,
+        "user_type" : "registered",
+        "accept_rate" : 68,
+        "profile_image" : "https://www.gravatar.com/avatar/2464ba37794a5ea2b2afcbd9c54987a3?s=256&d=identicon&r=PG",
+        "display_name" : "Luigino",
+        "link" : "https://stackoverflow.com/users/1487979/luigino"
+      },
+      "creation_date" : 1751204649,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140551059,
+      "post_id" : 79683382,
+      "body" : "@Luigino That doesn&#39;t explain why you have 2 different classes to represent the same thing.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 401843,
+        "reputation" : 107206,
+        "user_id" : 768644,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+        "display_name" : "rzwitserloot",
+        "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+      },
+      "creation_date" : 1751203233,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140550789,
+      "post_id" : 79683382,
+      "body" : "thank you for deep explanation,.... in my scenario it&#39;s about few elements I get remotely and they aren&#39;t sorted and what I am doing is synchronizing those remotely with the ones I have locally, like updating those items I already have with new remotely data otherwise if it is a new item I get from remote then I add in my local list... Thank you... I&#39;ll investigate anyway about using HashMap because it is interesting to improve performance as you said",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1608382,
+        "reputation" : 779,
+        "user_id" : 1487979,
+        "user_type" : "registered",
+        "accept_rate" : 68,
+        "profile_image" : "https://www.gravatar.com/avatar/2464ba37794a5ea2b2afcbd9c54987a3?s=256&d=identicon&r=PG",
+        "display_name" : "Luigino",
+        "link" : "https://stackoverflow.com/users/1487979/luigino"
+      },
+      "creation_date" : 1751189154,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

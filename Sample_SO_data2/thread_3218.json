@@ -1,0 +1,84 @@
+{
+  "question" : {
+    "question_id" : 79566743,
+    "title" : "Java Http client: java.io.IOException: Connection reset",
+    "body" : "<p>We have a service which is calling a service over Http using <code>java.net.http.HttpClient</code></p>\n<p>We are getting below errors for 1-2% of the requests while calling that service , which mostly gets resolved if we <strong>retry</strong> requests. We have low QPS i.e 20 QPS.</p>\n<pre class=\"lang-none prettyprint-override\"><code>\njava.io.IOException: Connection reset\n    at platform/java.net.http@21.0.6/jdk.internal.net.http.HttpClientImpl.send(Unknown Source)\n    at platform/java.net.http@21.0.6/jdk.internal.net.http.HttpClientFacade.send(Unknown Source)\n</code></pre>\n<p>This is how our client build looks like</p>\n<pre><code>HttpClient.newBuilder()\n      .version(HttpClient.Version.HTTP_2)\n      .connectTimeout(Duration.ofSeconds(HTTP_CLIENT_CONNECT_TIMEOUT_SECONDS))\n      .build()\n</code></pre>\n<ul>\n<li><p>What is the reason of these errors ? Is the case that Connection was closed by server and Java HttpClient ConnectionPool is reusing that connection and failing?</p>\n</li>\n<li><p>Why does it get succeeded on Retry? Does it recreate new connection?</p>\n</li>\n<li><p>What is the recommended solution to avoid these errors altogether? I believe Java Http Client does not pre validate a connection before using it.</p>\n</li>\n</ul>\n",
+    "tags" : [ "java", "http", "httpclient", "connection-reset" ],
+    "owner" : {
+      "account_id" : 7802956,
+      "reputation" : 71,
+      "user_id" : 5901693,
+      "user_type" : "registered",
+      "accept_rate" : 0,
+      "profile_image" : "https://www.gravatar.com/avatar/4bce62c253519f26b38c01a0cf486fc8?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "ankur garg",
+      "link" : "https://stackoverflow.com/users/5901693/ankur-garg"
+    },
+    "is_answered" : false,
+    "view_count" : 147,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1746151914,
+    "creation_date" : 1744290648,
+    "link" : "https://stackoverflow.com/questions/79566743/java-http-client-java-io-ioexception-connection-reset",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79566930,
+    "question_id" : 79566743,
+    "body" : "<p>Connection Reset is a very special TCP command sent by the server to the client.  There are a lot of reasons for this, but it general means the server doesn't know how to process the data being sent to it. It could also be because a middle man is sending back RST for the same reason (i.e. it's receiving data is doesn't know what to do with).  But here are some things that can contribute to it:</p>\n<ul>\n<li><p>The server closed the socket, but the client is still sending data.  This is an application protocol error typically.</p>\n</li>\n<li><p>Sending data to an un-open port.  Like making a HTTP call to port 81, but there is nothing listening on that port.</p>\n</li>\n<li><p>The client has received some unread data, and the client closes the socket.</p>\n</li>\n<li><p>There is also the potentially mis-configured DNS server that is sending you two multiple IPs.  Some of the IPs are working and some aren't.</p>\n</li>\n<li><p>Misconfigured webserver</p>\n</li>\n<li><p>Security Software blocking connections</p>\n</li>\n<li><p>Corrupt browser caches, browser extensions interfering with the connection.</p>\n</li>\n<li><p>TCP/IP settings</p>\n</li>\n<li><p>VPN/Proxy interfering with the connection (Load Balancer?)</p>\n</li>\n</ul>\n<p>I noticed that you are using HTTP 2 which is a complex protocol for the servers.  Have you tried switching to 1.1 and see if that improves things?  If that works better then I'd look at the server configurations to make sure everyone has the same config using HTTP 2.  And figure out which servers are working with HTTP 2 and which aren't.</p>\n<p><em>In JDK 11 ConnectionPool</em> uses the <code>jdk.httpclient.keepalive.timeout</code> system property when initializing and defaults to 1200 seconds (20 minutes).  So things in the pool will be available for 20 minutes which is a long time.  After java 20 is reduces it to 30 seconds.  You could play around with that system property to see if lower the threshold improves the resets.  HTTP 2 uses <em><code>jdk.httpclient.keepalivetimeout.h2</code></em> to set the timeout so you might need to experiment with that as well.</p>\n<p>To test the idle connection reuse theory I'd do the following:</p>\n<pre><code>HttpResponse&lt;String&gt; firstResponse = client.send(getRequest, HttpResponse.BodyHandlers.ofString());\nThread.sleep(keepAliveTime + 1000);\nHttpResponse&lt;String&gt; secondResponse = client.send(getRequest, HttpResponse.BodyHandlers.ofString());\n</code></pre>\n<p>And see if that succeeds.  If the first succeeds, but the second fails then you know idle connections are being re-used.  Which I think if your client has a long keep alive time out (say 1200 sec) it's possible that the server with a smaller timeout could close the connection and the pool might not realize it's dead.  That would confirm the theory.  But, if the 1st dies immediately then you know it's something in your network.  If they both work then connection pooling is ok and it's probably in the network.</p>\n<p>In the case the 2nd connection fails you'll want to confirm that a connection was retrieved from the pool so you'll need to look in your logs to see that the 2nd connection didn't create another connection.  If it creates another connection and fails then you know it's network related.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 51881,
+      "reputation" : 39410,
+      "user_id" : 155020,
+      "user_type" : "registered",
+      "accept_rate" : 80,
+      "profile_image" : "https://i.sstatic.net/fEqVo.png?s=256",
+      "display_name" : "chubbsondubs",
+      "link" : "https://stackoverflow.com/users/155020/chubbsondubs"
+    },
+    "creation_date" : 1744295077,
+    "last_activity_date" : 1746151914,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79566930" : [ {
+      "comment_id" : 140326057,
+      "post_id" : 79566930,
+      "body" : "I updated the answer to include some tests you can try out to see if connections are being re-used in a dead state or not.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 51881,
+        "reputation" : 39410,
+        "user_id" : 155020,
+        "user_type" : "registered",
+        "accept_rate" : 80,
+        "profile_image" : "https://i.sstatic.net/fEqVo.png?s=256",
+        "display_name" : "chubbsondubs",
+        "link" : "https://stackoverflow.com/users/155020/chubbsondubs"
+      },
+      "creation_date" : 1744401200,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140324933,
+      "post_id" : 79566930,
+      "body" : "Thanks chubbsondubs for detailed response.  -We were earlier using HTTP 1.1, errors were also there but of nearly same amount (bit less though) -  We are using java 21, so there it is 30 second. We will try lower value.  Is there any concrete reason it works on retry in my case? Is it because http client will try to create new connection as previous connection was reset?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 7802956,
+        "reputation" : 71,
+        "user_id" : 5901693,
+        "user_type" : "registered",
+        "accept_rate" : 0,
+        "profile_image" : "https://www.gravatar.com/avatar/4bce62c253519f26b38c01a0cf486fc8?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "ankur garg",
+        "link" : "https://stackoverflow.com/users/5901693/ankur-garg"
+      },
+      "creation_date" : 1744382705,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

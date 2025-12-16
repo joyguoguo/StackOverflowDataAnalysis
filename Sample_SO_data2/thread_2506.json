@@ -1,0 +1,78 @@
+{
+  "question" : {
+    "question_id" : 79618324,
+    "title" : "Generating Java code at runtime to replace legacy reflection-based data mapping. How to use @ForceInline and and module export questions",
+    "body" : "<p>I’m writing a library that generates Java code at runtime, and so far it’s producing good results.</p>\n<p>The problem: some legacy software (read: &quot;adopting polymorphism now is kinda impossible&quot;) needs to parse large volumes of data. The conversion logic from PojoA to PojoB is always the same, so writing a simple mapper that specifically implements the logic to move data from PojoA to PojoB, and reusing it to parse a BIG List&lt;PojoA&gt; to List&lt;PojoB&gt;, would be ideal... but we have ~10,000 different Pojo classes (and an unknown number of meaningful source-destination combinations).</p>\n<p>Currently, this &quot;parsing&quot; is done via reflection in a ~30k-line Java file that examines POJO variable names and types (which, to be fair, are remarkably consistent across files). Based on source vs destination comparisons, one can often predict the required transformation. For example, if the source POJO has a variable like:</p>\n<pre><code>public int variableUniqueID_date_yyyy_MM_dd_nullable;\n</code></pre>\n<p>...and the destination POJO has something like:</p>\n<pre><code>public String variableUniqueID_date_MonthNameALLCAPS_notNullable_default_JAN;\n</code></pre>\n<p>...you know there’s a match (yay!), but parsing is required. This is currently handled with reflection and a lot of if statements.</p>\n<p>This approach has worked for ~20 years (I think... I didn’t write it, the project wasn’t even in Git back then, and I’ve only been at the company a few years). But as data volume has grown exponentially, what used to take ~10 minutes now takes ~7 hours. This is expected, since we’re essentially moving data using reflection and huge switch statements based on variable names and types.</p>\n<p>My first solution was to write a program that compared all possible source vs destination POJO files and generated a .java file with exact conversion logic for each pair. After a lot of trial and error, I tested the approach with randomly-picked POJOs and real production data. It worked like a charm! I even ran it overnight to compare results with the legacy solution, and they matched.</p>\n<p>However, I didn’t implement this version in production because it would have generated nearly 100 million files... not something our build system could realistically handle :D.</p>\n<p>I came up with a better solution: at runtime, I generate the code for the needed POJO pair, compile it using the Java Compiler API, cache the resulting class bytecode in an LRU cache (keyed by the source/destination pair), and begin parsing.</p>\n<p>The generated code is quite performant because it’s all inside loop with minimal external function calls (parsing helpers). The generated structure looks like:</p>\n<pre><code>List&lt;PojoA&gt; source = ...;\nList&lt;PojoB&gt; dest = new ArrayList&lt;&gt;(source.size());\nfor (int index = 0; index &lt; source.size(); index++) {\n    PojoA current = source.get(index);\n    PojoB parsed = new PojoB();\n    dest.add(parsed);\n    // parse each variable\n    {\n        // logic resulting in parsed.setFirstVariableName(something);\n    }\n    {\n        // logic resulting in parsed.setSecondVariableName(something);\n    }\n    // ...\n}\n</code></pre>\n<p>Debugging generated code is not simple, but it should not be hard. Sometimes the for-loop body is quite long so I was thinking about putting most (if not all) parsing inside public accessible functions so the result could be something like:</p>\n<pre><code>List&lt;PojoA&gt; source = ...;\nList&lt;PojoB&gt; dest = new ArrayList&lt;&gt;(source.size());\nfor (int index = 0; index &lt; source.size(); index++) {\n    PojoA current = source.get(index);\n    PojoB parsed = new PojoB();\n    dest.add(parsed);\n    // parse each variable\n    parsed.setFirstVariableName(parseFunctionX(current.getFirstVariableName()));\n    parsed.setSecondVariableName(parseFunctionY(current.getSecondVariableName()));\n    // ...\n}\n</code></pre>\n<p>This is more readable but might slightly impact performance. To mitigate that, I thought about using the @ForceInline annotation on my parsing functions.</p>\n<p>Despite the warning inside the ForceInline class (<a href=\"https://github.com/openjdk/jdk/blob/7ae52ce572794f9d17446c66381f703ea1bb8b7c/src/java.base/share/classes/jdk/internal/vm/annotation/ForceInline.java#L35\" rel=\"nofollow noreferrer\">https://github.com/openjdk/jdk/blob/7ae52ce572794f9d17446c66381f703ea1bb8b7c/src/java.base/share/classes/jdk/internal/vm/annotation/ForceInline.java#L35</a>) I believe my use case is valid. <strong>Would you agree?</strong></p>\n<p>Also, referencing anything in jdk.internal.vm.annotation.* requires adding:</p>\n<pre><code>--add-exports java.base/jdk.internal.vm.annotation=ALL-UNNAMED\n</code></pre>\n<p>to the compiler args. My other questions:</p>\n<ol>\n<li>Do I need to specify this at runtime too?</li>\n<li>If another application imports my code as a library, should they also compile/run with --add-exports?</li>\n<li>Why ALL-UNNAMED? Can I restrict the export to only my code generation module? Or should the class with the to-be-inlined-function be inside said module?</li>\n<li>I read that I need to name my module and define exports in a module-info.java file, how?</li>\n<li>Is this compatible with Maven (my current build system)?</li>\n</ol>\n",
+    "tags" : [ "java", "inline", "generated-code" ],
+    "owner" : {
+      "account_id" : 9325387,
+      "reputation" : 93,
+      "user_id" : 6922878,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/961274c1414700ab722cbd45632b99cb?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Vento",
+      "link" : "https://stackoverflow.com/users/6922878/vento"
+    },
+    "is_answered" : false,
+    "view_count" : 59,
+    "answer_count" : 0,
+    "score" : 0,
+    "last_activity_date" : 1747069914,
+    "creation_date" : 1747069500,
+    "link" : "https://stackoverflow.com/questions/79618324/generating-java-code-at-runtime-to-replace-legacy-reflection-based-data-mapping",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140419152,
+    "post_id" : 79618324,
+    "body" : "Yes.  Unless you&#39;re working on the stuff built into Java, ForceInline does nothing.  (And that&#39;s a good thing.)",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 465573,
+      "reputation" : 200423,
+      "user_id" : 869736,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/ae7bb06b9a23a4dd7eea69e853d47d12?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Louis Wasserman",
+      "link" : "https://stackoverflow.com/users/869736/louis-wasserman"
+    },
+    "creation_date" : 1747076367,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140419145,
+    "post_id" : 79618324,
+    "body" : "Are you referring to this section inside the annotation comments: &quot;...  This annotation only takes effect for methods or constructors of classes loaded by the boot loader.  Annotations on methods or constructors of classes loaded outside of the boot loader are ignored. ...&quot;",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 9325387,
+      "reputation" : 93,
+      "user_id" : 6922878,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/961274c1414700ab722cbd45632b99cb?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Vento",
+      "link" : "https://stackoverflow.com/users/6922878/vento"
+    },
+    "creation_date" : 1747076254,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140418849,
+    "post_id" : 79618324,
+    "body" : "Using ForceInline outside of classes defined in the JDK (built into Java) has no effect.  Do not attempt to outsmart the JIT.  Trust Java to do the right thing when it comes to optimizing things like this.",
+    "score" : 3,
+    "owner" : {
+      "account_id" : 465573,
+      "reputation" : 200423,
+      "user_id" : 869736,
+      "user_type" : "registered",
+      "accept_rate" : 82,
+      "profile_image" : "https://www.gravatar.com/avatar/ae7bb06b9a23a4dd7eea69e853d47d12?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Louis Wasserman",
+      "link" : "https://stackoverflow.com/users/869736/louis-wasserman"
+    },
+    "creation_date" : 1747069863,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

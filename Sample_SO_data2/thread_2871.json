@@ -1,0 +1,314 @@
+{
+  "question" : {
+    "question_id" : 79591183,
+    "title" : "What can make a thread uninterruptible and non terminating?",
+    "body" : "<p><strong>tl;dr - I want a complete list of mechanisms/patterns that can result in java code that runs forever and cannot be interrupted</strong></p>\n<p>There are a number of things that can make a java thread fail to terminate, such as infinite loops, deadlocks, or waiting on IO that is never available.</p>\n<p>Some of these things result in threads that are <em>interruptible</em> - i.e., a calling thread is able to cause them to die and release any resources they held. Others are <em>uninterruptible</em> and no (easy, safe) mechanism can cause them to die - they will continue to run until the JVM itself is shut down. The tests in the example below demonstrate this: the interruptible <code>sleepy</code> will output to the console only until the timeout is hit, while the uninterruptible <code>spinny</code> will continue to output until the test finishes and the JVM shuts down.</p>\n<p>Things I know of which can cause uninterruptible and non returning thread:</p>\n<ul>\n<li>Infinite loops without <code>Thread.sleep</code> (or other interrupt-checking) calls</li>\n<li>Any non-terminating code which catches and swallows <code>InterruptedException</code>s</li>\n<li>Any non-terminating code which checks (and clears) the <code>Thread.interrupted()</code> status without throwing an exception</li>\n</ul>\n<p>My question is, what else can result in this? (possible examples - deadlocks with different locking mechanisms, IO waiting, infinite recursion with tail-recursive optimizations that avoid stack overflows). I'm looking for as complete a list as possible.</p>\n<p>For context, I have a use case where I need to run semi-trusted user code, but want to be able to guarantee termination within a set time (without leaking resources to un-terminated threads.) My understanding is that this is unachievable for arbitrary code, but if I have a relatively complete &quot;blacklist&quot; I may be able to enforce some compile-time checks, or at least strongly document specific mechanisms that must be avoided.</p>\n<pre><code>import org.junit.jupiter.api.Test;\nimport java.util.concurrent.*;\n\npublic class TimeoutTest {\n\n    private static boolean sneakyTrue() { return true;}\n    private static String sleepy() throws InterruptedException{\n        while (sneakyTrue()) {\n            Thread.sleep(1 * 1000);\n            System.out.println(&quot;Sleepy is still running&quot;);\n        }\n        return &quot;Unreachable&quot;;\n    }\n    private static String spinny(){\n        var x = 0;\n        while (sneakyTrue()) {\n            x++;\n            if (x == 0) System.out.println(&quot;Spinny is still running&quot;);\n        }\n        return &quot;Unreachable&quot;;\n\n    }\n\n    private static String maybeTimeout(Callable&lt;String&gt; f){\n        ExecutorService exec = Executors.newSingleThreadExecutor();\n        var result = exec.submit(f);\n        try{\n            return result.get(5, TimeUnit.SECONDS);\n        } catch (InterruptedException | ExecutionException e) {\n            throw new RuntimeException(e);\n        }\n        catch (TimeoutException e){\n            result.cancel(true);\n            System.out.println(&quot;Thread has timed out&quot;);\n            return &quot;Timed out&quot;;\n        }\n    }\n\n    @Test\n    void spinnyShouldBeAbleToTimeout() {\n        assert (maybeTimeout(TimeoutTest::spinny).equals(&quot;Timed out&quot;));\n        try {\n            Thread.sleep(15 * 1000);\n        } catch (InterruptedException e) {\n            throw new RuntimeException(e);\n        }\n    }\n\n    @Test\n    void sleepyShouldBeAbleToTimeout() {\n        assert (maybeTimeout(TimeoutTest::sleepy).equals(&quot;Timed out&quot;));\n        try {\n            Thread.sleep(15 * 1000);\n        } catch (InterruptedException e) {\n            throw new RuntimeException(e);\n        }\n    }\n}\n</code></pre>\n",
+    "tags" : [ "java", "multithreading", "timeout" ],
+    "owner" : {
+      "account_id" : 7971577,
+      "reputation" : 4336,
+      "user_id" : 6016064,
+      "user_type" : "registered",
+      "accept_rate" : 71,
+      "profile_image" : "https://www.gravatar.com/avatar/ef21e8114f58b4d82ea6c3056812f557?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Edward Peters",
+      "link" : "https://stackoverflow.com/users/6016064/edward-peters"
+    },
+    "is_answered" : true,
+    "view_count" : 127,
+    "closed_date" : 1745557221,
+    "answer_count" : 1,
+    "score" : -3,
+    "last_activity_date" : 1745523125,
+    "creation_date" : 1745515771,
+    "link" : "https://stackoverflow.com/questions/79591183/what-can-make-a-thread-uninterruptible-and-non-terminating",
+    "closed_reason" : "Needs more focus"
+  },
+  "answers" : [ {
+    "answer_id" : 79591342,
+    "question_id" : 79591183,
+    "body" : "<p>There's too much 'up to JVM impl' to do what you want.</p>\n<p>In particular, any method that is declared to <code>throws InterruptedException</code> is defined in the JVM specification as being interruptable: If you interrupt the thread, that method will soon exit, by way of an <code>InterruptedException</code>. Yes, as you noticed, that exception has to bubble allll the way up to your <code>runPluginNowAndGiveItLimitedTime()</code> 'runner', or otherwise must lead to a swift exit back to your <code>runPlugin</code>, which the JVM does not guarantee (for example, code can simply catch and swallow that exception).</p>\n<p>But any other method (i.e. anything that <em>is not</em> explicitly defined as <code>throws InterruptedException</code>) does not technically have to.</p>\n<p>In particular, that means something quite innocuous such as <code>Files.newBufferedReader(somePath).read();</code> may hang forever <em>even if you interrupt it</em>. I don't know of any JVM that would just 'hang' if you do that (every JVM impl I know of will end up exiting that <code>read()</code> method by way of an <code>IOException</code> whose message indicates the thread was interrupted). The point is: A JVM that just hangs is perfectly fine and if you were to file a bug with OpenJDK about it, they would close that bug with 'wontfix works-as-designed'.</p>\n<p>This gets us to the real point here: What you want is impossible. A JVM has too many freedoms. All you can do is: &quot;For <em>this</em> specific JVM release at <em>that</em> specific version on <em>so and so</em> specific architecture with <em>this and that</em> OS.... can I exhaustively enumerate every way in which interrupting a thread will <em>not</em> result in that thread exiting out into my runner call within a reasonable timeframe?&quot;</p>\n<p>Note also that you forgot one rather glaringly obvious item in your list: <strong>Starting another thread</strong>. Because, sure, even if you have somehow ascertained that interrupting the thread you invoked the plugin on will definitely return swiftly, what if they made another thread? That thread will keep running. I assume you don't want that.</p>\n<p>As others have said in comments, you have only two options:</p>\n<ol>\n<li><p>Leave the responsibility virtually entirely with the plugin author - they are free to asplode your process and all you can do is ask them not to do that. At best, you can use e.g. ASM introspection to scan for things you don't want and warn that the plugin appears to be breaking the rules, but you need to be crystal clear that the one and only purpose is to stop honest mistakes; anybody with malicious intent can get around it trivially.</p>\n</li>\n<li><p>Start a new process and use OS tooling to aggressively sandbox it. Both in what it can do and how many resources it can use.</p>\n</li>\n</ol>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 401843,
+      "reputation" : 107206,
+      "user_id" : 768644,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+      "display_name" : "rzwitserloot",
+      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+    },
+    "creation_date" : 1745523125,
+    "last_activity_date" : 1745523125,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140367168,
+    "post_id" : 79591183,
+    "body" : "In the first place you probably will not be able to &quot;guarantee termination within a set time&quot; because the scheduler that assigns CPU time to the semi-trusted user code is unable to provide such guarantees.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 1580843,
+      "reputation" : 13706,
+      "user_id" : 1466267,
+      "user_type" : "registered",
+      "accept_rate" : 91,
+      "profile_image" : "https://www.gravatar.com/avatar/c47d1f7544a8c4a1bb7a41d511f53604?s=256&d=identicon&r=PG",
+      "display_name" : "SpaceTrucker",
+      "link" : "https://stackoverflow.com/users/1466267/spacetrucker"
+    },
+    "creation_date" : 1745528538,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140366690,
+    "post_id" : 79591183,
+    "body" : "@gthanop Appreciated; part of my reason for asking this is I&#39;m trying to get a better handle on the realistic risk/avoidability of such uninterruptible and non-returning code. I <i>hope</i> it&#39;s something avoidable enough that it&#39;s not worth compromising the happy path to account for, but that hope rests on there being relatively few and obvious dangers to watch out for.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 7971577,
+      "reputation" : 4336,
+      "user_id" : 6016064,
+      "user_type" : "registered",
+      "accept_rate" : 71,
+      "profile_image" : "https://www.gravatar.com/avatar/ef21e8114f58b4d82ea6c3056812f557?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Edward Peters",
+      "link" : "https://stackoverflow.com/users/6016064/edward-peters"
+    },
+    "creation_date" : 1745518770,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140366628,
+    "post_id" : 79591183,
+    "body" : "@IłyaBursov it&#39;s actually trivial to define a subset of java code which guarantees termination - you can build quite complex logic using only if statements and arithmetic operations, for instance. The fact that turing completeness may be expressed with a small instruction set does not make it less powerful. That&#39;s like saying Dostoevsky&#39;s writing is simple because it can be translated to binary. But also, this isn&#39;t what I asked - I asked for as complete a list of patterns or mechanisms as possible, even if all I could do with them was provide human-centered warnings regarding such.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7971577,
+      "reputation" : 4336,
+      "user_id" : 6016064,
+      "user_type" : "registered",
+      "accept_rate" : 71,
+      "profile_image" : "https://www.gravatar.com/avatar/ef21e8114f58b4d82ea6c3056812f557?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Edward Peters",
+      "link" : "https://stackoverflow.com/users/6016064/edward-peters"
+    },
+    "creation_date" : 1745517380,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140366610,
+    "post_id" : 79591183,
+    "body" : "Ah ok, understood, thanks. Edit: sounds like you may run multiple semi-trusted codes in parallel to verify them. If that is the case, then maybe you can batch multiple such Threads inside a single process (ie start a process which will test as many threads of semi-trusted codes as possible and kill the process at some point). But then again this comes with some issues, I understand, I am just trying to propose alternatives.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 9059972,
+      "reputation" : 3471,
+      "user_id" : 6746785,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/3zi2O.png?s=256",
+      "display_name" : "gthanop",
+      "link" : "https://stackoverflow.com/users/6746785/gthanop"
+    },
+    "creation_date" : 1745517191,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140366592,
+    "post_id" : 79591183,
+    "body" : "@gthanop Unfortunately I believe that for my use case, the performance overhead of starting a process vs a thread is prohibitive.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7971577,
+      "reputation" : 4336,
+      "user_id" : 6016064,
+      "user_type" : "registered",
+      "accept_rate" : 71,
+      "profile_image" : "https://www.gravatar.com/avatar/ef21e8114f58b4d82ea6c3056812f557?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Edward Peters",
+      "link" : "https://stackoverflow.com/users/6016064/edward-peters"
+    },
+    "creation_date" : 1745516926,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140366591,
+    "post_id" : 79591183,
+    "body" : "@EdwardPeters <a href=\"https://softwareengineering.stackexchange.com/questions/230538/what-is-the-absolute-minimum-set-of-instructions-required-to-build-a-turing-comp\" title=\"what is the absolute minimum set of instructions required to build a turing comp\">softwareengineering.stackexchange.com/questions/230538/&hellip;</a>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3415144,
+      "reputation" : 24365,
+      "user_id" : 2864275,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f1f73deb5983ac46af2a74732752292e?s=256&d=identicon&r=PG",
+      "display_name" : "Iłya Bursov",
+      "link" : "https://stackoverflow.com/users/2864275/i%c5%82ya-bursov"
+    },
+    "creation_date" : 1745516911,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140366583,
+    "post_id" : 79591183,
+    "body" : "@IłyaBursov no, it isn&#39;t - the halting problem applies to things which are turing complete, which is quite powerful. I&#39;m fine limiting user code to something less than turing completeness.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7971577,
+      "reputation" : 4336,
+      "user_id" : 6016064,
+      "user_type" : "registered",
+      "accept_rate" : 71,
+      "profile_image" : "https://www.gravatar.com/avatar/ef21e8114f58b4d82ea6c3056812f557?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Edward Peters",
+      "link" : "https://stackoverflow.com/users/6016064/edward-peters"
+    },
+    "creation_date" : 1745516784,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140366551,
+    "post_id" : 79591183,
+    "body" : "So the actual problem is <i>to guarantee termination within a set time</i>? If that is the case, then is there some limitation on starting a <code>Process</code> for the semi-trusted code and destroying it after an amount of time? You could document in this case that the semi-trusted code must run at most some specified amount of time, otherwise it is not accepted. So implementors of semi-trusted code will be aware.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 9059972,
+      "reputation" : 3471,
+      "user_id" : 6746785,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/3zi2O.png?s=256",
+      "display_name" : "gthanop",
+      "link" : "https://stackoverflow.com/users/6746785/gthanop"
+    },
+    "creation_date" : 1745516395,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140366538,
+    "post_id" : 79591183,
+    "body" : "it is impossible <a href=\"https://en.wikipedia.org/wiki/Halting_problem\" rel=\"nofollow noreferrer\">en.wikipedia.org/wiki/Halting_problem</a>",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 3415144,
+      "reputation" : 24365,
+      "user_id" : 2864275,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/f1f73deb5983ac46af2a74732752292e?s=256&d=identicon&r=PG",
+      "display_name" : "Iłya Bursov",
+      "link" : "https://stackoverflow.com/users/2864275/i%c5%82ya-bursov"
+    },
+    "creation_date" : 1745516219,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79591342" : [ {
+      "comment_id" : 140372861,
+      "post_id" : 79591342,
+      "body" : "@Ohm&#39;sLawman Yes, any method in the standard library. <code>Thread.sleep</code> is declared as <code>throws InterruptedException</code>, it is in the standard library -&gt; it &#39;matches&#39;: If you interrupt a thread that is currently executing Thread.sleep, then that will do the thing you want (stop the sleeping, and cause an InterruptedEx). There are lots of things that JVMs do in a way that [A] lots of folks rely on it and [B] OpenJDK is aware of that, that nevertheless aren&#39;t spelled out.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 401843,
+        "reputation" : 107206,
+        "user_id" : 768644,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+        "display_name" : "rzwitserloot",
+        "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+      },
+      "creation_date" : 1745714318,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140370987,
+      "post_id" : 79591342,
+      "body" : "...that required any method in <i>the Java standard library</i> (i.e., any method in the <code>java</code> package or the <code>javax</code> package) to respond to interrupts by throwing that exception if it declares that it <i>can</i> throw the exception. But, I&#39;ve never contributed to either of those packages, and if that rule is written somewhere, I don&#39;t know where I would look for it.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 14247365,
+        "reputation" : 453,
+        "user_id" : 10291999,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/1yd1F.png?s=256",
+        "display_name" : "Ohm&#39;s Lawman",
+        "link" : "https://stackoverflow.com/users/10291999/ohms-lawman"
+      },
+      "creation_date" : 1745632012,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140370986,
+      "post_id" : 79591342,
+      "body" : "Re, &quot;<i>any method that is declared to <code>throws InterruptedException</code> is defined in the JVM specification as being interruptable.</i>&quot; Really? I cannot find &quot;interruptible&quot; (or, &quot;interruptable&quot;) anywhere in the JVMS or the JLS. And besides, it would be trivially easy to write a method that is declared with <code>throws InterruptedException</code>, but which does not ever respond to interrupts. And, it would be equally easy to write a method that actually <i>does</i> throw that exception, but for reasons that have nothing to do with interruption. OTOH, it would make perfect sense if somebody wrote a rule...",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 14247365,
+        "reputation" : 453,
+        "user_id" : 10291999,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/1yd1F.png?s=256",
+        "display_name" : "Ohm&#39;s Lawman",
+        "link" : "https://stackoverflow.com/users/10291999/ohms-lawman"
+      },
+      "creation_date" : 1745632008,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140370687,
+      "post_id" : 79591342,
+      "body" : "It&#39;s an issue, but I feel like it&#39;s kinda a separate issue - like, the original child thread doesn&#39;t need to be interrupted for this to happen, it&#39;s just a normal resource leak where the resource happens to be a thread. I was looking more specifically for &quot;things that make a thread hang and not respond to being interrupted&quot;. Like, un-killed grandchildren are just as likely a problem even when the child returns successfully, right? (Other than the likelihood of them forgetting to do cleanup on unhappy paths...)",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 7971577,
+        "reputation" : 4336,
+        "user_id" : 6016064,
+        "user_type" : "registered",
+        "accept_rate" : 71,
+        "profile_image" : "https://www.gravatar.com/avatar/ef21e8114f58b4d82ea6c3056812f557?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Edward Peters",
+        "link" : "https://stackoverflow.com/users/6016064/edward-peters"
+      },
+      "creation_date" : 1745617372,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140370620,
+      "post_id" : 79591342,
+      "body" : "You got most of em, but that &#39;you made a thread&#39; is a bit of an issue. It&#39;s kinda annoying to have to warn about that: There are plenty of totally legit reasons to do this. You&#39;re almost forced into making a tiny little framework where plugins are meant to invoke your framework to make threads (so that you can then interrupt them). You can try to detect if threads are made <i>explicitly specifying thread group</i> - threads made that don&#39;t specify a group inherit the spawning thread&#39;s group and you can interrupt every thread in a group.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 401843,
+        "reputation" : 107206,
+        "user_id" : 768644,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+        "display_name" : "rzwitserloot",
+        "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+      },
+      "creation_date" : 1745615414,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140367506,
+      "post_id" : 79591342,
+      "body" : "I&#39;ll add that option 1 is basically what I&#39;m going for - I do not expect this will stand up to malicious intent. I&#39;m just hoping for a list of the most likely &quot;honest mistakes&quot; that would be worth warning people off from.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 7971577,
+        "reputation" : 4336,
+        "user_id" : 6016064,
+        "user_type" : "registered",
+        "accept_rate" : 71,
+        "profile_image" : "https://www.gravatar.com/avatar/ef21e8114f58b4d82ea6c3056812f557?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Edward Peters",
+        "link" : "https://stackoverflow.com/users/6016064/edward-peters"
+      },
+      "creation_date" : 1745540138,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140367458,
+      "post_id" : 79591342,
+      "body" : "So I feel like you&#39;ve given a good explanation of why a 100% list of theoretically possible causes is unachievable, but I still think there&#39;s value in a 90% list of likely real world causes - for starters, it gives me a more grounded sense of how great an edge case this is, and how much performance/complexity cost we should spend to avoid it.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 7971577,
+        "reputation" : 4336,
+        "user_id" : 6016064,
+        "user_type" : "registered",
+        "accept_rate" : 71,
+        "profile_image" : "https://www.gravatar.com/avatar/ef21e8114f58b4d82ea6c3056812f557?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Edward Peters",
+        "link" : "https://stackoverflow.com/users/6016064/edward-peters"
+      },
+      "creation_date" : 1745537441,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

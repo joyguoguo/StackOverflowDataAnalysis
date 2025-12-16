@@ -1,0 +1,100 @@
+{
+  "question" : {
+    "question_id" : 79760420,
+    "title" : "Does httpclient need to consume httpentity in finally?",
+    "body" : "<p>1.The following code encapsulates the post method, is <code>EntityUtils.consume(httpEntity);</code> in finally segment code redundant? I asked claudai and he said it's not redundant, and asked chatgpt and he said it's redundant.</p>\n<pre><code>public String post(String url, String content, Map&lt;String, String&gt; headers, String charset) throws Exception {\n    HttpPost httpPost = null;\n    HttpEntity httpEntity = null;\n    try {\n        httpPost = new HttpPost(url); \n        StringEntity contentEntity = new StringEntity(content, charset);\n        httpPost.setEntity(contentEntity);\n        try (CloseableHttpResponse response = httpClient.execute(httpPost)) {\n            int statusCode = response.getStatusLine().getStatusCode();\n            if (statusCode != 200) {\n                httpPost.abort(); \n            }\n            httpEntity = response.getEntity();\n            String result = null;\n            if (httpEntity != null) {\n                result = EntityUtils.toString(httpEntity, charset);\n            }\n            EntityUtils.consume(httpEntity);\n            return result;\n        }\n    }\n    catch (Exception ex) {\n        logger.error(&quot;doPost failed:&quot;, ex);\n        throw ex;\n    }\n    finally { \n        if (httpEntity != null) {\n            try {\n                EntityUtils.consume(httpEntity);\n            }\n            catch (Exception consumeEx) {\n                logger.error(&quot;consume httpEntity failed:&quot;, consumeEx);\n            }\n        }\n        if (httpPost != null) {\n            try {\n                httpPost.abort();\n            }\n            catch (Exception abortEx) {\n                logger.error( &quot;abort request failed:&quot;, abortEx);\n            }\n        }\n    }\n}\n</code></pre>\n<p>2.here is another code ,Would there be any problem if I simply remove the code 'EntityUtils.consume(response.getEntity());'?</p>\n<pre><code>CloseableHttpResponse response = null;\ntry {\n    response = httpClient.execute(request);\n    HttpEntity entity = response.getEntity();\n    String result = EntityUtils.toString(entity);\n} finally {\n    if (response != null) {\n        EntityUtils.consume(response.getEntity());\n        response.close();\n    }\n}\n</code></pre>\n",
+    "tags" : [ "java", "httpclient", "apache-httpclient-4.x" ],
+    "owner" : {
+      "account_id" : 3624157,
+      "reputation" : 259,
+      "user_id" : 3022220,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/aec14702723e6ffc4de7fbaa694bc2b2?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Rebecca",
+      "link" : "https://stackoverflow.com/users/3022220/rebecca"
+    },
+    "is_answered" : true,
+    "view_count" : 89,
+    "answer_count" : 2,
+    "score" : 1,
+    "last_activity_date" : 1758203547,
+    "creation_date" : 1757472155,
+    "link" : "https://stackoverflow.com/questions/79760420/does-httpclient-need-to-consume-httpentity-in-finally",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79760470,
+    "question_id" : 79760420,
+    "body" : "<p>If you fully consume the entity using methods like <code>EntityUtils.toString</code> (which reads the entire stream), consume becomes unnecessary because the connection is already released.</p>\n<p><code>// Inside try-with-resources:</code><br />\n<code> String result = null;</code><br />\n<code>if (httpEntity != null)</code><br />\n<code>{   </code><br />\n<code>   result = EntityUtils.toString(httpEntity, charset); // Fully consumes the stream</code><br />\n<code>}</code><br />\n<code>    EntityUtils.consume(httpEntity); // Redundant if toString() was called</code><br />\n<code> ....</code></p>\n<p>In this pattern, <code>EntityUtils.toString()</code> fully consumes the stream, so the subsequent EntityUtils.consume(httpEntity) is redundant. Placing another consume in the finally block is unnecessary unless an exception interrupts reading before full consumption.</p>\n<ul>\n<li><p>In aove code examples, if you use EntityUtils.toString (or similar methods that fully read the entity), you can safely remove repeated calls to EntityUtils.consume—no problem will occur.</p>\n</li>\n<li><p>Keep the finally block for aborting requests and closing resources, but avoid redundant consume calls if the entity is fully read.</p>\n<p>So my takeway is -<br />\n-  EntityUtils.toString(entity) - fully closed when work done. In this example or you can find more they have used .toString wihtout .consume <a href=\"https://github.com/apache/httpcomponents-client/blob/master/httpclient5/src/main/java/org/apache/hc/client5/http/impl/classic/BasicHttpClientResponseHandler.java\" rel=\"nofollow noreferrer\">https://github.com/apache/httpcomponents-client/blob/master/httpclient5/src/main/java/org/apache/hc/client5/http/impl/classic/BasicHttpClientResponseHandler.java</a><br />\n- Use EntityUtils.consume(entity) when you partially read steam or having abstract  reource management</p>\n</li>\n</ul>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 1120840,
+      "reputation" : 6879,
+      "user_id" : 1109179,
+      "user_type" : "registered",
+      "accept_rate" : 62,
+      "profile_image" : "https://www.gravatar.com/avatar/946c3899f642e09870abbf34cf95872e?s=256&d=identicon&r=PG",
+      "display_name" : "Sohan",
+      "link" : "https://stackoverflow.com/users/1109179/sohan"
+    },
+    "creation_date" : 1757478847,
+    "last_activity_date" : 1757485788,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79767119,
+    "question_id" : 79760420,
+    "body" : "<p><code>HttpEntity</code> objects do not <em>have</em> to be closed in a try-finally due to the response message managing all the resources allocated for the given message exchange including those that the entity makes use of.</p>\n<p>What one <em>MUST</em> do is to ensure the response message <em>always</em> gets closed out. As of version 5.2 this should no longer be even an issue as one is expected to be using of <code>#execute</code> methods that take a <code>HttpClientResponseHandler</code> lambda as a parameter.</p>\n<p>Overall, presently (in the 5.x release series) one can be lax with closing of <code>HttpEntity</code> objects.</p>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 133909,
+      "reputation" : 27881,
+      "user_id" : 335638,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/a0176e178f8f08da2ac4524454b4184e?s=256&d=identicon&r=PG",
+      "display_name" : "ok2c",
+      "link" : "https://stackoverflow.com/users/335638/ok2c"
+    },
+    "creation_date" : 1758102299,
+    "last_activity_date" : 1758203547,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79760470" : [ {
+      "comment_id" : 140726026,
+      "post_id" : 79760470,
+      "body" : "@Rebecca Yes - that is my understaind based on examples I have seen on apache repo. You can still close the client in finally or catch",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 1120840,
+        "reputation" : 6879,
+        "user_id" : 1109179,
+        "user_type" : "registered",
+        "accept_rate" : 62,
+        "profile_image" : "https://www.gravatar.com/avatar/946c3899f642e09870abbf34cf95872e?s=256&d=identicon&r=PG",
+        "display_name" : "Sohan",
+        "link" : "https://stackoverflow.com/users/1109179/sohan"
+      },
+      "creation_date" : 1757487653,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140725999,
+      "post_id" : 79760470,
+      "body" : "Under normal circumstances, the code <code>EntityUtils.consume(httpEntity);</code> in finally does not need to be added, just to avoid unexpected situations such as errors when reading.Is it need?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 3624157,
+        "reputation" : 259,
+        "user_id" : 3022220,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/aec14702723e6ffc4de7fbaa694bc2b2?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Rebecca",
+        "link" : "https://stackoverflow.com/users/3022220/rebecca"
+      },
+      "creation_date" : 1757486731,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

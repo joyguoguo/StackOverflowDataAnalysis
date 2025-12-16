@@ -1,0 +1,63 @@
+{
+  "question" : {
+    "question_id" : 79738509,
+    "title" : "How to call a COM function with a Variant * parameter using JNA？",
+    "body" : "<p>Background and environment:</p>\n<p>I have a Windows software installed, which has a Component Model Object. The COM provides a function:</p>\n<pre><code>long GetValue(VARIANT* v, short a, short b, [optional] VARIANT c, [optional] VARIANT d);\n</code></pre>\n<p>I got the function signature information by the <code>oleview.exe</code>  tool.</p>\n<p>There is a C# example. I need to refactor it to Kotlin.</p>\n<pre><code>object valOutput = null;\nshort a = 1;\nshort b = 101;\nstring c = &quot;0&quot;;\nstring d = &quot;m&quot;;\no.GetValue(ref valOutput, a, b, c, d);\n</code></pre>\n<p>Problem:</p>\n<p>I am using JNA and Kotlin to refactor the C# example.</p>\n<p>I have successfully initialized the COM and called some functions. Everything works until I call the &quot;GetValue&quot; function.</p>\n<pre class=\"lang-kotlin prettyprint-override\"><code>val valOutput = Variant.VARIANT()\nval a = 1\nval b = 101\nval c = &quot;0&quot;\nval d = &quot;m&quot;\no.GetValue(valOutput, a.toShort(), b.toShort(), c, d)\n</code></pre>\n<p>I got an Exception:</p>\n<pre><code>com.sun.jna.platform.win32.COM.COMInvokeException: Type mismatch. (HRESULT: 80020005) (puArgErr=4)\n    at com.sun.jna.platform.win32.COM.COMUtils.checkRC(COMUtils.java:187)\n    at com.sun.jna.platform.win32.COM.util.ProxyObject.oleMethod(ProxyObject.java:736)\n    at com.sun.jna.platform.win32.COM.util.ProxyObject.invokeMethod(ProxyObject.java:450)\n    at com.sun.jna.platform.win32.COM.util.ProxyObject.invoke(ProxyObject.java:256)\n    at com.sun.proxy.$Proxy26.GetValueEx(Unknown Source)\n    at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke0(Native Method)\n    at java.base/jdk.internal.reflect.NativeMethodAccessorImpl.invoke(NativeMethodAccessorImpl.java:62)\n    at java.base/jdk.internal.reflect.DelegatingMethodAccessorImpl.invoke(DelegatingMethodAccessorImpl.java:43)\n    at java.base/java.lang.reflect.Method.invoke(Method.java:566)\n    at com.sun.jna.platform.win32.COM.util.Factory$ProxyObject2$1.call(Factory.java:98)\n    at java.base/java.util.concurrent.FutureTask.run(FutureTask.java:264)\n    at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1128)\n    at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:628)\n    at java.base/java.lang.Thread.run(Thread.java:829)\n    at java.base/java.util.concurrent.FutureTask.report(FutureTask.java:122)\n    at java.base/java.util.concurrent.FutureTask.get(FutureTask.java:205)\n    at com.sun.jna.platform.win32.COM.util.ComThread.execute(ComThread.java:155)\n    at com.sun.jna.platform.win32.COM.util.Factory.runInComThread(Factory.java:172)\n    at com.sun.jna.platform.win32.COM.util.Factory.access$100(Factory.java:56)\n    at com.sun.jna.platform.win32.COM.util.Factory$ProxyObject2.invoke(Factory.java:95)\n...\n</code></pre>\n<p>What does the exception mean? How to fix it?</p>\n<p>I have changed the calling Kotlin code as below and got the same exception.</p>\n<pre><code>val valOutput = Variant.VARIANT.ByReference()\no.GetValue(valOutput, a.toShort(), b.toShort(), c, d)\n</code></pre>\n",
+    "tags" : [ "java", "kotlin", "jna", "comexception", "ole-automation" ],
+    "owner" : {
+      "account_id" : 11743767,
+      "reputation" : 61,
+      "user_id" : 8595154,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/1d31d3cd8bb55b642857bf8a1be90546?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Tyrael",
+      "link" : "https://stackoverflow.com/users/8595154/tyrael"
+    },
+    "is_answered" : true,
+    "view_count" : 107,
+    "answer_count" : 1,
+    "score" : 3,
+    "last_activity_date" : 1757536671,
+    "creation_date" : 1755509414,
+    "link" : "https://stackoverflow.com/questions/79738509/how-to-call-a-com-function-with-a-variant-parameter-using-jna",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79739191,
+    "question_id" : 79738509,
+    "body" : "<p>The error &quot;Type mismatch. (HRESULT: 80020005) (puArgErr=4)&quot; indicates you're passing a wrong type to <code>GetValue()</code>. It further indicates (puArgErr=4) that the fifth element of the array being passed to the COM Invoker is the problem.</p>\n<p>You indicate the fourth and fifth arguments are of VARIANT type:</p>\n<pre class=\"lang-c prettyprint-override\"><code>long GetValue(VARIANT* v, short a, short b, [optional] VARIANT c, [optional] VARIANT d);\n</code></pre>\n<p>However, you are passing strings for the fourth and fifth arguments:</p>\n<pre class=\"lang-kotlin prettyprint-override\"><code>val valOutput = Variant.VARIANT()\nval a = 1\nval b = 101\nval c = &quot;0&quot;\nval d = &quot;m&quot;\no.GetValue(valOutput, a.toShort(), b.toShort(), c, d)\n</code></pre>\n<p>Strings are not COM objects.  The variant String type is a <code>BSTR</code> and you need to use OLE/Com methods to allocate it (and free it).  While there are some (deprecated) JNA helper functions which automatically wrap these in a (<code>VARIANT</code>) <code>BSTR</code>, these internally allocate memory which is never released, so you should manually allocate using <code>OleAuto.SysAllocString()</code> and free the memory later with <code>SysFreeString</code>, ideally in a <code>finally</code> block.</p>\n<p>As you've indicated in your comments, this was not the only error; I'm assuming once correcting the strings you probably got the same error with <code>puArgErr=0</code> pointing to the <code>valOutput</code> variable you initially suspected.</p>\n<p>The key insight here is what <code>.ByReference()</code> means.  In a JNA Structure (<code>VARIANT</code> is a subclass of <code>Union</code> which is a subclass of <code>Structure</code>), <code>ByReference</code> is just a <em>tagging interface</em> identifying whether a structure should be passed by value (all of its bytes) or by reference (a pointer).  Inline inside another Structure, ByValue is the default; when used as a method argument, ByReference is the default.  So in this case tagging the argument <code>ByReference</code> is not actually changing the fact that you're just passing along an uninitialized/untyped <code>VARIANT</code> subclass.</p>\n<p>In this case, the COM method expects type information for this parameter to know that the value you're passing is a VARIANT pointer which further points to a <code>VARIANT</code> structure (union). (This is similar to the problem with the string arguments where the <code>BSTR</code> memory allocation pointer and length information doesn't match the typical pointer to null-terminated C string).  The plain pointer didn't provide the memory the method was expected to fill when the method was called.</p>\n<p>In the <code>valOutput</code> case, the key element you're missing is the <code>VT_BYREF</code> type.  And you still need the <code>ByReference</code> tag so that the <code>setValue()</code> implementation understands to write the pointer to the Variant, not the variant itself, in the internal variant field.</p>\n<p>Putting it all together, the below should be close to what you need. I use Java and not Kotlin so I may not have the syntax exactly right:</p>\n<pre class=\"lang-kotlin prettyprint-override\"><code>val vp = Variant.VARIANT.ByReference()         \nval valOutput = Variant.VARIANT()         \nvalOutput.setValue(Variant.VT_BYREF or Variant.VT_VARIANT, vp)\n\nvar cBstr = null\nvar dBstr = null\ntry {\n    // Allocate COM strings natively\n    cBstr = OleAuto.SysAllocString(&quot;0&quot;)\n    dBstr = OleAuto.SysAllocString(&quot;m&quot;)\n\n    val a = 1.toShort()\n    val b = 101.toShort()\n    val variantC = VARIANT(cBstr)\n    val variantD = VARIANT(dBstr)\n    o.GetValue(valOutput, a, b, variantC, variantD)\n} finally {\n    // Free natively\n    if (cBstr != null) {\n        OleAuto.SysFreeString(cBstr)\n    }\n    if (dBstr != null) {\n        OleAuto.SysFreeString(dBstr)\n    }\n}\n\n// handle valOutput here\n</code></pre>\n",
+    "score" : 3,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 1187908,
+      "reputation" : 9355,
+      "user_id" : 1161484,
+      "user_type" : "registered",
+      "accept_rate" : 93,
+      "profile_image" : "https://www.gravatar.com/avatar/371797a0137ad4519049f88afac2d4e7?s=256&d=identicon&r=PG",
+      "display_name" : "Daniel Widdis",
+      "link" : "https://stackoverflow.com/users/1161484/daniel-widdis"
+    },
+    "creation_date" : 1755547063,
+    "last_activity_date" : 1757536671,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140683692,
+    "post_id" : 79738509,
+    "body" : "After many researches and tries, I figure it out. It is a problem of the &quot;valOutput&quot; variant in this case.  The below code works. <code>val type = Variant.VT_BYREF or Variant.VT_VARIANT         val vp = Variant.VARIANT.ByReference()         val valOutput = Variant.VARIANT()         valOutput.setValue(type, vp)</code>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 11743767,
+      "reputation" : 61,
+      "user_id" : 8595154,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/1d31d3cd8bb55b642857bf8a1be90546?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Tyrael",
+      "link" : "https://stackoverflow.com/users/8595154/tyrael"
+    },
+    "creation_date" : 1755836049,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

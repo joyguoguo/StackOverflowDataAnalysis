@@ -1,0 +1,80 @@
+{
+  "question" : {
+    "question_id" : 79621823,
+    "title" : "Hibernate 6: “The batch containing X statements could not be sorted” warning after Spring Boot 3 upgrade — what changed?",
+    "body" : "<p>After upgrading from Spring Boot 2 to Spring Boot 3, which internally moves from Hibernate 5 to Hibernate 6, I started seeing the following warning during persistence:</p>\n<pre><code>The batch containing 4590 statements could not be sorted. This might indicate a circular entity relationship.\n</code></pre>\n<p>This warning never appeared before in Hibernate 5.</p>\n<p>Around the same time, we experienced an OutOfMemoryError (Java heap space) during a scheduled task that basically involved doing just some basic things. (fetching datasheets, checking if a JSON file was already generated, and then flushing via entity manager). We are not sure where the heap error is coming from, and we are not able to reproduce it currently.</p>\n<p>We’re working with a deeply nested structure used to model engineering datasheets:</p>\n<ul>\n<li>A Datasheet has a List of Diagrams. A Diagram has a List of Curves with @OneToMany(cascade = CascadeType.ALL)    and @OrderBy(&quot;index&quot;)</li>\n<li>Curve has a List of Coordinates with another @OneToMany(cascade =    CascadeType.ALL) and @OrderBy(&quot;index&quot;). These objects are all saved as part of the same transaction.</li>\n<li>A typical diagram might contain:</li>\n<li>1-10 curves. Each curve can have 5,000+ coordinate points</li>\n</ul>\n<p>Why does Hibernate 6 log this sorting warning when Hibernate 5 did not?\nCan this warning cause a HEAP out-of-memory problem?</p>\n<p>Here is the log file from the out-of-memory error:</p>\n<pre><code>14:47:08 INFO  c.d.c.service.AuthenticationService - getCurrentUsername returned: Dhyani\n14:47:09 INFO  ParserService - Parsing took 823 ms\n14:47:09 WARN  ParserService - Input file parsed with 0 errors.\n14:47:09 INFO  ParserService - Creating logs took 9 ms\n14:47:09 WARN  o.hibernate.engine.spi.ActionQueue - The batch containing 3685 statements could not be sorted. This might indicate a circular entity relationship.\n14:47:12 INFO  c.d.core.mail.service.MailService - Send 'Datasheet Update Notification' to Datasheet Owner.\n14:47:12 WARN  o.t.s.p.AbstractStandardFragmentInsertionTagProcessor - [THYMELEAF][http-nio-8080-exec-6][mail-template] Deprecated unwrapped fragment expression &quot;__${topContent}__&quot; found in template mail-template, line 20, col 18. Please use the complete syntax of fragment expressions instead (&quot;~{__${topContent}__}&quot;). The old, unwrapped syntax for fragment expressions will be removed in future versions of Thymeleaf.\n14:47:13 WARN  o.t.s.p.AbstractStandardFragmentInsertionTagProcessor - [THYMELEAF][http-nio-8080-exec-6][approval-flow-mails] Deprecated unwrapped fragment expression &quot;this :: ds-name-and-revision&quot; found in template approval-flow-mails, line 69, col 30. Please use the complete syntax of fragment expressions instead (&quot;~{this :: ds-name-and-revision}&quot;). The old, unwrapped syntax for fragment expressions will be removed in future versions of Thymeleaf.\n14:47:13 INFO  c.d.core.mail.service.MailConnector - Sending Mail from R-test-ePowerDatashe@test.com to asdf@test.com; subject: ePower 2.0 Message: Your Datasheet was changed\n14:47:16 INFO  c.d.core.mail.service.MailService - Mail sent!\n14:47:16 INFO  c.d.c.s.s.AppUserDetailsService - numActiveUsers: 1 for username: kobayahi\n14:47:16 INFO  c.d.c.service.AuthenticationService - null:productive\n14:47:16 INFO  c.d.c.service.AuthenticationService - getCurrentUsername returned: KOBAYAHI\n14:47:16 INFO  c.d.c.service.AuthenticationService - null:productive\n14:47:16 INFO  c.d.c.service.AuthenticationService - Auth with currentUsername\n14:47:17 INFO  c.d.c.s.s.AppUserDetailsService - numActiveUsers: 1 for username: vielemem\n14:47:17 INFO  c.d.c.service.AuthenticationService - null:productive\n14:47:17 INFO  c.d.c.service.AuthenticationService - getCurrentUsername returned: VIELEMEM\n14:47:17 INFO  c.d.c.service.AuthenticationService - null:productive\n14:47:17 INFO  c.d.c.service.AuthenticationService - Auth with currentUsername\n14:47:18 INFO  c.d.c.s.s.AppUserDetailsService - numActiveUsers: 1 for username: torremar\n14:47:18 INFO  c.d.c.service.AuthenticationService - null:productive\n14:47:18 INFO  c.d.c.service.AuthenticationService - getCurrentUsername returned: TORREMAR\n14:47:18 INFO  c.d.c.service.AuthenticationService - null:productive\n14:47:18 INFO  c.d.c.service.AuthenticationService - Auth with currentUsername\n14:47:18 WARN  org.apache.pdfbox.cos.COSDocument - Warning: You did not close a PDF Document\n14:49:39 ERROR o.s.s.s.TaskUtils$LoggingErrorHandler - Unexpected error occurred in scheduled task\njava.lang.OutOfMemoryError: Java heap space\n14:49:39 WARN  com.zaxxer.hikari.pool.HikariPool - HikariPool-2 - Thread starvation or clock leap detected (housekeeper delta=2m13s625ms839µs60ns).\n14:49:39 ERROR o.a.coyote.http11.Http11NioProtocol - Error processing async timeouts\njava.util.concurrent.ExecutionException: java.lang.OutOfMemoryError: Java heap space\n    at java.base/java.util.concurrent.FutureTask.report(FutureTask.java:122)\n    at java.base/java.util.concurrent.FutureTask.get(FutureTask.java:191)\n    at org.apache.coyote.AbstractProtocol.startAsyncTimeout(AbstractProtocol.java:660)\n    at org.apache.coyote.AbstractProtocol.lambda$start$0(AbstractProtocol.java:646)\n    at java.base/java.util.concurrent.Executors$RunnableAdapter.call(Executors.java:539)\n    at java.base/java.util.concurrent.FutureTask.runAndReset(FutureTask.java:305)\n    at java.base/java.util.concurrent.ScheduledThreadPoolExecutor$ScheduledFutureTask.run(ScheduledThreadPoolExecutor.java:305)\n    at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1136)\n    at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:635)\n    at org.apache.tomcat.util.threads.TaskThread$WrappingRunnable.run(TaskThread.java:63)\n    at java.base/java.lang.Thread.run(Thread.java:840)\nCaused by: java.lang.OutOfMemoryError: Java heap space\n    at java.base/java.util.concurrent.ConcurrentHashMap$KeySetView.iterator(ConcurrentHashMap.java:4635)\n    at org.apache.coyote.AbstractProtocol.lambda$startAsyncTimeout$1(AbstractProtocol.java:667)\n    at org.apache.coyote.AbstractProtocol$$Lambda$2323/0x00007f64f0f66240.run(Unknown Source)\n    ... 7 common frames omitted\n14:49:39 INFO  c.d.epower.service.DatasheetService - ExportJsonScheduler started\n</code></pre>\n",
+    "tags" : [ "java", "spring-boot", "hibernate" ],
+    "owner" : {
+      "account_id" : 3446643,
+      "reputation" : 245,
+      "user_id" : 2887326,
+      "user_type" : "registered",
+      "accept_rate" : 58,
+      "profile_image" : "https://www.gravatar.com/avatar/606d8845a08291bf376dc8e4940ad89f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "zFr3eak",
+      "link" : "https://stackoverflow.com/users/2887326/zfr3eak"
+    },
+    "is_answered" : false,
+    "view_count" : 143,
+    "answer_count" : 0,
+    "score" : 1,
+    "last_activity_date" : 1747253571,
+    "creation_date" : 1747237066,
+    "link" : "https://stackoverflow.com/questions/79621823/hibernate-6-the-batch-containing-x-statements-could-not-be-sorted-warning-aft",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140426573,
+    "post_id" : 79621823,
+    "body" : "I found a few references of this and it looks like it is not related to Hibernate 6 as the code was <a href=\"https://github.com/hibernate/hibernate-orm/blame/main/hibernate-core/src/main/java/org/hibernate/engine/spi/ActionQueue.java#L1314\" rel=\"nofollow noreferrer\">added on version 5.x</a> would it be possible to use lazy for those nested attributes? It might help. No idea why would this happen only after the updated though, sorry.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 209503,
+      "reputation" : 23867,
+      "user_id" : 460557,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/b4565f97815833390c9c880e9e8522e4?s=256&d=identicon&r=PG",
+      "display_name" : "Jorge Campos",
+      "link" : "https://stackoverflow.com/users/460557/jorge-campos"
+    },
+    "creation_date" : 1747255026,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140426501,
+    "post_id" : 79621823,
+    "body" : "Thank you for the answer - yeah it might suggest, that this would be the issue and i would totally agree, but we are actually closing everything and have this warning in our engine for about two years without any issue. Also only one document was written after system startup and before the crash. Furthermore one of those documents have about 2 MB of filesize. We have an available heap-memory of 1,8GB.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3446643,
+      "reputation" : 245,
+      "user_id" : 2887326,
+      "user_type" : "registered",
+      "accept_rate" : 58,
+      "profile_image" : "https://www.gravatar.com/avatar/606d8845a08291bf376dc8e4940ad89f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "zFr3eak",
+      "link" : "https://stackoverflow.com/users/2887326/zfr3eak"
+    },
+    "creation_date" : 1747253879,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140426241,
+    "post_id" : 79621823,
+    "body" : "For the memory one I would suggest looking into this warning first: <code>org.apache.pdfbox.cos.COSDocument - Warning: You did not close a PDF Document</code> not closing resources that works we files is a big indicator of memory problems.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 209503,
+      "reputation" : 23867,
+      "user_id" : 460557,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/b4565f97815833390c9c880e9e8522e4?s=256&d=identicon&r=PG",
+      "display_name" : "Jorge Campos",
+      "link" : "https://stackoverflow.com/users/460557/jorge-campos"
+    },
+    "creation_date" : 1747248390,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

@@ -1,0 +1,46 @@
+{
+  "question" : {
+    "question_id" : 79634984,
+    "title" : "spring native process-aot unable to register lambda",
+    "body" : "<p>If you want to use lambda expressions under native, you must register the lambdaCapturingTypes type in serialization-config.json.</p>\n<pre><code>\n@Service\n@AllArgsConstructor\npublic class SysRegionServiceImpl implements ISysRegionService {\n\n    private final SysRegionRepository sysRegionRepository;\n\n    @Override\n    public SysRegion selectSysRegionByRegionCodel(String regionCode) {\n        return sysRegionRepository.getOne(Wrappers.&lt;SysRegion&gt;lambdaQuery().eq(SysRegion::getRegionCode, regionCode));\n    }\n\n}\n</code></pre>\n<p>Must be registered in serialization-config.json</p>\n<pre><code>{\n  &quot;types&quot;:[\n  ],\n  &quot;lambdaCapturingTypes&quot;:[\n    {&quot;name&quot;:&quot;com.shushang.system.service.impl.SysRegionServiceImpl&quot;}\n  ],\n  &quot;proxies&quot;:[\n  ]\n}\n\n</code></pre>\n<p>or add buildArg --features=x.x.x.LambdaRegistrationFeature</p>\n<pre><code>public class LambdaRegistrationFeature implements Feature {\n\n    @Override\n    public void duringSetup(DuringSetupAccess access) {\n        RuntimeSerialization.registerLambdaCapturingClass(SysRegionServiceImpl.class);\n    }\n\n}\n</code></pre>\n<p>It is very troublesome to use.</p>\n<p>but Spring provides APIs related to Hints to generate JSON files in advance, org.springframework.aot.hint.SerializationHints</p>\n<p>use RuntimeHintsRegistrar</p>\n<pre><code>hints.serialization().registerType(SysRegionServiceImpl.class);\n</code></pre>\n<p>But the registered lambdaCapturingTypes type cannot be added.</p>\n<p>What Spring process-aot helped me generate is like this serialization-config.json</p>\n<pre><code>[\n  {\n    &quot;name&quot;: &quot;com.shushang.system.service.impl.SysRegionServiceImpl&quot;\n  }\n]\n\n</code></pre>\n<p>How should I dynamically add classes that need to be registered during process-aot, such as classes annotated by @Service, and add them to lambdaCapturingTypes?</p>\n",
+    "tags" : [ "java", "spring-boot", "spring-native" ],
+    "owner" : {
+      "account_id" : 12263552,
+      "reputation" : 11,
+      "user_id" : 8950622,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-cO45UDed_w4/AAAAAAAAAAI/AAAAAAAAAEs/usCHP7LvQ1U/s256-rj/photo.jpg",
+      "display_name" : "Qeir Mr.钟",
+      "link" : "https://stackoverflow.com/users/8950622/qeir-mr-%e9%92%9f"
+    },
+    "is_answered" : true,
+    "view_count" : 57,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1748309592,
+    "creation_date" : 1747983113,
+    "link" : "https://stackoverflow.com/questions/79634984/spring-native-process-aot-unable-to-register-lambda",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79639718,
+    "question_id" : 79634984,
+    "body" : "<p>Manually use the scanned class file to register.<br />\nThis method scans the class in the jar package for manual registration in the native:compile stage.</p>\n<p>There is no scanning processing in the spring process-aot stage, because spring does not provide relevant api (registerLambdaCapturingClass)</p>\n<pre><code>public class LambdaRegistrationFeature implements Feature {\n\n    @SneakyThrows\n    @Override\n    public void duringSetup(DuringSetupAccess access) {\n        // 这里只支持一个**的匹配\n        List&lt;String&gt; classes = MultiPackageScanner.scanClasses(&quot;com.shushang.**.service.impl&quot;, &quot;com.shushang.system.repository&quot;);\n        // 忽略的类 spring自动生成的 不需要加载\n        List&lt;String&gt; ignoreClass = CollUtil.newArrayList(&quot;__BeanDefinitions&quot;,&quot;__Autowiring&quot;,&quot;SpringCGLIB&quot;);\n        for (String aClass : classes) {\n            if (ignoreClass.stream().anyMatch(aClass::contains)) {\n                continue;\n            }\n            Class&lt;?&gt; clazz = Thread.currentThread().getContextClassLoader().loadClass(aClass);\n            RuntimeSerialization.registerLambdaCapturingClass(clazz);\n            // 需要确保类资源被扫描进去了\n            System.out.println(&quot;成功加载类: &quot; + aClass);\n        }\n    }\n\n}\n</code></pre>\n<pre><code>\nimport java.io.File;\nimport java.net.JarURLConnection;\nimport java.net.URL;\nimport java.util.ArrayList;\nimport java.util.Enumeration;\nimport java.util.List;\nimport java.util.jar.JarEntry;\nimport java.util.jar.JarFile;\n\npublic class MultiPackageScanner {\n\n    public static List&lt;String&gt; scanClasses(String... packagePatterns) throws Exception {\n        List&lt;String&gt; classes = new ArrayList&lt;&gt;();\n        for (String pattern : packagePatterns) {\n            String basePackage = pattern.replace(&quot;.**&quot;, &quot;&quot;); // 移除通配符以获取基础包名\n            String targetPath = &quot;&quot;;\n            // 包含通配符\n            if (pattern.contains(&quot;.**&quot;)) {\n                basePackage = pattern.substring(0, pattern.indexOf(&quot;.**&quot;));\n                targetPath = pattern.substring(pattern.indexOf(&quot;.**&quot;)).replace(&quot;.**.&quot;,&quot;&quot;);\n            }\n            String resourcePath = basePackage.replace('.', '/');\n            Enumeration&lt;URL&gt; resources = Thread.currentThread().getContextClassLoader().getResources(resourcePath);\n\n            while (resources.hasMoreElements()) {\n                URL url = resources.nextElement();\n                if (&quot;file&quot;.equals(url.getProtocol())) {\n                    scanFileSystem(url, basePackage, targetPath, classes, pattern.contains(&quot;**&quot;));\n                } else if (&quot;jar&quot;.equals(url.getProtocol())) {\n                    scanJar(url, basePackage,targetPath, classes, pattern.contains(&quot;**&quot;));\n                }\n            }\n        }\n        return classes;\n    }\n\n    private static void scanFileSystem(URL url, String basePackage, String targetPath, List&lt;String&gt; classes, boolean recursive) {\n        File dir = new File(url.getPath());\n        if (dir.exists()) {\n            scanDirectory(dir, basePackage,targetPath, classes, recursive);\n        }\n    }\n\n    private static void scanDirectory(File dir, String basePackage, String targetPath, List&lt;String&gt; classes, boolean recursive) {\n        File[] files = dir.listFiles();\n        if (files == null) return;\n\n        for (File file : files) {\n            if (file.isDirectory()) {\n                if (recursive) { // 支持递归扫描子包\n                    scanDirectory(file, basePackage + &quot;.&quot; + file.getName(),targetPath, classes, true);\n                }\n            } else if (file.getName().endsWith(&quot;.class&quot;)) {\n                String className = basePackage + '.' + file.getName().replace(&quot;.class&quot;, &quot;&quot;);\n                if (className.contains(targetPath.replace('/', '.'))) {\n                    loadClass(className, classes);\n                }\n            }\n        }\n    }\n\n    private static void scanJar(URL url, String basePackage, String targetPath, List&lt;String&gt; classes, boolean recursive) throws Exception {\n        JarFile jar = ((JarURLConnection) url.openConnection()).getJarFile();\n        Enumeration&lt;JarEntry&gt; entries = jar.entries();\n        String packagePath = basePackage.replace('.', '/');\n\n        while (entries.hasMoreElements()) {\n            JarEntry entry = entries.nextElement();\n            String entryName = entry.getName();\n            if (entryName.endsWith(&quot;.class&quot;)) {\n                if (entryName.startsWith(packagePath) &amp;&amp;\n                        (recursive || entryName.substring(packagePath.length() + 1).indexOf('/') == -1)) {\n                    String className = entryName.replace('/', '.').replace(&quot;.class&quot;, &quot;&quot;);\n                    if (className.contains(targetPath.replace('/', '.'))) {\n                        loadClass(className, classes);\n                    }\n                }\n            }\n        }\n    }\n\n    private static void loadClass(String className, List&lt;String&gt; classes) {\n        classes.add(className);\n    }\n\n    public static void main(String[] args) throws Exception {\n        List&lt;String&gt; classes = scanClasses(&quot;com.shushang.**.service.impl&quot;, &quot;com.shushang.system.repository&quot;);\n        classes.forEach(clazz -&gt; System.out.println(&quot;加载类: &quot; + clazz));\n    }\n}\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 12263552,
+      "reputation" : 11,
+      "user_id" : 8950622,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-cO45UDed_w4/AAAAAAAAAAI/AAAAAAAAAEs/usCHP7LvQ1U/s256-rj/photo.jpg",
+      "display_name" : "Qeir Mr.钟",
+      "link" : "https://stackoverflow.com/users/8950622/qeir-mr-%e9%92%9f"
+    },
+    "creation_date" : 1748309592,
+    "last_activity_date" : 1748309592,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : { }
+}

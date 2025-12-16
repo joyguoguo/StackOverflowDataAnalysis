@@ -56,32 +56,28 @@ public interface QuestionRepository extends JpaRepository<QuestionEntity, Long> 
     
     /**
      * 查找可解决的问题（初步筛选）
-     * 标准一（主要）：有被接受的答案
-     * 标准二（补充）：没有被接受的答案，但有一个或多个高赞答案（max_answer_score >= 5）
-     * 注意：标准三（时效性）将在Java代码中计算
+     * 仅按是否有被接受答案且未关闭进行粗筛，
+     * 具体时间间隔等规则在服务层 refineSolvableQuestions 中处理。
      * 同时加载答案和所有者信息，避免N+1查询
      */
     @Query("SELECT DISTINCT q FROM QuestionEntity q " +
            "LEFT JOIN FETCH q.answers a " +
            "LEFT JOIN FETCH q.owner " +
            "WHERE q.acceptedAnswerId IS NOT NULL " +
-           "   OR (q.acceptedAnswerId IS NULL AND EXISTS (" +
-           "       SELECT 1 FROM AnswerEntity a2 WHERE a2.question.questionId = q.questionId " +
-           "       AND a2.score IS NOT NULL AND a2.score >= 5))")
+           "  AND q.closedDate IS NULL")
     List<QuestionEntity> findSolvableQuestions();
     
     /**
      * 查找难解决的问题（初步筛选）
-     * 标准一（主要）：无被接受的答案
-     * 标准二（补充）：答案数量很少（answer_count <= 1）
-     * 注意：标准三（时间因素）将在Java代码中计算
+     * 仅按“无被接受答案且未关闭”进行粗筛，
+     * 具体高分答案与长期无人回答规则在服务层 refineHardQuestions 中处理。
      * 同时加载答案和所有者信息，避免N+1查询
      */
     @Query("SELECT DISTINCT q FROM QuestionEntity q " +
            "LEFT JOIN FETCH q.answers a " +
            "LEFT JOIN FETCH q.owner " +
            "WHERE q.acceptedAnswerId IS NULL " +
-           "   AND (q.answerCount IS NULL OR q.answerCount <= 1)")
+           "  AND q.closedDate IS NULL")
     List<QuestionEntity> findHardToSolveQuestions();
 }
 

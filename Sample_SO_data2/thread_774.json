@@ -1,0 +1,64 @@
+{
+  "question" : {
+    "question_id" : 79777796,
+    "title" : "Sending a custom event to DLQ topic using @RetryableTopic",
+    "body" : "<p>I’m using Spring Boot with Kafka and the <code>@RetryableTopic</code> annotation.</p>\n<p>What I want to achieve:</p>\n<p>Messages that end up in the DLQ should instead be wrapped in a custom type (DlqEventWrapper) that includes the original payload plus some error metadata.</p>\n<p>To make this work, I tried creating a custom DeadLetterPublishingRecoverer (both as a @Bean and as a @Component) and overriding createProducerRecord(...) so that I could wrap the original event before it gets sent to the DLQ topic.</p>\n<p>However, when the listener fails and the message goes to DLQ, my overridden recoverer is never used. Instead, @RetryableTopic continues to use the default recoverer, which simply republishes the original OriginalEvent into the DLQ. Because my @DltHandler is written to accept a DlqEventWrapper, Spring throws a conversion error before my @DltHandler is even called.</p>\n<p>Here is an example of my setup:</p>\n<pre class=\"lang-java prettyprint-override\"><code>\n    @KafkaListener(topics = &quot;my-topic&quot;, groupId = &quot;my-group&quot;)\n    @RetryableTopic(\n        attempts = &quot;2&quot;,\n        backoff = @Backoff(delay = 1000),\n        dltStrategy = DltStrategy.FAIL_ON_ERROR,\n        autoCreateTopics = &quot;false&quot;,\n        topicSuffixingStrategy = SuffixingWithIndexTopicNamingStrategy.SUFFIX_WITH_INDEX_VALUE,\n        sameIntervalTopicReuseStrategy = SameIntervalReuseTopicReuseStrategy.MULTIPLE_TOPICS,\n        retryTopicSuffix = &quot;.RETRY&quot;,\n        dltSuffix = &quot;.DLQ&quot;\n    )\n    public void listen(OriginalEvent event) {\n        throw new RuntimeException(&quot;Failing for test&quot;);\n    }\n    \n    @DltHandler\n    public void handleDlq(DlqEventWrapper event) {\n        log.error(&quot;Received DLQ event: {}&quot;, event);\n    }\n\n</code></pre>\n<p>I tried customizing the DeadLetterPublishingRecoverer to wrap events:</p>\n<pre class=\"lang-java prettyprint-override\"><code>\n    @Bean\n    public DeadLetterPublishingRecoverer deadLetterPublishingRecoverer(KafkaTemplate&lt;Object, Object&gt; template) {\n        return new DeadLetterPublishingRecoverer(template,\n            (record, exception) -&gt; new TopicPartition(record.topic() + &quot;.DLQ&quot;, record.partition())) {\n    \n            @Override\n            protected ProducerRecord&lt;Object, Object&gt; createProducerRecord(\n                    ConsumerRecord&lt;?, ?&gt; record,\n                    TopicPartition topicPartition,\n                    Headers headers,\n                    byte[] key,\n                    byte[] value,\n                    Exception exception) {\n    \n                DlqEventWrapper wrapper = new DlqEventWrapper();\n                wrapper.setOriginalEvent(record.value());\n                wrapper.setErrorMessage(exception != null ? exception.getMessage() : &quot;unknown&quot;);\n                wrapper.setTimestamp(System.currentTimeMillis());\n    \n                return new ProducerRecord&lt;&gt;(topicPartition.topic(), null, wrapper);\n            }\n        };\n    }\n</code></pre>\n<p>FYI, using Spring kafka version 3.3.9.</p>\n",
+    "tags" : [ "java", "spring-boot", "apache-kafka", "spring-kafka", "dead-letter" ],
+    "owner" : {
+      "account_id" : 17069157,
+      "reputation" : 280,
+      "user_id" : 12350428,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/eba8a9b1d79984a310e83aebfd24e1ba?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "bob",
+      "link" : "https://stackoverflow.com/users/12350428/bob"
+    },
+    "is_answered" : true,
+    "view_count" : 79,
+    "answer_count" : 1,
+    "score" : 2,
+    "last_activity_date" : 1759271274,
+    "creation_date" : 1759127276,
+    "link" : "https://stackoverflow.com/questions/79777796/sending-a-custom-event-to-dlq-topic-using-retryabletopic",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79779556,
+    "question_id" : 79777796,
+    "body" : "<p>After a lot of testing I found a way to send custom events specifically to the dead letter topic when using <code>@RetryableTopic</code>.</p>\n<p>I created a class that extends <code>DeadLetterPublishingRecoverer</code> and instead of overriding <code>createProducerRecord()</code> I instead overrode <code>publish()</code>.  With the publish method I can then customize or wrap the kafka event that will go to the dead letter topic.</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class WrappingDeadLetterPublishingRecoverer extends DeadLetterPublishingRecoverer {\n\n    public WrappingDeadLetterPublishingRecoverer(Function&lt;ProducerRecord&lt;?, ?&gt;, KafkaOperations&lt;?, ?&gt;&gt; templateResolver, BiFunction&lt;ConsumerRecord&lt;?, ?&gt;, Exception, TopicPartition&gt; destinationResolver) {\n        super(templateResolver, destinationResolver);\n    }\n\n    @Override\n    protected void publish(ProducerRecord&lt;Object, Object&gt; outRecord, KafkaOperations&lt;Object, Object&gt; kafkaTemplate, ConsumerRecord&lt;?, ?&gt; inRecord) {\n\n\n        if (outRecord.topic().contains(&quot;DLQ&quot;)) {\n\n            OriginalEvent originalEvent = (OriginalEvent) inRecord.value();\n            DlqEventWrapper dlq = DlqEventWrapper.builder()\n                    .event(originalEvent)\n                    .build();\n\n            ProducerRecord&lt;Object, Object&gt; event = new ProducerRecord&lt;&gt;(outRecord.topic(), outRecord.partition(), outRecord.key(), dlq, outRecord.headers());\n\n            super.publish(event, kafkaTemplate, inRecord);\n        } else {\n\n            super.publish(outRecord, kafkaTemplate, inRecord);\n        }\n    }\n}\n</code></pre>\n<p>And then I created a configuration class that extends <code>RetryTopicConfigurationSupport</code> to override <code>configureDeadLetterPublishingContainerFactory()</code> so that I can provide my custom <code>DeadLetterPublishingRecoverer</code> class.</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Configuration\npublic class KafkaDlqConfig extends RetryTopicConfigurationSupport {\n\n    @Override\n    protected Consumer&lt;DeadLetterPublishingRecovererFactory&gt; configureDeadLetterPublishingContainerFactory() {\n        return dlprf -&gt; {\n            dlprf.setDeadLetterPublisherCreator(WrappingDeadLetterPublishingRecoverer::new);\n        };\n    }\n}\n</code></pre>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 17069157,
+      "reputation" : 280,
+      "user_id" : 12350428,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/eba8a9b1d79984a310e83aebfd24e1ba?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "bob",
+      "link" : "https://stackoverflow.com/users/12350428/bob"
+    },
+    "creation_date" : 1759271274,
+    "last_activity_date" : 1759271274,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79779556" : [ {
+      "comment_id" : 140771314,
+      "post_id" : 79779556,
+      "body" : "Anyone got a generic way to handle the &quot;original payload + some error metadata&quot; pattern with Camel and a message broker? Feels like a pretty common problem.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 3399031,
+        "reputation" : 346,
+        "user_id" : 2851799,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/19e59e9c50cdafa5420014950054cf56?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Ben",
+        "link" : "https://stackoverflow.com/users/2851799/ben"
+      },
+      "creation_date" : 1759328281,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

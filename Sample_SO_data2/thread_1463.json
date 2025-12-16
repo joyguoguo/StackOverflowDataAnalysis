@@ -1,0 +1,393 @@
+{
+  "question" : {
+    "question_id" : 79706745,
+    "title" : "a Java streams way to zero a 2d java array of objects each containing a 2d array?",
+    "body" : "<pre><code>public static class al_s {\n    int path[][] = new int[4][5];\n}\nstatic al_s already[][] = new al_s[10][10];\n</code></pre>\n<p>I need to zero the variable 'already' over and over. Specifically, zero the 'path' of each object over and over:</p>\n<p>I am using:</p>\n<pre><code>already = new al_s[10][10];\nfor (int yy = 0; yy &lt; 10; yy++) {\n    for (int xx = 0; xx &lt; 10; xx++) {\n        already[yy][xx] = new al_s();\n    }\n}\no_r\nalready = new al_s[10][10];\nfor (int yy = 0; yy &lt; 10; yy++) {\n    for (int xx = 0; xx &lt; 10; xx++) {\n        Arrays.stream(already[yy][xx].path).forEach(row -&gt; Arrays.fill(row, 0));\n    }\n}\n</code></pre>\n<p>This is slow.</p>\n<p>If 'already' was of ints the quick way to zero 'already2':</p>\n<pre><code>int already2[][] = new int[10][10];\nArrays.stream(already2).forEach(row -&gt; Arrays.fill(row, 0));\n</code></pre>\n<p>Does anyone have a streams way to zero 'already'? (The array is 141x141 to be zeroed around 100,000 times.)</p>\n<hr />\n<p>Suggested quickly &amp; works exactly: (&amp; thank you <a href=\"https://stackoverflow.com/users/1553851/shmosel\">shmosel</a>) (saves 10seconds on a 2 minute program)</p>\n<pre><code>Arrays.parallelSetAll(already, i -&gt; { al_s[] row = new al_s[leny]; Arrays.parallelSetAll(row, j -&gt; new al_s()); return row; });\n</code></pre>\n<p>So now, instead of doing a new, is there a faster way, something like: (but this gives me an error not knowing what variable j is;) ( error: cannot find symbol: variable j)</p>\n<pre><code>Arrays.parallelSetAll(already, i -&gt; { al_s[] row = new al_s[leny]; Arrays.parallelSetAll(row, Arrays.stream(j.path).forEach(row1 -&gt; Arrays.fill(row1, 0))); return row; }); \n</code></pre>\n",
+    "tags" : [ "java", "arrays", "2d", "4d" ],
+    "owner" : {
+      "account_id" : 21555835,
+      "reputation" : 1,
+      "user_id" : 23539964,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a-/AOh14Gjp5HkKkso_lNTp9Ymuhf_vC0iMyJxjm9lQ-jBx6Q=k-s256",
+      "display_name" : "Conor Williams",
+      "link" : "https://stackoverflow.com/users/23539964/conor-williams"
+    },
+    "is_answered" : true,
+    "view_count" : 140,
+    "closed_date" : 1752930255,
+    "answer_count" : 2,
+    "score" : -2,
+    "last_activity_date" : 1753109839,
+    "creation_date" : 1752872924,
+    "link" : "https://stackoverflow.com/questions/79706745/a-java-streams-way-to-zero-a-2d-java-array-of-objects-each-containing-a-2d-array",
+    "closed_reason" : "Needs more focus"
+  },
+  "answers" : [ {
+    "answer_id" : 79706810,
+    "question_id" : 79706745,
+    "body" : "<p>This variation did <em>much</em> better for me than the <code>parallelSetAll()</code> approach:</p>\n<pre><code>Arrays.asList(already).parallelStream()\n    .flatMap(arr -&gt; Arrays.stream(arr))\n    .forEach(als -&gt; Arrays.setAll(als.path, ix -&gt; {\n        int[] row = als.path[ix];\n        Arrays.fill(row, 0);\n        return row;\n    }));\n</code></pre>\n<p>It creates relatively few new objects, none of them <code>al_s</code>s.  Instead it sets the elements of the existing <code>path</code> members of the existing objects in-place.</p>\n<p><strong>Addendum</strong></p>\n<p>Coming back to the idea I noted in comments, I find that unrolling the <code>setAll()</code> indeed does produce a significant improvement.  Almost a (further) 25% reduction in runtime, in fact, for this:</p>\n<pre><code>Arrays.asList(already).parallelStream()\n    .flatMap(arr -&gt; Arrays.stream(arr))\n    .forEach(als -&gt; {\n        Arrays.fill(als.path[0], 0);\n        Arrays.fill(als.path[1], 0);\n        Arrays.fill(als.path[2], 0);\n        Arrays.fill(als.path[3], 0);\n    });\n</code></pre>\n",
+    "score" : 2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 2792262,
+      "reputation" : 190832,
+      "user_id" : 2402272,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+      "display_name" : "John Bollinger",
+      "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+    },
+    "creation_date" : 1752878154,
+    "last_activity_date" : 1753109839,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79706836,
+    "question_id" : 79706745,
+    "body" : "<p>According to <a href=\"https://stackoverflow.com/questions/79706745/a-java-streams-way-to-zero-a-2d-java-array-of-objects-each-containing-a-2d-array#comment140601322_79706745\">this comment</a>, the implementation does not necessarily have to use streams. So, let's just optimize for speed. What you want is a structure that contains an <code>int[][]</code>, a collection of those structures, and a way to set each structure in that collection back to some initial state (all zeros). I will throw everything out and implement just that.</p>\n<hr />\n<p>This is an analogue for your current <code>al_s</code> class. We will use an <code>int[]</code> rather than an <code>int[][]</code> so that we can leverage a single native <code>Arrays#fill</code> call to clear the entire structure. Here, <code>Box#get</code> and <code>Box#set</code> replaces the direct <code>al_s#path</code> field access.</p>\n<pre class=\"lang-java prettyprint-override\"><code>public final class Box {\n\n    private static final int PATH_ROWS = 5;\n    private static final int PATH_COLS = 4;\n\n    //\n\n    private final int[] path;\n\n    public Box() {\n        this.path = new int[PATH_ROWS * PATH_COLS];\n    }\n\n    //\n\n    public int get(int row, int col) {\n        return this.path[this.makeIndex(row, col)];\n    }\n\n    public void set(int row, int col, int value) {\n        this.path[this.makeIndex(row, col)] = value;\n    }\n\n    public void clear() {\n        this.clear(0);\n    }\n\n    public void clear(int value) {\n        Arrays.fill(this.path, value);\n    }\n\n    private int makeIndex(int row, int col) {\n        if (0 &gt; row || row &gt;= PATH_ROWS)\n            throw new IndexOutOfBoundsException(&quot;Row index &quot; + row + &quot; out of bounds&quot;);\n\n        if (0 &gt; col || col &gt;= PATH_COLS)\n            throw new IndexOutOfBoundsException(&quot;Column index &quot; + col + &quot; out of bounds&quot;);\n\n        return (col * PATH_ROWS) + row;\n    }\n\n}\n</code></pre>\n<hr />\n<p>Now, to clear a collection of these structures (we'll go with a <code>Box[][]</code> per your original example of a <code>al_s[][]</code>), simply iterate and call the highly optimized <code>Box#clear</code> method:</p>\n<pre class=\"lang-java prettyprint-override\"><code>Box[][] boxes = new Box[10][10];\n// initialize &quot;boxes&quot;, then...\nfor (int x=0; x &lt; 10; x++) {\n    for (int y=0; y &lt; 10; y++) {\n        boxes[x][y].clear();\n    }\n}\n</code></pre>\n<p>Or, if you prefer streams (similar to <a href=\"https://stackoverflow.com/a/79706810/10808904\">John Bollinger's answer</a>):</p>\n<pre class=\"lang-java prettyprint-override\"><code>Arrays.stream(boxes)\n        .flatMap(Arrays::stream)\n        .forEach(Box::clear);\n</code></pre>\n<p>Though its worth noting that streams will have an inherent overhead. From a speed or memory footprint perspective, simple loops remain superior.</p>\n",
+    "score" : 2,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 14914414,
+      "reputation" : 1185,
+      "user_id" : 10808904,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Ts8fIsJj.png?s=256",
+      "display_name" : "Xavier Pedraza",
+      "link" : "https://stackoverflow.com/users/10808904/xavier-pedraza"
+    },
+    "creation_date" : 1752882925,
+    "last_activity_date" : 1752882925,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140606375,
+    "post_id" : 79706745,
+    "body" : "If this structure is as static as it looks like, redesign the <code>al_s</code> to have <code>set(int,int,int)</code> and <code>get(int,int)</code> methods mapping the access to a flat <code>int[]</code> array with offset. Initialize the <code>al_s already[][]</code> with instances pointing to non-overlapping regions of a single <code>int[10*10*4*5]</code> array. Then, you can keep your operations on the <code>already</code> as-is but clear the entire thing with a single <code>Arrays.fill(the_underlying_int_array, 0)</code>",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 3211603,
+      "reputation" : 301001,
+      "user_id" : 2711488,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/t2hoD.jpg?s=256",
+      "display_name" : "Holger",
+      "link" : "https://stackoverflow.com/users/2711488/holger"
+    },
+    "creation_date" : 1753110584,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140603022,
+    "post_id" : 79706745,
+    "body" : "@usuario85421, I start from the premise that cloning it, is faster than creating a new <b>already</b>, although thinking about it a little more, maybe we start from a non-ideal scenario: <b>already[][] = new al_s[10][10][10];</b> when it would be much cleaner: <b>int already[][][][][] = new int[10][10][10][5][4];</b>, I do not think this affects the performance, but the existence of the class <i>al_s</i> has shocked me from the beginning.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10843443,
+      "reputation" : 924,
+      "user_id" : 20882864,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+      "display_name" : "Marce Puente",
+      "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+    },
+    "creation_date" : 1752966488,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140602933,
+    "post_id" : 79706745,
+    "body" : "@Marce instead of <code>already = alreadyBase.clone()</code>,  just <code>already = new al_s[10][]</code> -- no reason to set all <i>sub-arrays</i> if they are being replaced anyway",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 31180,
+      "reputation" : 29752,
+      "user_id" : 85421,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/kKvXH.gif?s=256",
+      "display_name" : "user85421",
+      "link" : "https://stackoverflow.com/users/85421/user85421"
+    },
+    "creation_date" : 1752960171,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140602879,
+    "post_id" : 79706745,
+    "body" : "@user85421, haha, I foolishly looked it up, it seems the only way (using <b>clone()</b>) is to replace the body of <b>setAlready()</b> with: <b>void setAlready() { already = alreadyBase.clone(); for( int i = 0; i &lt; already.length; i++ ) { already[ i ] = alreadyBase[ i ].clone(); } }</b>, this makes it quite a bit slower, but still under a millisecond for “141000” clones.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10843443,
+      "reputation" : 924,
+      "user_id" : 20882864,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+      "display_name" : "Marce Puente",
+      "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+    },
+    "creation_date" : 1752956451,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140602839,
+    "post_id" : 79706745,
+    "body" : "@Marce unfortunately, afaik, there is no <code>Arrays.deepClone()</code> or so (in standard Java) :-)",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 31180,
+      "reputation" : 29752,
+      "user_id" : 85421,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/kKvXH.gif?s=256",
+      "display_name" : "user85421",
+      "link" : "https://stackoverflow.com/users/85421/user85421"
+    },
+    "creation_date" : 1752954671,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140602762,
+    "post_id" : 79706745,
+    "body" : "@user85421, you are right, thank you for pointing out the error, I was unaware of this <b>clone()</b> behavior.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10843443,
+      "reputation" : 924,
+      "user_id" : 20882864,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+      "display_name" : "Marce Puente",
+      "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+    },
+    "creation_date" : 1752951016,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140602024,
+    "post_id" : 79706745,
+    "body" : "(@Marce)  <code>clone()</code> will only do a <i>shallow</i> clone: after <code>already = alreadyBase.clone();</code> both <i>2D</i> arrays will contain the same instances (of simple arrays,) that is, <code>already[i] == alreadyBase[i]</code> (consequently changing <code>already[i][j]</code> will also change <code>alreadyBase[i][j]</code>; and so any subsequent initialization)",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 31180,
+      "reputation" : 29752,
+      "user_id" : 85421,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/kKvXH.gif?s=256",
+      "display_name" : "user85421",
+      "link" : "https://stackoverflow.com/users/85421/user85421"
+    },
+    "creation_date" : 1752921261,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140601701,
+    "post_id" : 79706745,
+    "body" : "I would not expect a stream operation to be any faster.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 7612423,
+      "reputation" : 87409,
+      "user_id" : 5772882,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/8283c64511fa80afed5259d10850168f?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Anonymous",
+      "link" : "https://stackoverflow.com/users/5772882/anonymous"
+    },
+    "creation_date" : 1752907516,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140601515,
+    "post_id" : 79706745,
+    "body" : "Maybe I&#39;m wrong, but I think we are at the limit of what it can optimize, you could check it by running your code without resetting <b>already</b>, to see what is the real cost of resetting.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10843443,
+      "reputation" : 924,
+      "user_id" : 20882864,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+      "display_name" : "Marce Puente",
+      "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+    },
+    "creation_date" : 1752892483,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140601493,
+    "post_id" : 79706745,
+    "body" : "“j” seems to be something completely made up; don’t know why it’s there. No surprise it complains \uD83E\uDD37‍♂️",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 195854,
+      "reputation" : 160525,
+      "user_id" : 438992,
+      "user_type" : "registered",
+      "accept_rate" : 90,
+      "profile_image" : "https://i.sstatic.net/QouOz.jpg?s=256",
+      "display_name" : "Dave Newton",
+      "link" : "https://stackoverflow.com/users/438992/dave-newton"
+    },
+    "creation_date" : 1752890553,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140601341,
+    "post_id" : 79706745,
+    "body" : "hi Marce - using clone, surprisingly reduced program run time by only 10 seconds - but definitely in the right direction...",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 21555835,
+      "reputation" : 1,
+      "user_id" : 23539964,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a-/AOh14Gjp5HkKkso_lNTp9Ymuhf_vC0iMyJxjm9lQ-jBx6Q=k-s256",
+      "display_name" : "Conor Williams",
+      "link" : "https://stackoverflow.com/users/23539964/conor-williams"
+    },
+    "creation_date" : 1752878839,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140601328,
+    "post_id" : 79706745,
+    "body" : "hi Marce, that&#39;s a good idea, thank you...",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 21555835,
+      "reputation" : 1,
+      "user_id" : 23539964,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a-/AOh14Gjp5HkKkso_lNTp9Ymuhf_vC0iMyJxjm9lQ-jBx6Q=k-s256",
+      "display_name" : "Conor Williams",
+      "link" : "https://stackoverflow.com/users/23539964/conor-williams"
+    },
+    "creation_date" : 1752878144,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140601323,
+    "post_id" : 79706745,
+    "body" : "hi John, faster really --- in C++ i use memset(always, 0, sizeof(always);",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 21555835,
+      "reputation" : 1,
+      "user_id" : 23539964,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a-/AOh14Gjp5HkKkso_lNTp9Ymuhf_vC0iMyJxjm9lQ-jBx6Q=k-s256",
+      "display_name" : "Conor Williams",
+      "link" : "https://stackoverflow.com/users/23539964/conor-williams"
+    },
+    "creation_date" : 1752878077,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140601322,
+    "post_id" : 79706745,
+    "body" : "hi John - well, no, it does not have to be streams...",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 21555835,
+      "reputation" : 1,
+      "user_id" : 23539964,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a-/AOh14Gjp5HkKkso_lNTp9Ymuhf_vC0iMyJxjm9lQ-jBx6Q=k-s256",
+      "display_name" : "Conor Williams",
+      "link" : "https://stackoverflow.com/users/23539964/conor-williams"
+    },
+    "creation_date" : 1752878032,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140601319,
+    "post_id" : 79706745,
+    "body" : "Hello Conor, I&#39;m not sure if this is the best approach, but you could try creating the <b>alreadyBase</b> variable and instantiating <b>always</b> like this: <b>setAlways() { already = alreadyBase.clone(); }</b>.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 10843443,
+      "reputation" : 924,
+      "user_id" : 20882864,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/CCQCy.jpg?s=256",
+      "display_name" : "Marce Puente",
+      "link" : "https://stackoverflow.com/users/20882864/marce-puente"
+    },
+    "creation_date" : 1752877941,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140601270,
+    "post_id" : 79706745,
+    "body" : "And do you need it to be <i>more efficient</i>, or is merely <i>faster</i> enough?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2792262,
+      "reputation" : 190832,
+      "user_id" : 2402272,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+      "display_name" : "John Bollinger",
+      "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+    },
+    "creation_date" : 1752876389,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140601236,
+    "post_id" : 79706745,
+    "body" : "Why does it have to be streams?",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 2792262,
+      "reputation" : 190832,
+      "user_id" : 2402272,
+      "user_type" : "registered",
+      "accept_rate" : 85,
+      "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+      "display_name" : "John Bollinger",
+      "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+    },
+    "creation_date" : 1752874855,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79706836" : [ {
+      "comment_id" : 140601430,
+      "post_id" : 79706836,
+      "body" : "thank you Wasabi - the stream version speeded it by a further 12 seconds (on the clone) and the loop by a further 14 seconds (on the clone)... that is akin to C++ speeds",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 21555835,
+        "reputation" : 1,
+        "user_id" : 23539964,
+        "user_type" : "registered",
+        "profile_image" : "https://lh3.googleusercontent.com/a-/AOh14Gjp5HkKkso_lNTp9Ymuhf_vC0iMyJxjm9lQ-jBx6Q=k-s256",
+        "display_name" : "Conor Williams",
+        "link" : "https://stackoverflow.com/users/23539964/conor-williams"
+      },
+      "creation_date" : 1752885259,
+      "content_license" : "CC BY-SA 4.0"
+    } ],
+    "79706810" : [ {
+      "comment_id" : 140601446,
+      "post_id" : 79706810,
+      "body" : "This could probably be improved by completely unrolling the <code>Arrays.setAll()</code> into four <code>Arrays.fill()</code> calls.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 2792262,
+        "reputation" : 190832,
+        "user_id" : 2402272,
+        "user_type" : "registered",
+        "accept_rate" : 85,
+        "profile_image" : "https://www.gravatar.com/avatar/1182b1d5518a596d4e8cfe0567a65c4d?s=256&d=identicon&r=PG",
+        "display_name" : "John Bollinger",
+        "link" : "https://stackoverflow.com/users/2402272/john-bollinger"
+      },
+      "creation_date" : 1752886272,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140601378,
+      "post_id" : 79706810,
+      "body" : "hi John, thank you very much... works well (and is exactly what I was looking for), though speed hasn&#39;t hugely improved, but as you say efficiency is much better (with the creation of very few new objects), speed improvement (in my 141x141 array path:4x5): maybe 5 seconds...",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 21555835,
+        "reputation" : 1,
+        "user_id" : 23539964,
+        "user_type" : "registered",
+        "profile_image" : "https://lh3.googleusercontent.com/a-/AOh14Gjp5HkKkso_lNTp9Ymuhf_vC0iMyJxjm9lQ-jBx6Q=k-s256",
+        "display_name" : "Conor Williams",
+        "link" : "https://stackoverflow.com/users/23539964/conor-williams"
+      },
+      "creation_date" : 1752881123,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

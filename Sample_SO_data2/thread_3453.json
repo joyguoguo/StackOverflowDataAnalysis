@@ -1,0 +1,78 @@
+{
+  "question" : {
+    "question_id" : 79550566,
+    "title" : "Quarkus Hibernate ORM creates flawed associative table when two entities with @OneToMany relations extend the same Parent",
+    "body" : "<h1>Issue Description</h1>\n<p>With the following Setup</p>\n<pre class=\"lang-none prettyprint-override\"><code>@Entity\npublic class ParentContainer {\n    @Id\n    @GeneratedValue\n    public Long id;\n}\n</code></pre>\n<pre class=\"lang-none prettyprint-override\"><code>@Entity\npublic class Container1 extends ParentContainer{\n    @OneToMany\n    public Set&lt;Part&gt; parts;\n}\n</code></pre>\n<pre class=\"lang-none prettyprint-override\"><code>@Entity\npublic class Container2 extends ParentContainer {\n    @OneToMany\n    public Set&lt;Part&gt; parts;\n}\n</code></pre>\n<pre class=\"lang-none prettyprint-override\"><code>@Entity\npublic class Part {\n    @Id\n    @GeneratedValue\n    public Long id;\n}\n</code></pre>\n<p>Hibernate will create a associative table called parentcontainer_part that stores a container1_id and a container2_id both with a NOT NULL constraint.</p>\n<pre class=\"lang-none prettyprint-override\"><code>create table parentcontainer_part\n(\n    container1_id bigint not null\n        constraint fkha3bx76rbpaly2k96p4ay41pu\n            references parentcontainer,\n    container2_id bigint not null\n        constraint fkridaro57cwd6262vsbttj8069\n            references parentcontainer,\n    parts_id      bigint not null\n        unique\n        constraint fkmh13giccrumjrrharog6p2rdh\n            references part,\n    primary key (container1_id, parts_id)\n);\n</code></pre>\n<p>This means that neither Container1 or Container2 can ever be initialized because the NOT NULL constraint of the other container type will always interfere. Its Obviously possible for a Part to only be in the Set of Container1 and not in the Set in Container2.</p>\n<h1>Potential Solutions</h1>\n<p>By making the ParentContainer a @MappedSuperclass the associative entity would be correct, but then the ParentContainer type can no longer be used in any other relation by any other entity, only the specific Container1 or Container2.</p>\n<p>The obvious solution in this example would be to move the Set of parts to the ParentContainer but there might be 10 different container types and only two need a Set of Parts.</p>\n<p>By adding a <code>@Inheritance(strategy = InheritanceType.JOINED)</code> to the ParentContainer it will break up the entities into multiple tables and obviously create multiple associative tables. But now a ton of joins are needed when querying that data which is undesirable.</p>\n<h1>Expected Solution</h1>\n<p>I expected the Hibernate Mapper to be smarter and not create these conflicting NOT NULL constraints in the first place. But if hibernate does not create individual associative tables for each entity there should be a way to configure either the parent or the relations to do so.</p>\n",
+    "tags" : [ "java", "hibernate", "quarkus", "quarkus-hibernate-orm" ],
+    "owner" : {
+      "account_id" : 21224590,
+      "reputation" : 27,
+      "user_id" : 15610510,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a-/AOh14GiT55d4hgU6Q0Nwung_YuuQx186T9u9g_izkTGf=k-s256",
+      "display_name" : "el_Yanuki",
+      "link" : "https://stackoverflow.com/users/15610510/el-yanuki"
+    },
+    "is_answered" : false,
+    "view_count" : 64,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1748872367,
+    "creation_date" : 1743595351,
+    "link" : "https://stackoverflow.com/questions/79550566/quarkus-hibernate-orm-creates-flawed-associative-table-when-two-entities-with-o",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79641620,
+    "question_id" : 79550566,
+    "body" : "<p>First and foremost, and those are mostly opinions:</p>\n<ol>\n<li>Using <code>@Inheritance(strategy = InheritanceType.JOINED)</code> is fine. Joins are what a relational DB is designed for, and I avoid them only when facing proven performance problems (and when adding indexes doesn't help).</li>\n<li>You should consider using bidirectional <code>@OneToMany</code>, i.e. add <code>@ManyToOne</code> properties to your <code>Part</code> entity, and add <code>mappedBy = &quot;...&quot;</code> to your existing <code>@OneToMany</code>. What you did is a unidirectional <code>@OneToMany</code>, and is considered bad practice, as it requires an association table even though the foreign key could perfectly well live in the <code>Part</code> table.</li>\n</ol>\n<hr />\n<p>That being said... I believe the (surprising) behavior of shoving every association into the same association table is per spec: <a href=\"https://jakarta.ee/specifications/persistence/3.2/jakarta-persistence-spec-3.2#a764\" rel=\"nofollow noreferrer\">https://jakarta.ee/specifications/persistence/3.2/jakarta-persistence-spec-3.2#a764</a></p>\n<p>The non-null constraints on the other hand might be unspecified and thus considered a bug. If you feel strongly about this, and if you can reproduce this using a recent version of Hibernate ORM (6.6+), I'd suggest reporting the problem: <a href=\"https://hibernate.atlassian.net/browse/HHH\" rel=\"nofollow noreferrer\">https://hibernate.atlassian.net/browse/HHH</a></p>\n<hr />\n<p>In any case, if you really don't want to use <code>@Inheritance(strategy = InheritanceType.JOINED)</code> and <code>@OneToMany(mappedBy = ...)</code>, the only workaround I can see is explicitly assigning a separate association table to each association, as below.</p>\n<pre class=\"lang-java prettyprint-override\"><code>@Entity\npublic class Container1 extends ParentContainer{\n    @OneToMany\n    @JoinTable(name = &quot;container1_part&quot;)\n    public Set&lt;Part&gt; parts;\n}\n</code></pre>\n<pre class=\"lang-java prettyprint-override\"><code>@Entity\npublic class Container2 extends ParentContainer {\n    @OneToMany\n    @JoinTable(name = &quot;container2_part&quot;)\n    public Set&lt;Part&gt; parts;\n}\n</code></pre>\n<p>Then the schema should be something like this:</p>\n<pre><code>create table container1_part\n(\n    container1_id bigint not null\n        constraint ...\n            references parentcontainer,\n    parts_id      bigint not null\n        unique\n        constraint fkmh13giccrumjrrharog6p2rdh\n            references part,\n    primary key (container1_id, parts_id)\n);\ncreate table container2_part\n(\n    container2_id bigint not null\n        constraint fkridaro57cwd6262vsbttj8069\n            references parentcontainer,\n    parts_id      bigint not null\n        unique\n        constraint fkmh13giccrumjrrharog6p2rdh\n            references part,\n    primary key (container2_id, parts_id)\n);\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 8974783,
+      "reputation" : 10107,
+      "user_id" : 6692043,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/3673815784047b7e0673677a0bc7dde0?s=256&d=identicon&r=PG",
+      "display_name" : "yrodiere",
+      "link" : "https://stackoverflow.com/users/6692043/yrodiere"
+    },
+    "creation_date" : 1748413474,
+    "last_activity_date" : 1748872367,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140462257,
+    "post_id" : 79550566,
+    "body" : "@yrodiere the implied question is: has anyone encountered this and how the hell do i fix it haha",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 21224590,
+      "reputation" : 27,
+      "user_id" : 15610510,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/a-/AOh14GiT55d4hgU6Q0Nwung_YuuQx186T9u9g_izkTGf=k-s256",
+      "display_name" : "el_Yanuki",
+      "link" : "https://stackoverflow.com/users/15610510/el-yanuki"
+    },
+    "creation_date" : 1748344750,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140290985,
+    "post_id" : 79550566,
+    "body" : "There is... no question here? You might want to report the problem instead: <a href=\"https://hibernate.atlassian.net/browse/HHH\" rel=\"nofollow noreferrer\">hibernate.atlassian.net/browse/HHH</a>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 8974783,
+      "reputation" : 10107,
+      "user_id" : 6692043,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/3673815784047b7e0673677a0bc7dde0?s=256&d=identicon&r=PG",
+      "display_name" : "yrodiere",
+      "link" : "https://stackoverflow.com/users/6692043/yrodiere"
+    },
+    "creation_date" : 1743604869,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

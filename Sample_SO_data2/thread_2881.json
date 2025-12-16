@@ -1,0 +1,98 @@
+{
+  "question" : {
+    "question_id" : 79590493,
+    "title" : "Adding a file to an existing in memory zip file with Zip4j",
+    "body" : "<p>with <a href=\"https://github.com/srikanth-lingala/zip4j\" rel=\"nofollow noreferrer\">Zip4j</a>, I'm trying to add a file to an existing zip file loaded in memory. I have no access to the file system. My zip file is basically a <code>byte[]</code> and I would like to not unzip it to add my new file.</p>\n<p>I tried several methods but none gave me an acceptable result. The closest I got was by putting my zip file in a <code>ByteArrayOutputStream</code>, wrap it in a <code>ZipOutputStream</code> and finally adding my new file in it :</p>\n<pre class=\"lang-java prettyprint-override\"><code>    public byte[] addFileToArchive(byte[] originalContent, byte[] fileToAdd, String filePathInArchive) {\n\n        ByteArrayOutputStream outputStream = new ByteArrayOutputStream();\n        try (ZipOutputStream zipOutputStream = new ZipOutputStream(outputStream)) {\n            // Add original content\n            outputStream.write(originalContent);\n\n            // Add new file\n            ZipParameters parameters = new ZipParameters();\n            parameters.setFileNameInZip(filePathInArchive);\n\n            zipOutputStream.putNextEntry(parameters);\n            zipOutputStream.write(fileToAdd);\n            zipOutputStream.closeEntry();\n        }\n\n        return outputStream.toByteArray();\n    }\n</code></pre>\n<p>Unfortunately, it creates a strange zip file displaying original files when I preview it with a zip explorer (like <a href=\"https://doc.ubuntu-fr.org/ark\" rel=\"nofollow noreferrer\">Ark</a>) but when I unzip it to verify its real content, only the new file is present.</p>\n<p>I found a stale <a href=\"https://github.com/srikanth-lingala/zip4j/issues/506\" rel=\"nofollow noreferrer\">issue</a> on the official github related to same kind of needs.</p>\n<p>Does anyone know a way to achieve that? Thanks!</p>\n<p><strong>EDIT</strong>: Why I just can't use <code>File</code> or <code>ZipFile</code> ? It's because this code can receive data from filesystem or S3 API or several other data provider.</p>\n",
+    "tags" : [ "java", "in-memory", "zip4j" ],
+    "owner" : {
+      "account_id" : 16967213,
+      "reputation" : 73,
+      "user_id" : 12272760,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qmryi.jpg?s=256",
+      "display_name" : "MatthieuBlm",
+      "link" : "https://stackoverflow.com/users/12272760/matthieublm"
+    },
+    "is_answered" : true,
+    "view_count" : 129,
+    "answer_count" : 2,
+    "score" : 3,
+    "last_activity_date" : 1745505997,
+    "creation_date" : 1745494866,
+    "link" : "https://stackoverflow.com/questions/79590493/adding-a-file-to-an-existing-in-memory-zip-file-with-zip4j",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79590702,
+    "question_id" : 79590493,
+    "body" : "<p>Zip files consist of:</p>\n<ol>\n<li><p>A series of 'zipped contents'. Each 'content' is a single file. It exists on its own (this explains why .zip is a horribly inefficient format when zipping up many tiny files that share a lot of common data; zip does not offer any way to use similarity <em>between</em> files to improve compression). Each 'content' block contains not just the byte content of the entry, but also the metadata, including its name and its uncompressed size.</p>\n</li>\n<li><p>A central directory structure, which lists the contents of the zip file. You do not <em>necessarily</em> need this thing; it is replicating data already shown in the metadata of the content items.</p>\n</li>\n</ol>\n<p>ZIP as a format sticks the central directory structure <em>at the end</em>. In this streaming age that seems like a boneheaded decision, but, think about how file systems work: Adding data <em>at the end</em> of a file is possible, whereas adding at <em>at the beginning</em> is not possible (you can ask a filesystem to do it; if it supports this at all, usually it just makes a complete copy, whereas when you add to the end, all bytes inside it that fit in a full sector equivalent are generally not touched at all).</p>\n<p>This means there are 2 completely different ways to unzip / read a file:</p>\n<ol>\n<li><p>Start at the start, and print/unzip each file as you see it. You might as well do this when 'streaming'. You have to go through the bytes anyway!</p>\n</li>\n<li><p>Start at the end, read only the central directory structure and print all of that only. When talking about files, this is <strong>vastly</strong> more efficient: You only need to ask the filesystem to read a single sector (the one containing the last segment of the file).</p>\n</li>\n</ol>\n<p>What you've done is this:</p>\n<ul>\n<li>Have one zip file containing all your old stuff.</li>\n<li>Make a completely unrelated separate zip file containing just the one file you added.</li>\n<li>Concatenate the bytes of these 2 things together.</li>\n</ul>\n<p>This is an invalid zip file. If you read it using the first strategy, you see only the 'old' files or possibly all files, depending on how that reader is built (if it stops once it sees the central directory structure, you never see the newly added file. If it simply skips over central directory structures it will see both, but, this is somewhat bizarre; this makes sense only if the zip reader is explicitly designed to attempt to recover corrupted zip files.. because that's what you created here, a corrupted zip file).</p>\n<p>If you read it using the second strategy, you hop to the end of the whole thing which is the central directory structure of your second zip file that contains only the one added file.</p>\n<p>This explains your output.</p>\n<p>In general your approach is broken - you do <strong>not</strong> want to 'stream' anything because the point of zips is that adding a file at the end is possible without rewriting. You want a zip API that explicitly does not involve <code>InputStream</code> - it must involve <code>Path</code> or <code>File</code>. Or, you don't mind the inefficiency of rewriting.</p>\n<p>So, this:</p>\n<blockquote>\n<pre><code>byte[] originalContent = FileUtils.readFileToByteArray(originalFile);\n</code></pre>\n</blockquote>\n<p>is a mistake already. Don't do that</p>\n<p>From a 'lets write a zip tool from the ground up' approach, now you know all you need to know. You even know that if you must 'stream' through it, you can still do so very efficiently; there is no need to uncompress each file, you can just copy the bytes verbatim from old to new. And if you don't have to stream through it (it's a file on disk already), you can just open it, move the 'file position' to the start of the central directory structure, write the new file (in compressed state), then write a new central directory structure. That's what e.g. the command line <code>zip</code> and <code>pkzip</code> tools would do in this situation, and it means that if you have a zip file of, say, 540GB and you add a file, that will take less than a second, whereas any tool that can only 'stream' through would take way, way longer and wouldn't work unless there's 540GB+ free disk space.</p>\n<p>But, how do you do that without writing your own zip library?</p>\n<p>The zip4j docs are very explicit about how to do this. Just.. <a href=\"https://github.com/srikanth-lingala/zip4j\" rel=\"nofollow noreferrer\">Read the docs</a>.</p>\n<pre class=\"lang-java prettyprint-override\"><code>ZipFile existingZip = new ZipFile(pathToExistingZip);\nexistingZip.addFiles(new File[] {fileToAdd1});\n</code></pre>\n",
+    "score" : 3,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 401843,
+      "reputation" : 107206,
+      "user_id" : 768644,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+      "display_name" : "rzwitserloot",
+      "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+    },
+    "creation_date" : 1745500749,
+    "last_activity_date" : 1745500749,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79590893,
+    "question_id" : 79590493,
+    "body" : "<p>The three class <code>ZipInputStream</code>, and <code>ZipOutputStream</code> cover only one side, and <code>ZipFile</code> would be adequate, but does not operate as such in memory.</p>\n<ul>\n<li>Do a ZipInputStream and a new ZipOutputStream</li>\n<li>And copy every entry and its content</li>\n</ul>\n<p>Or use <code>ZipFile</code>.</p>\n<p>There is yet an other technique, using the ZipFileSystem under the hood. Java <code>Path</code> is a generalisation of <code>File</code> for different <code>FileSystem</code> abstractions.</p>\n<p>The class <code>Files</code> allows you to operate on files between file systems. For instance write bytes or a String into a file.</p>\n<pre><code>String zipFile = &quot;/a/b/c.zip&quot;;\nURI zipURI = URI.create(&quot;jar:file:/&quot; + zipFile);\nMap&lt;String, String&gt; env = Map.of(); // Say for password zips or creating.\ntry (FileSystem zipfs = FileSystems.newFileSystem(zipURI, env)) {\n    Path originalPath = zipfs.getPath(&quot;d/e.txt&quot;);\n    Path destinationPath = Paths.get(&quot;/a/b/e2.txt&quot;);\n    Files.copy(originalPath, destinationPath);\n    Files.copy(destinationPath, originalPath.resolveSibling(&quot;e3.txt&quot;));\n    Files.writeString(originalPath.resolveSibling(&quot;e4.txt&quot;), &quot;Hello!\\n&quot;);\n}\n</code></pre>\n<p>The above is an example copying a file into and out of the same zip and creating a file from a content String.</p>\n<p>Note that the string is written in Charset UTF-8.</p>\n<p>The advantage is the high level of abstraction, like copying, renaming, moving, deleting files.</p>\n<p>As a zip file consists of a header, a sequence of ZipEntry and bytes, and an end, one would need to patch existing bytes when adding at the end. Hence your problems. And as some slight variants of the zip format exist, it is not recomended to hack those bytes.</p>\n<p>Should there be some need, chose the <strong>.tgz</strong> format: <strong>tar</strong> (sequential) tape archive submitted to <strong>gz</strong> <code>GZipOutputStream</code>. More complicated.</p>\n",
+    "score" : 1,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 960307,
+      "reputation" : 110397,
+      "user_id" : 984823,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Z2KYN.jpg?s=256",
+      "display_name" : "Joop Eggen",
+      "link" : "https://stackoverflow.com/users/984823/joop-eggen"
+    },
+    "creation_date" : 1745505997,
+    "last_activity_date" : 1745505997,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79590702" : [ {
+      "comment_id" : 140365941,
+      "post_id" : 79590702,
+      "body" : "Then clone zip4j and write your own handling for in-memory zip files. Note that having a zip file in memory strongly suggests bad code somewhere along the lines. Your code is inherently now limited to tiny files, in the sense that storing, say, 1GB zip in memory is probably already well beyond reasonable and highly taxing on your infra, whereas storing 1GB on a streaming medium (disk, for example, or even certain DB systems) is totally fine.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 401843,
+        "reputation" : 107206,
+        "user_id" : 768644,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/b13bedc5215730fbce5edff6c130988a?s=256&d=identicon&r=PG",
+        "display_name" : "rzwitserloot",
+        "link" : "https://stackoverflow.com/users/768644/rzwitserloot"
+      },
+      "creation_date" : 1745505799,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140365879,
+      "post_id" : 79590702,
+      "body" : "Thank you for your comment and all the information you provided on how zip file works, it will help me for sure. I suspected something like that had happend (mixing old directory structure with new file content). Maybe my post isn&#39;t clear enough, but I work in a context where I receive data as <code>byte[]</code>, have to return a <code>byte[]</code> and write it to a filesystem would add unnecessary operations and implies responsabilities that doesn&#39;t have to be faced by this code. So, I just can&#39;t use <code>File</code> or <code>ZipFile</code> and its well-known <code>addFiles</code> method. I might edit my code example to be more precise.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 16967213,
+        "reputation" : 73,
+        "user_id" : 12272760,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/qmryi.jpg?s=256",
+        "display_name" : "MatthieuBlm",
+        "link" : "https://stackoverflow.com/users/12272760/matthieublm"
+      },
+      "creation_date" : 1745504898,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

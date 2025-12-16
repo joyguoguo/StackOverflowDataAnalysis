@@ -1,0 +1,129 @@
+{
+  "question" : {
+    "question_id" : 79694086,
+    "title" : "Get the list of cancelled tasks which were in progress when the executor was shut down",
+    "body" : "<p><em>LISTING 7.21 ExecutorService that keeps track of cancelled tasks after shutdown.</em></p>\n<pre class=\"lang-java prettyprint-override\"><code>public class TrackingExecutor extends AbstractExecutorService {\n    private final ExecutorService exec;\n    private final Set&lt;Runnable&gt; tasksCancelledAtShutdown =\n            Collections.synchronizedSet(new HashSet&lt;Runnable&gt;());\n\n    public TrackingExecutor(ExecutorService exec) {\n        this.exec = exec;\n    }\n\n    public void shutdown() {\n        exec.shutdown();\n    }\n\n    public List&lt;Runnable&gt; shutdownNow() {\n        return exec.shutdownNow();\n    }\n\n    public boolean isShutdown() {\n        return exec.isShutdown();\n    }\n\n    public boolean isTerminated() {\n        return exec.isTerminated();\n    }\n\n    public boolean awaitTermination(long timeout, TimeUnit unit)\n            throws InterruptedException {\n        return exec.awaitTermination(timeout, unit);\n    }\n\n    public List&lt;Runnable&gt; getCancelledTasks() {\n        if (!exec.isTerminated())\n            throw new IllegalStateException(/*...*/);\n        return new ArrayList&lt;Runnable&gt;(tasksCancelledAtShutdown);\n    }\n\n    public void execute(final Runnable runnable) {\n        exec.execute(new Runnable() {\n            public void run() {\n                try {\n                    runnable.run();\n                } finally {\n                    if (isShutdown()\n                            &amp;&amp; Thread.currentThread().isInterrupted())\n                        tasksCancelledAtShutdown.add(runnable);\n                }\n            }\n        });\n    }\n}\n</code></pre>\n<p>It is written in the &quot;Java Concurrency in Practice&quot; book (7.2.5):</p>\n<blockquote>\n<p>TrackingExecutor has an unavoidable race condition that could make it yield false positives: tasks that are identified as cancelled but actually completed. This aries because the thread pool could be shut down between when the last instruction of the task executes and when the pool records the task as complete. This is not a problem if tasks are idempotent(if performing them twice has the same effect as performing them once), as they typically are in a web crawler.<strong>Otherwise, the application retrieving the cancelled tasks must be aware of this risk and be prepared to deal with false positives.</strong></p>\n</blockquote>\n<p><strong>Question</strong>: What should be done to handle non-idempotent tasks?</p>\n",
+    "tags" : [ "java", "concurrency", "threadpool", "race-condition" ],
+    "owner" : {
+      "account_id" : 13259968,
+      "reputation" : 61,
+      "user_id" : 9574849,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-XdUIqdMkCWA/AAAAAAAAAAI/AAAAAAAAAAA/4252rscbv5M/s256-rj/photo.jpg",
+      "display_name" : "Flamer",
+      "link" : "https://stackoverflow.com/users/9574849/flamer"
+    },
+    "is_answered" : true,
+    "view_count" : 126,
+    "answer_count" : 1,
+    "score" : -1,
+    "last_activity_date" : 1752062850,
+    "creation_date" : 1751971016,
+    "link" : "https://stackoverflow.com/questions/79694086/get-the-list-of-cancelled-tasks-which-were-in-progress-when-the-executor-was-shu",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79694324,
+    "question_id" : 79694086,
+    "body" : "<p><strong>UPD: Improved solution</strong></p>\n<p>As @Flamer correctly pointed out, simply wrapping a Runnable and adding a completion flag does <strong>not</strong> resolve the race condition. A thread could finish executing the task but be interrupted before setting the completion flag:</p>\n<pre class=\"lang-java prettyprint-override\"><code>task.run();\ncompletedSuccessfully = true;\n</code></pre>\n<p>A more reliable solution, in my opinion, is to use Callable&lt;T&gt; together with Future&lt;T&gt;. Here’s how it might look:</p>\n<pre class=\"lang-java prettyprint-override\"><code>public class TrackingExecutorService {\n    private final ExecutorService executor;\n    private final Map&lt;Future&lt;?&gt;, Callable&lt;?&gt;&gt; tasks = new ConcurrentHashMap&lt;&gt;();\n\n    public TrackingExecutorService(ExecutorService executor) {\n        this.executor = executor;\n    }\n\n    public &lt;T&gt; Future&lt;T&gt; submit(Callable&lt;T&gt; task) {\n        Future&lt;T&gt; future = executor.submit(task);\n        tasks.put(future, task);\n        return future;\n    }\n\n    public Future&lt;?&gt; submit(Runnable task) {\n        Callable&lt;?&gt; callable = Executors.callable(task);\n        Future&lt;?&gt; future = executor.submit(callable);\n        tasks.put(future, callable);\n        return future;\n    }\n\n    public List&lt;Callable&lt;?&gt;&gt; getCancelledTasks() {\n        List&lt;Callable&lt;?&gt;&gt; cancelled = new ArrayList&lt;&gt;();\n        for (Map.Entry&lt;Future&lt;?&gt;, Callable&lt;?&gt;&gt; entry : tasks.entrySet()) {\n            Future&lt;?&gt; future = entry.getKey();\n            if (future.isCancelled()) {\n                cancelled.add(entry.getValue());\n            }\n        }\n        return cancelled;\n    }\n\n    public void shutdown() {\n        executor.shutdown();\n    }\n\n    public List&lt;Runnable&gt; shutdownNow() {\n        return executor.shutdownNow();\n    }\n\n    public boolean isShutdown() {\n        return executor.isShutdown();\n    }\n\n    public boolean isTerminated() {\n        return executor.isTerminated();\n    }\n\n    public boolean awaitTermination(long timeout, TimeUnit unit) throws InterruptedException {\n        return executor.awaitTermination(timeout, unit);\n    }\n}\n</code></pre>\n<hr />\n<p><strong>Older solution</strong></p>\n<p>Since <code>TrackingExecutor</code> may mistakenly consider a task as cancelled due to a race condition between task completion and <code>shutdownNow()</code>, we need to be prepared for such errors.</p>\n<p>To avoid them, we can introduce a special flag to indicate the state of the task. For example:</p>\n<pre><code>public class TrackableTask implements Runnable {\n    private final Runnable task;\n    private volatile boolean completedSuccessfully = false;\n\n    public TrackableTask(Runnable task) {\n        this.task = task;\n    }\n\n    public boolean isCompletedSuccessfully() {\n        return completedSuccessfully;\n    }\n\n    @Override\n    public void run() {\n        task.run();\n        completedSuccessfully = true;\n    }\n}\n</code></pre>\n<p>Thus, when calling <code>getCancelledTasks()</code>, we should check whether a task is an <code>instance of TrackableTask</code> and examine the value of <code>isCompletedSuccessfully()</code>.</p>\n",
+    "score" : 3,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 42933091,
+      "reputation" : 66,
+      "user_id" : 30993234,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/XIoZZLIc.jpg?s=256",
+      "display_name" : "banitm",
+      "link" : "https://stackoverflow.com/users/30993234/banitm"
+    },
+    "creation_date" : 1751980944,
+    "last_activity_date" : 1752062850,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140573702,
+    "post_id" : 79694086,
+    "body" : "The short answer is to only implement an orderly shutdown. A task that is wrapped in a RDBMS ACID Transaction may only need to report if it ended in COMMIT or ROLLBACK. But a task could be executed in stages and have a restart point rather than a binary &#39;completed/did nothing&#39; restart state and so on. You end up extending the interface and making sure the executor and tasks negotiate shutdown cleanly. But @SolomonSlow is right. This is one of the many reasons to value idempotency.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 5277236,
+      "reputation" : 8627,
+      "user_id" : 4213662,
+      "user_type" : "registered",
+      "accept_rate" : 80,
+      "profile_image" : "https://graph.facebook.com/693430827/picture?type=large",
+      "display_name" : "Persixty",
+      "link" : "https://stackoverflow.com/users/4213662/persixty"
+    },
+    "creation_date" : 1751979784,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140573605,
+    "post_id" : 79694086,
+    "body" : "Is there some actual problem that you are trying to solve? or is your question purely academic? If it&#39;s the latter, and we&#39;re not allowed to escape from the framework of tasks that <i>must</i> be completed, submitted to an executor service that <i>may</i> be shut down, then the answer probably is, <i>don&#39;t write non-idempotent tasks.</i>",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 422870,
+      "reputation" : 27582,
+      "user_id" : 801894,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/67f2ccd17aa6fd622152ad88fc2ae784?s=256&d=identicon&r=PG",
+      "display_name" : "Solomon Slow",
+      "link" : "https://stackoverflow.com/users/801894/solomon-slow"
+    },
+    "creation_date" : 1751977899,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140573438,
+    "post_id" : 79694086,
+    "body" : "I’m pretty sure the only way to do this is to make sure each task is capable of restarting itself (for example, a class that implements Runnable and also has a <code>reset()</code> method).  If a Runnable can’t be safely restarted, there is nothing an Executor can do about that.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 2053598,
+      "reputation" : 44991,
+      "user_id" : 1831987,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/38b1c37530189ec4471a43a618e33f67?s=256&d=identicon&r=PG",
+      "display_name" : "VGR",
+      "link" : "https://stackoverflow.com/users/1831987/vgr"
+    },
+    "creation_date" : 1751974653,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79694324" : [ {
+      "comment_id" : 140576599,
+      "post_id" : 79694324,
+      "body" : "@Flamer Yes, you&#39;re right, thanks for pointing that out.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 42933091,
+        "reputation" : 66,
+        "user_id" : 30993234,
+        "user_type" : "registered",
+        "profile_image" : "https://i.sstatic.net/XIoZZLIc.jpg?s=256",
+        "display_name" : "banitm",
+        "link" : "https://stackoverflow.com/users/30993234/banitm"
+      },
+      "creation_date" : 1752062077,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140574276,
+      "post_id" : 79694324,
+      "body" : "I believe this solution is not feasible because it is possible for the thread pool to shut down before the statement <code>completedSuccessfully = true;</code> is executed, which would result in the same problem as before.",
+      "score" : 2,
+      "owner" : {
+        "account_id" : 13259968,
+        "reputation" : 61,
+        "user_id" : 9574849,
+        "user_type" : "registered",
+        "profile_image" : "https://lh3.googleusercontent.com/-XdUIqdMkCWA/AAAAAAAAAAI/AAAAAAAAAAA/4252rscbv5M/s256-rj/photo.jpg",
+        "display_name" : "Flamer",
+        "link" : "https://stackoverflow.com/users/9574849/flamer"
+      },
+      "creation_date" : 1751989466,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

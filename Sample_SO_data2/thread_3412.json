@@ -1,0 +1,84 @@
+{
+  "question" : {
+    "question_id" : 79553179,
+    "title" : "Why doesn&#39;t INET_NTOA work in ColumnTransformer?",
+    "body" : "<p>I have a MySQL table that stores information about label printers:</p>\n<div class=\"s-table-container\"><table class=\"s-table\">\n<thead>\n<tr>\n<th>ip</th>\n<th>port</th>\n<th>nickname</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>181012304</td>\n<td>9100</td>\n<td>PRLMA213</td>\n</tr>\n<tr>\n<td>181012370</td>\n<td>9100</td>\n<td>PRLMA212</td>\n</tr>\n<tr>\n<td>181012398</td>\n<td>9100</td>\n<td>PRLMA211</td>\n</tr>\n<tr>\n<td>181012559</td>\n<td>9100</td>\n<td>PRLMA210</td>\n</tr>\n</tbody>\n</table></div>\n<p>There is a corresponding JPA entity for this table in my application:</p>\n<pre><code>@Entity\n@Table(name = &quot;printers&quot;, catalog = &quot;gage_requests&quot;)\npublic class PrinterEntity {\n\n    @Id\n    @Column(name = &quot;ip&quot;)\n    @ColumnTransformer(read = &quot;INET_NTOA(ip)&quot;, write = &quot;INET_ATON(?)&quot;)\n    private String address;\n    private int port;\n    private String nickname;\n\n    public String getAddress() {\n        return this.address;\n    }\n\n    public int getPort() {\n        return this.port;\n    }\n\n    public String getNickname() {\n        return this.nickname;\n    }\n\n}\n</code></pre>\n<p>When I use <a href=\"https://docs.oracle.com/javaee/7/api/javax/persistence/criteria/CriteriaQuery.html\" rel=\"nofollow noreferrer\"><code>CriteriaQuery</code></a> to retrieve the list of printers, the IP address is not properly converted and remains an integer:</p>\n<pre><code>public List&lt;PrinterEntity&gt; findPrinters() {\n    CriteriaBuilder criteriaBuilder = this.entityManager.getCriteriaBuilder();\n    CriteriaQuery&lt;PrinterEntity&gt; criteriaQuery = criteriaBuilder.createQuery(PrinterEntity.class);\n\n    Root&lt;PrinterEntity&gt; root = criteriaQuery.from(PrinterEntity.class);\n    criteriaQuery.select(root);\n\n    TypedQuery&lt;PrinterEntity&gt; query = this.entityManager.createQuery(criteriaQuery);\n    return query.getResultStream().peek(this.entityManager::detach)\n            .collect(Collectors.toCollection(LinkedList::new));\n}\n</code></pre>\n<p>Returned list:</p>\n<pre><code>[\n    {\n        &quot;address&quot;: &quot;181012304&quot;,\n        &quot;nickname&quot;: &quot;PRLMA213&quot;,\n        &quot;port&quot;: 9100\n    },\n    {\n        &quot;address&quot;: &quot;181012370&quot;,\n        &quot;nickname&quot;: &quot;PRLMA212&quot;,\n        &quot;port&quot;: 9100\n    },\n    {\n        &quot;address&quot;: &quot;181012398&quot;,\n        &quot;nickname&quot;: &quot;PRLMA211&quot;,\n        &quot;port&quot;: 9100\n    },\n    {\n        &quot;address&quot;: &quot;181012559&quot;,\n        &quot;nickname&quot;: &quot;PRLMA210&quot;,\n        &quot;port&quot;: 9100\n    }\n]\n</code></pre>\n<p>With <code>hibernate.show_sql</code> set to true, the following SQL is logged:</p>\n<pre><code>select printerent0_.ip as ip1_5_, printerent0_.nickname as nickname2_5_, printerent0_.port as port3_5_ from gage_requests.printers printerent0_\n</code></pre>\n<p>This is clearly missing the <code>INET_NTOA</code> function used in my <a href=\"https://docs.jboss.org/hibernate/orm/7.0/javadocs/org/hibernate/annotations/ColumnTransformer.html\" rel=\"nofollow noreferrer\"><code>@ColumnTransformer</code></a> annotation, so it appears that the annotation is not being applied.</p>\n<p>Why is this?</p>\n",
+    "tags" : [ "java", "hibernate", "jpa" ],
+    "owner" : {
+      "account_id" : 7421543,
+      "reputation" : 3594,
+      "user_id" : 5645656,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://i.sstatic.net/cWJZKa1g.png?s=256",
+      "display_name" : "Cardinal System",
+      "link" : "https://stackoverflow.com/users/5645656/cardinal-system"
+    },
+    "is_answered" : true,
+    "view_count" : 82,
+    "answer_count" : 2,
+    "score" : 2,
+    "last_activity_date" : 1743759004,
+    "creation_date" : 1743689227,
+    "link" : "https://stackoverflow.com/questions/79553179/why-doesnt-inet-ntoa-work-in-columntransformer",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79554879,
+    "question_id" : 79553179,
+    "body" : "<h2><code>@ColumnTransformer</code> not supported at <code>@Id</code> fields</h2>\n<p>Hibernate's <code>@ColumnTransformer</code> might not be supported for a primary-key field as given by the annotation <code>@Id</code> here.</p>\n<p>This was <a href=\"https://hibernate.atlassian.net/browse/HHH-9808?focusedCommentId=75040\" rel=\"nofollow noreferrer\">rejected in feature-request HHH-9808</a> by the core-maintainer Steve Ebersole in 2016:</p>\n<blockquote>\n<h3>@ColumnTransformer is not applied on @Id members</h3>\n<p>Ok then, until this gets some votes or something else changes, going to reject this.</p>\n</blockquote>\n<p>For a detailed explanation see: <a href=\"https://stackoverflow.com/questions/54789416/why-cant-we-apply-columntransformer-to-id-primary-key-field\">Why can&#39;t we apply @ColumnTransformer to @Id field (primary key)?</a> .</p>\n<h2>Related</h2>\n<p>This restriction was also be the issue in this case: <a href=\"https://stackoverflow.com/questions/58187405/columntransformer-isnt-used-in-select\">@ColumnTransformer isn&#39;t used in select</a> . The solution was to use a different column as primary-key with <code>@Id</code>.</p>\n<h2>Workarounds</h2>\n<p>To get the transformation for the IP-address working, I could think of these workarounds:</p>\n<ol>\n<li><strong>Fix the source:</strong> Reformat the persisted IP-addresses in the source-table, e.g. ensure that the column-type is VARCHAR and execute SQL <code>UPDATE TABLE gage_requests.printers SET ip = INET_NTOA(ip)</code>. Then you need no transformation in Java but a validation on the <code>address</code> field, to ensure the correct format.</li>\n<li><strong>Transform in Java:</strong> Port this internet-address/IP transform-functions <code>INET_NTOA</code> and <code>INET_ATON</code> into the Java getters/setters for field <code>address</code>.</li>\n<li><strong>Change primary-key:</strong> Use a different column as primary-key, e.g. move <code>@Id</code> to <code>nickname</code></li>\n</ol>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 7547772,
+      "reputation" : 9694,
+      "user_id" : 5730279,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/9GYwj.jpg?s=256",
+      "display_name" : "hc_dev",
+      "link" : "https://stackoverflow.com/users/5730279/hc-dev"
+    },
+    "creation_date" : 1743756603,
+    "last_activity_date" : 1743759004,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "answer_id" : 79553339,
+    "question_id" : 79553179,
+    "body" : "<p>From your problem, I think I have two main causes that might produce the IP address not properly converting, remaining an integer:</p>\n<ul>\n<li><p>From my experience with Hibernate, some versions may not fully support the <code>@ColumnTransformer</code> annotation for certain queries. I researched a bit on the topic, and it seems like Hibernate 5.4+ fully supports this annotation, according to this documentation: <a href=\"https://docs.jboss.org/hibernate/orm/5.4/javadocs/org/hibernate/annotations/ColumnTransformer.html\" rel=\"nofollow noreferrer\">https://docs.jboss.org/hibernate/orm/5.4/javadocs/org/hibernate/annotations/ColumnTransformer</a>. Here, it describes the usage of <code>@ColumnTransformer</code> annotation in Hibernate 5.4, resulting that it supports it.</p>\n</li>\n<li><p>Native queries tend to work better with this kind of annotation. I suggest also trying to create your query something like:</p>\n</li>\n</ul>\n<pre><code>\nQuery query = entityManager.createNativeQuery(&quot;SELECT INET_NTOA(ip) as address, port, nickname FROM printers&quot;, PrinterEntity.class);\nList&lt;PrinterEntity&gt; printers = query.getResultList();\n</code></pre>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 38890247,
+      "reputation" : 156,
+      "user_id" : 29003408,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/LhjH9Wyd.jpg?s=256",
+      "display_name" : "Andrei Greblă",
+      "link" : "https://stackoverflow.com/users/29003408/andrei-grebl%c4%83"
+    },
+    "creation_date" : 1743693308,
+    "last_activity_date" : 1743693835,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : {
+    "79554879" : [ {
+      "comment_id" : 140299010,
+      "post_id" : 79554879,
+      "body" : "I added a separate <code>id</code> column and removed the primary key constraint from the <code>ip</code> column, then confirmed that the <code>ColumnTransformer</code> was working. However, I want to keep <code>ip</code> as the primary, so my final solution was to create a view which applies the <code>INET_NTOA</code> transformation. If you like, you can update your answer to include creating a view as a workaround.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 7421543,
+        "reputation" : 3594,
+        "user_id" : 5645656,
+        "user_type" : "registered",
+        "accept_rate" : 100,
+        "profile_image" : "https://i.sstatic.net/cWJZKa1g.png?s=256",
+        "display_name" : "Cardinal System",
+        "link" : "https://stackoverflow.com/users/5645656/cardinal-system"
+      },
+      "creation_date" : 1743766248,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

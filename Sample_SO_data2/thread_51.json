@@ -1,0 +1,112 @@
+{
+  "question" : {
+    "question_id" : 79842879,
+    "title" : "Spring boot creates 2 security filter chains instead of 1 in spring boot 3.5.8",
+    "body" : "<p>I'm migrating code from spring boot 2.7.5 to 3.5.8. Before the migration everything worked fine</p>\n<p>Here is my internal security configuration in my library</p>\n<pre><code>@Configuration\n@EnableWebSecurity\n@RequiredArgsConstructor\npublic class SecurityConfig {\n\n    @Bean\n    @Order(Ordered.HIGHEST_PRECEDENCE)\n    public SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {\n        http\n            .sessionManagement(sessionManagement -&gt;\n                sessionManagement.sessionCreationPolicy(SessionCreationPolicy.STATELESS))\n            .csrf(AbstractHttpConfigurer::disable)\n            .authorizeHttpRequests(request -&gt; request\n                .requestMatchers(&quot;/app&quot;).hasAuthority(&quot;APP&quot;)\n                .requestMatchers(&quot;/**&quot;).permitAll()\n            )\n            .httpBasic(Customizer.withDefaults())\n            .exceptionHandling(exceptionHandling -&gt;\n                exceptionHandling.authenticationEntryPoint(new HttpStatusEntryPoint(HttpStatus.UNAUTHORIZED)))\n            .headers(headersConfigurer -&gt; headersConfigurer\n                .contentSecurityPolicy(securityPolicyConfigurer -&gt; securityPolicyConfigurer.policyDirectives(&quot;*&quot;))\n                .referrerPolicy(referrerPolicyConfigurer -&gt; referrerPolicyConfigurer\n                    .policy(ReferrerPolicyHeaderWriter.ReferrerPolicy.NO_REFERRER))\n                .permissionsPolicyHeader(permissionsPolicyConfig -&gt; permissionsPolicyConfig.policy(&quot;self&quot;))\n                .httpStrictTransportSecurity(hstsConfig -&gt; hstsConfig\n                    .includeSubDomains(true)\n                    .maxAgeInSeconds(SECONDS_IN_YEAR))\n                .frameOptions(HeadersConfigurer.FrameOptionsConfig::deny))\n            .headers(headersConfigurer -&gt; headersConfigurer.contentTypeOptions(Customizer.withDefaults()));\n\n        return http.build();\n    }\n</code></pre>\n<p>the class gets into the context like this</p>\n<pre><code>@ComponentScan\npublic class AppConfiguration {\n}\n</code></pre>\n<p>Next, I include this library in my project and when I run it I get</p>\n<pre><code>Caused by: org.springframework.security.web.UnreachableFilterChainException: A filter chain that matches any request [DefaultSecurityFilterChain defined as 'managementSecurityFilterChain' in [class path resource [org/springframework/boot/actuate/autoconfigure/security/servlet/ManagementWebSecurityAutoConfiguration.class]] matching [any request] and having filters [DisableEncodeUrl, WebAsyncManagerIntegration, SecurityContextHolder, HeaderWriter, Cors, Csrf, Logout, UsernamePasswordAuthentication, DefaultResources, DefaultLoginPageGenerating, DefaultLogoutPageGenerating, BasicAuthentication, RequestCacheAware, SecurityContextHolderAwareRequest, AnonymousAuthentication, ExceptionTranslation, Authorization]] has already been configured, which means that this filter chain [DefaultSecurityFilterChain defined as 'securityFilterChain' in [class path resource [/app/config/SecurityConfig.class]] matching [any request] and having filters [DisableEncodeUrl, WebAsyncManagerIntegration, SecurityContextHolder, HeaderWriter, Logout, BasicAuthentication, RequestCacheAware, SecurityContextHolderAwareRequest, AnonymousAuthentication, SessionManagement, ExceptionTranslation, Authorization]] will never get invoked. Please use `HttpSecurity#securityMatcher` to ensure that there is only one filter chain configured for 'any request' and that the 'any request' filter chain is published last.\n    at app//org.springframework.security.config.annotation.web.builders.WebSecurityFilterChainValidator.checkForAnyRequestRequestMatcher(WebSecurityFilterChainValidator.java:59)\n    at app//org.springframework.security.config.annotation.web.builders.WebSecurityFilterChainValidator.validate(WebSecurityFilterChainValidator.java:47)\n    at app//org.springframework.security.web.FilterChainProxy.afterPropertiesSet(FilterChainProxy.java:178)\n    at app//org.springframework.security.config.annotation.web.builders.WebSecurity.performBuild(WebSecurity.java:351)\n    at app//org.springframework.security.config.annotation.web.builders.WebSecurity.performBuild(WebSecurity.java:98)\n    at app//org.springframework.security.config.annotation.AbstractConfiguredSecurityBuilder.doBuild(AbstractConfiguredSecurityBuilder.java:355)\n    at app//org.springframework.security.config.annotation.AbstractSecurityBuilder.build(AbstractSecurityBuilder.java:38)\n    at app//org.springframework.security.config.annotation.web.configuration.WebSecurityConfiguration.springSecurityFilterChain(WebSecurityConfiguration.java:132)\n    at app//org.springframework.beans.factory.support.SimpleInstantiationStrategy.lambda$instantiate$0(SimpleInstantiationStrategy.java:172)\n    ... 44 more\n</code></pre>\n<p>This happens because the next bin gets into the context earlier</p>\n<pre><code>@AutoConfiguration(before = SecurityAutoConfiguration.class,\n       after = { HealthEndpointAutoConfiguration.class, InfoEndpointAutoConfiguration.class,\n             WebEndpointAutoConfiguration.class, OAuth2ClientWebSecurityAutoConfiguration.class,\n             OAuth2ResourceServerAutoConfiguration.class, Saml2RelyingPartyAutoConfiguration.class })\n@ConditionalOnWebApplication(type = Type.SERVLET)\n@ConditionalOnDefaultWebSecurity\npublic class ManagementWebSecurityAutoConfiguration {\n\n    @Bean\n    @Order(SecurityProperties.BASIC_AUTH_ORDER)\n    SecurityFilterChain managementSecurityFilterChain(Environment environment, HttpSecurity http) throws Exception {\n       http.authorizeHttpRequests((requests) -&gt; {\n          requests.requestMatchers(healthMatcher(), additionalHealthPathsMatcher()).permitAll();\n          requests.anyRequest().authenticated();\n       });\n       if (ClassUtils.isPresent(&quot;org.springframework.web.servlet.DispatcherServlet&quot;, null)) {\n          http.cors(withDefaults());\n       }\n       http.formLogin(withDefaults());\n       http.httpBasic(withDefaults());\n       return http.build();\n    }\n</code></pre>\n<p>The error was fixed by adding the following settings to application.yaml</p>\n<pre><code>spring:\n    autoconfigure:\n        exclude: &gt;\n            org.springframework.boot.autoconfigure.security.servlet.SecurityAutoConfiguration,\n            org.springframework.boot.actuate.autoconfigure.security.servlet.ManagementWebSecurityAutoConfiguration\n</code></pre>\n<p>or</p>\n<pre><code>@Bean(&quot;managementSecurityFilterChain&quot;)\n@Primary\n@Order(Ordered.HIGHEST_PRECEDENCE)\npublic SecurityFilterChain securityFilterChain(HttpSecurity http) throws Exception {\n</code></pre>\n<p>with</p>\n<pre><code>spring:\n    main:\n        allow-bean-definition-overriding: true\n</code></pre>\n<p>but it seems to me that this is not entirely correct and may lead to negative consequences. <strong>How can only managementSecurityFilterChain be excluded from the context</strong>?</p>\n",
+    "tags" : [ "java", "spring", "spring-boot", "spring-security" ],
+    "owner" : {
+      "account_id" : 31367400,
+      "reputation" : 1,
+      "user_id" : 24185487,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/ced53b186518de58be0ab613a3ee9311?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Andrey Antonov",
+      "link" : "https://stackoverflow.com/users/24185487/andrey-antonov"
+    },
+    "is_answered" : false,
+    "view_count" : 83,
+    "answer_count" : 1,
+    "score" : 0,
+    "last_activity_date" : 1765483140,
+    "creation_date" : 1765366095,
+    "link" : "https://stackoverflow.com/questions/79842879/spring-boot-creates-2-security-filter-chains-instead-of-1-in-spring-boot-3-5-8",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79844329,
+    "question_id" : 79842879,
+    "body" : "<p>Your chain and Actuator’s chain both match any request, and Spring Boot 3 doesn’t allow that anymore...\nDon’t exclude auto-configs, don’t override beans… just scope your chain.</p>\n<p>I suggest this fix :</p>\n<pre class=\"lang-java prettyprint-override\"><code>http.securityMatcher(&quot;/app/**&quot;);\n</code></pre>\n<blockquote>\n<p>Now your chain handles <code>/app/**</code> only, Actuator keeps <code>/actuator/**</code>, and Spring stops yelling !</p>\n</blockquote>\n",
+    "score" : 0,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 12972904,
+      "reputation" : 1113,
+      "user_id" : 9377995,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/Hl13jffO.png?s=256",
+      "display_name" : "gdoura mohamed",
+      "link" : "https://stackoverflow.com/users/9377995/gdoura-mohamed"
+    },
+    "creation_date" : 1765483140,
+    "last_activity_date" : 1765483140,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140896254,
+    "post_id" : 79842879,
+    "body" : "<code>@ConditionalOnDefaultWebSecurity public class ManagementWebSecurityAutoConfiguration {</code>",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 31367400,
+      "reputation" : 1,
+      "user_id" : 24185487,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/ced53b186518de58be0ab613a3ee9311?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Andrey Antonov",
+      "link" : "https://stackoverflow.com/users/24185487/andrey-antonov"
+    },
+    "creation_date" : 1765374168,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140896163,
+    "post_id" : 79842879,
+    "body" : "thanks, only exclude:  <code>org.springframework.boot.actuate.autoconfigure.security.serv&zwnj;&#8203;let.ManagementWebSec&zwnj;&#8203;urityAutoConfigurati&zwnj;&#8203;on</code> helped. Please tell me why there was no such problem in versions of spring boot 2.7.5 and 3.2.6? In older versions, managementSecurityFilterChain was not created if it had its own implementation",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 31367400,
+      "reputation" : 1,
+      "user_id" : 24185487,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/ced53b186518de58be0ab613a3ee9311?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Andrey Antonov",
+      "link" : "https://stackoverflow.com/users/24185487/andrey-antonov"
+    },
+    "creation_date" : 1765371139,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140896119,
+    "post_id" : 79842879,
+    "body" : "The problem isn&#39;t so much 2 filter chains, the problem is <code>requestMatchers(&quot;&#47;**&quot;).permitAll()</code> you are basically opening up the whole application with this. What you should do instead if limit the amount of open URLs. Which is what the management auto configuration does. So if you remove that line it will work as well. If you really want to open everything in your app just only exclude the <code>ManagementWebSecurityAutoConfiguration</code>, you don&#39;t need to exclude the <code>SecurityAutoConfiguration</code> as that will backoff automatically. In Spring Boot 4 you won&#39;t need it either due to the modularization.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126826,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1765369617,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79844329" : [ {
+      "comment_id" : 140899933,
+      "post_id" : 79844329,
+      "body" : "thanks, but I need to open the path exactly to /**, as it was in the &lt; Spring Boot 3 version, because my service processes thousands of such requests daily",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 31367400,
+        "reputation" : 1,
+        "user_id" : 24185487,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/ced53b186518de58be0ab613a3ee9311?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Andrey Antonov",
+        "link" : "https://stackoverflow.com/users/24185487/andrey-antonov"
+      },
+      "creation_date" : 1765555359,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

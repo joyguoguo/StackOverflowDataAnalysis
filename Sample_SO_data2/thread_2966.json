@@ -1,0 +1,182 @@
+{
+  "question" : {
+    "question_id" : 79584759,
+    "title" : "ActiveMQMessageConsumer.receive() stuck at TIMED_WAITING",
+    "body" : "<p>A third-party, multi-threaded application is interacting with a remote ActiveMQ queue and is getting stuck with threads waiting at:</p>\n<pre><code>java.lang.Thread.State: TIMED_WAITING (on object monitor)\n  at java.lang.Object.wait(Native Method)\n  at org.apache.activemq.artemis.core.client.impl.ClientConsumerImpl.receive(ClientConsumerImpl.java:258)\n  - locked &lt;0x00000000f541f548&gt; (a org.apache.activemq.artemis.core.client.impl.ClientConsumerImpl)\n  at org.apache.activemq.artemis.core.client.impl.ClientConsumerImpl.receive(ClientConsumerImpl.java:385)\n  at org.apache.activemq.artemis.jms.client.ActiveMQMessageConsumer.getMessage(ActiveMQMessageConsumer.java:198)\n  at org.apache.activemq.artemis.jms.client.ActiveMQMessageConsumer.receive(ActiveMQMessageConsumer.java:118)\n  ...(...:384)\n</code></pre>\n<p>I've decompiled the application and reviewed TRACE logs and it seems that the <code>queueReceiver.receive()</code> method doesn't get/see the same number of messages returned by the <code>queueBrowser</code>.</p>\n<pre><code>/* 375 */       queueBrowser = queueSession.createBrowser(queue, messageSelector);\n/* 376 */       Enumeration e = queueBrowser.getEnumeration();\n/* 377 */       int iMesgCount = 0;\n/* 378 */       while (e.hasMoreElements()) {\n/* 379 */         iMesgCount++;\n/* 380 */         e.nextElement();\n/*     */       } \n/* 382 */       queueReceiver = queueSession.createReceiver(queue, messageSelector);\n/* 383 */       for (int i = 0; i &lt; iMesgCount; i++) {\n/* 384 */         Message ipMessage = queueReceiver.receive();\n/*     */       }\n</code></pre>\n<p>Why might this be and is there anything I can do to add concurrency control around the ActiveMQ objects? I don't believe there are any other threads or processes removing the messages from the queue. I believe the issue is multi-threaded use of the ActiveMQ objects.</p>\n",
+    "tags" : [ "java", "multithreading", "thread-safety", "activemq-artemis" ],
+    "owner" : {
+      "account_id" : 24416,
+      "reputation" : 5960,
+      "user_id" : 62072,
+      "user_type" : "registered",
+      "accept_rate" : 84,
+      "profile_image" : "https://www.gravatar.com/avatar/1b60fc4645b020bc304e0e04395d0b89?s=256&d=identicon&r=PG",
+      "display_name" : "Tom Hunter",
+      "link" : "https://stackoverflow.com/users/62072/tom-hunter"
+    },
+    "is_answered" : true,
+    "view_count" : 107,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1745523618,
+    "creation_date" : 1745243661,
+    "link" : "https://stackoverflow.com/questions/79584759/activemqmessageconsumer-receive-stuck-at-timed-waiting",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79584824,
+    "question_id" : 79584759,
+    "body" : "<p>Generally speaking, the snapshot of the queue returned by a JMS <code>QueueBrowser</code> is not guaranteed to be 100% accurate since while the queue is being browsed messages may be coming and going. The <a href=\"https://docs.oracle.com/javaee/7/api/javax/jms/QueueBrowser.html\" rel=\"nofollow noreferrer\">relevant JavaDoc</a> states:</p>\n<blockquote>\n<p>Messages may be arriving and expiring while the scan is done. The JMS API does not require the content of an enumeration to be a static snapshot of queue content. Whether these changes are visible or not depends on the JMS provider.</p>\n</blockquote>\n<p>The reason the thread is waiting indefinitely is because the application invoked <code>receive()</code> (i.e. with <strong>no timeout</strong>). If the application should instead simply consume all the messages in the queue and then return after there are no more messages available then I recommend something like this:</p>\n<pre class=\"lang-java prettyprint-override\"><code>queueReceiver = queueSession.createReceiver(queue, messageSelector);\nMessage ipMessage;\nwhile ((ipMessage = queueReceiver.receive(1000)) != null) { // wait 1 second for a message\n   // do something with message\n}\n</code></pre>\n<p>There's no reason to use a <code>QueueBrowser</code> at all.</p>\n<p>If the application is multi-threaded it should follow a session-per-thread pattern to avoid thread-safety issues. The JMS <code>Connection</code> is thread-safe but essentially everything else is not. That said, if sessions must be shared among threads you can add protection using the standard mechanisms available in Java (e.g. <code>synchronized</code>, various <a href=\"https://docs.oracle.com/en/java/javase/17/docs/api/java.base/java/util/concurrent/locks/Lock.html\" rel=\"nofollow noreferrer\"><code>Lock</code></a> implementations, etc.).</p>\n<p>If you don't have any way to change the code of this third-party application then I'm afraid you're stuck. There is no way influence or control the thread concurrency in the ActiveMQ Artemis Core JMS client via configuration.</p>\n",
+    "score" : 3,
+    "is_accepted" : false,
+    "owner" : {
+      "account_id" : 11434008,
+      "reputation" : 36292,
+      "user_id" : 8381946,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-ORs8fPNVzDU/AAAAAAAAAAI/AAAAAAAADBs/F3IsdsProVY/s256-rj/photo.jpg",
+      "display_name" : "Justin Bertram",
+      "link" : "https://stackoverflow.com/users/8381946/justin-bertram"
+    },
+    "creation_date" : 1745246833,
+    "last_activity_date" : 1745523618,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140366968,
+    "post_id" : 79584759,
+    "body" : "I updated my answer to address your question about controlling thread concurrency via configuration. The question about modifying the behavior of the third-party software via a subclass is not possible to answer with the current information. If my answer addressed your question please mark it as correct to help other folks who have similar questions in the future. Thanks!",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 11434008,
+      "reputation" : 36292,
+      "user_id" : 8381946,
+      "user_type" : "registered",
+      "profile_image" : "https://lh3.googleusercontent.com/-ORs8fPNVzDU/AAAAAAAAAAI/AAAAAAAADBs/F3IsdsProVY/s256-rj/photo.jpg",
+      "display_name" : "Justin Bertram",
+      "link" : "https://stackoverflow.com/users/8381946/justin-bertram"
+    },
+    "creation_date" : 1745523821,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140366941,
+    "post_id" : 79584759,
+    "body" : "Thanks @JustinBertram, you certainly addressed the question, but unfortunately it doesn&#39;t solve the problem as I am unable to change the code, although I am wondering if I might be able to implement a sub class and inject that instead of the third-party application class.  Alternatively, I am wondering if there is any way I can influence or control the thread concurrency via configuration somehow.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 24416,
+      "reputation" : 5960,
+      "user_id" : 62072,
+      "user_type" : "registered",
+      "accept_rate" : 84,
+      "profile_image" : "https://www.gravatar.com/avatar/1b60fc4645b020bc304e0e04395d0b89?s=256&d=identicon&r=PG",
+      "display_name" : "Tom Hunter",
+      "link" : "https://stackoverflow.com/users/62072/tom-hunter"
+    },
+    "creation_date" : 1745523309,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79584824" : [ {
+      "comment_id" : 140385978,
+      "post_id" : 79584824,
+      "body" : "Fair comment.  It could be this issue: <a href=\"https://issues.apache.org/jira/browse/ARTEMIS-828\" rel=\"nofollow noreferrer\">issues.apache.org/jira/browse/ARTEMIS-828</a> but who knows..  In our circumstances we don&#39;t need paging, so the fix is an easy one.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 24416,
+        "reputation" : 5960,
+        "user_id" : 62072,
+        "user_type" : "registered",
+        "accept_rate" : 84,
+        "profile_image" : "https://www.gravatar.com/avatar/1b60fc4645b020bc304e0e04395d0b89?s=256&d=identicon&r=PG",
+        "display_name" : "Tom Hunter",
+        "link" : "https://stackoverflow.com/users/62072/tom-hunter"
+      },
+      "creation_date" : 1746060569,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140382362,
+      "post_id" : 79584824,
+      "body" : "Wildfly 10.1.0.Final was released in August 2016, and ActiveMQ Artemis 1.1.0 was release almost a year prior in September 2015. It&#39;s so old I can&#39;t even speculate on what the problem might be (assuming there is one). There&#39;s been over 7,000 commits to the ActiveMQ Artemis code-base and around 60 releases in the decade since then. Are you able to reproduce this on the latest release of WildFly or ActiveMQ Artemis?",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 11434008,
+        "reputation" : 36292,
+        "user_id" : 8381946,
+        "user_type" : "registered",
+        "profile_image" : "https://lh3.googleusercontent.com/-ORs8fPNVzDU/AAAAAAAAAAI/AAAAAAAADBs/F3IsdsProVY/s256-rj/photo.jpg",
+        "display_name" : "Justin Bertram",
+        "link" : "https://stackoverflow.com/users/8381946/justin-bertram"
+      },
+      "creation_date" : 1745980076,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140382123,
+      "post_id" : 79584824,
+      "body" : "we are using <code>artemis-*-1.1.0.wildfly-024</code> jar version.  Are there any such known issues/bugs in this version where paging interrupts the results of a queue browser in this manner?  Thanks",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 24416,
+        "reputation" : 5960,
+        "user_id" : 62072,
+        "user_type" : "registered",
+        "accept_rate" : 84,
+        "profile_image" : "https://www.gravatar.com/avatar/1b60fc4645b020bc304e0e04395d0b89?s=256&d=identicon&r=PG",
+        "display_name" : "Tom Hunter",
+        "link" : "https://stackoverflow.com/users/62072/tom-hunter"
+      },
+      "creation_date" : 1745969487,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140382119,
+      "post_id" : 79584824,
+      "body" : "Hi Justin, (after many hours..) it seems I was barking up the wrong tree re client threading.  The ActiveMQ Artemis queue is hosted on WildFly 10.1.0.Final.  I configured trace logs on the server and client, and I can see that via the browser the server is returning two duplicate copies of the message in some cases (the Receiver then waits forever for the second copy), <b>but only when <i>paging</i> is enabled</b>.  When I increase <code>max-size-bytes</code> on the queue so that paging isn&#39;t used, I don&#39;t get the issue.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 24416,
+        "reputation" : 5960,
+        "user_id" : 62072,
+        "user_type" : "registered",
+        "accept_rate" : 84,
+        "profile_image" : "https://www.gravatar.com/avatar/1b60fc4645b020bc304e0e04395d0b89?s=256&d=identicon&r=PG",
+        "display_name" : "Tom Hunter",
+        "link" : "https://stackoverflow.com/users/62072/tom-hunter"
+      },
+      "creation_date" : 1745969326,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140354798,
+      "post_id" : 79584824,
+      "body" : "At the end of the day the browser really isn&#39;t necessary at all. There&#39;s no good reason to check if the message exists with a browser before the same check is done by the consumer. Furthermore, invoking a method that blocks forever is a bad idea if blocking forever is an undesired outcome. This ultimately seems like a simple bug in the application.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 11434008,
+        "reputation" : 36292,
+        "user_id" : 8381946,
+        "user_type" : "registered",
+        "profile_image" : "https://lh3.googleusercontent.com/-ORs8fPNVzDU/AAAAAAAAAAI/AAAAAAAADBs/F3IsdsProVY/s256-rj/photo.jpg",
+        "display_name" : "Justin Bertram",
+        "link" : "https://stackoverflow.com/users/8381946/justin-bertram"
+      },
+      "creation_date" : 1745248238,
+      "content_license" : "CC BY-SA 4.0"
+    }, {
+      "comment_id" : 140354776,
+      "post_id" : 79584824,
+      "body" : "Thanks Justin.  The messageSelector specifies a unique message identifier so I guess the assumption was that the browser and the receiver would always get exactly the same message (and not be impacted by other messages coming and going) but that seems to be not the case..  Unfortunately the application is third-party so I am unable to change the code.",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 24416,
+        "reputation" : 5960,
+        "user_id" : 62072,
+        "user_type" : "registered",
+        "accept_rate" : 84,
+        "profile_image" : "https://www.gravatar.com/avatar/1b60fc4645b020bc304e0e04395d0b89?s=256&d=identicon&r=PG",
+        "display_name" : "Tom Hunter",
+        "link" : "https://stackoverflow.com/users/62072/tom-hunter"
+      },
+      "creation_date" : 1745247594,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

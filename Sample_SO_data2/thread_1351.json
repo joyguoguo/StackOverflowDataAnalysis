@@ -1,0 +1,110 @@
+{
+  "question" : {
+    "question_id" : 79719836,
+    "title" : "What is the intended usage of hypersistence-utils JsonBinaryType",
+    "body" : "<p>Suppose I have the following table definition in postgres</p>\n<pre class=\"lang-sql prettyprint-override\"><code>create table foo_entity\n(\n    id                varchar(255) not null primary key,\n    jsonb_column      jsonb\n);\n</code></pre>\n<p>I am trying to modify the table using a native query via entity manager like so</p>\n<pre class=\"lang-java prettyprint-override\"><code>EntityManager em; // its obtained somehow\nList&lt;String&gt; strings = List.of(&quot;foo&quot;, &quot;bar&quot;);\nQuery q = em.createNativeQuery(&quot;update foo_entity set jsonb_colimn = :value&quot;);\nq.setParameter(&quot;value&quot;, new TypedParameterValue&lt;&gt;(\n   new JsonBinaryType(new ObjectMapper()),\n   strings\n));\nq.executeUpdate();\n</code></pre>\n<p>But I am getting an error that the provided value was of type <code>bytea</code> rather than the intended <code>jsonb</code>.</p>\n<pre class=\"lang-none prettyprint-override\"><code>2025-07-30T13:53:09.547+03:00 DEBUG 13275 --- [demo1] [           main] o.h.engine.jdbc.spi.SqlExceptionHelper   : JDBC exception executing SQL [        update foo_entity set jsonb_column = ?\n] [n/a]\n\norg.postgresql.util.PSQLException: ERROR: column &quot;jsonb_column&quot; is of type jsonb but expression is of type bytea\n  Hint: You will need to rewrite or cast the expression.\n  Position: 46\n</code></pre>\n<p>Meanwhile if I provide a string scalar into the value, rather than an array type I get a different error</p>\n<pre class=\"lang-none prettyprint-override\"><code>2025-07-30T13:54:57.683+03:00 DEBUG 13526 --- [demo1] [           main] o.h.engine.jdbc.spi.SqlExceptionHelper   : JDBC exception executing SQL [        update foo_entity set jsonb_column = ?\n] [n/a]\n\norg.postgresql.util.PSQLException: ERROR: column &quot;jsonb_column&quot; is of type jsonb but expression is of type character varying\n  Hint: You will need to rewrite or cast the expression.\n  Position: 46\n</code></pre>\n<p>How do I ensure that the resulting value is properly written as <code>jsonb</code> type?</p>\n<p>At the time of writing i'm using Hibernate 6.6 and Hypersistence-utils 63 3.10.1</p>\n",
+    "tags" : [ "java", "postgresql", "hibernate", "hypersistence-utils" ],
+    "owner" : {
+      "account_id" : 8719765,
+      "reputation" : 1277,
+      "user_id" : 6523288,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/9ec6758d645d1c8869a007f79bfb6d3b?s=256&d=identicon&r=PG",
+      "display_name" : "Dragas",
+      "link" : "https://stackoverflow.com/users/6523288/dragas"
+    },
+    "is_answered" : true,
+    "view_count" : 123,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1753959455,
+    "creation_date" : 1753873069,
+    "link" : "https://stackoverflow.com/questions/79719836/what-is-the-intended-usage-of-hypersistence-utils-jsonbinarytype",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79721171,
+    "question_id" : 79719836,
+    "body" : "<p>It seems that when you're using <code>JsonBinaryType</code> you must provide a non <code>Object.class</code> argument via <code>JsonBinaryType(java.lang.reflect.Type)</code> constructor, otherwise when binding parameters hibernate gets confused and attempts to guess the parameter type rather than using value's class as seen by following lines 87-104 in <code>AbstractJdbcParameter.java</code></p>\n<pre class=\"lang-java prettyprint-override\"><code>    private JdbcMapping jdbcMapping(ExecutionContext executionContext, JdbcParameterBinding binding) {\n        JdbcMapping jdbcMapping = binding.getBindType();\n\n        if ( jdbcMapping == null ) {\n            jdbcMapping = this.jdbcMapping;\n        }\n\n        // If the parameter type is not known from the context i.e. null or Object, infer it from the bind value\n        if ( jdbcMapping == null || jdbcMapping.getMappedJavaType().getJavaTypeClass() == Object.class ) { // &lt;- always true in default case\n            jdbcMapping = guessBindType( executionContext, binding.getBindValue(), jdbcMapping );\n        }\n\n        if ( jdbcMapping == null ) {\n            throw new ExecutionException( &quot;No JDBC mapping could be inferred for parameter - &quot; + this );\n        }\n\n        return jdbcMapping;\n    }\n</code></pre>\n<p>Since <code>getMappedJavaType()</code> returns <code>Object.class</code> (which is the default), hibernate will attempt to guess the binder that should be used, rather than explicitly use the one provided by <code>JsonBinaryType</code>, which will end up being being something like <code>SerializableJavaType</code> or <code>StringJavaType</code>, as well as write the wrong <code>sqlTypeCode</code> (17 for bytea, instead of expected 3802 for jsonb).</p>\n",
+    "score" : 0,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 8719765,
+      "reputation" : 1277,
+      "user_id" : 6523288,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/9ec6758d645d1c8869a007f79bfb6d3b?s=256&d=identicon&r=PG",
+      "display_name" : "Dragas",
+      "link" : "https://stackoverflow.com/users/6523288/dragas"
+    },
+    "creation_date" : 1753959455,
+    "last_activity_date" : 1753959455,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140632444,
+    "post_id" : 79719836,
+    "body" : "@LaurenzAlbe apparently hibernate was really confused and thought it was writing a <code>bytea</code> type all along rather than the expected type. Providing extra metadata tweaks the resulting type and prevents the issue.",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 8719765,
+      "reputation" : 1277,
+      "user_id" : 6523288,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/9ec6758d645d1c8869a007f79bfb6d3b?s=256&d=identicon&r=PG",
+      "display_name" : "Dragas",
+      "link" : "https://stackoverflow.com/users/6523288/dragas"
+    },
+    "creation_date" : 1753959961,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140629567,
+    "post_id" : 79719836,
+    "body" : "@LaurenzAlbe that does work if I wrap it with <code>to_jsonb</code> function rather than casting because hibernate seems to pass <code>bytea</code>/<code>varchar</code> argument, but i&#39;d expect it to be handled for me, hence the usage of hypersistence-utils package that vlad provides.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 8719765,
+      "reputation" : 1277,
+      "user_id" : 6523288,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/9ec6758d645d1c8869a007f79bfb6d3b?s=256&d=identicon&r=PG",
+      "display_name" : "Dragas",
+      "link" : "https://stackoverflow.com/users/6523288/dragas"
+    },
+    "creation_date" : 1753873823,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140629541,
+    "post_id" : 79719836,
+    "body" : "Binding a JSON as binary type is clearly wrong. For other data types where Hibernate doesn&#39;t get the data type right, an explicit cast would help: <code>update foo_entity set jsonb_colimn = CAST (:value AS jsonb)</code>.",
+    "score" : 2,
+    "owner" : {
+      "account_id" : 8633322,
+      "reputation" : 257201,
+      "user_id" : 6464308,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/12PVX.jpg?s=256",
+      "display_name" : "Laurenz Albe",
+      "link" : "https://stackoverflow.com/users/6464308/laurenz-albe"
+    },
+    "creation_date" : 1753873408,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140629538,
+    "post_id" : 79719836,
+    "body" : "This question is explicitly about native queries, and not about entities. Do not suggest answers or related questions that wrap the table with respective entity.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 8719765,
+      "reputation" : 1277,
+      "user_id" : 6523288,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/9ec6758d645d1c8869a007f79bfb6d3b?s=256&d=identicon&r=PG",
+      "display_name" : "Dragas",
+      "link" : "https://stackoverflow.com/users/6523288/dragas"
+    },
+    "creation_date" : 1753873354,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

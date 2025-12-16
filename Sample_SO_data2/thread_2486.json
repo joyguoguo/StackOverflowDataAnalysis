@@ -1,0 +1,158 @@
+{
+  "question" : {
+    "question_id" : 79619301,
+    "title" : "Kafka Streams State store behaving differently if stream is converted beforehand",
+    "body" : "<p>I am expiriencing a very weird behaviour in my kafka streams application.\nSetup is the following:</p>\n<ul>\n<li>I create the state store &quot;user-store&quot; manually and connect it to a processor &quot;filter-role-processor&quot;</li>\n<li>I use the DSL to process the incoming Stream with the connected processor</li>\n<li>Inside the processor, I try to get() values out of the above mentioned state store</li>\n</ul>\n<p>This works fine. I get what I try to get from the store.</p>\n<p>Now my setup should be extended: The &quot;filter-role-processor&quot; should be applied later in the topology. Between that I convert the incoming stream into a table, process it, and convert it back into a stream using DSL. <br />\n<strong>BUT</strong>: Now the get() calls to the state store work no longer! I receive <strong>null</strong> values for the exact same keys that worked just fine before I double-converted the input stream. Also, debugging inside the processor shows the exact same records arriving both ways, just the state store delivers a different result.</p>\n<p>To me this is weird - the keys used for querying the store are identical, why am I receiving different results? Is there anything I can check/change?</p>\n<p>This works as expected:</p>\n<pre><code>public KStream&lt;String, Roles&gt; filteredRolesKStream() {\n    return inputKStream\n                .process(FilterRoleProcessor::new, Named.as(&quot;filter-role-processor&quot;));\n}\n</code></pre>\n<p>This does not:</p>\n<pre><code>public KStream&lt;String, Roles&gt; filteredRolesKStream() {\n    return inputKStream\n            .toTable(Materialized.&lt;String, Roles, KeyValueStore&lt;Bytes, byte[]&gt;&gt;as(\n                            &quot;test-table&quot;)\n                    .withKeySerde(Serdes.String())\n                    .withValueSerde(new JsonSerde&lt;&gt;(Roles.class).noTypeInfo())\n            )\n            .toStream()\n            .process(FilterRoleProcessor::new, Named.as(&quot;filter-role-processor&quot;));\n}\n</code></pre>\n<p>The filter-role-processor and user-store are connected like this:</p>\n<pre><code>builder.addStateStore(inMemoryRoleStore)\n.build()\n.connectProcessorAndStateStores(&quot;filter-role-processor&quot;, &quot;user-store&quot;)\n</code></pre>\n<p>The filter-role-processor is coded like that:</p>\n<pre><code>public void process(Record&lt;String, Roles&gt; userRoleRecord) {\n    ReadOnlyKeyValueStore&lt;String, String&gt; relevantUsers = ctx.getStateStore(&quot;user-store&quot;);\n    \n    // Key of the userRoleRecord is the userId which is also the key of entries in the user-store. The value in the store is a string representing if the user is active or not.\n    String storeValue = relevantUsers.get(userRoleRecord.key());\n    if (storeValue != null &amp;&amp; storeValue.equals(&quot;true&quot;)) ctx.forward(userRoleRecord);\n    else log.info(&quot;User {} is not active, dropping event&quot;, userRoleRecord.key());\n}\n</code></pre>\n",
+    "tags" : [ "java", "spring", "apache-kafka", "apache-kafka-streams" ],
+    "owner" : {
+      "account_id" : 13023731,
+      "reputation" : 3,
+      "user_id" : 9412294,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/9dfe139a4938bfd52ca8b4051c45a206?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Tino",
+      "link" : "https://stackoverflow.com/users/9412294/tino"
+    },
+    "is_answered" : false,
+    "view_count" : 113,
+    "answer_count" : 0,
+    "score" : 0,
+    "last_activity_date" : 1747297673,
+    "creation_date" : 1747126348,
+    "link" : "https://stackoverflow.com/questions/79619301/kafka-streams-state-store-behaving-differently-if-stream-is-converted-beforehand",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ ],
+  "question_comments" : [ {
+    "comment_id" : 140453258,
+    "post_id" : 79619301,
+    "body" : "I don&#39;t know how <code>inputStream</code> is created, but yes, if there was an upstream key-changing operation, a repartition topic might be created: however, the repartition topic would, be default, get the same number of partitions as the upstream input topic. -- So I am not sure right now, where a difference in number of partitions would come from. If it&#39;s really a problem with number of partitions, you can use <code>repartition()</code> operator (before calling <code>toTable()</code>) and set the desired number of partitions via <code>Repartition</code> parameter.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 6384814,
+      "reputation" : 62820,
+      "user_id" : 4953079,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/HwySN.jpg?s=256",
+      "display_name" : "Matthias J. Sax",
+      "link" : "https://stackoverflow.com/users/4953079/matthias-j-sax"
+    },
+    "creation_date" : 1748014808,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140427904,
+    "post_id" : 79619301,
+    "body" : "Of course @MatthiasJ.Sax, you are right, this was not very clear.  I added more code of the regarding classes, but I think I know what is the problem. The processor filling the statestore is consuming a topic with a single partition. The FilterRoleProcessor is receiving a 12-partition stream.   If a role arrives from partition 0, it actually finds the regarding value in the store. I think, by transforming it into a table and back into a stream I am doing a repartioning action.  How can I best solve this store-sharding problem?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 13023731,
+      "reputation" : 3,
+      "user_id" : 9412294,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/9dfe139a4938bfd52ca8b4051c45a206?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Tino",
+      "link" : "https://stackoverflow.com/users/9412294/tino"
+    },
+    "creation_date" : 1747297861,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140427446,
+    "post_id" : 79619301,
+    "body" : "Not sure if I understand the setup end-to-end. There is no code which shows how you connect the state store, or what <code>FilterRoleProcessor</code> does. Can you share more details?",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 6384814,
+      "reputation" : 62820,
+      "user_id" : 4953079,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/HwySN.jpg?s=256",
+      "display_name" : "Matthias J. Sax",
+      "link" : "https://stackoverflow.com/users/4953079/matthias-j-sax"
+    },
+    "creation_date" : 1747289242,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140425535,
+    "post_id" : 79619301,
+    "body" : "@FactoreT thanks, learned something new today... i wrongly assumed it was just by the name :)",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 209503,
+      "reputation" : 23867,
+      "user_id" : 460557,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/b4565f97815833390c9c880e9e8522e4?s=256&d=identicon&r=PG",
+      "display_name" : "Jorge Campos",
+      "link" : "https://stackoverflow.com/users/460557/jorge-campos"
+    },
+    "creation_date" : 1747235546,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140423927,
+    "post_id" : 79619301,
+    "body" : "@JorgeCampos This post is regarding Kafka Streams and not Java InputStreams",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 13023731,
+      "reputation" : 3,
+      "user_id" : 9412294,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/9dfe139a4938bfd52ca8b4051c45a206?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Tino",
+      "link" : "https://stackoverflow.com/users/9412294/tino"
+    },
+    "creation_date" : 1747207517,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140423920,
+    "post_id" : 79619301,
+    "body" : "Thank you for your comments, but I think they are both not related to the problem.  @AndreiLisa I have a value present for every key I request from the state store, but the answer is null just sometimes (if I do the conversion mentioned above).",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 13023731,
+      "reputation" : 3,
+      "user_id" : 9412294,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/9dfe139a4938bfd52ca8b4051c45a206?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Tino",
+      "link" : "https://stackoverflow.com/users/9412294/tino"
+    },
+    "creation_date" : 1747207420,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140422148,
+    "post_id" : 79619301,
+    "body" : "An inputstream in java is a read once. You likely need to make a copy of your inputstream to be able to read it again.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 209503,
+      "reputation" : 23867,
+      "user_id" : 460557,
+      "user_type" : "registered",
+      "accept_rate" : 100,
+      "profile_image" : "https://www.gravatar.com/avatar/b4565f97815833390c9c880e9e8522e4?s=256&d=identicon&r=PG",
+      "display_name" : "Jorge Campos",
+      "link" : "https://stackoverflow.com/users/460557/jorge-campos"
+    },
+    "creation_date" : 1747152708,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140421930,
+    "post_id" : 79619301,
+    "body" : "<code>null</code> values in the stream are interpreted as delete events in the <code>KTable</code> — these create key with null value.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 24440940,
+      "reputation" : 5259,
+      "user_id" : 18364656,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/70eb650df3e935255b17e62942f30620?s=256&d=identicon&r=PG",
+      "display_name" : "Andrei Lisa",
+      "link" : "https://stackoverflow.com/users/18364656/andrei-lisa"
+    },
+    "creation_date" : 1747148621,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : { }
+}

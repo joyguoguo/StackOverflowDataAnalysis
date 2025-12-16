@@ -1,0 +1,147 @@
+{
+  "question" : {
+    "question_id" : 79765699,
+    "title" : "Hibernate Lazy Loading Interceptor returning NULL",
+    "body" : "<p>I have the following entities:</p>\n<pre><code>class A {\n  @Id\n  String aId;\n  @OneToMany(fetch = FetchType.LAZY)\n  List&lt;B&gt; bsOfA\n  @OneToMany(fetch = FetchType.LAZY)\n  List&lt;C&gt; csOfA\n  \n  public A(String id) {\n    this.aId = id;\n  }\n}\nclass B {\n  @Id\n  String aId;\n  @Id\n  String bId;\n  @ManyToOne(fetch = FetchType.LAZY)\n  A aOfB;\n  @ManyToOne(fetch = FetchType.LAZY)\n  C cOfB                 // this is some member of csOfA\n\n  public B(String id, B sourceB) {\n    this.aId = id;\n    this.bId = sourceB.bId;\n  }\n}\nclass C {\n  @Id\n  String aId;\n  @Id\n  String cId;\n  @OneToMany(fetch = FetchType.LAZY)\n  A aOfC;\n  @ManyToOne(fetch = FetchType.LAZY)\n  List&lt;B&gt; linkedBsToC;\n  public C(String id, C sourceC) {\n    this.aId = id;\n    this.cId = sourceC.cId;\n  }\n}\n</code></pre>\n<p>Now I want to create a copy of A so I proceed as follows</p>\n<pre><code>A sourceA = aRepo.getbyId(sourceAId);\nA copyA = new A(newAId);\n\nList&lt;B&gt; bsOfA = new ArrayList&lt;&gt;(sourceA.getBsOfA.size());\nsourceA.getBsOfA().forEach(b -&gt; bsOfA.add(new B(newAId, b));\ncopyA.setBsOfA(bsOfA)\n\nList&lt;C&gt; csOfA = new ArrayList&lt;&gt;(sourceA.getCsOfA.size());\n// problematic part\nsourceA.getCsOfA().forEach(c -&gt; csOfA.add(new C(newAId, c));  \ncopyA.setCsOfA(csOfA)\n</code></pre>\n<p>Now the issue is: during this copy operation, I am observing that when constructor of C is called, the input c is a hibernate_interceptor object that has null attributes (like in this other post: <a href=\"https://stackoverflow.com/questions/66513959/data-inside-hibernate-interceptor-object-but-null-under-entity-variables-cant\">Data inside hibernate interceptor object but null under entity variables - Can&#39;t save to repository</a>).</p>\n<p>To remedy this situation, I have 3 choices:</p>\n<ol>\n<li>Swap the position of initializing copyA's bsOfA and csOfA:</li>\n</ol>\n<pre><code>List&lt;C&gt; csOfA = new ArrayList&lt;&gt;(sourceA.getCsOfA.size());\nsourceA.getCsOfA().forEach(c -&gt; csOfA.add(new C(newAId, c));  \ncopyA.setCsOfA(csOfA)\n\nList&lt;B&gt; bsOfA = new ArrayList&lt;&gt;(sourceA.getBsOfA.size());\nsourceA.getBsOfA().forEach(b -&gt; bsOfA.add(new B(newAId, b));\ncopyA.setBsOfA(bsOfA)\n</code></pre>\n<ol start=\"2\">\n<li>Set FetchType.EAGER for cOfB</li>\n<li>Modify the constructors</li>\n</ol>\n<pre><code>  public C(String id, C sourceC) {\n    this.aId = id;\n    this.cId = sourceC.getCId();   // How is this different from sourceC.id ?!\n  }\n</code></pre>\n<p>Can someone please enlighten me on this issue? I will most definitely opt for #3 because it seems the easiest to adjust but I still can't figure out what is wrong with the original code. Many thanks in advance :)</p>\n",
+    "tags" : [ "java", "spring-boot", "hibernate", "lazy-loading", "lazy-initialization" ],
+    "owner" : {
+      "account_id" : 6280829,
+      "reputation" : 317,
+      "user_id" : 5489294,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/0a50a3238ce3c4f5f33f82c49997dc68?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Guppy_00",
+      "link" : "https://stackoverflow.com/users/5489294/guppy-00"
+    },
+    "is_answered" : true,
+    "view_count" : 138,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1758575882,
+    "creation_date" : 1757983607,
+    "link" : "https://stackoverflow.com/questions/79765699/hibernate-lazy-loading-interceptor-returning-null",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79766482,
+    "question_id" : 79765699,
+    "body" : "<p>The behavior you’re seeing is because of how Hibernate uses <strong>proxies</strong> for lazy-loaded associations.</p>\n<p>When you call <code>sourceA.getCsOfA()</code>, Hibernate doesn’t always return a fully populated <code>C</code> instance. Instead it returns a proxy object with a <code>hibernate_interceptor</code> attached. That proxy only knows how to fetch the data if/when you call a method. If you access fields directly (<code>sourceC.cId</code>), Hibernate never gets a chance to initialize the proxy, so you see <code>null</code>.</p>\n<pre><code>public C(String id, C sourceC) {\n    this.aId = id;\n    this.cId = sourceC.getCId();  // calls through proxy → Hibernate loads the value\n}\n</code></pre>\n<p>and this does not:</p>\n<pre><code>public C(String id, C sourceC) {\n    this.aId = id;\n    this.cId = sourceC.cId;       // bypasses proxy → null\n}\n</code></pre>\n<p>So the difference is not between <code>cId</code> and <code>getCId()</code> on a “normal” object, but on a <strong>proxy</strong>. With proxies you must use getters (or initialize the entity/collection before copying).</p>\n<p>About the three options you listed:</p>\n<ol>\n<li><p><strong>Swapping the order of copying Bs and Cs</strong> – this only works because loading <code>B</code> forces Hibernate to touch its <code>cOfB</code>, which indirectly initializes some <code>C</code> proxies. That’s a side effect, not something you should rely on.</p>\n</li>\n<li><p><strong>Making <code>cOfB</code> eager</strong> – fixes the null problem, but it can explode into unnecessary joins and N+1 queries. It solves one issue but creates others.</p>\n</li>\n<li><p><strong>Using getters in the constructors</strong> – this is the correct fix. Hibernate proxies exist exactly for this use case, and getters are the hook Hibernate uses to trigger lazy loading.</p>\n</li>\n</ol>\n<p>So what’s wrong with the original code is that you’re directly accessing fields of a proxy. The safe approach is to either initialize the associations before copying (e.g. <code>Hibernate.initialize(sourceA.getCsOfA())</code>) or to always go through getters in your copy constructor.</p>\n<p>Mapping should be:</p>\n<pre><code>@Entity\nclass A {\n    @Id\n    String aId;\n\n    @OneToMany(mappedBy = &quot;aOfB&quot;, fetch = FetchType.LAZY)\n    List&lt;B&gt; bsOfA;\n\n    @OneToMany(mappedBy = &quot;aOfC&quot;, fetch = FetchType.LAZY)\n    List&lt;C&gt; csOfA;\n\n    public A(String id) {\n        this.aId = id;\n    }\n}\n\n@Entity\nclass B {\n    @EmbeddedId\n    BId id;\n\n    @ManyToOne(fetch = FetchType.LAZY)\n    @MapsId(&quot;aId&quot;)\n    A aOfB;\n\n    @ManyToOne(fetch = FetchType.LAZY)\n    @JoinColumns({\n        @JoinColumn(name=&quot;aId&quot;, referencedColumnName=&quot;aId&quot;),\n        @JoinColumn(name=&quot;cId&quot;, referencedColumnName=&quot;cId&quot;)\n    })\n    C cOfB;\n\n    public B(String newAId, B sourceB) {\n        this.id = new BId(newAId, sourceB.getId().getBId());\n    }\n}\n\n@Entity\nclass C {\n    @EmbeddedId\n    CId id;\n\n    @ManyToOne(fetch = FetchType.LAZY)\n    @MapsId(&quot;aId&quot;)\n    A aOfC;\n\n    @OneToMany(mappedBy = &quot;cOfB&quot;, fetch = FetchType.LAZY)\n    List&lt;B&gt; linkedBsToC;\n\n    public C(String newAId, C sourceC) {\n        this.id = new CId(newAId, sourceC.getId().getCId());\n    }\n}\n\n@Embeddable\nclass BId implements Serializable {\n    String aId;\n    String bId;\n}\n\n@Embeddable\nclass CId implements Serializable {\n    String aId;\n    String cId;\n}\n</code></pre>\n",
+    "score" : 2,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 1940935,
+      "reputation" : 1571,
+      "user_id" : 1747165,
+      "user_type" : "registered",
+      "accept_rate" : 44,
+      "profile_image" : "https://i.sstatic.net/Vqec4.jpg?s=256",
+      "display_name" : "Avinash Mishra",
+      "link" : "https://stackoverflow.com/users/1747165/avinash-mishra"
+    },
+    "creation_date" : 1758041089,
+    "last_activity_date" : 1758041089,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ {
+    "comment_id" : 140738973,
+    "post_id" : 79765699,
+    "body" : "You are doing <code>getById</code> which will return a lazy proxy. The proxy works on intercepting method calls, you are doing direct field access. So if you call <code>getCId()</code> the proxy will do a query to obtain the information, if you do direct field access it won&#39;t. Replacing the <code>getById</code> with a <code>findById</code> will remedy this as well as it will now fetch the full A object, and when accessing the collection will fetch the entities (as opposed to the proxy returned from <code>getById</code>).",
+    "score" : 1,
+    "owner" : {
+      "account_id" : 3192259,
+      "reputation" : 126826,
+      "user_id" : 2696260,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/qHEzx.png?s=256",
+      "display_name" : "M. Deinum",
+      "link" : "https://stackoverflow.com/users/2696260/m-deinum"
+    },
+    "creation_date" : 1758011938,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140738889,
+    "post_id" : 79765699,
+    "body" : "I just thought that it was weird how sourceC.cId returns the non-NULL ID when I swap the position of initializing copyA&#39;s bsOfA and csOfA as mentioned above.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 6280829,
+      "reputation" : 317,
+      "user_id" : 5489294,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/0a50a3238ce3c4f5f33f82c49997dc68?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Guppy_00",
+      "link" : "https://stackoverflow.com/users/5489294/guppy-00"
+    },
+    "creation_date" : 1758010068,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140738808,
+    "post_id" : 79765699,
+    "body" : "How it is an issue? Why do you try to access fields directly instead of using getters? As far as I see all works as intended.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 4497436,
+      "reputation" : 20796,
+      "user_id" : 3656904,
+      "user_type" : "registered",
+      "accept_rate" : 67,
+      "profile_image" : "https://www.gravatar.com/avatar/8bdbd1f89f8907e8e8b15ab88c084c65?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "talex",
+      "link" : "https://stackoverflow.com/users/3656904/talex"
+    },
+    "creation_date" : 1758007922,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140738805,
+    "post_id" : 79765699,
+    "body" : "The issue is the sourceC object accessed like sourceC.cId=NULL but sourceC.getCId() retrieves the correct, non-NULL ID.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 6280829,
+      "reputation" : 317,
+      "user_id" : 5489294,
+      "user_type" : "registered",
+      "profile_image" : "https://www.gravatar.com/avatar/0a50a3238ce3c4f5f33f82c49997dc68?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "Guppy_00",
+      "link" : "https://stackoverflow.com/users/5489294/guppy-00"
+    },
+    "creation_date" : 1758007826,
+    "content_license" : "CC BY-SA 4.0"
+  }, {
+    "comment_id" : 140738661,
+    "post_id" : 79765699,
+    "body" : "What exactly your issue is? BTW: <code>hibernate_interceptor</code> you getting is proxy class.",
+    "score" : 0,
+    "owner" : {
+      "account_id" : 4497436,
+      "reputation" : 20796,
+      "user_id" : 3656904,
+      "user_type" : "registered",
+      "accept_rate" : 67,
+      "profile_image" : "https://www.gravatar.com/avatar/8bdbd1f89f8907e8e8b15ab88c084c65?s=256&d=identicon&r=PG&f=y&so-version=2",
+      "display_name" : "talex",
+      "link" : "https://stackoverflow.com/users/3656904/talex"
+    },
+    "creation_date" : 1758002983,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "answer_comments" : {
+    "79766482" : [ {
+      "comment_id" : 140740940,
+      "post_id" : 79766482,
+      "body" : "Thank you very much for the clear explanation :)",
+      "score" : 0,
+      "owner" : {
+        "account_id" : 6280829,
+        "reputation" : 317,
+        "user_id" : 5489294,
+        "user_type" : "registered",
+        "profile_image" : "https://www.gravatar.com/avatar/0a50a3238ce3c4f5f33f82c49997dc68?s=256&d=identicon&r=PG&f=y&so-version=2",
+        "display_name" : "Guppy_00",
+        "link" : "https://stackoverflow.com/users/5489294/guppy-00"
+      },
+      "creation_date" : 1758065544,
+      "content_license" : "CC BY-SA 4.0"
+    } ]
+  }
+}

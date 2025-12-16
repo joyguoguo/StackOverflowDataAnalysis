@@ -1,0 +1,47 @@
+{
+  "question" : {
+    "question_id" : 79641100,
+    "title" : "Preserving distinct types downstream for different operators",
+    "body" : "<p>Help me solve this Project Reactor puzzle.</p>\n<p>Basically two operators need different types, I seemingly can't preserve them both downstream.</p>\n<p>I could have some data container that stores both the DTO and the <code>User</code>: the former operator would retrieve the DTO, the latter would retrieve the <code>User</code>. However, it seems dubious from the design standpoint.</p>\n<p>I certainly don't want to load the user once again just because it slipped out of scope.</p>\n<p><code>UserDto</code>, <code>User</code>, <code>UserServive</code>, <code>UserAuthenticationToken</code> are custom but irrelevant types, so I won't include them.</p>\n<pre class=\"lang-java prettyprint-override\"><code>import org.springframework.security.authentication.ReactiveAuthenticationManager;\nimport org.springframework.security.core.Authentication;\nimport org.springframework.security.crypto.password.PasswordEncoder;\nimport reactor.core.publisher.Mono;\n\nimport java.util.Optional;\n\npublic class UserReactiveAuthenticationManager implements ReactiveAuthenticationManager {\n    \n    private final UserService userService;\n    private final PasswordEncoder passwordEncoder;\n\n    private UserReactiveAuthenticationManager(UserService userService, PasswordEncoder passwordEncoder) {\n        this.userService = userService;\n        this.passwordEncoder = passwordEncoder;\n    }\n    \n    public static UserReactiveAuthenticationManager of(UserService userService, PasswordEncoder passwordEncoder) {\n        return new UserReactiveAuthenticationManager(userService, passwordEncoder);\n    }\n\n    @Override\n    public Mono&lt;Authentication&gt; authenticate(Authentication authentication) {\n        return Mono.just(authentication.getPrincipal())\n                .ofType(UserDto.class)\n                .filter(this::matchesExistingUser) // needs DTO\n                .map(UserAuthenticationToken::from); // needs User, but loaded User no longer in scope, doesn't compile\n    }\n\n    private boolean matchesExistingUser(UserDto userDto) {\n        Optional&lt;User&gt; userOptional = userService.find(userDto); // DB call\n        if (userOptional.isEmpty()) return false;\n        User user = userOptional.get();\n        return passwordEncoder.matches(userDto.getPassword(), user.getPassword());\n    }\n}\n</code></pre>\n<p>Here's the dubious solution that I mentioned:</p>\n<pre class=\"lang-java prettyprint-override\"><code>    @Override\n    public Mono&lt;Authentication&gt; authenticate(Authentication authentication) {\n        return Mono.just(authentication.getPrincipal())\n                .ofType(UserDto.class)\n                .map(AuthenticationContext::from)\n                .filter(this::matchConfirmed)\n                .map(AuthenticationContext::getUser)\n                .map(UserAuthenticationToken::from);\n    }\n\n    private boolean matchConfirmed(AuthenticationContext authenticationContext) {\n        UserDto userDto = authenticationContext.getUserDto();\n        Optional&lt;User&gt; userOptional = userService.find(userDto);\n        if (userOptional.isEmpty()) return false;\n        User user = userOptional.get();\n        authenticationContext.setUser(user); // cares about downstream operator, that's nice of them\n        return passwordEncoder.matches(userDto.getPassword(), user.getPassword());\n    }\n    \n    @Setter\n    @Getter\n    private static class AuthenticationContext {\n\n        UserDto userDto;\n        User user;\n        \n        static AuthenticationContext from(UserDto userDto) {\n            AuthenticationContext authenticationContext = new AuthenticationContext();\n            authenticationContext.setUserDto(userDto);\n            return authenticationContext;\n        }\n    } \n</code></pre>\n",
+    "tags" : [ "java", "project-reactor" ],
+    "owner" : {
+      "account_id" : 10187542,
+      "reputation" : 2683,
+      "user_id" : 20692967,
+      "user_type" : "registered",
+      "profile_image" : "https://i.sstatic.net/NZSXm.jpg?s=256",
+      "display_name" : "Sergey Zolotarev",
+      "link" : "https://stackoverflow.com/users/20692967/sergey-zolotarev"
+    },
+    "is_answered" : true,
+    "view_count" : 74,
+    "answer_count" : 1,
+    "score" : 1,
+    "last_activity_date" : 1748455284,
+    "creation_date" : 1748374546,
+    "link" : "https://stackoverflow.com/questions/79641100/preserving-distinct-types-downstream-for-different-operators",
+    "content_license" : "CC BY-SA 4.0"
+  },
+  "answers" : [ {
+    "answer_id" : 79642739,
+    "question_id" : 79641100,
+    "body" : "<p>I would look into <code>zipWhen()</code> operator:</p>\n<pre><code>/**\n * Wait for the result from this mono, use it to create a second mono via the\n * provided {@code rightGenerator} function and combine both results into a {@link Tuple2}.\n *\n * &lt;p&gt;\n * &lt;img class=&quot;marble&quot; src=&quot;doc-files/marbles/zipWhenForMono.svg&quot; alt=&quot;&quot;&gt;\n *\n * @param rightGenerator the {@link Function} to generate a {@code Mono} to combine with\n * @param &lt;T2&gt; the element type of the other Mono instance\n *\n * @return a new combined Mono\n */\npublic final &lt;T2&gt; Mono&lt;Tuple2&lt;T, T2&gt;&gt; zipWhen(Function&lt;T, Mono&lt;? extends T2&gt;&gt; rightGenerator) {\n</code></pre>\n<p>So, there you would call your <code>userService.find(userDto)</code> and use this <code>Tuple2</code> downstream for those respective <code>filter</code> and <code>map</code> operators.</p>\n",
+    "score" : 1,
+    "is_accepted" : true,
+    "owner" : {
+      "account_id" : 3273937,
+      "reputation" : 122596,
+      "user_id" : 2756547,
+      "user_type" : "registered",
+      "accept_rate" : 75,
+      "profile_image" : "https://www.gravatar.com/avatar/2158ce6e7c048277890eb64458864c1c?s=256&d=identicon&r=PG",
+      "display_name" : "Artem Bilan",
+      "link" : "https://stackoverflow.com/users/2756547/artem-bilan"
+    },
+    "creation_date" : 1748453728,
+    "last_activity_date" : 1748453728,
+    "content_license" : "CC BY-SA 4.0"
+  } ],
+  "question_comments" : [ ],
+  "answer_comments" : { }
+}

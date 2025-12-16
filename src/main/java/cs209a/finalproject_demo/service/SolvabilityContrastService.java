@@ -2,6 +2,7 @@ package cs209a.finalproject_demo.service;
 
 import cs209a.finalproject_demo.dto.SolvabilityContrastResponse;
 import cs209a.finalproject_demo.dto.SolvabilityContrastResponse.CommentFrequencyData;
+import cs209a.finalproject_demo.dto.SolvabilityContrastResponse.DistributionData;
 import cs209a.finalproject_demo.dto.SolvabilityContrastResponse.FeatureComparison;
 import cs209a.finalproject_demo.dto.SolvabilityContrastResponse.TagFrequencyData;
 import cs209a.finalproject_demo.entity.AnswerEntity;
@@ -100,7 +101,23 @@ public class SolvabilityContrastService {
         // 计算评论频率数据
         CommentFrequencyData commentFrequencyData = calculateCommentFrequencyData(solvableQuestions, hardQuestions);
         
-        return new SolvabilityContrastResponse(features, tagFrequencyData, commentFrequencyData);
+        // 计算5个分布数据
+        DistributionData codeSnippetRatioDistribution = calculateCodeSnippetRatioDistribution(solvableQuestions, hardQuestions);
+        DistributionData tagCountDistribution = calculateTagCountDistribution(solvableQuestions, hardQuestions);
+        DistributionData questionLengthDistribution = calculateQuestionLengthDistribution(solvableQuestions, hardQuestions);
+        DistributionData reputationDistribution = calculateReputationDistribution(solvableQuestions, hardQuestions);
+        DistributionData commentCountDistribution = calculateCommentCountDistribution(solvableQuestions, hardQuestions);
+        
+        return new SolvabilityContrastResponse(
+                features, 
+                tagFrequencyData, 
+                commentFrequencyData,
+                codeSnippetRatioDistribution,
+                tagCountDistribution,
+                questionLengthDistribution,
+                reputationDistribution,
+                commentCountDistribution
+        );
     }
     
     /**
@@ -130,81 +147,89 @@ public class SolvabilityContrastService {
     }
     
     /**
-     * 精炼可解决问题：应用标准三（时效性）
-     * 保留有被接受答案的，或有高赞答案的，或首次回答时间 < 1小时的问题
+     * 精炼可解决问题
+     * 新规则：问题未关闭，且有被接受答案，并且被接受答案的创建时间距离问题创建时间小于2小时
      */
     private List<QuestionEntity> refineSolvableQuestions(List<QuestionEntity> questions) {
         return questions.stream()
                 .filter(q -> {
-                    // 标准一：有被接受的答案（已在查询中）
-                    if (q.getAcceptedAnswerId() != null) {
-                        return true;
+                    // 必须未关闭
+                    if (q.getClosedDate() != null) {
+                        return false;
                     }
-                    
-                    // 标准二：有高赞答案（score >= 5，已在查询中）
-                    boolean hasHighScoreAnswer = q.getAnswers().stream()
-                            .anyMatch(a -> a.getScore() != null && a.getScore() >= 5);
-                    if (hasHighScoreAnswer) {
-                        return true;
+
+                    // 必须有被接受答案
+                    Long acceptedId = q.getAcceptedAnswerId();
+                    if (acceptedId == null) {
+                        return false;
                     }
-                    
-                    // 标准三：首次回答时间 < 1小时
-                    if (q.getCreationDate() != null && !q.getAnswers().isEmpty()) {
-                        Instant firstAnswerTime = q.getAnswers().stream()
-                                .map(AnswerEntity::getCreationDate)
-                                .filter(date -> date != null)
-                                .min(Instant::compareTo)
-                                .orElse(null);
-                        
-                        if (firstAnswerTime != null) {
-                            Duration timeToFirstAnswer = Duration.between(q.getCreationDate(), firstAnswerTime);
-                            if (timeToFirstAnswer.toHours() < 1) {
-                                return true;
-                            }
-                        }
+
+                    if (q.getCreationDate() == null || q.getAnswers() == null || q.getAnswers().isEmpty()) {
+                        return false;
                     }
-                    
-                    return false;
+
+                    // 在 answers 中找到被接受的答案
+                    AnswerEntity accepted = q.getAnswers().stream()
+                            .filter(a -> a.getAnswerId() != null && a.getAnswerId().equals(acceptedId))
+                            .findFirst()
+                            .orElse(null);
+                    if (accepted == null || accepted.getCreationDate() == null) {
+                        return false;
+                    }
+
+                    // 计算时间差 < 2 小时
+                    Duration delta = Duration.between(q.getCreationDate(), accepted.getCreationDate());
+                    return delta.toHours() < 2;
                 })
                 .collect(Collectors.toList());
     }
     
     /**
-     * 精炼难解决问题：应用标准三（时间因素）
-     * 保留无被接受答案且（答案数 <= 1 或（超过30天且最高答案分数 < 5））的问题
+     * 精炼难解决问题
+     * 新规则：问题未关闭，且满足：
+     *  条件A：无被接受答案，但存在得分 > 6 的答案；
+     *  或 条件B：无被接受答案且没有任何答案，并且距 2025-12-11 超过 240 天。
      */
     private List<QuestionEntity> refineHardQuestions(List<QuestionEntity> questions) {
-        Instant now = Instant.now();
+        // 固定比较日期 2025-12-11，用于长期无人回答判断
+        LocalDate referenceDate = LocalDate.of(2025, 12, 11);
+        ZoneId zoneId = ZoneId.systemDefault();
+
         return questions.stream()
                 .filter(q -> {
-                    // 标准一：无被接受的答案（已在查询中）
+                    // 排除已关闭问题
+                    if (q.getClosedDate() != null) {
+                        return false;
+                    }
+
+                    // 必须没有被接受答案
                     if (q.getAcceptedAnswerId() != null) {
                         return false;
                     }
-                    
-                    // 标准二：答案数量很少（已在查询中）
-                    if (q.getAnswerCount() == null || q.getAnswerCount() <= 1) {
+
+                    List<AnswerEntity> answers = q.getAnswers() != null ? q.getAnswers() : List.of();
+
+                    // 条件A：有高分答案（score > 6）
+                    boolean hasHighScoreAnswer = answers.stream()
+                            .map(AnswerEntity::getScore)
+                            .filter(score -> score != null)
+                            .anyMatch(score -> score > 6);
+
+                    if (hasHighScoreAnswer) {
                         return true;
                     }
-                    
-                    // 标准三：超过30天且最高答案分数 < 5
-                    if (q.getCreationDate() != null) {
-                        Duration age = Duration.between(q.getCreationDate(), now);
-                        if (age.toDays() > 30) {
-                            int maxAnswerScore = q.getAnswers().stream()
-                                    .map(AnswerEntity::getScore)
-                                    .filter(score -> score != null)
-                                    .mapToInt(Integer::intValue)
-                                    .max()
-                                    .orElse(0);
-                            
-                            if (maxAnswerScore < 5) {
-                                return true;
-                            }
-                        }
+
+                    // 条件B：长期无人回答（无任何答案，且创建时间距参考日期 > 240 天）
+                    if (!answers.isEmpty()) {
+                        return false;
                     }
-                    
-                    return false;
+                    if (q.getCreationDate() == null) {
+                        return false;
+                    }
+
+                    LocalDate createdDate = q.getCreationDate().atZone(zoneId).toLocalDate();
+                    // createdDate + 240 天 早于 referenceDate，说明间隔 > 240 天
+                    return createdDate.plusDays(240).isBefore(referenceDate);
                 })
                 .collect(Collectors.toList());
     }
@@ -492,5 +517,280 @@ public class SolvabilityContrastService {
                 (int) hardWithComments,
                 hard.size()
         );
+    }
+    
+    /**
+     * 计算代码片段比率分布
+     */
+    private DistributionData calculateCodeSnippetRatioDistribution(
+            List<QuestionEntity> solvable, List<QuestionEntity> hard) {
+        
+        // 定义10个区间：0-0.1, 0.1-0.2, ..., 0.9-1.0
+        int numBins = 10;
+        List<String> bins = new ArrayList<>();
+        for (int i = 0; i < numBins; i++) {
+            double start = i * 0.1;
+            double end = (i + 1) * 0.1;
+            bins.add(String.format("%.1f-%.1f", start, end));
+        }
+        
+        // 初始化计数数组
+        int[] solvableCounts = new int[numBins];
+        int[] hardCounts = new int[numBins];
+        
+        // 统计易解决问题
+        for (QuestionEntity question : solvable) {
+            double ratio = calculateCodeSnippetRatio(question);
+            int binIndex = Math.min((int) (ratio * numBins), numBins - 1);
+            solvableCounts[binIndex]++;
+        }
+        
+        // 统计难解决问题
+        for (QuestionEntity question : hard) {
+            double ratio = calculateCodeSnippetRatio(question);
+            int binIndex = Math.min((int) (ratio * numBins), numBins - 1);
+            hardCounts[binIndex]++;
+        }
+        
+        // 转换为频率百分比
+        List<Double> solvableFreq = new ArrayList<>();
+        List<Double> hardFreq = new ArrayList<>();
+        double solvableTotal = solvable.isEmpty() ? 1 : solvable.size();
+        double hardTotal = hard.isEmpty() ? 1 : hard.size();
+        
+        for (int i = 0; i < numBins; i++) {
+            solvableFreq.add((solvableCounts[i] / solvableTotal) * 100.0);
+            hardFreq.add((hardCounts[i] / hardTotal) * 100.0);
+        }
+        
+        return new DistributionData(bins, solvableFreq, hardFreq);
+    }
+    
+    /**
+     * 计算代码片段比率
+     */
+    private double calculateCodeSnippetRatio(QuestionEntity question) {
+        String body = question.getBody();
+        if (body == null || body.isEmpty()) {
+            return 0.0;
+        }
+        
+        // 提取代码片段
+        java.util.regex.Matcher matcher = CODE_SNIPPET_PATTERN.matcher(body);
+        int codeSnippetLength = 0;
+        while (matcher.find()) {
+            codeSnippetLength += matcher.group().length();
+        }
+        
+        // 计算总字符数（去除HTML标签）
+        String textOnly = body.replaceAll("<[^>]+>", " ");
+        int totalLength = textOnly.length();
+        
+        if (totalLength == 0) {
+            return 0.0;
+        }
+        
+        return Math.min(1.0, (double) codeSnippetLength / totalLength);
+    }
+    
+    /**
+     * 计算标签数分布
+     */
+    private DistributionData calculateTagCountDistribution(
+            List<QuestionEntity> solvable, List<QuestionEntity> hard) {
+        
+        // 定义标签数区间：0, 1, 2, 3-5, 6-10, 10+
+        List<String> bins = List.of("0", "1", "2", "3-5", "6-10", "10+");
+        int[] solvableCounts = new int[6];
+        int[] hardCounts = new int[6];
+        
+        // 统计易解决问题
+        for (QuestionEntity question : solvable) {
+            int tagCount = question.getTags() != null ? question.getTags().size() : 0;
+            int binIndex = getTagCountBinIndex(tagCount);
+            solvableCounts[binIndex]++;
+        }
+        
+        // 统计难解决问题
+        for (QuestionEntity question : hard) {
+            int tagCount = question.getTags() != null ? question.getTags().size() : 0;
+            int binIndex = getTagCountBinIndex(tagCount);
+            hardCounts[binIndex]++;
+        }
+        
+        // 转换为频率百分比
+        List<Double> solvableFreq = new ArrayList<>();
+        List<Double> hardFreq = new ArrayList<>();
+        double solvableTotal = solvable.isEmpty() ? 1 : solvable.size();
+        double hardTotal = hard.isEmpty() ? 1 : hard.size();
+        
+        for (int i = 0; i < bins.size(); i++) {
+            solvableFreq.add((solvableCounts[i] / solvableTotal) * 100.0);
+            hardFreq.add((hardCounts[i] / hardTotal) * 100.0);
+        }
+        
+        return new DistributionData(bins, solvableFreq, hardFreq);
+    }
+    
+    /**
+     * 获取标签数的区间索引
+     */
+    private int getTagCountBinIndex(int tagCount) {
+        if (tagCount == 0) return 0;
+        if (tagCount == 1) return 1;
+        if (tagCount == 2) return 2;
+        if (tagCount >= 3 && tagCount <= 5) return 3;
+        if (tagCount >= 6 && tagCount <= 10) return 4;
+        return 5; // 10+
+    }
+    
+    /**
+     * 计算问题长度分布
+     */
+    private DistributionData calculateQuestionLengthDistribution(
+            List<QuestionEntity> solvable, List<QuestionEntity> hard) {
+        
+        // 定义长度区间：0-500, 500-1000, 1000-2000, 2000-5000, 5000+
+        List<String> bins = List.of("0-500", "500-1000", "1000-2000", "2000-5000", "5000+");
+        int[] solvableCounts = new int[5];
+        int[] hardCounts = new int[5];
+        
+        // 统计易解决问题
+        for (QuestionEntity question : solvable) {
+            int length = calculateQuestionLength(question);
+            int binIndex = getLengthBinIndex(length);
+            solvableCounts[binIndex]++;
+        }
+        
+        // 统计难解决问题
+        for (QuestionEntity question : hard) {
+            int length = calculateQuestionLength(question);
+            int binIndex = getLengthBinIndex(length);
+            hardCounts[binIndex]++;
+        }
+        
+        // 转换为频率百分比
+        List<Double> solvableFreq = new ArrayList<>();
+        List<Double> hardFreq = new ArrayList<>();
+        double solvableTotal = solvable.isEmpty() ? 1 : solvable.size();
+        double hardTotal = hard.isEmpty() ? 1 : hard.size();
+        
+        for (int i = 0; i < bins.size(); i++) {
+            solvableFreq.add((solvableCounts[i] / solvableTotal) * 100.0);
+            hardFreq.add((hardCounts[i] / hardTotal) * 100.0);
+        }
+        
+        return new DistributionData(bins, solvableFreq, hardFreq);
+    }
+    
+    /**
+     * 获取长度的区间索引
+     */
+    private int getLengthBinIndex(int length) {
+        if (length < 500) return 0;
+        if (length < 1000) return 1;
+        if (length < 2000) return 2;
+        if (length < 5000) return 3;
+        return 4; // 5000+
+    }
+    
+    /**
+     * 计算提问者声誉分布
+     */
+    private DistributionData calculateReputationDistribution(
+            List<QuestionEntity> solvable, List<QuestionEntity> hard) {
+        
+        // 定义声誉区间：0-100, 100-500, 500-1000, 1000-5000, 5000+
+        List<String> bins = List.of("0-100", "100-500", "500-1000", "1000-5000", "5000+");
+        int[] solvableCounts = new int[5];
+        int[] hardCounts = new int[5];
+        
+        // 统计易解决问题
+        for (QuestionEntity question : solvable) {
+            int reputation = getOwnerReputation(question);
+            int binIndex = getReputationBinIndex(reputation);
+            solvableCounts[binIndex]++;
+        }
+        
+        // 统计难解决问题
+        for (QuestionEntity question : hard) {
+            int reputation = getOwnerReputation(question);
+            int binIndex = getReputationBinIndex(reputation);
+            hardCounts[binIndex]++;
+        }
+        
+        // 转换为频率百分比
+        List<Double> solvableFreq = new ArrayList<>();
+        List<Double> hardFreq = new ArrayList<>();
+        double solvableTotal = solvable.isEmpty() ? 1 : solvable.size();
+        double hardTotal = hard.isEmpty() ? 1 : hard.size();
+        
+        for (int i = 0; i < bins.size(); i++) {
+            solvableFreq.add((solvableCounts[i] / solvableTotal) * 100.0);
+            hardFreq.add((hardCounts[i] / hardTotal) * 100.0);
+        }
+        
+        return new DistributionData(bins, solvableFreq, hardFreq);
+    }
+    
+    /**
+     * 获取声誉的区间索引
+     */
+    private int getReputationBinIndex(int reputation) {
+        if (reputation < 100) return 0;
+        if (reputation < 500) return 1;
+        if (reputation < 1000) return 2;
+        if (reputation < 5000) return 3;
+        return 4; // 5000+
+    }
+    
+    /**
+     * 计算评论数量分布
+     */
+    private DistributionData calculateCommentCountDistribution(
+            List<QuestionEntity> solvable, List<QuestionEntity> hard) {
+        
+        // 定义评论数区间：0, 1, 2-5, 6-10, 10+
+        List<String> bins = List.of("0", "1", "2-5", "6-10", "10+");
+        int[] solvableCounts = new int[5];
+        int[] hardCounts = new int[5];
+        
+        // 统计易解决问题
+        for (QuestionEntity question : solvable) {
+            int commentCount = question.getQuestionComments() != null ? question.getQuestionComments().size() : 0;
+            int binIndex = getCommentCountBinIndex(commentCount);
+            solvableCounts[binIndex]++;
+        }
+        
+        // 统计难解决问题
+        for (QuestionEntity question : hard) {
+            int commentCount = question.getQuestionComments() != null ? question.getQuestionComments().size() : 0;
+            int binIndex = getCommentCountBinIndex(commentCount);
+            hardCounts[binIndex]++;
+        }
+        
+        // 转换为频率百分比
+        List<Double> solvableFreq = new ArrayList<>();
+        List<Double> hardFreq = new ArrayList<>();
+        double solvableTotal = solvable.isEmpty() ? 1 : solvable.size();
+        double hardTotal = hard.isEmpty() ? 1 : hard.size();
+        
+        for (int i = 0; i < bins.size(); i++) {
+            solvableFreq.add((solvableCounts[i] / solvableTotal) * 100.0);
+            hardFreq.add((hardCounts[i] / hardTotal) * 100.0);
+        }
+        
+        return new DistributionData(bins, solvableFreq, hardFreq);
+    }
+    
+    /**
+     * 获取评论数的区间索引
+     */
+    private int getCommentCountBinIndex(int commentCount) {
+        if (commentCount == 0) return 0;
+        if (commentCount == 1) return 1;
+        if (commentCount >= 2 && commentCount <= 5) return 2;
+        if (commentCount >= 6 && commentCount <= 10) return 3;
+        return 4; // 10+
     }
 }
