@@ -149,5 +149,13 @@ This page includes:
 4. 为关键分析编写单元/集成测试，并优化性能与缓存策略
 
 ---
+### RESTFUL
+是的，项目已满足该要求，且有 2 个以上可演示的 RESTful API：
+GET /api/cooccurrence?topN=10&filterCoreTopics=false：返回主题共现 Top N 对及频次，JSON。
+GET /api/topic-trends?topics=java,spring&metric=QUESTIONS&from=2020-01-01&to=2020-12-31&topN=8：返回主题趋势分析，JSON。
+GET /api/multithreading/pitfalls?topN=5：返回多线程坑点 Top N，JSON。
+GET /api/solvability/contrast?from=2024-01-01&to=2024-12-31：返回易/难问题对比的全部特征、分布、箱线图数据，JSON。
+GET /api/metadata/status：返回元数据快照（数据量/状态），JSON。
+这些端点都在 AnalysisController 和 MetadataController 中定义，前端通过这些 REST API 获取数据进行可视化，符合“至少 2 个 REST 端点、可在浏览器演示”的要求。
 
 Happy coding! 🚀

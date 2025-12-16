@@ -111,6 +111,9 @@ public class SolvabilityContrastService {
         
         // 计算声誉箱线图数据
         BoxPlotData reputationBoxPlotData = calculateReputationBoxPlotData(solvableQuestions, hardQuestions);
+        BoxPlotData titleWordsBoxPlotData = calculateTitleWordsBoxPlotData(solvableQuestions, hardQuestions);
+        BoxPlotData codeRatioBoxPlotData = calculateCodeRatioBoxPlotData(solvableQuestions, hardQuestions);
+        BoxPlotData viewCountBoxPlotData = calculateViewCountBoxPlotData(solvableQuestions, hardQuestions);
         
         return new SolvabilityContrastResponse(
                 features, 
@@ -121,7 +124,10 @@ public class SolvabilityContrastService {
                 questionLengthDistribution,
                 reputationDistribution,
                 commentCountDistribution,
-                reputationBoxPlotData
+                reputationBoxPlotData,
+                titleWordsBoxPlotData,
+                codeRatioBoxPlotData,
+                viewCountBoxPlotData
         );
     }
     
@@ -374,6 +380,25 @@ public class SolvabilityContrastService {
         }
         Integer reputation = question.getOwner().getReputation();
         return reputation != null ? reputation : 0;
+    }
+    
+    /**
+     * 获取标题词数（按空格拆分）
+     */
+    private int getTitleWordCount(QuestionEntity question) {
+        String title = question.getTitle();
+        if (title == null || title.isBlank()) {
+            return 0;
+        }
+        return title.trim().split("\\s+").length;
+    }
+    
+    /**
+     * 获取浏览量
+     */
+    private int getViewCount(QuestionEntity question) {
+        Integer viewCount = question.getViewCount();
+        return viewCount != null ? viewCount : 0;
     }
     
     /**
@@ -838,6 +863,63 @@ public class SolvabilityContrastService {
         BoxPlotStats solvableStats = calculateBoxPlotStatsDouble(solvableReputations);
         BoxPlotStats hardStats = calculateBoxPlotStatsDouble(hardReputations);
         
+        return new BoxPlotData(solvableStats, hardStats);
+    }
+    
+    /**
+     * 计算标题词数箱线图数据
+     */
+    private BoxPlotData calculateTitleWordsBoxPlotData(
+            List<QuestionEntity> solvable, List<QuestionEntity> hard) {
+        
+        List<Integer> solvableWords = solvable.stream()
+                .map(this::getTitleWordCount)
+                .collect(Collectors.toList());
+        
+        List<Integer> hardWords = hard.stream()
+                .map(this::getTitleWordCount)
+                .collect(Collectors.toList());
+        
+        BoxPlotStats solvableStats = calculateBoxPlotStats(solvableWords);
+        BoxPlotStats hardStats = calculateBoxPlotStats(hardWords);
+        return new BoxPlotData(solvableStats, hardStats);
+    }
+    
+    /**
+     * 计算代码片段占比箱线图数据
+     */
+    private BoxPlotData calculateCodeRatioBoxPlotData(
+            List<QuestionEntity> solvable, List<QuestionEntity> hard) {
+        
+        List<Double> solvableRatios = solvable.stream()
+                .map(this::calculateCodeSnippetRatio)
+                .collect(Collectors.toList());
+        
+        List<Double> hardRatios = hard.stream()
+                .map(this::calculateCodeSnippetRatio)
+                .collect(Collectors.toList());
+        
+        BoxPlotStats solvableStats = calculateBoxPlotStatsDouble(solvableRatios);
+        BoxPlotStats hardStats = calculateBoxPlotStatsDouble(hardRatios);
+        return new BoxPlotData(solvableStats, hardStats);
+    }
+    
+    /**
+     * 计算浏览量箱线图数据
+     */
+    private BoxPlotData calculateViewCountBoxPlotData(
+            List<QuestionEntity> solvable, List<QuestionEntity> hard) {
+        
+        List<Integer> solvableViews = solvable.stream()
+                .map(this::getViewCount)
+                .collect(Collectors.toList());
+        
+        List<Integer> hardViews = hard.stream()
+                .map(this::getViewCount)
+                .collect(Collectors.toList());
+        
+        BoxPlotStats solvableStats = calculateBoxPlotStats(solvableViews);
+        BoxPlotStats hardStats = calculateBoxPlotStats(hardViews);
         return new BoxPlotData(solvableStats, hardStats);
     }
     

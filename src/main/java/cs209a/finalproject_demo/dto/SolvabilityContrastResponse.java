@@ -11,7 +11,10 @@ public record SolvabilityContrastResponse(
         DistributionData question_length_distribution,
         DistributionData reputation_distribution,
         DistributionData comment_count_distribution,
-        BoxPlotData reputation_boxplot_data
+        BoxPlotData reputation_boxplot_data,
+        BoxPlotData title_words_boxplot_data,
+        BoxPlotData code_ratio_boxplot_data,
+        BoxPlotData view_count_boxplot_data
 ) {
 
     public record FeatureComparison(
